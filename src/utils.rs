@@ -90,6 +90,7 @@ async fn handle_response(
     let host = url.host_str().ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
 
     let ip_address = resolve_host_to_ip(host).await?;
+    let reverse_dns_name = reverse_dns_lookup(&ip_address).await?;
 
     let security_headers = extract_security_headers(&headers);
     let security_headers_json = serde_json::to_string(&security_headers)
@@ -97,7 +98,7 @@ async fn handle_response(
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
-    update_database(&initial_domain, &final_domain, &ip_address, status, status_desc, elapsed, &title, keywords_str.as_deref(), &security_headers_json, timestamp, &tls_version, &subject, &issuer, valid_from, valid_to, oids, pool).await
+    update_database(&initial_domain, &final_domain, &ip_address, &reverse_dns_name, &status, status_desc, elapsed, &title, keywords_str.as_deref(), &security_headers_json, timestamp, &tls_version, &subject, &issuer, valid_from, valid_to, oids, pool).await
 }
 
 fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
@@ -226,6 +227,18 @@ async fn resolve_host_to_ip(host: &str) -> Result<String, Error> {
 
     Ok(ip)
 }
+
+async fn reverse_dns_lookup(ip: &str) -> Result<Option<String>, Error> {
+    let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(Error::new)?;
+
+    let response = resolver.reverse_lookup(ip.parse()?).await.map_err(Error::new)?;
+
+    // Take the first name found; there could be multiple names.
+    let name = response.iter().next().map(|name| name.to_utf8());
+
+    Ok(name)
+}
+
 
 async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, anyhow::Error> {
     let mut root_store = RootCertStore::empty();

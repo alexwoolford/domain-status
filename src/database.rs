@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Error;
 use chrono::NaiveDateTime;
 use log::{error, info};
+use reqwest::StatusCode;
 use sqlx::{Pool, Sqlite, SqlitePool};
 
 use crate::config::DB_PATH;
@@ -39,6 +40,7 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), Box<dyn std::error:
         domain TEXT NOT NULL,
         final_domain TEXT NOT NULL,
         ip_address TEXT NOT NULL,
+        reverse_dns_name TEXT,
         status INTEGER NOT NULL,
         status_description TEXT NOT NULL,
         response_time NUMERIC(10, 2),
@@ -69,7 +71,8 @@ pub async fn update_database(
     initial_domain: &str,
     final_domain: &str,
     ip_address: &str,
-    status: reqwest::StatusCode,
+    reverse_dns_name: &Option<String>,
+    status: &StatusCode,
     status_desc: &str,
     elapsed: f64,
     title: &str,
@@ -93,6 +96,7 @@ pub async fn update_database(
                 domain, \
                 final_domain, \
                 ip_address, \
+                reverse_dns_name, \
                 status, \
                 status_description, \
                 response_time, \
@@ -106,11 +110,12 @@ pub async fn update_database(
                 ssl_cert_valid_to, \
                 oids, \
                 timestamp\
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
         .bind(&initial_domain)
         .bind(&final_domain)
         .bind(&ip_address)
+        .bind(&reverse_dns_name)
         .bind(status.as_u16())
         .bind(status_desc)
         .bind(elapsed)
