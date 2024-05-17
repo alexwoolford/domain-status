@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Error;
 use chrono::NaiveDateTime;
 use log::{error, info};
+use reqwest::StatusCode;
 use sqlx::{Pool, Sqlite, SqlitePool};
 
 use crate::config::DB_PATH;
@@ -38,11 +39,14 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), Box<dyn std::error:
         id INTEGER PRIMARY KEY,
         domain TEXT NOT NULL,
         final_domain TEXT NOT NULL,
+        ip_address TEXT NOT NULL,
+        reverse_dns_name TEXT,
         status INTEGER NOT NULL,
         status_description TEXT NOT NULL,
         response_time NUMERIC(10, 2),
         title TEXT NOT NULL,
         keywords TEXT,
+        security_headers TEXT NOT NULL,
         tls_version TEXT,
         ssl_cert_subject TEXT,
         ssl_cert_issuer TEXT,
@@ -66,11 +70,14 @@ fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {
 pub async fn update_database(
     initial_domain: &str,
     final_domain: &str,
-    status: reqwest::StatusCode,
+    ip_address: &str,
+    reverse_dns_name: &Option<String>,
+    status: &StatusCode,
     status_desc: &str,
     elapsed: f64,
     title: &str,
     keywords: Option<&str>,
+    security_headers: &str,
     timestamp: i64,
     tls_version: &Option<String>,
     ssl_cert_subject: &Option<String>,
@@ -88,11 +95,14 @@ pub async fn update_database(
         "INSERT INTO url_status (\
                 domain, \
                 final_domain, \
+                ip_address, \
+                reverse_dns_name, \
                 status, \
                 status_description, \
                 response_time, \
                 title, \
                 keywords, \
+                security_headers, \
                 tls_version, \
                 ssl_cert_subject, \
                 ssl_cert_issuer, \
@@ -100,15 +110,18 @@ pub async fn update_database(
                 ssl_cert_valid_to, \
                 oids, \
                 timestamp\
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
         .bind(&initial_domain)
         .bind(&final_domain)
+        .bind(&ip_address)
+        .bind(&reverse_dns_name)
         .bind(status.as_u16())
         .bind(status_desc)
         .bind(elapsed)
         .bind(&title)
         .bind(keywords)
+        .bind(security_headers)
         .bind(&tls_version)
         .bind(&ssl_cert_subject)
         .bind(&ssl_cert_issuer)

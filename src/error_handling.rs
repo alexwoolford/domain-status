@@ -161,7 +161,7 @@ pub fn get_retry_strategy() -> ExponentialBackoff {
         .max_delay(Duration::from_secs(20)) // Maximum delay of 20 seconds
 }
 
-pub fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
+pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
 
     let error_type = match error.status() {
 
