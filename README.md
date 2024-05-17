@@ -26,23 +26,26 @@ Run the tool with a list of URLs:
 ## Database Details
 The results are stored in the domain_results.db SQLite database, inside a table named `url_status`. Each entry in this table consists of:
 
-| Field                   | Type      | Description                                                                                                                            |
-|-------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------|
-| **id**                  | `integer` | A unique identifier.                                                                                                                   |
-| **domain**              | `text`    | The initial domain checked.                                                                                                            |
-| **final_domain**        | `text`    | The domain after potential redirections.                                                                                               |
-| **status**              | `integer` | The HTTP status code.                                                                                                                  |
-| **status_description**  | `text`    | A brief description of the status code.                                                                                                |
-| **response_time**       | `numeric` | How long the request took (seconds).                                                                                                   |
-| **title**               | `text`    | The webpage's title, when applicable.                                                                                                  |
-| **keywords**            | `text`    | The webpage's meta keywords from the `<meta name="keywords">` tag.                                                                     |
-| **ssl_cert_subject**    | `text`    | The distinguished name of the entity associated with the certificate.                                                                  |
-| **ssl_cert_issuer**     | `text`    | The distinguished name of the certificate authority (CA) that issued the certificate.                                                  |
-| **ssl_cert_valid_from** | `integer` | The start date/time of the certificate's validity period, recorded in epoch millis.                                                    |
-| **ssl_cert_valid_to**   | `integer` | The end date/time of the certificate's validity period, indicating when the certificate expires, recorded in epoch millis.             |
-| **oids**                | `text`    | A JSON-encoded list of Object Identifiers (OIDs) representing certificate policies or other extensions present in the SSL certificate. |
-| **timestamp**           | `integer` | When the URL check happened, recorded in epoch millis.                                                                                 |
-
+| Field                   | Type      | Description                                                                                                                                                                            |
+|-------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **id**                  | `integer` | A unique identifier.                                                                                                                                                                   |
+| **domain**              | `text`    | The initial domain checked.                                                                                                                                                            |
+| **final_domain**        | `text`    | The domain after potential redirections.                                                                                                                                               |
+| **ip_address**          | `text`    | The IP address of the final domain.                                                                                                                                                    |
+| **reverse_dns_name**    | `text`    | The resolved domain name from the final domain's IP address via reverse DNS lookup.                                                                                                    |
+| **status**              | `integer` | The HTTP status code.                                                                                                                                                                  |
+| **status_description**  | `text`    | A brief description of the status code.                                                                                                                                                |
+| **response_time**       | `numeric` | How long the request took (seconds).                                                                                                                                                   |
+| **title**               | `text`    | The webpage's title, when applicable.                                                                                                                                                  |
+| **keywords**            | `text`    | The webpage's meta keywords from the `<meta name="keywords">` tag.                                                                                                                     |
+| **security_headers**    | `text`    | Captures essential web security headers as a JSON string, including policies on content security, transport security, and more, providing insights into the website's security practices. |
+| **tls_version**         | `text`    | The TLS protocol version used in the connection.                                                                                                                                       |
+| **ssl_cert_subject**    | `text`    | The distinguished name of the entity associated with the certificate.                                                                                                                  |
+| **ssl_cert_issuer**     | `text`    | The distinguished name of the certificate authority (CA) that issued the certificate.                                                                                                  |
+| **ssl_cert_valid_from** | `integer` | The start date/time of the certificate's validity period, recorded in epoch millis.                                                                                                    |
+| **ssl_cert_valid_to**   | `integer` | The end date/time of the certificate's validity period, indicating when the certificate expires, recorded in epoch millis.                                                             |
+| **oids**                | `text`    | A JSON-encoded list of Object Identifiers (OIDs) representing certificate policies or other extensions present in the SSL certificate.                                                 |
+| **timestamp**           | `integer` | When the URL check happened, recorded in epoch millis.                                                                                                                                 |
 
 ## 📊 Output
 Stay informed with detailed logging:
