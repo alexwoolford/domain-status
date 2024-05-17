@@ -63,7 +63,7 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), Box<dyn std::error:
 }
 
 fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {
-    datetime.map(|dt| dt.timestamp_millis())
+    datetime.map(|dt| dt.and_utc().timestamp_millis())
 }
 
 /// Inserts a new URL status into the database.
