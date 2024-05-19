@@ -10,7 +10,7 @@ use colored::*;
 
 use crate::error_handling::InitializationError;
 
-// Initializes the logger for the application with the provided configuration.
+/// Initializes the logger for the application with the provided configuration.
 pub fn init_logger() -> Result<(), InitializationError> {
 
     colored::control::set_override(true);
@@ -53,10 +53,12 @@ pub fn init_logger() -> Result<(), InitializationError> {
     Ok(())
 }
 
+/// Initializes a semaphore with the specified count.
 pub fn init_semaphore(count: usize) -> Arc<Semaphore> {
     Arc::new(Semaphore::new(count))
 }
 
+/// Initializes the HTTP client with default settings.
 pub async fn init_client() -> Result<Arc<reqwest::Client>, reqwest::Error> {
     let client = ClientBuilder::new()
         .timeout(Duration::from_secs(10))
@@ -65,6 +67,7 @@ pub async fn init_client() -> Result<Arc<reqwest::Client>, reqwest::Error> {
     Ok(Arc::new(client))
 }
 
+/// Initializes the TLD extractor.
 pub fn init_extractor() -> Arc<TldExtractor> {
     Arc::new(TldExtractor::new(TldOption::default()))
 }

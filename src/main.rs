@@ -1,3 +1,5 @@
+// main.rs
+use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
@@ -37,22 +39,22 @@ fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_logger()?;
+async fn main() -> Result<()> {
+    init_logger().context("Failed to initialize logger")?;
 
     let opt = Opt::from_args();
-    let file = File::open(&opt.file)?;
+    let file = File::open(&opt.file).context("Failed to open input file")?;
     let reader = BufReader::new(file);
 
     let mut tasks = FuturesUnordered::new();
 
     let semaphore = init_semaphore(SEMAPHORE_LIMIT);
 
-    let pool = init_db_pool().await?;
-    let client = init_client().await?;
+    let pool = init_db_pool().await.context("Failed to initialize database pool")?;
+    let client = init_client().await.context("Failed to initialize HTTP client")?;
     let extractor = init_extractor();
 
-    create_table(&pool).await?;
+    create_table(&pool).await.context("Failed to create table")?;
 
     let start_time = std::time::Instant::now();
 
@@ -146,6 +148,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

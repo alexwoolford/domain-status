@@ -1,16 +1,17 @@
+// database.rs
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::sync::Arc;
 
-use anyhow::Error;
 use chrono::NaiveDateTime;
-use log::{error, info};
+use log::info;
 use reqwest::StatusCode;
 use sqlx::{Pool, Sqlite, SqlitePool};
 
 use crate::config::DB_PATH;
+use crate::error_handling::DatabaseError;
 
-pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, Error> {
+pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
     match OpenOptions::new()
         .read(true)
         .write(true)
@@ -19,21 +20,24 @@ pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, Error> {
     {
         Ok(_) => info!("Database file created successfully."),
         Err(ref e) if e.kind() == ErrorKind::AlreadyExists => info!("Database file already exists."),
-        Err(e) => return Err(Error::from(e)),
+        Err(e) => return Err(DatabaseError::FileCreationError(e.to_string())),
     }
 
-    let pool = SqlitePool::connect(&format!("sqlite:{}", DB_PATH)).await?;
+    let pool = SqlitePool::connect(&format!("sqlite:{}", DB_PATH))
+        .await
+        .map_err(DatabaseError::SqlError)?;
 
     // Enable WAL mode
     sqlx::query("PRAGMA journal_mode=WAL")
         .execute(&pool)
-        .await?;
+        .await
+        .map_err(DatabaseError::SqlError)?;
 
     Ok(Arc::new(pool))
 }
 
 /// Creates the 'url_status' table if it doesn't exist.
-pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS url_status (
         id INTEGER PRIMARY KEY,
@@ -48,8 +52,8 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), Box<dyn std::error:
         keywords TEXT,
         security_headers TEXT NOT NULL,
         tls_version TEXT,
-        ssl_cert_subject TEXT,
-        ssl_cert_issuer TEXT,
+        ssl_cert_subject TEXT NOT NULL,
+        ssl_cert_issuer TEXT NOT NULL,
         ssl_cert_valid_from INTEGER,
         ssl_cert_valid_to INTEGER,
         oids STRING,
@@ -57,11 +61,12 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), Box<dyn std::error:
     )",
     )
         .execute(pool)
-        .await?;
-
-    Ok(())
+        .await
+        .map(|_| ())
+        .map_err(|e| DatabaseError::SqlError(e).into())
 }
 
+/// Converts a NaiveDateTime to milliseconds since Unix epoch.
 fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {
     datetime.map(|dt| dt.and_utc().timestamp_millis())
 }
@@ -86,55 +91,38 @@ pub async fn update_database(
     ssl_cert_valid_to: Option<NaiveDateTime>,
     oids: Option<String>,
     pool: &SqlitePool,
-) -> Result<(), Error> {
-
+) -> Result<(), DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(ssl_cert_valid_to.as_ref());
 
-    match sqlx::query(
-        "INSERT INTO url_status (\
-                domain, \
-                final_domain, \
-                ip_address, \
-                reverse_dns_name, \
-                status, \
-                status_description, \
-                response_time, \
-                title, \
-                keywords, \
-                security_headers, \
-                tls_version, \
-                ssl_cert_subject, \
-                ssl_cert_issuer, \
-                ssl_cert_valid_from, \
-                ssl_cert_valid_to, \
-                oids, \
-                timestamp\
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    sqlx::query(
+        "INSERT INTO url_status (
+            domain, final_domain, ip_address, reverse_dns_name, status, status_description,
+            response_time, title, keywords, security_headers, tls_version, ssl_cert_subject,
+            ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
-        .bind(&initial_domain)
-        .bind(&final_domain)
-        .bind(&ip_address)
-        .bind(&reverse_dns_name)
+        .bind(initial_domain)
+        .bind(final_domain)
+        .bind(ip_address)
+        .bind(reverse_dns_name)
         .bind(status.as_u16())
         .bind(status_desc)
         .bind(elapsed)
-        .bind(&title)
+        .bind(title)
         .bind(keywords)
         .bind(security_headers)
-        .bind(&tls_version)
-        .bind(&ssl_cert_subject)
-        .bind(&ssl_cert_issuer)
+        .bind(tls_version)
+        .bind(ssl_cert_subject)
+        .bind(ssl_cert_issuer)
         .bind(valid_from_millis)
         .bind(valid_to_millis)
-        .bind(&oids)
+        .bind(oids)
         .bind(timestamp)
         .execute(pool)
-        .await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            error!("Error when accessing the database: {}", e);
-            Err(e.into())
-        }
-    }
+        .await
+        .map(|_| ())
+        .map_err(DatabaseError::SqlError)?;
+
+    Ok(())
 }

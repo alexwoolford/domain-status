@@ -99,6 +99,10 @@ async fn handle_response(
     let timestamp = chrono::Utc::now().timestamp_millis();
 
     update_database(&initial_domain, &final_domain, &ip_address, &reverse_dns_name, &status, status_desc, elapsed, &title, keywords_str.as_deref(), &security_headers_json, timestamp, &tls_version, &subject, &issuer, valid_from, valid_to, oids, pool).await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok(())
+
 }
 
 fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -7,9 +6,35 @@ use strum::IntoEnumIterator;
 use log::warn;
 use tokio_retry::strategy::ExponentialBackoff;
 use strum_macros::EnumIter as EnumIterMacro;
-
+use thiserror::Error;
+use log::SetLoggerError;
+use reqwest::Error as ReqwestError;
 
 use crate::config::LOGGING_INTERVAL;
+
+/// Error types for initialization failures.
+#[derive(Error, Debug)]
+pub enum InitializationError {
+    /// Error initializing the logger.
+    #[error("Logger initialization error: {0}")]
+    LoggerError(#[from] SetLoggerError),
+
+    /// Error initializing the HTTP client.
+    #[error("HTTP client initialization error: {0}")]
+    HttpClientError(#[from] ReqwestError),
+}
+
+/// Error types for database operations.
+#[derive(Error, Debug)]
+pub enum DatabaseError {
+    /// Error creating the database file.
+    #[error("Database file creation error: {0}")]
+    FileCreationError(String),
+
+    /// SQL execution error.
+    #[error("SQL error: {0}")]
+    SqlError(#[from] sqlx::Error),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
 pub enum ErrorType {
@@ -78,7 +103,6 @@ impl ErrorStats {
     pub fn total_error_count(&self) -> usize {
         self.errors.values().map(|counter| counter.load(Ordering::SeqCst)).sum()
     }
-
 }
 
 #[derive(Clone)]
@@ -113,7 +137,7 @@ impl ErrorRateLimiter {
                 // increase backoff time
                 let sleep_duration = Duration::from_secs_f64((error_rate / 5.0).max(1.0));
                 warn!("Throttled; error rate of {:.2}% has exceeded the set threshold. There were {} errors out of {} operations. Backoff time is {:.2} seconds.",
-        error_rate, total_errors, self.operation_count.load(Ordering::SeqCst), sleep_duration.as_secs_f64());
+                    error_rate, total_errors, self.operation_count.load(Ordering::SeqCst), sleep_duration.as_secs_f64());
                 tokio::time::sleep(sleep_duration).await;
             }
         }
@@ -121,37 +145,8 @@ impl ErrorRateLimiter {
 
     fn calculate_error_rate(&self) -> f64 {
         let total_errors = self.error_stats.total_error_count();
-
         let error_rate = (total_errors as f64 / f64::max(total_errors as f64, self.operation_count.load(Ordering::SeqCst) as f64)) * 100.0;
-
         error_rate
-    }
-}
-
-#[derive(Debug)]
-pub enum InitializationError {
-    LoggerError(log::SetLoggerError),
-}
-
-impl From<log::SetLoggerError> for InitializationError {
-    fn from(err: log::SetLoggerError) -> InitializationError {
-        InitializationError::LoggerError(err)
-    }
-}
-
-impl fmt::Display for InitializationError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            InitializationError::LoggerError(e) => write!(f, "Logger initialization error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for InitializationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            InitializationError::LoggerError(e) => Some(e),
-        }
     }
 }
 
@@ -162,9 +157,7 @@ pub fn get_retry_strategy() -> ExponentialBackoff {
 }
 
 pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
-
     let error_type = match error.status() {
-
         // When the error contains a status code, match on it
         Some(status) if status.is_client_error() => {
             match status.as_u16() {
@@ -198,5 +191,4 @@ pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error
     };
 
     error_stats.increment(error_type);
-
 }
