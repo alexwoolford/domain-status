@@ -22,6 +22,7 @@ use crate::error_handling::{ErrorStats, ErrorType, get_retry_strategy, update_er
 lazy_static! {
     static ref TITLE_SELECTOR: Selector = Selector::parse("title").unwrap();
     static ref META_KEYWORDS_SELECTOR: Selector = Selector::parse("meta[name='keywords']").unwrap();
+    static ref META_DESCRIPTION_SELECTOR: Selector = Selector::parse("meta[name='description']").unwrap();
 }
 
 fn extract_domain(extractor: &TldExtractor, url: &str) -> Result<String, anyhow::Error> {
@@ -83,6 +84,8 @@ async fn handle_response(
         None
     };
 
+    let description = extract_meta_description(&body, error_stats);
+
     let initial_domain = extract_domain(&extractor, url)?;
     let final_domain = extract_domain(&extractor, &final_url)?;
 
@@ -93,17 +96,37 @@ async fn handle_response(
     let reverse_dns_name = reverse_dns_lookup(&ip_address).await?;
 
     let security_headers = extract_security_headers(&headers);
-    let security_headers_json = serde_json::to_string(&security_headers)
-        .unwrap_or_else(|_| "{}".to_string());
+    let security_headers_json = serde_json::to_string(&security_headers).unwrap_or_else(|_| "{}".to_string());
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
-    update_database(&initial_domain, &final_domain, &ip_address, &reverse_dns_name, &status, status_desc, elapsed, &title, keywords_str.as_deref(), &security_headers_json, timestamp, &tls_version, &subject, &issuer, valid_from, valid_to, oids, pool).await
-        .map_err(|e| anyhow::anyhow!(e))?;
+    log::debug!("Preparing to insert record for URL: {}", url);
+
+    update_database(
+        &initial_domain,
+        &final_domain,
+        &ip_address,
+        &reverse_dns_name,
+        &status,
+        status_desc,
+        elapsed,
+        &title,
+        keywords_str.as_deref(),
+        description.as_deref(),
+        &security_headers_json,
+        timestamp,
+        &tls_version,
+        &subject,
+        &issuer,
+        valid_from,
+        valid_to,
+        oids,
+        pool
+    ).await.map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(())
-
 }
+
 
 fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
     let headers_list = [
@@ -186,6 +209,18 @@ fn extract_meta_keywords(html: &str, error_stats: &ErrorStats) -> Option<Vec<Str
             None
         }
     }
+}
+
+fn extract_meta_description(html: &str, error_stats: &ErrorStats) -> Option<String> {
+    let parsed_html = Html::parse_document(html);
+    let meta_description = parsed_html.select(&META_DESCRIPTION_SELECTOR).next()
+        .and_then(|element| element.value().attr("content").map(|content| content.trim().to_string()));
+
+    if meta_description.is_none() {
+        error_stats.increment(ErrorType::MetaDescriptionExtractError);
+    }
+
+    meta_description
 }
 
 struct CertificateInfo {
