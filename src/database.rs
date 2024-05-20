@@ -61,6 +61,7 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
         title TEXT NOT NULL,
         keywords TEXT,
         description TEXT,
+        linkedin_slug TEXT,
         security_headers TEXT NOT NULL,
         tls_version TEXT,
         ssl_cert_subject TEXT NOT NULL,
@@ -94,6 +95,7 @@ pub async fn update_database(
     title: &str,
     keywords: Option<&str>,
     description: Option<&str>,
+    linkedin_slug: Option<&str>,
     security_headers: &str,
     timestamp: i64,
     tls_version: &Option<String>,
@@ -110,9 +112,9 @@ pub async fn update_database(
     let result = sqlx::query(
         "INSERT INTO url_status (
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
-            response_time, title, keywords, description, security_headers, tls_version, ssl_cert_subject,
+            response_time, title, keywords, description, linkedin_slug, security_headers, tls_version, ssl_cert_subject,
             ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
         .bind(initial_domain)
         .bind(final_domain)
@@ -124,6 +126,7 @@ pub async fn update_database(
         .bind(title)
         .bind(keywords)
         .bind(description)
+        .bind(linkedin_slug)
         .bind(security_headers)
         .bind(tls_version)
         .bind(ssl_cert_subject)

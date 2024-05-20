@@ -51,6 +51,7 @@ pub enum ErrorType {
     TitleExtractError,
     KeywordExtractError,
     MetaDescriptionExtractError,
+    LinkedInSlugExtractError,
     ProcessUrlTimeout,
 }
 
@@ -70,6 +71,7 @@ impl ErrorType {
             ErrorType::TitleExtractError => "Title extract error",
             ErrorType::KeywordExtractError => "Keyword extract error",
             ErrorType::MetaDescriptionExtractError => "Meta description extract error",
+            ErrorType::LinkedInSlugExtractError => "LinkedIn slug extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
         }
     }

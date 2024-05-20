@@ -14,6 +14,7 @@ use trust_dns_resolver::TokioAsyncResolver;
 use rustls::pki_types::ServerName;
 use tokio::net::TcpStream;
 use reqwest::Url;
+use regex::Regex;
 use x509_parser::extensions::ParsedExtension;
 
 use crate::database::update_database;
@@ -66,7 +67,6 @@ async fn handle_response(
     };
 
     let headers = response.headers().clone();
-
     let final_url = response.url().to_string();
     let status = response.status();
     let status_desc = status.canonical_reason().unwrap_or_else(|| "Unknown Status Code");
@@ -74,24 +74,17 @@ async fn handle_response(
     let body = response.text().await.unwrap_or_default();
 
     let title = extract_title(&body, error_stats);
-
     let keywords = extract_meta_keywords(&body, error_stats);
-    let keywords_str = if let Some(kw) = keywords {
-        // Create a String from the Vec<String> and pass a reference to it
-        Some(kw.join(", "))
-    } else {
-        // No keywords, so we pass None
-        None
-    };
-
+    let keywords_str = keywords.map(|kw| kw.join(", "));
     let description = extract_meta_description(&body, error_stats);
+
+    let linkedin_slug = extract_linkedin_slug(&body, error_stats);
 
     let initial_domain = extract_domain(&extractor, url)?;
     let final_domain = extract_domain(&extractor, &final_url)?;
 
     let url = Url::parse(&final_url)?;
     let host = url.host_str().ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
-
     let ip_address = resolve_host_to_ip(host).await?;
     let reverse_dns_name = reverse_dns_lookup(&ip_address).await?;
 
@@ -113,6 +106,7 @@ async fn handle_response(
         &title,
         keywords_str.as_deref(),
         description.as_deref(),
+        linkedin_slug.as_deref(),
         &security_headers_json,
         timestamp,
         &tls_version,
@@ -126,7 +120,6 @@ async fn handle_response(
 
     Ok(())
 }
-
 
 fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
     let headers_list = [
@@ -221,6 +214,22 @@ fn extract_meta_description(html: &str, error_stats: &ErrorStats) -> Option<Stri
     }
 
     meta_description
+}
+
+fn extract_linkedin_slug(html: &str, error_stats: &ErrorStats) -> Option<String> {
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("a[href]").unwrap();
+    let re = Regex::new(r"https?://www\.linkedin\.com/company/([^/?]+)").unwrap();
+
+    for element in document.select(&selector) {
+        if let Some(link) = element.value().attr("href") {
+            if let Some(caps) = re.captures(link) {
+                return caps.get(1).map(|m| m.as_str().to_string());
+            }
+        }
+    }
+    error_stats.increment(ErrorType::LinkedInSlugExtractError);
+    None
 }
 
 struct CertificateInfo {
