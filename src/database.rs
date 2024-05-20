@@ -69,6 +69,7 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
         ssl_cert_valid_from INTEGER,
         ssl_cert_valid_to INTEGER,
         oids STRING,
+        is_mobile_friendly BOOLEAN,
         timestamp INTEGER NOT NULL
     )",
     )
@@ -104,6 +105,7 @@ pub async fn update_database(
     ssl_cert_valid_from: Option<NaiveDateTime>,
     ssl_cert_valid_to: Option<NaiveDateTime>,
     oids: Option<String>,
+    is_mobile_friendly: bool,
     pool: &SqlitePool,
 ) -> Result<(), DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(ssl_cert_valid_from.as_ref());
@@ -113,8 +115,8 @@ pub async fn update_database(
         "INSERT INTO url_status (
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
             response_time, title, keywords, description, linkedin_slug, security_headers, tls_version, ssl_cert_subject,
-            ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, is_mobile_friendly, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
         .bind(initial_domain)
         .bind(final_domain)
@@ -134,6 +136,7 @@ pub async fn update_database(
         .bind(valid_from_millis)
         .bind(valid_to_millis)
         .bind(oids)
+        .bind(is_mobile_friendly)
         .bind(timestamp)
         .execute(pool)
         .await;

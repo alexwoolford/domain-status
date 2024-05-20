@@ -91,6 +91,8 @@ async fn handle_response(
     let security_headers = extract_security_headers(&headers);
     let security_headers_json = serde_json::to_string(&security_headers).unwrap_or_else(|_| "{}".to_string());
 
+    let is_mobile_friendly = is_mobile_friendly(&body);
+
     let timestamp = chrono::Utc::now().timestamp_millis();
 
     log::debug!("Preparing to insert record for URL: {}", url);
@@ -115,6 +117,7 @@ async fn handle_response(
         valid_from,
         valid_to,
         oids,
+        is_mobile_friendly,
         pool
     ).await.map_err(|e| anyhow::anyhow!(e))?;
 
@@ -230,6 +233,10 @@ fn extract_linkedin_slug(html: &str, error_stats: &ErrorStats) -> Option<String>
     }
     error_stats.increment(ErrorType::LinkedInSlugExtractError);
     None
+}
+
+fn is_mobile_friendly(html: &str) -> bool {
+    html.contains("viewport")
 }
 
 struct CertificateInfo {
