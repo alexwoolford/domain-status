@@ -2,9 +2,9 @@
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -22,10 +22,10 @@ use utils::*;
 use crate::error_handling::{ErrorRateLimiter, ErrorStats, ErrorType};
 
 mod config;
-mod initialization;
 mod database;
-mod utils;
 mod error_handling;
+mod initialization;
+mod utils;
 
 fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize>) {
     let elapsed = start_time.elapsed();
@@ -50,11 +50,17 @@ async fn main() -> Result<()> {
 
     let semaphore = init_semaphore(SEMAPHORE_LIMIT);
 
-    let pool = init_db_pool().await.context("Failed to initialize database pool")?;
-    let client = init_client().await.context("Failed to initialize HTTP client")?;
+    let pool = init_db_pool()
+        .await
+        .context("Failed to initialize database pool")?;
+    let client = init_client()
+        .await
+        .context("Failed to initialize HTTP client")?;
     let extractor = init_extractor();
 
-    create_table(&pool).await.context("Failed to create table")?;
+    create_table(&pool)
+        .await
+        .context("Failed to create table")?;
 
     let start_time = std::time::Instant::now();
 
@@ -96,13 +102,17 @@ async fn main() -> Result<()> {
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
 
-            let result = tokio::time::timeout(URL_PROCESSING_TIMEOUT, process_url(
-                url,
-                client_clone,
-                pool_clone,
-                extractor_clone,
-                error_stats_clone.clone(),
-            )).await;
+            let result = tokio::time::timeout(
+                URL_PROCESSING_TIMEOUT,
+                process_url(
+                    url,
+                    client_clone,
+                    pool_clone,
+                    extractor_clone,
+                    error_stats_clone.clone(),
+                ),
+            )
+            .await;
 
             match result {
                 Ok(()) => {
@@ -119,7 +129,8 @@ async fn main() -> Result<()> {
     let completed_urls_clone_for_logging = Arc::clone(&completed_urls);
 
     let logging_task = tokio::task::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(LOGGING_INTERVAL as u64));
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(LOGGING_INTERVAL as u64));
         loop {
             interval.tick().await;
             log_progress(start_time, &completed_urls_clone_for_logging);

@@ -19,11 +19,13 @@ pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
         .open(DB_PATH)
     {
         Ok(_) => info!("Database file created successfully."),
-        Err(ref e) if e.kind() == ErrorKind::AlreadyExists => info!("Database file already exists."),
+        Err(ref e) if e.kind() == ErrorKind::AlreadyExists => {
+            info!("Database file already exists.")
+        }
         Err(e) => {
             error!("Failed to create database file: {}", e);
             return Err(DatabaseError::FileCreationError(e.to_string()));
-        },
+        }
     }
 
     let pool = SqlitePool::connect(&format!("sqlite:{}", DB_PATH))
@@ -44,7 +46,6 @@ pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
 
     Ok(Arc::new(pool))
 }
-
 
 /// Creates the 'url_status' table if it doesn't exist.
 pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
@@ -73,10 +74,10 @@ pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
         timestamp INTEGER NOT NULL
     )",
     )
-        .execute(pool)
-        .await
-        .map(|_| ())
-        .map_err(|e| DatabaseError::SqlError(e).into())
+    .execute(pool)
+    .await
+    .map(|_| ())
+    .map_err(|e| DatabaseError::SqlError(e).into())
 }
 
 /// Converts a NaiveDateTime to milliseconds since Unix epoch.

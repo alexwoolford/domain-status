@@ -12,7 +12,6 @@ use crate::error_handling::InitializationError;
 
 /// Initializes the logger for the application with the provided configuration.
 pub fn init_logger() -> Result<(), InitializationError> {
-
     colored::control::set_override(true);
 
     let mut builder = env_logger::Builder::new();

@@ -1,14 +1,14 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
-use strum::IntoEnumIterator;
 use log::warn;
-use tokio_retry::strategy::ExponentialBackoff;
-use strum_macros::EnumIter as EnumIterMacro;
-use thiserror::Error;
 use log::SetLoggerError;
 use reqwest::Error as ReqwestError;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter as EnumIterMacro;
+use thiserror::Error;
+use tokio_retry::strategy::ExponentialBackoff;
 
 use crate::config::LOGGING_INTERVAL;
 
@@ -105,7 +105,10 @@ impl ErrorStats {
     }
 
     pub fn total_error_count(&self) -> usize {
-        self.errors.values().map(|counter| counter.load(Ordering::SeqCst)).sum()
+        self.errors
+            .values()
+            .map(|counter| counter.load(Ordering::SeqCst))
+            .sum()
     }
 }
 
@@ -149,25 +152,28 @@ impl ErrorRateLimiter {
 
     fn calculate_error_rate(&self) -> f64 {
         let total_errors = self.error_stats.total_error_count();
-        let error_rate = (total_errors as f64 / f64::max(total_errors as f64, self.operation_count.load(Ordering::SeqCst) as f64)) * 100.0;
+        let error_rate = (total_errors as f64
+            / f64::max(
+                total_errors as f64,
+                self.operation_count.load(Ordering::SeqCst) as f64,
+            ))
+            * 100.0;
         error_rate
     }
 }
 
 pub fn get_retry_strategy() -> ExponentialBackoff {
     ExponentialBackoff::from_millis(1000)
-        .factor(2)                // Double the delay with each retry
+        .factor(2) // Double the delay with each retry
         .max_delay(Duration::from_secs(20)) // Maximum delay of 20 seconds
 }
 
 pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
     let error_type = match error.status() {
         // When the error contains a status code, match on it
-        Some(status) if status.is_client_error() => {
-            match status.as_u16() {
-                429 => ErrorType::HttpRequestTooManyRedirects,
-                _ => ErrorType::HttpRequestOtherError
-            }
+        Some(status) if status.is_client_error() => match status.as_u16() {
+            429 => ErrorType::HttpRequestTooManyRedirects,
+            _ => ErrorType::HttpRequestOtherError,
         },
         Some(status) if status.is_server_error() => ErrorType::HttpRequestOtherError,
         _ => {

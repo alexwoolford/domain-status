@@ -1,4 +1,7 @@
 # domain_status
+
+[![Rust](https://github.com/alexwoolford/domain_status/actions/workflows/rust.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/rust.yml)
+
 **domain_status** is a Rust-based tool designed for multithreaded checking of URL statuses and redirections. It captures errors, tracks progress, and records results in a SQLite database.
 
 ## 🌟 Features

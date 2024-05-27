@@ -9,9 +9,11 @@ pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DB_PATH: &str = "./url_checker.db";
 
-
 #[derive(Default, Debug, StructOpt)]
-#[structopt(name = "domain_status", about = "Checks a list of URLs for their status and redirection.")]
+#[structopt(
+    name = "domain_status",
+    about = "Checks a list of URLs for their status and redirection."
+)]
 pub struct Opt {
     /// File to read
     #[structopt(parse(from_os_str))]

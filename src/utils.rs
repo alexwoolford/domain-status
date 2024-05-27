@@ -1,33 +1,34 @@
-
+use anyhow::{Context, Error, Result};
+use log::{error, info};
+use regex::Regex;
+use reqwest::Url;
+use rustls::pki_types::ServerName;
+use scraper::{Html, Selector};
+use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use anyhow::{Result, Error, Context};
-use scraper::{Html, Selector};
-use log::{info, error};
-use sqlx::SqlitePool;
 use structopt::lazy_static::lazy_static;
 use tldextract::TldExtractor;
 use tokio::io::AsyncWriteExt;
-use tokio_rustls::TlsConnector;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
-use trust_dns_resolver::TokioAsyncResolver;
-use rustls::pki_types::ServerName;
 use tokio::net::TcpStream;
-use reqwest::Url;
-use regex::Regex;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::TlsConnector;
+use trust_dns_resolver::TokioAsyncResolver;
 use x509_parser::extensions::ParsedExtension;
 
 use crate::database::update_database;
-use crate::error_handling::{ErrorStats, ErrorType, get_retry_strategy, update_error_stats};
+use crate::error_handling::{get_retry_strategy, update_error_stats, ErrorStats, ErrorType};
 
 lazy_static! {
     static ref TITLE_SELECTOR: Selector = Selector::parse("title").unwrap();
     static ref META_KEYWORDS_SELECTOR: Selector = Selector::parse("meta[name='keywords']").unwrap();
-    static ref META_DESCRIPTION_SELECTOR: Selector = Selector::parse("meta[name='description']").unwrap();
+    static ref META_DESCRIPTION_SELECTOR: Selector =
+        Selector::parse("meta[name='description']").unwrap();
 }
 
 fn extract_domain(extractor: &TldExtractor, url: &str) -> Result<String, anyhow::Error> {
-    extractor.extract(url)
+    extractor
+        .extract(url)
         .map_err(|e| anyhow::anyhow!("Extractor error: {}", e))
         .and_then(|extract| {
             if let Some(main_domain) = extract.domain {
@@ -51,10 +52,18 @@ async fn handle_response(
     error_stats: &ErrorStats,
     elapsed: f64,
 ) -> Result<(), Error> {
-    let (tls_version, subject, issuer, valid_from, valid_to, oids) = if url.starts_with("https://") {
+    let (tls_version, subject, issuer, valid_from, valid_to, oids) = if url.starts_with("https://")
+    {
         match extract_domain(&extractor, url) {
             Ok(domain) => match get_ssl_certificate_info(domain.clone()).await {
-                Ok(cert_info) => (cert_info.tls_version, cert_info.subject, cert_info.issuer, cert_info.valid_from, cert_info.valid_to, cert_info.oids),
+                Ok(cert_info) => (
+                    cert_info.tls_version,
+                    cert_info.subject,
+                    cert_info.issuer,
+                    cert_info.valid_from,
+                    cert_info.valid_to,
+                    cert_info.oids,
+                ),
                 Err(e) => {
                     error!("Failed to get SSL certificate info for {}: {}", domain, e);
                     (None, None, None, None, None, None)
@@ -69,7 +78,9 @@ async fn handle_response(
     let headers = response.headers().clone();
     let final_url = response.url().to_string();
     let status = response.status();
-    let status_desc = status.canonical_reason().unwrap_or_else(|| "Unknown Status Code");
+    let status_desc = status
+        .canonical_reason()
+        .unwrap_or_else(|| "Unknown Status Code");
 
     let body = response.text().await.unwrap_or_default();
 
@@ -84,12 +95,15 @@ async fn handle_response(
     let final_domain = extract_domain(&extractor, &final_url)?;
 
     let url = Url::parse(&final_url)?;
-    let host = url.host_str().ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
     let ip_address = resolve_host_to_ip(host).await?;
     let reverse_dns_name = reverse_dns_lookup(&ip_address).await?;
 
     let security_headers = extract_security_headers(&headers);
-    let security_headers_json = serde_json::to_string(&security_headers).unwrap_or_else(|_| "{}".to_string());
+    let security_headers_json =
+        serde_json::to_string(&security_headers).unwrap_or_else(|_| "{}".to_string());
 
     let is_mobile_friendly = is_mobile_friendly(&body);
 
@@ -118,8 +132,10 @@ async fn handle_response(
         valid_to,
         oids,
         is_mobile_friendly,
-        pool
-    ).await.map_err(|e| anyhow::anyhow!(e))?;
+        pool,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(())
 }
@@ -135,11 +151,17 @@ fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Str
         "Permissions-Policy",
     ];
 
-    headers_list.iter().filter_map(|&header_name| {
-        headers.get(header_name).map(|value| {
-            (header_name.to_string(), value.to_str().unwrap_or_default().to_string())
+    headers_list
+        .iter()
+        .filter_map(|&header_name| {
+            headers.get(header_name).map(|value| {
+                (
+                    header_name.to_string(),
+                    value.to_str().unwrap_or_default().to_string(),
+                )
+            })
         })
-    }).collect()
+        .collect()
 }
 
 async fn handle_http_request(
@@ -165,7 +187,6 @@ async fn handle_http_request(
     handle_response(response, url, pool, extractor, error_stats, elapsed).await
 }
 
-
 fn extract_title(html: &str, error_stats: &ErrorStats) -> String {
     let parsed_html = Html::parse_document(html);
 
@@ -181,12 +202,15 @@ fn extract_title(html: &str, error_stats: &ErrorStats) -> String {
 
 fn extract_meta_keywords(html: &str, error_stats: &ErrorStats) -> Option<Vec<String>> {
     let parsed_html = Html::parse_document(html);
-    let meta_keywords = parsed_html.select(&META_KEYWORDS_SELECTOR).next()
+    let meta_keywords = parsed_html
+        .select(&META_KEYWORDS_SELECTOR)
+        .next()
         .and_then(|element| element.value().attr("content"));
 
     match meta_keywords {
         Some(content) => {
-            let keywords: Vec<String> = content.split(',')
+            let keywords: Vec<String> = content
+                .split(',')
                 .map(|keyword| keyword.trim().to_lowercase())
                 .filter(|keyword| !keyword.is_empty()) // Filter out any empty strings
                 .collect();
@@ -198,7 +222,7 @@ fn extract_meta_keywords(html: &str, error_stats: &ErrorStats) -> Option<Vec<Str
             } else {
                 Some(keywords)
             }
-        },
+        }
         None => {
             // No keywords meta tag found
             error_stats.increment(ErrorType::KeywordExtractError);
@@ -209,8 +233,15 @@ fn extract_meta_keywords(html: &str, error_stats: &ErrorStats) -> Option<Vec<Str
 
 fn extract_meta_description(html: &str, error_stats: &ErrorStats) -> Option<String> {
     let parsed_html = Html::parse_document(html);
-    let meta_description = parsed_html.select(&META_DESCRIPTION_SELECTOR).next()
-        .and_then(|element| element.value().attr("content").map(|content| content.trim().to_string()));
+    let meta_description = parsed_html
+        .select(&META_DESCRIPTION_SELECTOR)
+        .next()
+        .and_then(|element| {
+            element
+                .value()
+                .attr("content")
+                .map(|content| content.trim().to_string())
+        });
 
     if meta_description.is_none() {
         error_stats.increment(ErrorType::MetaDescriptionExtractError);
@@ -245,10 +276,12 @@ struct CertificateInfo {
     issuer: Option<String>,
     valid_from: Option<chrono::NaiveDateTime>,
     valid_to: Option<chrono::NaiveDateTime>,
-    oids: Option<String>
+    oids: Option<String>,
 }
 
-fn extract_certificate_policies(cert: &x509_parser::certificate::X509Certificate<'_>) -> Result<Vec<String>, anyhow::Error> {
+fn extract_certificate_policies(
+    cert: &x509_parser::certificate::X509Certificate<'_>,
+) -> Result<Vec<String>, anyhow::Error> {
     let mut oids: Vec<String> = Vec::new();
 
     for ext in cert.extensions() {
@@ -258,7 +291,7 @@ fn extract_certificate_policies(cert: &x509_parser::certificate::X509Certificate
             ParsedExtension::CertificatePolicies(ref policies) => {
                 // Now we can iterate over the policies
                 oids.extend(policies.iter().map(|policy| policy.policy_id.to_string()));
-            },
+            }
             // Ignore other cases; we only care about CertificatePolicies
             _ => {}
         }
@@ -268,15 +301,15 @@ fn extract_certificate_policies(cert: &x509_parser::certificate::X509Certificate
 
 async fn resolve_host_to_ip(host: &str) -> Result<String, Error> {
     // Create the resolver
-    let resolver = TokioAsyncResolver::tokio_from_system_conf()
-        .map_err(|e| Error::new(e))?;
+    let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(|e| Error::new(e))?;
 
     // Perform the DNS query asynchronously
-    let response = resolver.lookup_ip(host).await
-        .map_err(|e| Error::new(e))?;
+    let response = resolver.lookup_ip(host).await.map_err(|e| Error::new(e))?;
 
     // Extract the first IP address from the response
-    let ip = response.iter().next()
+    let ip = response
+        .iter()
+        .next()
         .ok_or_else(|| Error::msg("No IP addresses found"))?
         .to_string();
 
@@ -286,7 +319,10 @@ async fn resolve_host_to_ip(host: &str) -> Result<String, Error> {
 async fn reverse_dns_lookup(ip: &str) -> Result<Option<String>, Error> {
     let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(Error::new)?;
 
-    let response = resolver.reverse_lookup(ip.parse()?).await.map_err(Error::new)?;
+    let response = resolver
+        .reverse_lookup(ip.parse()?)
+        .await
+        .map_err(Error::new)?;
 
     // Take the first name found; there could be multiple names.
     let name = response.iter().next().map(|name| name.to_utf8());
@@ -294,14 +330,9 @@ async fn reverse_dns_lookup(ip: &str) -> Result<Option<String>, Error> {
     Ok(name)
 }
 
-
 async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, anyhow::Error> {
     let mut root_store = RootCertStore::empty();
-    root_store.extend(
-        webpki_roots::TLS_SERVER_ROOTS
-            .iter()
-            .cloned()
-    );
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
     let config = ClientConfig::builder()
         .with_root_certificates(root_store)
@@ -310,15 +341,21 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
     let server_name = ServerName::try_from(domain.clone())
         .with_context(|| format!("Invalid domain name: {}", domain))?;
 
-    let sock = TcpStream::connect((domain.clone(), 443)).await
+    let sock = TcpStream::connect((domain.clone(), 443))
+        .await
         .with_context(|| format!("Failed to connect to {}:443", domain))?;
 
     let connector = TlsConnector::from(Arc::new(config));
 
-    let mut tls_stream = connector.connect(server_name, sock).await
+    let mut tls_stream = connector
+        .connect(server_name, sock)
+        .await
         .with_context(|| "TLS connection failed")?;
 
-    let tls_version = tls_stream.get_ref().1.protocol_version()
+    let tls_version = tls_stream
+        .get_ref()
+        .1
+        .protocol_version()
         .map(|v| format!("{:?}", v)) // Convert the version enum to a string
         .unwrap_or_else(|| "Unknown".to_string());
 
@@ -348,27 +385,33 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
                 Ok(oids) => {
                     let unique_oids: HashSet<String> = oids.into_iter().collect(); // De-duplication
                     serialized_oids = serde_json::to_string(&unique_oids)?;
-                },
+                }
                 Err(e) => return Err(e),
             }
 
-            let valid_from_str = tbs_cert.validity.not_before.to_rfc2822()
-                .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e))?;
+            let valid_from_str =
+                tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
+                    anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
+                })?;
 
-            let valid_from = chrono::NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
-                .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
+            let valid_from =
+                chrono::NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
+                    .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
 
-            let valid_to_str = tbs_cert.validity.not_after.to_rfc2822()
-                .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e))?;
+            let valid_to_str =
+                tbs_cert.validity.not_after.to_rfc2822().map_err(|e| {
+                    anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e)
+                })?;
 
-            let valid_to = chrono::NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
-                .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
+            let valid_to =
+                chrono::NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
+                    .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
 
             info!("Domain: {:?}; OIDs: {}", domain, serialized_oids);
 
             return Ok(CertificateInfo {
                 tls_version: Some(tls_version),
-                subject:Some(subject),
+                subject: Some(subject),
                 issuer: Some(issuer),
                 valid_from: Some(valid_from),
                 valid_to: Some(valid_to),
@@ -377,8 +420,10 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
         }
     }
 
-    Err(anyhow::anyhow!("Failed to retrieve certificate information for {}", domain))
-
+    Err(anyhow::anyhow!(
+        "Failed to retrieve certificate information for {}",
+        domain
+    ))
 }
 
 pub async fn process_url(
@@ -399,7 +444,15 @@ pub async fn process_url(
         let error_stats = error_stats.clone();
 
         tokio::task::spawn(async move {
-            handle_http_request(&*client, &url, &*pool, &*extractor, &error_stats, start_time).await
+            handle_http_request(
+                &*client,
+                &url,
+                &*pool,
+                &*extractor,
+                &error_stats,
+                start_time,
+            )
+            .await
         })
     });
 
