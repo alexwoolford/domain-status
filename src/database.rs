@@ -153,3 +153,21 @@ pub async fn update_database(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_init_db_pool() {
+        let pool = init_db_pool().await;
+        assert!(pool.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_table() {
+        let pool = init_db_pool().await.unwrap();
+        let result = create_table(&pool).await;
+        assert!(result.is_ok());
+    }
+}
