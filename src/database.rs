@@ -7,6 +7,7 @@ use chrono::NaiveDateTime;
 use log::{error, info};
 use reqwest::StatusCode;
 use sqlx::{Pool, Sqlite, SqlitePool};
+use tempfile::tempdir;
 
 use crate::config::DB_PATH;
 use crate::error_handling::DatabaseError;
@@ -211,6 +212,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_db_pool() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+
         let pool = init_db_pool().await;
         assert!(pool.is_ok());
     }
