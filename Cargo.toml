@@ -8,7 +8,7 @@ description = "A Rust project that scrapes urls and captures status information 
 [dependencies]
 # HTTP requests and async
 reqwest = { version = "0.12" }
-tokio = { version = "1.37", features = ["full"] }
+tokio = { version = "1.39", features = ["full"] }
 tokio-retry = "0.3"
 futures = "0.3"
 rustls = "0.23"
@@ -18,11 +18,11 @@ tokio-rustls = "0.26"
 trust-dns-resolver = "0.23"
 
 # Database related
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls"], default-features = false }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"], default-features = false }
 
 # Scraping and URL handling
-scraper = "0.19"
-url = "2.5.0"
+scraper = "0.20"
+url = "2.5"
 tldextract = "0.6"
 validators = "0.25"
 

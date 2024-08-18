@@ -109,8 +109,57 @@ pub async fn update_database(
     is_mobile_friendly: bool,
     pool: &SqlitePool,
 ) -> Result<(), DatabaseError> {
+
+    log::debug!("Preparing SQL query for domain: {}", initial_domain);
+
     let valid_from_millis = naive_datetime_to_millis(ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(ssl_cert_valid_to.as_ref());
+
+    log::debug!("Inserting record into the database for domain: {}", initial_domain);
+
+    log::debug!(
+        "Inserting record into the database with the following data:\n\
+        initial_domain: {},\n\
+        final_domain: {},\n\
+        ip_address: {},\n\
+        reverse_dns_name: {:?},\n\
+        status: {},\n\
+        status_desc: {},\n\
+        elapsed: {},\n\
+        title: {},\n\
+        keywords: {:?},\n\
+        description: {:?},\n\
+        linkedin_slug: {:?},\n\
+        security_headers: {},\n\
+        tls_version: {:?},\n\
+        ssl_cert_subject: {:?},\n\
+        ssl_cert_issuer: {:?},\n\
+        valid_from_millis: {:?},\n\
+        valid_to_millis: {:?},\n\
+        oids: {:?},\n\
+        is_mobile_friendly: {},\n\
+        timestamp: {}",
+        initial_domain,
+        final_domain,
+        ip_address,
+        reverse_dns_name,
+        status.as_u16(),
+        status_desc,
+        elapsed,
+        title,
+        keywords,
+        description,
+        linkedin_slug,
+        security_headers,
+        tls_version,
+        ssl_cert_subject,
+        ssl_cert_issuer,
+        valid_from_millis,
+        valid_to_millis,
+        oids,
+        is_mobile_friendly,
+        timestamp
+    );
 
     let result = sqlx::query(
         "INSERT INTO url_status (
@@ -142,13 +191,15 @@ pub async fn update_database(
         .execute(pool)
         .await;
 
+    log::debug!("SQL execution result: {:?}", result);
+
     match result {
         Ok(_) => {
-            log::debug!("Record successfully inserted into the database");
+            log::info!("Record successfully inserted into the database for domain: {}", initial_domain);
             Ok(())
         }
         Err(e) => {
-            log::error!("Failed to insert record into the database: {}", e);
+            log::error!("Failed to insert record into the database for domain {}: {}", initial_domain, e);
             Err(DatabaseError::SqlError(e))
         }
     }

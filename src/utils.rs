@@ -1,4 +1,4 @@
-use anyhow::{Context, Error, Result};
+use anyhow::{Error, Result};
 use log::{error, info};
 use regex::Regex;
 use reqwest::Url;
@@ -52,31 +52,41 @@ async fn handle_response(
     error_stats: &ErrorStats,
     elapsed: f64,
 ) -> Result<(), Error> {
-    let (tls_version, subject, issuer, valid_from, valid_to, oids) = if url.starts_with("https://")
-    {
-        match extract_domain(&extractor, url) {
-            Ok(domain) => match get_ssl_certificate_info(domain.clone()).await {
-                Ok(cert_info) => (
-                    cert_info.tls_version,
-                    cert_info.subject,
-                    cert_info.issuer,
-                    cert_info.valid_from,
-                    cert_info.valid_to,
-                    cert_info.oids,
-                ),
-                Err(e) => {
-                    error!("Failed to get SSL certificate info for {}: {}", domain, e);
-                    (None, None, None, None, None, None)
-                }
-            },
-            Err(_) => (None, None, None, None, None, None),
+    log::debug!("Started processing response for {}", url);
+
+    // Determine the final URL after all redirects
+    let final_url = response.url().to_string();
+
+    log::debug!("Final url after redirects: {}", final_url);
+
+    // Extract the final domain using the extractor
+    let final_domain = extract_domain(&extractor, &final_url)?;
+
+    log::debug!("Final domain extracted: {}", final_domain);
+
+    let (tls_version, subject, issuer, valid_from, valid_to, oids) = if final_url.starts_with("https://") {
+        // Use the final domain for SSL extraction
+        match get_ssl_certificate_info(final_domain.clone()).await {
+            Ok(cert_info) => (
+                cert_info.tls_version,
+                cert_info.subject,
+                cert_info.issuer,
+                cert_info.valid_from,
+                cert_info.valid_to,
+                cert_info.oids,
+            ),
+            Err(e) => {
+                log::error!("Failed to get SSL certificate info for {}: {}", final_domain, e);
+                (None, None, None, None, None, None)
+            }
         }
     } else {
         (None, None, None, None, None, None)
     };
 
+    log::debug!("Extracted SSL info for {}: {:?}, {:?}, {:?}, {:?}, {:?}", final_domain, tls_version, subject, issuer, valid_from, valid_to);
+
     let headers = response.headers().clone();
-    let final_url = response.url().to_string();
     let status = response.status();
     let status_desc = status
         .canonical_reason()
@@ -85,21 +95,38 @@ async fn handle_response(
     let body = response.text().await.unwrap_or_default();
 
     let title = extract_title(&body, error_stats);
+
+    log::debug!("Extracted title for {}: {:?}", final_domain, title);
+
     let keywords = extract_meta_keywords(&body, error_stats);
     let keywords_str = keywords.map(|kw| kw.join(", "));
+
+    log::debug!("Extracted keywords for {}: {:?}", final_domain, keywords_str);
+
     let description = extract_meta_description(&body, error_stats);
+
+    log::debug!("Extracted description for {}: {:?}", final_domain, description);
 
     let linkedin_slug = extract_linkedin_slug(&body, error_stats);
 
+    log::debug!("Extracted LinkedIn slug for {}: {:?}", final_domain, linkedin_slug);
+
     let initial_domain = extract_domain(&extractor, url)?;
-    let final_domain = extract_domain(&extractor, &final_url)?;
 
     let url = Url::parse(&final_url)?;
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
+
+    log::debug!("Resolved host: {}", host);
+
     let ip_address = resolve_host_to_ip(host).await?;
+
+    log::debug!("Resolved IP address: {}", ip_address);
+
     let reverse_dns_name = reverse_dns_lookup(&ip_address).await?;
+
+    log::debug!("Resolved reverse DNS name: {:?}", reverse_dns_name);
 
     let security_headers = extract_security_headers(&headers);
     let security_headers_json =
@@ -109,9 +136,11 @@ async fn handle_response(
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
-    log::debug!("Preparing to insert record for URL: {}", url);
+    log::debug!("Preparing to insert record for URL: {}", final_url);
 
-    update_database(
+    log::info!("Attempting to insert record into database for domain: {}", initial_domain);
+
+    let update_result = update_database(
         &initial_domain,
         &final_domain,
         &ip_address,
@@ -133,9 +162,12 @@ async fn handle_response(
         oids,
         is_mobile_friendly,
         pool,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!(e))?;
+    ).await;
+
+    match update_result {
+        Ok(_) => log::info!("Record successfully inserted for URL: {}", final_url),
+        Err(e) => log::error!("Failed to insert record for URL {}: {}", final_url, e),
+    };
 
     Ok(())
 }
@@ -172,19 +204,33 @@ async fn handle_http_request(
     error_stats: &ErrorStats,
     start_time: std::time::Instant,
 ) -> Result<(), Error> {
+    log::debug!("Sending request to {}", url);
+
     let res = client.get(url).send().await;
 
     let elapsed = start_time.elapsed().as_secs_f64();
 
     let response = match res {
-        Ok(response) => response,
+        Ok(response) => {
+            log::debug!("Received response from {}", url);
+            response
+        }
         Err(e) => {
+            log::error!("Error occurred while accessing {}: {:?}", url, e);
             update_error_stats(error_stats, &e).await;
             return Err(e.into());
         }
     };
 
-    handle_response(response, url, pool, extractor, error_stats, elapsed).await
+    log::debug!("Handling response for {}", url);
+    let handle_result = handle_response(response, url, pool, extractor, error_stats, elapsed).await;
+
+    match &handle_result {
+        Ok(_) => log::debug!("Handled response for {}", url),
+        Err(e) => log::error!("Failed to handle response for {}: {}", url, e),
+    }
+
+    handle_result
 }
 
 fn extract_title(html: &str, error_stats: &ErrorStats) -> String {
@@ -319,18 +365,24 @@ async fn resolve_host_to_ip(host: &str) -> Result<String, Error> {
 async fn reverse_dns_lookup(ip: &str) -> Result<Option<String>, Error> {
     let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(Error::new)?;
 
-    let response = resolver
-        .reverse_lookup(ip.parse()?)
-        .await
-        .map_err(Error::new)?;
-
-    // Take the first name found; there could be multiple names.
-    let name = response.iter().next().map(|name| name.to_utf8());
-
-    Ok(name)
+    match resolver.reverse_lookup(ip.parse()?).await {
+        Ok(response) => {
+            let name = response.iter().next().map(|name| name.to_utf8());
+            Ok(name)
+        },
+        Err(e) => {
+            log::warn!("Failed to perform reverse DNS lookup for {}: {}", ip, e);
+            Ok(None)
+        }
+    }
 }
 
+// src/utils.rs
+
 async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, anyhow::Error> {
+
+    log::debug!("Attempting to get SSL info for domain: {}", domain);
+
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
@@ -338,25 +390,39 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    let server_name = ServerName::try_from(domain.clone())
-        .with_context(|| format!("Invalid domain name: {}", domain))?;
+    log::info!("Attempting to resolve server name for domain: {}", domain);
+    let server_name = match ServerName::try_from(domain.clone()) {
+        Ok(name) => name,
+        Err(e) => {
+            error!("Invalid domain name: {}", e);
+            return Err(anyhow::anyhow!("Invalid domain name: {}", e));
+        }
+    };
 
-    let sock = TcpStream::connect((domain.clone(), 443))
-        .await
-        .with_context(|| format!("Failed to connect to {}:443", domain))?;
+    log::info!("Attempting to connect to domain: {}", domain);
+    let sock = match TcpStream::connect((domain.clone(), 443)).await {
+        Ok(sock) => sock,
+        Err(e) => {
+            error!("Failed to connect to {}:443 - {}", domain, e);
+            return Err(anyhow::anyhow!("Failed to connect to {}:443", domain));
+        }
+    };
 
     let connector = TlsConnector::from(Arc::new(config));
+    let mut tls_stream = match connector.connect(server_name, sock).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            error!("TLS connection failed for {}: {}", domain, e);
+            return Err(anyhow::anyhow!("TLS connection failed for {}", domain));
+        }
+    };
 
-    let mut tls_stream = connector
-        .connect(server_name, sock)
-        .await
-        .with_context(|| "TLS connection failed")?;
-
+    log::info!("Extracting TLS version for domain: {}", domain);
     let tls_version = tls_stream
         .get_ref()
         .1
         .protocol_version()
-        .map(|v| format!("{:?}", v)) // Convert the version enum to a string
+        .map(|v| format!("{:?}", v))
         .unwrap_or_else(|| "Unknown".to_string());
 
     let request = format!(
@@ -368,9 +434,10 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
         domain
     );
 
-    tls_stream.write_all(request.as_bytes()).await?;
-
-    let serialized_oids;
+    if let Err(e) = tls_stream.write_all(request.as_bytes()).await {
+        error!("Failed to write request to {}: {}", domain, e);
+        return Err(anyhow::anyhow!("Failed to write request to {}", domain));
+    }
 
     if let Some(certs) = tls_stream.get_ref().1.peer_certificates() {
         if let Some(cert) = certs.first() {
@@ -380,34 +447,24 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
             let subject = cert.tbs_certificate.subject.to_string();
             let issuer = cert.tbs_certificate.issuer.to_string();
 
-            let oids = extract_certificate_policies(&cert);
-            match oids {
-                Ok(oids) => {
-                    let unique_oids: HashSet<String> = oids.into_iter().collect(); // De-duplication
-                    serialized_oids = serde_json::to_string(&unique_oids)?;
-                }
-                Err(e) => return Err(e),
-            }
+            let oids = extract_certificate_policies(&cert).unwrap_or_else(|_| Vec::new());
+            let unique_oids: HashSet<String> = oids.into_iter().collect();
+            let serialized_oids = serde_json::to_string(&unique_oids).unwrap_or_else(|_| "{}".to_string());
 
-            let valid_from_str =
-                tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
-                    anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
-                })?;
+            log::info!("Extracting validity period for domain: {}", domain);
+            let valid_from_str = tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
+                anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
+            })?;
+            let valid_from = chrono::NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
+                .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
 
-            let valid_from =
-                chrono::NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
-                    .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
+            let valid_to_str = tbs_cert.validity.not_after.to_rfc2822().map_err(|e| {
+                anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e)
+            })?;
+            let valid_to = chrono::NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
+                .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
 
-            let valid_to_str =
-                tbs_cert.validity.not_after.to_rfc2822().map_err(|e| {
-                    anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e)
-                })?;
-
-            let valid_to =
-                chrono::NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
-                    .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
-
-            info!("Domain: {:?}; OIDs: {}", domain, serialized_oids);
+            info!("SSL certificate info extracted for domain: {}", domain);
 
             return Ok(CertificateInfo {
                 tls_version: Some(tls_version),
@@ -433,6 +490,8 @@ pub async fn process_url(
     extractor: Arc<TldExtractor>,
     error_stats: Arc<ErrorStats>,
 ) {
+    log::debug!("Starting process for URL: {}", url);
+
     let retry_strategy = get_retry_strategy();
     let start_time = std::time::Instant::now();
 

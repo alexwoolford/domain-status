@@ -7,7 +7,7 @@ use tldextract::{TldExtractor, TldOption};
 use tokio::sync::Semaphore;
 
 use colored::*;
-
+use log::LevelFilter;
 use crate::error_handling::InitializationError;
 
 /// Initializes the logger for the application with the provided configuration.
@@ -16,8 +16,14 @@ pub fn init_logger() -> Result<(), InitializationError> {
 
     let mut builder = env_logger::Builder::new();
 
-    builder.filter_level(log::LevelFilter::Info);
-    builder.filter_module("html5ever", log::LevelFilter::Error);
+    // Set the log level for your crate to Debug and for other crates to a higher level to reduce verbosity
+    builder.filter_level(LevelFilter::Debug);
+    builder.filter_module("html5ever", LevelFilter::Error);
+    builder.filter_module("sqlx", LevelFilter::Debug);
+    builder.filter_module("reqwest", LevelFilter::Debug);
+    builder.filter_module("hyper", LevelFilter::Debug);
+    builder.filter_module("selectors", LevelFilter::Warn);
+    builder.filter_module("domain_status", LevelFilter::Debug);
 
     builder.format(|buf, record| {
         let level = record.level();
