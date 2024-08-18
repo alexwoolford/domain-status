@@ -7,6 +7,7 @@ use chrono::NaiveDateTime;
 use log::{error, info};
 use reqwest::StatusCode;
 use sqlx::{Pool, Sqlite, SqlitePool};
+use tempfile::tempdir;
 
 use crate::config::DB_PATH;
 use crate::error_handling::DatabaseError;
@@ -211,14 +212,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_db_pool() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+
         let pool = init_db_pool().await;
         assert!(pool.is_ok());
     }
 
     #[tokio::test]
     async fn test_create_table() {
-        let pool = init_db_pool().await.unwrap();
+        // Create a new temporary directory for each test run
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        // Make sure the temp directory exists and is writable
+        assert!(temp_dir.path().exists());
+        assert!(temp_dir.path().is_dir());
+
+        // Generate a unique database file path
+        let db_path = temp_dir.path().join("test.db");
+
+        // Initialize the database pool with the new path
+        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path.to_str().unwrap()))
+            .await
+            .expect("Failed to create test database pool");
+
+        // Ensure WAL mode is set for better concurrency
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .expect("Failed to set WAL mode for test database");
+
+        // Run the create_table function
         let result = create_table(&pool).await;
+
+        // Ensure that the table was created successfully
         assert!(result.is_ok());
+
+        // Close the pool to release the database file lock
+        drop(pool);
     }
 }
