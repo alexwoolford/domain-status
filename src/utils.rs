@@ -15,7 +15,8 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
 use trust_dns_resolver::TokioAsyncResolver;
 use x509_parser::extensions::ParsedExtension;
-
+use serde::Serialize;
+use validators::serde_json;
 use crate::database::update_database;
 use crate::error_handling::{get_retry_strategy, update_error_stats, ErrorStats, ErrorType};
 
@@ -42,6 +43,15 @@ fn extract_domain(extractor: &TldExtractor, url: &str) -> Result<String, anyhow:
                 Err(anyhow::anyhow!("Failed to extract domain from {}", url))
             }
         })
+}
+
+fn serialize_with_sorted_keys<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .and_then(|json| {
+            let deserialized: serde_json::Value = serde_json::from_str(&json).unwrap();
+            serde_json::to_string(&deserialized)
+        })
+        .unwrap_or_else(|_| "{}".to_string())
 }
 
 async fn handle_response(
@@ -129,8 +139,7 @@ async fn handle_response(
     log::debug!("Resolved reverse DNS name: {:?}", reverse_dns_name);
 
     let security_headers = extract_security_headers(&headers);
-    let security_headers_json =
-        serde_json::to_string(&security_headers).unwrap_or_else(|_| "{}".to_string());
+    let security_headers_json = serialize_with_sorted_keys(&security_headers);
 
     let is_mobile_friendly = is_mobile_friendly(&body);
 
@@ -449,7 +458,7 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
 
             let oids = extract_certificate_policies(&cert).unwrap_or_else(|_| Vec::new());
             let unique_oids: HashSet<String> = oids.into_iter().collect();
-            let serialized_oids = serde_json::to_string(&unique_oids).unwrap_or_else(|_| "{}".to_string());
+            let serialized_oids = serialize_with_sorted_keys(&unique_oids);
 
             log::info!("Extracting validity period for domain: {}", domain);
             let valid_from_str = tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {

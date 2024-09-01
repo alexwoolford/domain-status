@@ -8,7 +8,7 @@ description = "A Rust project that scrapes urls and captures status information 
 [dependencies]
 # HTTP requests and async
 reqwest = { version = "0.12" }
-tokio = { version = "1.39", features = ["full"] }
+tokio = { version = "1.40", features = ["full"] }
 tokio-retry = "0.3"
 futures = "0.3"
 rustls = "0.23"
@@ -41,7 +41,7 @@ chrono = "0.4"
 rand = "0.8"
 strum = "0.26"
 strum_macros = "0.26"
-serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 tempdir = "0.3"
 tempfile = "3.12"
