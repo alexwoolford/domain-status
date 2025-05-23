@@ -8,12 +8,12 @@ description = "A Rust project that scrapes urls and captures status information 
 [dependencies]
 # HTTP requests and async
 reqwest = { version = "0.12" }
-tokio = { version = "1.40", features = ["full"] }
+tokio = { version = "1.45", features = ["full"] }
 tokio-retry = "0.3"
 futures = "0.3"
 rustls = "0.23"
-webpki-roots = "0.26"
-x509-parser = "0.16"
+webpki-roots = "1.0"
+x509-parser = "0.17"
 tokio-rustls = "0.26"
 trust-dns-resolver = "0.23"
 
@@ -21,7 +21,7 @@ trust-dns-resolver = "0.23"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"], default-features = false }
 
 # Scraping and URL handling
-scraper = "0.20"
+scraper = "0.23"
 url = "2.5"
 tldextract = "0.6"
 validators = "0.25"
@@ -29,19 +29,19 @@ validators = "0.25"
 # CLI and error handling
 structopt = "0.3"
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Logging
 log = "0.4"
 env_logger = "0.11"
-colored = "2.1.0"
+colored = "3.0"
 
 # Other
 chrono = "0.4"
-rand = "0.8"
-strum = "0.26"
-strum_macros = "0.26"
+rand = "0.9"
+strum = "0.27"
+strum_macros = "0.27"
 serde = { version = "1.0", features = ["derive"] }
-regex = "1.10"
+regex = "1.11"
 tempdir = "0.3"
-tempfile = "3.12"
+tempfile = "3.20"
