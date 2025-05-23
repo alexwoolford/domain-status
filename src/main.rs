@@ -41,6 +41,7 @@ fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logger().context("Failed to initialize logger")?;
+    init_crypto_provider();
 
     let opt = Opt::from_args();
     let file = File::open(&opt.file).context("Failed to open input file")?;
