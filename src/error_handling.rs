@@ -47,7 +47,7 @@ pub enum ErrorType {
     HttpRequestBodyError,
     HttpRequestDecodeError,
     HttpRequestOtherError,
-    HttpRequestTooManyRedirects,
+    HttpRequestTooManyRequests,
     TitleExtractError,
     KeywordExtractError,
     MetaDescriptionExtractError,
@@ -67,7 +67,7 @@ impl ErrorType {
             ErrorType::HttpRequestBodyError => "HTTP request body error",
             ErrorType::HttpRequestDecodeError => "HTTP request decode error",
             ErrorType::HttpRequestOtherError => "HTTP request other error",
-            ErrorType::HttpRequestTooManyRedirects => "Too many redirects",
+            ErrorType::HttpRequestTooManyRequests => "Too many requests",
             ErrorType::TitleExtractError => "Title extract error",
             ErrorType::KeywordExtractError => "Keyword extract error",
             ErrorType::MetaDescriptionExtractError => "Meta description extract error",
@@ -172,7 +172,7 @@ pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error
     let error_type = match error.status() {
         // When the error contains a status code, match on it
         Some(status) if status.is_client_error() => match status.as_u16() {
-            429 => ErrorType::HttpRequestTooManyRedirects,
+            429 => ErrorType::HttpRequestTooManyRequests,
             _ => ErrorType::HttpRequestOtherError,
         },
         Some(status) if status.is_server_error() => ErrorType::HttpRequestOtherError,
