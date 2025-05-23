@@ -9,7 +9,7 @@ use tokio::sync::Semaphore;
 use colored::*;
 use log::LevelFilter;
 use crate::error_handling::InitializationError;
-use rustls::crypto::CryptoProvider;
+use rustls::crypto::{CryptoProvider, ring::default_provider};
 
 /// Initializes the logger for the application with the provided configuration.
 pub fn init_logger() -> Result<(), InitializationError> {
@@ -81,5 +81,5 @@ pub fn init_extractor() -> Arc<TldExtractor> {
 /// Installs the default CryptoProvider required by rustls.
 pub fn init_crypto_provider() {
     // The return value is ignored because reinstalling the provider is harmless
-    let _ = CryptoProvider::install_default();
+    let _ = CryptoProvider::install_default(default_provider());
 }
