@@ -2,19 +2,19 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::ClientBuilder;
 use crate::config::Opt;
-use publicsuffix::List;
-use tokio::sync::Semaphore;
 use hickory_resolver::TokioAsyncResolver;
+use publicsuffix::List;
+use reqwest::ClientBuilder;
+use tokio::sync::Semaphore;
 use tokio::sync::Semaphore as TokioSemaphore;
 use tokio::time::{interval, Duration as TokioDuration};
 
-use colored::*;
-use log::LevelFilter;
 use crate::config::{LogFormat, LogLevel};
 use crate::error_handling::InitializationError;
-use rustls::crypto::{CryptoProvider, ring::default_provider};
+use colored::*;
+use log::LevelFilter;
+use rustls::crypto::{ring::default_provider, CryptoProvider};
 
 /// Initializes the logger for the application with the provided configuration.
 pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), InitializationError> {
@@ -40,7 +40,8 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
                     chrono::Utc::now().timestamp_millis(),
                     record.level(),
                     record.target(),
-                    serde_json::to_string(&record.args().to_string()).unwrap_or_else(|_| "\"\"".into())
+                    serde_json::to_string(&record.args().to_string())
+                        .unwrap_or_else(|_| "\"\"".into())
                 )
             });
         }

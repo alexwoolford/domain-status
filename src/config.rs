@@ -71,7 +71,10 @@ pub struct Opt {
     pub timeout_seconds: u64,
 
     /// HTTP User-Agent header value
-    #[arg(long, default_value = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")]
+    #[arg(
+        long,
+        default_value = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    )]
     pub user_agent: String,
 
     /// Requests per second rate limit (0 disables limiting)

@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use chrono::NaiveDateTime;
 use log::{error, info};
-use sqlx::{Pool, Sqlite, SqlitePool};
 use sqlx::migrate::Migrator;
+use sqlx::{Pool, Sqlite, SqlitePool};
 #[cfg(test)]
 use tempfile::tempdir;
 
@@ -154,7 +154,8 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
         Err(e) => {
             log::error!(
                 "Failed to insert UrlRecord for domain {}: {}",
-                record.initial_domain, e
+                record.initial_domain,
+                e
             );
             Err(DatabaseError::SqlError(e))
         }

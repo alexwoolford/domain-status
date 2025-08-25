@@ -6,11 +6,11 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use clap::Parser;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
 use log::warn;
-use clap::Parser;
 use regex::Regex;
 use tokio_util::sync::CancellationToken;
 
@@ -53,11 +53,18 @@ async fn main() -> Result<()> {
     let mut tasks = FuturesUnordered::new();
 
     let semaphore = init_semaphore(opt.max_concurrency);
-    let rate_burst = if opt.rate_burst == 0 { opt.max_concurrency } else { opt.rate_burst };
+    let rate_burst = if opt.rate_burst == 0 {
+        opt.max_concurrency
+    } else {
+        opt.rate_burst
+    };
     let request_limiter = init_rate_limiter(opt.rate_limit_rps, rate_burst);
 
     // Override DB path env for init if needed
-    std::env::set_var("URL_CHECKER_DB_PATH", opt.db_path.to_string_lossy().to_string());
+    std::env::set_var(
+        "URL_CHECKER_DB_PATH",
+        opt.db_path.to_string_lossy().to_string(),
+    );
 
     let pool = init_db_pool()
         .await
@@ -99,15 +106,13 @@ async fn main() -> Result<()> {
 
         // Validate URL: only allow http/https and syntactically valid
         match url::Url::parse(&url) {
-            Ok(parsed) => {
-                match parsed.scheme() {
-                    "http" | "https" => {}
-                    _ => {
-                        warn!("Skipping unsupported scheme for URL: {url}");
-                        continue;
-                    }
+            Ok(parsed) => match parsed.scheme() {
+                "http" | "https" => {}
+                _ => {
+                    warn!("Skipping unsupported scheme for URL: {url}");
+                    continue;
                 }
-            }
+            },
             Err(_) => {
                 warn!("Skipping invalid URL: {url}");
                 continue;

@@ -1,5 +1,8 @@
 use anyhow::{Error, Result};
+use hickory_resolver::TokioAsyncResolver;
+use lazy_static::lazy_static;
 use log::{error, info};
+use publicsuffix::{List, Psl};
 use regex::Regex;
 use reqwest::Url;
 use rustls::pki_types::ServerName;
@@ -7,18 +10,15 @@ use scraper::{Html, Selector};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use lazy_static::lazy_static;
-use publicsuffix::{List, Psl};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
-use hickory_resolver::TokioAsyncResolver;
 use x509_parser::extensions::ParsedExtension;
 // removed unused Serialize import
-use serde_json;
 use crate::database::{insert_url_record, UrlRecord};
 use crate::error_handling::{get_retry_strategy, update_error_stats, ErrorStats, ErrorType};
+use serde_json;
 
 lazy_static! {
     static ref TITLE_SELECTOR: Selector = Selector::parse("title").unwrap();
@@ -75,33 +75,32 @@ async fn handle_response(
         .host_str()
         .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
 
-    let (tls_version, subject, issuer, valid_from, valid_to, oids) = if final_url.starts_with("https://") {
-        // Use the actual host (e.g., www.bbc.co.uk) for SSL extraction
-        match get_ssl_certificate_info(host.to_string()).await {
-            Ok(cert_info) => (
-                cert_info.tls_version,
-                cert_info.subject,
-                cert_info.issuer,
-                cert_info.valid_from,
-                cert_info.valid_to,
-                cert_info.oids,
-            ),
-            Err(e) => {
-                log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-                (None, None, None, None, None, None)
+    let (tls_version, subject, issuer, valid_from, valid_to, oids) =
+        if final_url.starts_with("https://") {
+            // Use the actual host (e.g., www.bbc.co.uk) for SSL extraction
+            match get_ssl_certificate_info(host.to_string()).await {
+                Ok(cert_info) => (
+                    cert_info.tls_version,
+                    cert_info.subject,
+                    cert_info.issuer,
+                    cert_info.valid_from,
+                    cert_info.valid_to,
+                    cert_info.oids,
+                ),
+                Err(e) => {
+                    log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
+                    (None, None, None, None, None, None)
+                }
             }
-        }
-    } else {
-        (None, None, None, None, None, None)
-    };
+        } else {
+            (None, None, None, None, None, None)
+        };
 
     log::debug!("Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}");
 
     let headers = response.headers().clone();
     let status = response.status();
-    let status_desc = status
-        .canonical_reason()
-        .unwrap_or("Unknown Status Code");
+    let status_desc = status.canonical_reason().unwrap_or("Unknown Status Code");
 
     // Enforce HTML content-type, else skip
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
@@ -259,7 +258,17 @@ async fn handle_http_request(
     };
 
     log::debug!("Handling response for {final_url_string}");
-    let handle_result = handle_response(response, &final_url_string, pool, extractor, resolver, error_stats, elapsed, Some(redirect_chain_json)).await;
+    let handle_result = handle_response(
+        response,
+        &final_url_string,
+        pool,
+        extractor,
+        resolver,
+        error_stats,
+        elapsed,
+        Some(redirect_chain_json),
+    )
+    .await;
 
     match &handle_result {
         Ok(_) => log::debug!("Handled response for {url}"),
@@ -375,7 +384,10 @@ fn extract_certificate_policies(
     Ok(oids)
 }
 
-async fn resolve_host_to_ip_with(host: &str, resolver: &TokioAsyncResolver) -> Result<String, Error> {
+async fn resolve_host_to_ip_with(
+    host: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<String, Error> {
     let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
     let ip = response
         .iter()
@@ -385,12 +397,15 @@ async fn resolve_host_to_ip_with(host: &str, resolver: &TokioAsyncResolver) -> R
     Ok(ip)
 }
 
-async fn reverse_dns_lookup_with(ip: &str, resolver: &TokioAsyncResolver) -> Result<Option<String>, Error> {
+async fn reverse_dns_lookup_with(
+    ip: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<Option<String>, Error> {
     match resolver.reverse_lookup(ip.parse()?).await {
         Ok(response) => {
             let name = response.iter().next().map(|name| name.to_utf8());
             Ok(name)
-        },
+        }
         Err(e) => {
             log::warn!("Failed to perform reverse DNS lookup for {ip}: {e}");
             Ok(None)
@@ -400,17 +415,23 @@ async fn reverse_dns_lookup_with(ip: &str, resolver: &TokioAsyncResolver) -> Res
 
 // src/utils.rs
 
-async fn resolve_redirect_chain(start_url: &str, max_hops: usize) -> Result<(String, String), Error> {
+async fn resolve_redirect_chain(
+    start_url: &str,
+    max_hops: usize,
+) -> Result<(String, String), Error> {
     let mut chain: Vec<String> = Vec::new();
     let mut current = start_url.to_string();
-    let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
 
     for _ in 0..max_hops {
         chain.push(current.clone());
         let resp = client.get(&current).send().await?;
         if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
             let loc = loc.to_str().unwrap_or("").to_string();
-            let new_url = Url::parse(&loc).or_else(|_| Url::parse(&current).and_then(|base| base.join(&loc)))?;
+            let new_url = Url::parse(&loc)
+                .or_else(|_| Url::parse(&current).and_then(|base| base.join(&loc)))?;
             current = new_url.to_string();
             // continue loop for next hop
             continue;
@@ -423,7 +444,6 @@ async fn resolve_redirect_chain(start_url: &str, max_hops: usize) -> Result<(Str
 }
 
 async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, anyhow::Error> {
-
     log::debug!("Attempting to get SSL info for domain: {domain}");
 
     let mut root_store = RootCertStore::empty();
@@ -494,17 +514,21 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
             let serialized_oids = serialize_with_sorted_keys(&unique_oids);
 
             log::info!("Extracting validity period for domain: {domain}");
-            let valid_from_str = tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
-                anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
-            })?;
-            let valid_from = chrono::NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
-                .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
+            let valid_from_str =
+                tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
+                    anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
+                })?;
+            let valid_from =
+                chrono::NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
+                    .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
 
-            let valid_to_str = tbs_cert.validity.not_after.to_rfc2822().map_err(|e| {
-                anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e)
-            })?;
-            let valid_to = chrono::NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
-                .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
+            let valid_to_str =
+                tbs_cert.validity.not_after.to_rfc2822().map_err(|e| {
+                    anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e)
+                })?;
+            let valid_to =
+                chrono::NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
+                    .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
 
             info!("SSL certificate info extracted for domain: {domain}");
 
@@ -547,7 +571,15 @@ pub async fn process_url(
         let resolver = resolver.clone();
 
         tokio::task::spawn(async move {
-            handle_http_request(&client, &url, &pool, &extractor, &resolver, &error_stats, start_time)
+            handle_http_request(
+                &client,
+                &url,
+                &pool,
+                &extractor,
+                &resolver,
+                &error_stats,
+                start_time,
+            )
             .await
         })
     });
