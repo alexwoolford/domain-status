@@ -4,10 +4,34 @@ use std::time::Duration;
 use clap::{Parser, ValueEnum};
 
 // constants (used as defaults)
+#[allow(dead_code)]
 pub const SEMAPHORE_LIMIT: usize = 500;
 pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DB_PATH: &str = "./url_checker.db";
+
+// Response and body size limits
+/// Maximum response body size in bytes (2MB)
+/// Responses larger than this are skipped to prevent memory exhaustion
+pub const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
+
+// Redirect handling
+/// Maximum number of redirect hops to follow
+/// Prevents infinite redirect loops and excessive request chains
+pub const MAX_REDIRECT_HOPS: usize = 10;
+
+// Error rate limiting
+/// Divisor used to calculate backoff duration from error rate
+/// Higher values result in shorter backoff times
+pub const ERROR_RATE_BACKOFF_DIVISOR: f64 = 5.0;
+
+// Retry strategy
+/// Initial delay in milliseconds before first retry
+pub const RETRY_INITIAL_DELAY_MS: u64 = 1000;
+/// Factor by which retry delay is multiplied on each attempt
+pub const RETRY_FACTOR: u64 = 2;
+/// Maximum delay between retries in seconds
+pub const RETRY_MAX_DELAY_SECS: u64 = 20;
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum LogLevel {

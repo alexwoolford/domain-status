@@ -58,7 +58,11 @@ async fn main() -> Result<()> {
     } else {
         opt.rate_burst
     };
-    let request_limiter = init_rate_limiter(opt.rate_limit_rps, rate_burst);
+    let (request_limiter, rate_limiter_shutdown) =
+        match init_rate_limiter(opt.rate_limit_rps, rate_burst) {
+            Some((limiter, shutdown)) => (Some(limiter), Some(shutdown)),
+            None => (None, None),
+        };
 
     // Override DB path env for init if needed
     std::env::set_var(
@@ -72,8 +76,11 @@ async fn main() -> Result<()> {
     let client = init_client(&opt)
         .await
         .context("Failed to initialize HTTP client")?;
+    let redirect_client = init_redirect_client(&opt)
+        .await
+        .context("Failed to initialize redirect client")?;
     let extractor = init_extractor();
-    let resolver = init_resolver();
+    let resolver = init_resolver().context("Failed to initialize DNS resolver")?;
 
     run_migrations(&pool)
         .await
@@ -87,7 +94,8 @@ async fn main() -> Result<()> {
 
     let completed_urls = Arc::new(AtomicUsize::new(0));
 
-    let url_regex = Regex::new(r"^https?://").unwrap();
+    let url_regex = Regex::new(r"^https?://")
+        .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
 
     for line in reader.lines() {
         let url = match line {
@@ -121,9 +129,16 @@ async fn main() -> Result<()> {
 
         rate_limiter.allow_operation().await;
 
-        let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+        let permit = match Arc::clone(&semaphore).acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                warn!("Semaphore closed, skipping URL: {url}");
+                continue;
+            }
+        };
 
         let client_clone = Arc::clone(&client);
+        let redirect_client_clone = Arc::clone(&redirect_client);
         let pool_clone = Arc::clone(&pool);
         let extractor_clone = Arc::clone(&extractor);
         let resolver_clone = Arc::clone(&resolver);
@@ -132,7 +147,7 @@ async fn main() -> Result<()> {
 
         let error_stats_clone = error_stats.clone();
 
-        let request_limiter_clone = request_limiter.clone();
+        let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
 
@@ -143,8 +158,9 @@ async fn main() -> Result<()> {
             let result = tokio::time::timeout(
                 URL_PROCESSING_TIMEOUT,
                 process_url(
-                    url,
+                    url.clone(),
                     client_clone,
+                    redirect_client_clone,
                     pool_clone,
                     extractor_clone,
                     resolver_clone,
@@ -154,10 +170,15 @@ async fn main() -> Result<()> {
             .await;
 
             match result {
-                Ok(()) => {
+                Ok(Ok(())) => {
                     completed_urls_clone.fetch_add(1, Ordering::SeqCst);
                 }
+                Ok(Err(e)) => {
+                    log::warn!("Failed to process URL {url}: {e}");
+                    error_stats_clone.increment(ErrorType::HttpRequestOtherError);
+                }
                 Err(_) => {
+                    log::warn!("Timeout processing URL {url}");
                     error_stats_clone.increment(ErrorType::ProcessUrlTimeout);
                 }
             }
@@ -191,6 +212,11 @@ async fn main() -> Result<()> {
     // Signal logging task to stop and await it
     cancel.cancel();
     let _ = logging_task.await;
+
+    // Signal rate limiter to stop if it exists
+    if let Some(shutdown) = rate_limiter_shutdown {
+        shutdown.cancel();
+    }
 
     // Log one final time before printing the error summary
     log_progress(start_time, &completed_urls);

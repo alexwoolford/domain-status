@@ -10,7 +10,7 @@ use tokio::sync::Semaphore;
 use tokio::sync::Semaphore as TokioSemaphore;
 use tokio::time::{interval, Duration as TokioDuration};
 
-use crate::config::{LogFormat, LogLevel};
+use crate::config::LogFormat;
 use crate::error_handling::InitializationError;
 use colored::*;
 use log::LevelFilter;
@@ -95,6 +95,17 @@ pub async fn init_client(opt: &Opt) -> Result<Arc<reqwest::Client>, reqwest::Err
     Ok(Arc::new(client))
 }
 
+/// Initializes a shared HTTP client for redirect resolution.
+/// This client has redirects disabled so we can manually track the redirect chain.
+pub async fn init_redirect_client(opt: &Opt) -> Result<Arc<reqwest::Client>, reqwest::Error> {
+    let client = ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(opt.timeout_seconds))
+        .user_agent(opt.user_agent.clone())
+        .build()?;
+    Ok(Arc::new(client))
+}
+
 /// Initializes the TLD extractor.
 pub fn init_extractor() -> Arc<List> {
     Arc::new(List::new())
@@ -107,14 +118,31 @@ pub fn init_crypto_provider() {
 }
 
 /// Initializes a shared DNS resolver from system configuration.
-pub fn init_resolver() -> Arc<TokioAsyncResolver> {
-    Arc::new(TokioAsyncResolver::tokio_from_system_conf().expect("Failed to init DNS resolver"))
+pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
+    // Try system configuration first
+    match TokioAsyncResolver::tokio_from_system_conf() {
+        Ok(resolver) => Ok(Arc::new(resolver)),
+        Err(e) => {
+            // Fallback: use default resolver configuration
+            use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+            log::warn!(
+                "Failed to initialize DNS resolver from system config ({e}), using defaults"
+            );
+            Ok(Arc::new(TokioAsyncResolver::tokio(
+                ResolverConfig::default(),
+                ResolverOpts::default(),
+            )))
+        }
+    }
 }
 
 /// Simple token-bucket rate limiter
 pub struct RateLimiter {
     permits: Arc<TokioSemaphore>,
+    #[allow(dead_code)]
     capacity: usize,
+    #[allow(dead_code)] // Used for cancellation token reference
+    shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl RateLimiter {
@@ -123,24 +151,38 @@ impl RateLimiter {
     }
 }
 
-pub fn init_rate_limiter(rps: u32, burst: usize) -> Option<Arc<RateLimiter>> {
+pub fn init_rate_limiter(
+    rps: u32,
+    burst: usize,
+) -> Option<(Arc<RateLimiter>, tokio_util::sync::CancellationToken)> {
     if rps == 0 {
         return None;
     }
     let capacity = burst;
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let shutdown_clone = shutdown.clone();
+
     let limiter = Arc::new(RateLimiter {
         permits: Arc::new(TokioSemaphore::new(capacity)),
         capacity,
+        shutdown: shutdown_clone.clone(),
     });
 
     let permits = limiter.permits.clone();
     let mut ticker = interval(TokioDuration::from_millis((1000 / rps.max(1)) as u64));
     tokio::spawn(async move {
         loop {
-            ticker.tick().await;
-            permits.add_permits(1);
+            tokio::select! {
+                _ = ticker.tick() => {
+                    permits.add_permits(1);
+                }
+                _ = shutdown_clone.cancelled() => {
+                    log::debug!("Rate limiter background task shutting down");
+                    break;
+                }
+            }
         }
     });
 
-    Some(limiter)
+    Some((limiter, shutdown))
 }

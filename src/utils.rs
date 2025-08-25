@@ -18,13 +18,15 @@ use x509_parser::extensions::ParsedExtension;
 // removed unused Serialize import
 use crate::database::{insert_url_record, UrlRecord};
 use crate::error_handling::{get_retry_strategy, update_error_stats, ErrorStats, ErrorType};
-use serde_json;
+// serde_json is used via fully qualified calls
 
 lazy_static! {
-    static ref TITLE_SELECTOR: Selector = Selector::parse("title").unwrap();
-    static ref META_KEYWORDS_SELECTOR: Selector = Selector::parse("meta[name='keywords']").unwrap();
-    static ref META_DESCRIPTION_SELECTOR: Selector =
-        Selector::parse("meta[name='description']").unwrap();
+    static ref TITLE_SELECTOR: Selector =
+        Selector::parse("title").expect("Failed to parse title selector - this is a bug");
+    static ref META_KEYWORDS_SELECTOR: Selector = Selector::parse("meta[name='keywords']")
+        .expect("Failed to parse meta keywords selector - this is a bug");
+    static ref META_DESCRIPTION_SELECTOR: Selector = Selector::parse("meta[name='description']")
+        .expect("Failed to parse meta description selector - this is a bug");
 }
 
 fn extract_domain(list: &List, url: &str) -> Result<String, anyhow::Error> {
@@ -38,18 +40,19 @@ fn extract_domain(list: &List, url: &str) -> Result<String, anyhow::Error> {
     Ok(String::from_utf8_lossy(d.as_bytes()).to_string())
 }
 
+/// Serializes a value to JSON string.
+/// Note: JSON object key order is not guaranteed by the JSON spec, but serde_json
+/// typically preserves insertion order for HashMap. If deterministic key ordering
+/// is required, use BTreeMap in the source data structure instead.
 fn serialize_with_sorted_keys<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_string(value)
-        .and_then(|json| {
-            let deserialized: serde_json::Value = serde_json::from_str(&json).unwrap();
-            serde_json::to_string(&deserialized)
-        })
-        .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_response(
     response: reqwest::Response,
-    url: &str,
+    original_url: &str,  // Original URL before redirects
+    final_url_str: &str, // Final URL after redirects
     pool: &SqlitePool,
     extractor: &List,
     resolver: &TokioAsyncResolver,
@@ -57,21 +60,22 @@ async fn handle_response(
     elapsed: f64,
     redirect_chain_json: Option<String>,
 ) -> Result<(), Error> {
-    log::debug!("Started processing response for {url}");
+    log::debug!("Started processing response for {final_url_str}");
 
-    // Determine the final URL after all redirects (passed-in) and keep provided redirect chain JSON
+    // Determine the final URL after all redirects (from response)
     let final_url = response.url().to_string();
 
     log::debug!("Final url after redirects: {final_url}");
 
-    // Extract the final domain using the extractor
+    // Extract domains once - initial from original URL, final from final URL
+    let initial_domain = extract_domain(extractor, original_url)?;
     let final_domain = extract_domain(extractor, &final_url)?;
 
-    log::debug!("Final domain extracted: {final_domain}");
+    log::debug!("Initial domain: {initial_domain}, Final domain: {final_domain}");
 
     // Parse host once for TLS/DNS
-    let url = Url::parse(&final_url)?;
-    let host = url
+    let parsed_url = Url::parse(&final_url)?;
+    let host = parsed_url
         .host_str()
         .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
 
@@ -111,10 +115,10 @@ async fn handle_response(
         }
     }
 
-    // Cap body size (~2MB)
+    // Cap body size
     let body = match response.bytes().await {
         Ok(bytes) => {
-            if bytes.len() > 2 * 1024 * 1024 {
+            if bytes.len() > crate::config::MAX_RESPONSE_BODY_SIZE {
                 log::debug!("Skipping large body: {} bytes", bytes.len());
                 return Ok(());
             }
@@ -123,24 +127,35 @@ async fn handle_response(
         Err(_) => String::new(),
     };
 
-    let title = extract_title(&body, error_stats);
+    // Parse HTML once and extract all data before any async operations
+    // (Html is not Send, so we extract everything in a block scope)
+    let (title, keywords_str, description, linkedin_slug, is_mobile_friendly) = {
+        let document = Html::parse_document(&body);
 
-    log::debug!("Extracted title for {final_domain}: {title:?}");
+        let title = extract_title(&document, error_stats);
+        log::debug!("Extracted title for {final_domain}: {title:?}");
 
-    let keywords = extract_meta_keywords(&body, error_stats);
-    let keywords_str = keywords.map(|kw| kw.join(", "));
+        let keywords = extract_meta_keywords(&document, error_stats);
+        let keywords_str = keywords.map(|kw| kw.join(", "));
+        log::debug!("Extracted keywords for {final_domain}: {keywords_str:?}");
 
-    log::debug!("Extracted keywords for {final_domain}: {keywords_str:?}");
+        let description = extract_meta_description(&document, error_stats);
+        log::debug!("Extracted description for {final_domain}: {description:?}");
 
-    let description = extract_meta_description(&body, error_stats);
+        let linkedin_slug = extract_linkedin_slug(&document, error_stats);
+        log::debug!("Extracted LinkedIn slug for {final_domain}: {linkedin_slug:?}");
 
-    log::debug!("Extracted description for {final_domain}: {description:?}");
+        let is_mobile_friendly = is_mobile_friendly(&body);
 
-    let linkedin_slug = extract_linkedin_slug(&body, error_stats);
-
-    log::debug!("Extracted LinkedIn slug for {final_domain}: {linkedin_slug:?}");
-
-    let initial_domain = extract_domain(extractor, &url.to_string())?;
+        // document is dropped here when the block ends
+        (
+            title,
+            keywords_str,
+            description,
+            linkedin_slug,
+            is_mobile_friendly,
+        )
+    };
 
     log::debug!("Resolved host: {host}");
 
@@ -154,8 +169,6 @@ async fn handle_response(
 
     let security_headers = extract_security_headers(&headers);
     let security_headers_json = serialize_with_sorted_keys(&security_headers);
-
-    let is_mobile_friendly = is_mobile_friendly(&body);
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
@@ -221,8 +234,10 @@ fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Str
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_http_request(
     client: &reqwest::Client,
+    redirect_client: &reqwest::Client,
     url: &str,
     pool: &SqlitePool,
     extractor: &List,
@@ -232,8 +247,9 @@ async fn handle_http_request(
 ) -> Result<(), Error> {
     log::debug!("Resolving redirects for {url}");
 
-    // Resolve redirect chain manually using a client with redirects disabled
-    let (final_url_string, redirect_chain_json) = resolve_redirect_chain(url, 10).await?;
+    // Resolve redirect chain manually using a shared client with redirects disabled
+    let (final_url_string, redirect_chain_json) =
+        resolve_redirect_chain(url, crate::config::MAX_REDIRECT_HOPS, redirect_client).await?;
 
     log::debug!("Sending request to final URL {final_url_string}");
 
@@ -260,7 +276,8 @@ async fn handle_http_request(
     log::debug!("Handling response for {final_url_string}");
     let handle_result = handle_response(
         response,
-        &final_url_string,
+        url,               // Original URL for initial_domain extraction
+        &final_url_string, // Final URL after redirects
         pool,
         extractor,
         resolver,
@@ -278,11 +295,9 @@ async fn handle_http_request(
     handle_result
 }
 
-fn extract_title(html: &str, error_stats: &ErrorStats) -> String {
-    let parsed_html = Html::parse_document(html);
-
+fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
     // Use the pre-created selector.
-    match parsed_html.select(&TITLE_SELECTOR).next() {
+    match document.select(&TITLE_SELECTOR).next() {
         Some(element) => element.inner_html().trim().to_string(),
         None => {
             error_stats.increment(ErrorType::TitleExtractError);
@@ -291,9 +306,8 @@ fn extract_title(html: &str, error_stats: &ErrorStats) -> String {
     }
 }
 
-fn extract_meta_keywords(html: &str, error_stats: &ErrorStats) -> Option<Vec<String>> {
-    let parsed_html = Html::parse_document(html);
-    let meta_keywords = parsed_html
+fn extract_meta_keywords(document: &Html, error_stats: &ErrorStats) -> Option<Vec<String>> {
+    let meta_keywords = document
         .select(&META_KEYWORDS_SELECTOR)
         .next()
         .and_then(|element| element.value().attr("content"));
@@ -322,9 +336,8 @@ fn extract_meta_keywords(html: &str, error_stats: &ErrorStats) -> Option<Vec<Str
     }
 }
 
-fn extract_meta_description(html: &str, error_stats: &ErrorStats) -> Option<String> {
-    let parsed_html = Html::parse_document(html);
-    let meta_description = parsed_html
+fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Option<String> {
+    let meta_description = document
         .select(&META_DESCRIPTION_SELECTOR)
         .next()
         .and_then(|element| {
@@ -341,10 +354,23 @@ fn extract_meta_description(html: &str, error_stats: &ErrorStats) -> Option<Stri
     meta_description
 }
 
-fn extract_linkedin_slug(html: &str, error_stats: &ErrorStats) -> Option<String> {
-    let document = Html::parse_document(html);
-    let selector = Selector::parse("a[href]").unwrap();
-    let re = Regex::new(r"https?://www\.linkedin\.com/company/([^/?]+)").unwrap();
+fn extract_linkedin_slug(document: &Html, error_stats: &ErrorStats) -> Option<String> {
+    let selector = match Selector::parse("a[href]") {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to parse LinkedIn selector: {e}");
+            error_stats.increment(ErrorType::LinkedInSlugExtractError);
+            return None;
+        }
+    };
+    let re = match Regex::new(r"https?://www\.linkedin\.com/company/([^/?]+)") {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("Failed to compile LinkedIn regex: {e}");
+            error_stats.increment(ErrorType::LinkedInSlugExtractError);
+            return None;
+        }
+    };
 
     for element in document.select(&selector) {
         if let Some(link) = element.value().attr("href") {
@@ -418,12 +444,10 @@ async fn reverse_dns_lookup_with(
 async fn resolve_redirect_chain(
     start_url: &str,
     max_hops: usize,
+    client: &reqwest::Client,
 ) -> Result<(String, String), Error> {
     let mut chain: Vec<String> = Vec::new();
     let mut current = start_url.to_string();
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
 
     for _ in 0..max_hops {
         chain.push(current.clone());
@@ -552,27 +576,32 @@ async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo, any
 pub async fn process_url(
     url: String,
     client: Arc<reqwest::Client>,
+    redirect_client: Arc<reqwest::Client>,
     pool: Arc<SqlitePool>,
     extractor: Arc<List>,
     resolver: Arc<TokioAsyncResolver>,
     error_stats: Arc<ErrorStats>,
-) {
+) -> Result<(), Error> {
     log::debug!("Starting process for URL: {url}");
 
     let retry_strategy = get_retry_strategy();
     let start_time = std::time::Instant::now();
 
-    let future = tokio_retry::Retry::spawn(retry_strategy, || {
+    // Retry::spawn's Action trait expects a closure that returns a Future
+    // We can return the async block directly without spawning a task
+    let result = tokio_retry::Retry::spawn(retry_strategy, || {
         let client = client.clone();
+        let redirect_client = redirect_client.clone();
         let url = url.clone();
         let pool = pool.clone();
         let extractor = extractor.clone();
         let error_stats = error_stats.clone();
         let resolver = resolver.clone();
 
-        tokio::task::spawn(async move {
+        async move {
             handle_http_request(
                 &client,
+                &redirect_client,
                 &url,
                 &pool,
                 &extractor,
@@ -581,11 +610,15 @@ pub async fn process_url(
                 start_time,
             )
             .await
-        })
-    });
+        }
+    })
+    .await;
 
-    match future.await {
-        Ok(_) => {}
-        Err(e) => error!("Error after retries: {e}"),
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            log::error!("Error processing URL {url} after retries: {e}");
+            Err(e)
+        }
     }
 }

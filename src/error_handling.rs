@@ -14,6 +14,7 @@ use crate::config::LOGGING_INTERVAL;
 
 /// Error types for initialization failures.
 #[derive(Error, Debug)]
+#[allow(clippy::enum_variant_names)] // All variants end with "Error" by convention
 pub enum InitializationError {
     /// Error initializing the logger.
     #[error("Logger initialization error: {0}")]
@@ -22,6 +23,11 @@ pub enum InitializationError {
     /// Error initializing the HTTP client.
     #[error("HTTP client initialization error: {0}")]
     HttpClientError(#[from] ReqwestError),
+
+    /// Error initializing the DNS resolver.
+    #[error("DNS resolver initialization error: {0}")]
+    #[allow(dead_code)] // Reserved for future use if fallback fails
+    DnsResolverError(String),
 }
 
 /// Error types for database operations.
@@ -91,17 +97,16 @@ impl ErrorStats {
     }
 
     pub fn increment(&self, error: ErrorType) {
-        if let Some(counter) = self.errors.get(&error) {
-            counter.fetch_add(1, Ordering::Relaxed);
-        }
+        // All ErrorType variants are initialized in new(), so unwrap() is safe
+        self.errors
+            .get(&error)
+            .unwrap()
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn get_count(&self, error: ErrorType) -> usize {
-        if let Some(counter) = self.errors.get(&error) {
-            counter.load(Ordering::SeqCst)
-        } else {
-            0
-        }
+        // All ErrorType variants are initialized in new(), so unwrap() is safe
+        self.errors.get(&error).unwrap().load(Ordering::SeqCst)
     }
 
     pub fn total_error_count(&self) -> usize {
@@ -133,7 +138,11 @@ impl ErrorRateLimiter {
     pub async fn allow_operation(&self) {
         self.operation_count.fetch_add(1, Ordering::SeqCst);
 
-        if self.operation_count.load(Ordering::SeqCst) % LOGGING_INTERVAL == 0 {
+        if self
+            .operation_count
+            .load(Ordering::SeqCst)
+            .is_multiple_of(LOGGING_INTERVAL)
+        {
             let error_rate = self.calculate_error_rate();
 
             self.error_rate.store(error_rate as usize, Ordering::SeqCst);
@@ -142,7 +151,9 @@ impl ErrorRateLimiter {
 
             if error_rate > self.error_rate_threshold {
                 // increase backoff time
-                let sleep_duration = Duration::from_secs_f64((error_rate / 5.0).max(1.0));
+                let sleep_duration = Duration::from_secs_f64(
+                    (error_rate / crate::config::ERROR_RATE_BACKOFF_DIVISOR).max(1.0),
+                );
                 warn!("Throttled; error rate of {:.2}% has exceeded the set threshold. There were {} errors out of {} operations. Backoff time is {:.2} seconds.",
                     error_rate, total_errors, self.operation_count.load(Ordering::SeqCst), sleep_duration.as_secs_f64());
                 tokio::time::sleep(sleep_duration).await;
@@ -152,19 +163,20 @@ impl ErrorRateLimiter {
 
     fn calculate_error_rate(&self) -> f64 {
         let total_errors = self.error_stats.total_error_count();
-        (total_errors as f64
-            / f64::max(
-                total_errors as f64,
-                self.operation_count.load(Ordering::SeqCst) as f64,
-            ))
-            * 100.0
+        let total_operations = self.operation_count.load(Ordering::SeqCst);
+
+        if total_operations == 0 {
+            return 0.0;
+        }
+
+        (total_errors as f64 / total_operations as f64) * 100.0
     }
 }
 
 pub fn get_retry_strategy() -> ExponentialBackoff {
-    ExponentialBackoff::from_millis(1000)
-        .factor(2) // Double the delay with each retry
-        .max_delay(Duration::from_secs(20)) // Maximum delay of 20 seconds
+    ExponentialBackoff::from_millis(crate::config::RETRY_INITIAL_DELAY_MS)
+        .factor(crate::config::RETRY_FACTOR) // Double the delay with each retry
+        .max_delay(Duration::from_secs(crate::config::RETRY_MAX_DELAY_SECS)) // Maximum delay
 }
 
 pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
