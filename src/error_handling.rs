@@ -56,7 +56,7 @@ pub enum ErrorType {
 }
 
 impl ErrorType {
-    pub fn to_string(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             ErrorType::HttpRequestBuilderError => "HTTP request builder error",
             ErrorType::HttpRequestRedirectError => "HTTP request redirect error",
@@ -152,13 +152,12 @@ impl ErrorRateLimiter {
 
     fn calculate_error_rate(&self) -> f64 {
         let total_errors = self.error_stats.total_error_count();
-        let error_rate = (total_errors as f64
+        (total_errors as f64
             / f64::max(
                 total_errors as f64,
                 self.operation_count.load(Ordering::SeqCst) as f64,
             ))
-            * 100.0;
-        error_rate
+            * 100.0
     }
 }
 

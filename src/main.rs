@@ -10,8 +10,9 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
 use log::warn;
-use structopt::StructOpt;
-use validators::regex::Regex;
+use clap::Parser;
+use regex::Regex;
+use tokio_util::sync::CancellationToken;
 
 use config::*;
 use database::*;
@@ -40,28 +41,36 @@ fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logger().context("Failed to initialize logger")?;
+    let opt = Opt::parse();
+    let log_level = opt.log_level.clone();
+    let log_format = opt.log_format.clone();
+    init_logger_with(log_level.into(), log_format).context("Failed to initialize logger")?;
     init_crypto_provider();
 
-    let opt = Opt::from_args();
     let file = File::open(&opt.file).context("Failed to open input file")?;
     let reader = BufReader::new(file);
 
     let mut tasks = FuturesUnordered::new();
 
-    let semaphore = init_semaphore(SEMAPHORE_LIMIT);
+    let semaphore = init_semaphore(opt.max_concurrency);
+    let rate_burst = if opt.rate_burst == 0 { opt.max_concurrency } else { opt.rate_burst };
+    let request_limiter = init_rate_limiter(opt.rate_limit_rps, rate_burst);
+
+    // Override DB path env for init if needed
+    std::env::set_var("URL_CHECKER_DB_PATH", opt.db_path.to_string_lossy().to_string());
 
     let pool = init_db_pool()
         .await
         .context("Failed to initialize database pool")?;
-    let client = init_client()
+    let client = init_client(&opt)
         .await
         .context("Failed to initialize HTTP client")?;
     let extractor = init_extractor();
+    let resolver = init_resolver();
 
-    create_table(&pool)
+    run_migrations(&pool)
         .await
-        .context("Failed to create table")?;
+        .context("Failed to run database migrations")?;
 
     let start_time = std::time::Instant::now();
 
@@ -77,16 +86,33 @@ async fn main() -> Result<()> {
         let url = match line {
             Ok(line) => {
                 if !url_regex.is_match(&line) {
-                    format!("https://{}", line)
+                    format!("https://{line}")
                 } else {
                     line
                 }
             }
             Err(e) => {
-                warn!("Failed to read line from input file: {}", e);
+                warn!("Failed to read line from input file: {e}");
                 continue;
             }
         };
+
+        // Validate URL: only allow http/https and syntactically valid
+        match url::Url::parse(&url) {
+            Ok(parsed) => {
+                match parsed.scheme() {
+                    "http" | "https" => {}
+                    _ => {
+                        warn!("Skipping unsupported scheme for URL: {url}");
+                        continue;
+                    }
+                }
+            }
+            Err(_) => {
+                warn!("Skipping invalid URL: {url}");
+                continue;
+            }
+        }
 
         rate_limiter.allow_operation().await;
 
@@ -95,13 +121,19 @@ async fn main() -> Result<()> {
         let client_clone = Arc::clone(&client);
         let pool_clone = Arc::clone(&pool);
         let extractor_clone = Arc::clone(&extractor);
+        let resolver_clone = Arc::clone(&resolver);
 
         let completed_urls_clone = Arc::clone(&completed_urls);
 
         let error_stats_clone = error_stats.clone();
 
+        let request_limiter_clone = request_limiter.clone();
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
+
+            if let Some(ref limiter) = request_limiter_clone {
+                limiter.acquire().await;
+            }
 
             let result = tokio::time::timeout(
                 URL_PROCESSING_TIMEOUT,
@@ -110,6 +142,7 @@ async fn main() -> Result<()> {
                     client_clone,
                     pool_clone,
                     extractor_clone,
+                    resolver_clone,
                     error_stats_clone.clone(),
                 ),
             )
@@ -126,6 +159,10 @@ async fn main() -> Result<()> {
         }));
     }
 
+    // Cancellation token for graceful shutdown of periodic logging
+    let cancel = CancellationToken::new();
+    let cancel_logging = cancel.child_token();
+
     // Clone the Arc before the logging task
     let completed_urls_clone_for_logging = Arc::clone(&completed_urls);
 
@@ -133,15 +170,22 @@ async fn main() -> Result<()> {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_secs(LOGGING_INTERVAL as u64));
         loop {
-            interval.tick().await;
-            log_progress(start_time, &completed_urls_clone_for_logging);
+            tokio::select! {
+                _ = interval.tick() => {
+                    log_progress(start_time, &completed_urls_clone_for_logging);
+                }
+                _ = cancel_logging.cancelled() => {
+                    break;
+                }
+            }
         }
     });
 
-    while let Some(_) = tasks.next().await {}
+    while (tasks.next().await).is_some() {}
 
-    // Ensure the logging task is done before exiting
-    drop(logging_task);
+    // Signal logging task to stop and await it
+    cancel.cancel();
+    let _ = logging_task.await;
 
     // Log one final time before printing the error summary
     log_progress(start_time, &completed_urls);
@@ -152,7 +196,7 @@ async fn main() -> Result<()> {
         if error_stats.get_count(error_type) > 0 {
             info!(
                 "   {}: {}",
-                error_type.to_string(),
+                error_type.as_str(),
                 error_stats.get_count(error_type)
             );
         }

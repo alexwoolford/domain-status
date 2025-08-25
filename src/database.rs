@@ -5,34 +5,61 @@ use std::sync::Arc;
 
 use chrono::NaiveDateTime;
 use log::{error, info};
-use reqwest::StatusCode;
 use sqlx::{Pool, Sqlite, SqlitePool};
+use sqlx::migrate::Migrator;
+#[cfg(test)]
 use tempfile::tempdir;
 
 use crate::config::DB_PATH;
 use crate::error_handling::DatabaseError;
 
+/// Represents a single row to insert into `url_status`.
+pub struct UrlRecord {
+    pub initial_domain: String,
+    pub final_domain: String,
+    pub ip_address: String,
+    pub reverse_dns_name: Option<String>,
+    pub status: u16,
+    pub status_desc: String,
+    pub response_time: f64,
+    pub title: String,
+    pub keywords: Option<String>,
+    pub description: Option<String>,
+    pub linkedin_slug: Option<String>,
+    pub security_headers: String,
+    pub tls_version: Option<String>,
+    pub ssl_cert_subject: Option<String>,
+    pub ssl_cert_issuer: Option<String>,
+    pub ssl_cert_valid_from: Option<NaiveDateTime>,
+    pub ssl_cert_valid_to: Option<NaiveDateTime>,
+    pub oids: Option<String>,
+    pub is_mobile_friendly: bool,
+    pub timestamp: i64,
+    pub redirect_chain: Option<String>,
+}
+
 pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
+    let db_path = std::env::var("URL_CHECKER_DB_PATH").unwrap_or_else(|_| DB_PATH.to_string());
     match OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
-        .open(DB_PATH)
+        .open(&db_path)
     {
         Ok(_) => info!("Database file created successfully."),
         Err(ref e) if e.kind() == ErrorKind::AlreadyExists => {
             info!("Database file already exists.")
         }
         Err(e) => {
-            error!("Failed to create database file: {}", e);
+            error!("Failed to create database file: {e}");
             return Err(DatabaseError::FileCreationError(e.to_string()));
         }
     }
 
-    let pool = SqlitePool::connect(&format!("sqlite:{}", DB_PATH))
+    let pool = SqlitePool::connect(&format!("sqlite:{db_path}"))
         .await
         .map_err(|e| {
-            error!("Failed to connect to database: {}", e);
+            error!("Failed to connect to database: {e}");
             DatabaseError::SqlError(e)
         })?;
 
@@ -41,44 +68,19 @@ pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
         .execute(&pool)
         .await
         .map_err(|e| {
-            error!("Failed to set WAL mode: {}", e);
+            error!("Failed to set WAL mode: {e}");
             DatabaseError::SqlError(e)
         })?;
 
     Ok(Arc::new(pool))
 }
 
-/// Creates the 'url_status' table if it doesn't exist.
-pub async fn create_table(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS url_status (
-        id INTEGER PRIMARY KEY,
-        domain TEXT NOT NULL,
-        final_domain TEXT NOT NULL,
-        ip_address TEXT NOT NULL,
-        reverse_dns_name TEXT,
-        status INTEGER NOT NULL,
-        status_description TEXT NOT NULL,
-        response_time NUMERIC(10, 2),
-        title TEXT NOT NULL,
-        keywords TEXT,
-        description TEXT,
-        linkedin_slug TEXT,
-        security_headers TEXT NOT NULL,
-        tls_version TEXT,
-        ssl_cert_subject TEXT NOT NULL,
-        ssl_cert_issuer TEXT NOT NULL,
-        ssl_cert_valid_from INTEGER,
-        ssl_cert_valid_to INTEGER,
-        oids STRING,
-        is_mobile_friendly BOOLEAN,
-        timestamp INTEGER NOT NULL
-    )",
-    )
-    .execute(pool)
-    .await
-    .map(|_| ())
-    .map_err(|e| DatabaseError::SqlError(e).into())
+/// Runs SQLx migrations located in the `migrations/` directory.
+pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
+    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let migrator = Migrator::new(migrations_dir.as_path()).await?;
+    migrator.run(pool).await?;
+    Ok(())
 }
 
 /// Converts a NaiveDateTime to milliseconds since Unix epoch.
@@ -86,125 +88,80 @@ fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {
     datetime.map(|dt| dt.and_utc().timestamp_millis())
 }
 
-/// Inserts a new URL status into the database.
-pub async fn update_database(
-    initial_domain: &str,
-    final_domain: &str,
-    ip_address: &str,
-    reverse_dns_name: &Option<String>,
-    status: &StatusCode,
-    status_desc: &str,
-    elapsed: f64,
-    title: &str,
-    keywords: Option<&str>,
-    description: Option<&str>,
-    linkedin_slug: Option<&str>,
-    security_headers: &str,
-    timestamp: i64,
-    tls_version: &Option<String>,
-    ssl_cert_subject: &Option<String>,
-    ssl_cert_issuer: &Option<String>,
-    ssl_cert_valid_from: Option<NaiveDateTime>,
-    ssl_cert_valid_to: Option<NaiveDateTime>,
-    oids: Option<String>,
-    is_mobile_friendly: bool,
-    pool: &SqlitePool,
-) -> Result<(), DatabaseError> {
-
-    log::debug!("Preparing SQL query for domain: {}", initial_domain);
-
-    let valid_from_millis = naive_datetime_to_millis(ssl_cert_valid_from.as_ref());
-    let valid_to_millis = naive_datetime_to_millis(ssl_cert_valid_to.as_ref());
-
-    log::debug!("Inserting record into the database for domain: {}", initial_domain);
+/// Inserts a `UrlRecord` into the database.
+pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<(), DatabaseError> {
+    let valid_from_millis = naive_datetime_to_millis(record.ssl_cert_valid_from.as_ref());
+    let valid_to_millis = naive_datetime_to_millis(record.ssl_cert_valid_to.as_ref());
 
     log::debug!(
-        "Inserting record into the database with the following data:\n\
-        initial_domain: {},\n\
-        final_domain: {},\n\
-        ip_address: {},\n\
-        reverse_dns_name: {:?},\n\
-        status: {},\n\
-        status_desc: {},\n\
-        elapsed: {},\n\
-        title: {},\n\
-        keywords: {:?},\n\
-        description: {:?},\n\
-        linkedin_slug: {:?},\n\
-        security_headers: {},\n\
-        tls_version: {:?},\n\
-        ssl_cert_subject: {:?},\n\
-        ssl_cert_issuer: {:?},\n\
-        valid_from_millis: {:?},\n\
-        valid_to_millis: {:?},\n\
-        oids: {:?},\n\
-        is_mobile_friendly: {},\n\
-        timestamp: {}",
-        initial_domain,
-        final_domain,
-        ip_address,
-        reverse_dns_name,
-        status.as_u16(),
-        status_desc,
-        elapsed,
-        title,
-        keywords,
-        description,
-        linkedin_slug,
-        security_headers,
-        tls_version,
-        ssl_cert_subject,
-        ssl_cert_issuer,
-        valid_from_millis,
-        valid_to_millis,
-        oids,
-        is_mobile_friendly,
-        timestamp
+        "Inserting UrlRecord: initial_domain={}",
+        record.initial_domain
     );
 
     let result = sqlx::query(
         "INSERT INTO url_status (
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
             response_time, title, keywords, description, linkedin_slug, security_headers, tls_version, ssl_cert_subject,
-            ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, is_mobile_friendly, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, is_mobile_friendly, timestamp, redirect_chain
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(final_domain, timestamp) DO UPDATE SET
+            domain=excluded.domain,
+            ip_address=excluded.ip_address,
+            reverse_dns_name=excluded.reverse_dns_name,
+            status=excluded.status,
+            status_description=excluded.status_description,
+            response_time=excluded.response_time,
+            title=excluded.title,
+            keywords=excluded.keywords,
+            description=excluded.description,
+            linkedin_slug=excluded.linkedin_slug,
+            security_headers=excluded.security_headers,
+            tls_version=excluded.tls_version,
+            ssl_cert_subject=excluded.ssl_cert_subject,
+            ssl_cert_issuer=excluded.ssl_cert_issuer,
+            ssl_cert_valid_from=excluded.ssl_cert_valid_from,
+            ssl_cert_valid_to=excluded.ssl_cert_valid_to,
+            oids=excluded.oids,
+            is_mobile_friendly=excluded.is_mobile_friendly,
+            redirect_chain=excluded.redirect_chain"
     )
-        .bind(initial_domain)
-        .bind(final_domain)
-        .bind(ip_address)
-        .bind(reverse_dns_name)
-        .bind(status.as_u16())
-        .bind(status_desc)
-        .bind(elapsed)
-        .bind(title)
-        .bind(keywords)
-        .bind(description)
-        .bind(linkedin_slug)
-        .bind(security_headers)
-        .bind(tls_version)
-        .bind(ssl_cert_subject)
-        .bind(ssl_cert_issuer)
+        .bind(&record.initial_domain)
+        .bind(&record.final_domain)
+        .bind(&record.ip_address)
+        .bind(&record.reverse_dns_name)
+        .bind(record.status)
+        .bind(&record.status_desc)
+        .bind(record.response_time)
+        .bind(&record.title)
+        .bind(&record.keywords)
+        .bind(&record.description)
+        .bind(&record.linkedin_slug)
+        .bind(&record.security_headers)
+        .bind(&record.tls_version)
+        .bind(&record.ssl_cert_subject)
+        .bind(&record.ssl_cert_issuer)
         .bind(valid_from_millis)
         .bind(valid_to_millis)
-        .bind(oids)
-        .bind(is_mobile_friendly)
-        .bind(timestamp)
+        .bind(&record.oids)
+        .bind(record.is_mobile_friendly)
+        .bind(record.timestamp)
+        .bind(&record.redirect_chain)
         .execute(pool)
         .await;
 
-    log::debug!("SQL execution result: {:?}", result);
-
     match result {
-        Ok(_) => {
-            log::info!("Record successfully inserted into the database for domain: {}", initial_domain);
-            Ok(())
-        }
+        Ok(_) => Ok(()),
         Err(e) => {
-            log::error!("Failed to insert record into the database for domain {}: {}", initial_domain, e);
+            log::error!(
+                "Failed to insert UrlRecord for domain {}: {}",
+                record.initial_domain, e
+            );
             Err(DatabaseError::SqlError(e))
         }
     }
 }
+
+// removed legacy update_database in favor of UrlRecord
 
 #[cfg(test)]
 mod tests {
@@ -212,15 +169,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_db_pool() {
-        let temp_dir = tempdir().expect("Failed to create temp dir");
-        let db_path = temp_dir.path().join("test.db");
+        let _temp_dir = tempdir().expect("Failed to create temp dir");
 
         let pool = init_db_pool().await;
         assert!(pool.is_ok());
     }
 
     #[tokio::test]
-    async fn test_create_table() {
+    async fn test_run_migrations() {
         // Create a new temporary directory for each test run
         let temp_dir = tempdir().expect("Failed to create temp dir");
 
@@ -242,8 +198,8 @@ mod tests {
             .await
             .expect("Failed to set WAL mode for test database");
 
-        // Run the create_table function
-        let result = create_table(&pool).await;
+        // Run migrations
+        let result = run_migrations(&pool).await;
 
         // Ensure that the table was created successfully
         assert!(result.is_ok());
