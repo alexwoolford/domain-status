@@ -367,25 +367,48 @@ mod tests {
     #[test]
     fn test_extract_security_headers_basic() {
         let mut headers = create_header_map();
-        add_header(&mut headers, "Content-Security-Policy", "default-src 'self'");
+        add_header(
+            &mut headers,
+            "Content-Security-Policy",
+            "default-src 'self'",
+        );
         add_header(&mut headers, "X-Frame-Options", "DENY");
 
         let result = extract_security_headers(&headers);
         assert_eq!(result.len(), 2);
-        assert_eq!(result.get("Content-Security-Policy"), Some(&"default-src 'self'".to_string()));
+        assert_eq!(
+            result.get("Content-Security-Policy"),
+            Some(&"default-src 'self'".to_string())
+        );
         assert_eq!(result.get("X-Frame-Options"), Some(&"DENY".to_string()));
     }
 
     #[test]
     fn test_extract_security_headers_all_headers() {
         let mut headers = create_header_map();
-        add_header(&mut headers, "Content-Security-Policy", "default-src 'self'");
-        add_header(&mut headers, "Strict-Transport-Security", "max-age=31536000");
+        add_header(
+            &mut headers,
+            "Content-Security-Policy",
+            "default-src 'self'",
+        );
+        add_header(
+            &mut headers,
+            "Strict-Transport-Security",
+            "max-age=31536000",
+        );
         add_header(&mut headers, "X-Content-Type-Options", "nosniff");
         add_header(&mut headers, "X-Frame-Options", "SAMEORIGIN");
         add_header(&mut headers, "X-XSS-Protection", "1; mode=block");
-        add_header(&mut headers, "Referrer-Policy", "strict-origin-when-cross-origin");
-        add_header(&mut headers, "Permissions-Policy", "geolocation=(), microphone=()");
+        add_header(
+            &mut headers,
+            "Referrer-Policy",
+            "strict-origin-when-cross-origin",
+        );
+        add_header(
+            &mut headers,
+            "Permissions-Policy",
+            "geolocation=(), microphone=()",
+        );
 
         let result = extract_security_headers(&headers);
         assert_eq!(result.len(), 7);
@@ -422,7 +445,10 @@ mod tests {
         let result = extract_security_headers(&headers);
         // Current implementation only matches exact case "X-Frame-Options"
         // So lowercase "x-frame-options" won't match
-        assert_eq!(result.get("X-Frame-Options"), Some(&"SAMEORIGIN".to_string()));
+        assert_eq!(
+            result.get("X-Frame-Options"),
+            Some(&"SAMEORIGIN".to_string())
+        );
         assert!(!result.contains_key("x-frame-options"));
     }
 
@@ -456,14 +482,21 @@ mod tests {
         add_header(&mut headers, "Content-Security-Policy", csp);
 
         let result = extract_security_headers(&headers);
-        assert_eq!(result.get("Content-Security-Policy"), Some(&csp.to_string()));
+        assert_eq!(
+            result.get("Content-Security-Policy"),
+            Some(&csp.to_string())
+        );
     }
 
     #[test]
     fn test_extract_security_headers_hsts_with_include_subdomains() {
         // Test HSTS header with includeSubDomains (common real-world case)
         let mut headers = create_header_map();
-        add_header(&mut headers, "Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+        add_header(
+            &mut headers,
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        );
 
         let result = extract_security_headers(&headers);
         assert_eq!(
@@ -478,7 +511,7 @@ mod tests {
         // Absolute URL in Location header should be used as-is
         let base = Url::parse("https://example.com/path").unwrap();
         let absolute_location = "https://other.com/new-path";
-        
+
         let joined = base.join(absolute_location);
         assert!(joined.is_ok());
         assert_eq!(joined.unwrap().as_str(), "https://other.com/new-path");
@@ -489,7 +522,7 @@ mod tests {
         // Test relative URL joining (common redirect gotcha)
         let base = Url::parse("https://example.com/old/path").unwrap();
         let relative_location = "/new/path";
-        
+
         let joined = base.join(relative_location);
         assert!(joined.is_ok());
         assert_eq!(joined.unwrap().as_str(), "https://example.com/new/path");
@@ -500,7 +533,7 @@ mod tests {
         // Test relative path (not starting with /)
         let base = Url::parse("https://example.com/old/path").unwrap();
         let relative_location = "new/path";
-        
+
         let joined = base.join(relative_location);
         assert!(joined.is_ok());
         assert_eq!(joined.unwrap().as_str(), "https://example.com/old/new/path");
@@ -511,7 +544,7 @@ mod tests {
         // Test relative URL with query string
         let base = Url::parse("https://example.com/path").unwrap();
         let relative_location = "/new?param=value";
-        
+
         let joined = base.join(relative_location);
         assert!(joined.is_ok());
         let url = joined.unwrap();
@@ -524,7 +557,7 @@ mod tests {
         // Test relative URL with fragment
         let base = Url::parse("https://example.com/path").unwrap();
         let relative_location = "/new#section";
-        
+
         let joined = base.join(relative_location);
         assert!(joined.is_ok());
         let url = joined.unwrap();
@@ -537,10 +570,10 @@ mod tests {
         // Test malformed Location header (should fail parsing)
         let base = Url::parse("https://example.com/path").unwrap();
         let malformed_location = "not a valid url!!!";
-        
+
         let parsed_direct = Url::parse(malformed_location);
         assert!(parsed_direct.is_err());
-        
+
         // When direct parse fails, should try joining with base
         let joined = base.join(malformed_location);
         // This might succeed or fail depending on URL parser behavior
@@ -553,10 +586,10 @@ mod tests {
         // Edge case: empty Location header
         let base = Url::parse("https://example.com/path").unwrap();
         let empty_location = "";
-        
+
         let parsed_direct = Url::parse(empty_location);
         assert!(parsed_direct.is_err());
-        
+
         let joined = base.join(empty_location);
         // Empty string might be treated as relative path
         assert!(joined.is_ok() || joined.is_err());
@@ -566,7 +599,7 @@ mod tests {
     fn test_url_join_protocol_relative() {
         // Protocol-relative URLs (//example.com/path) - common redirect pattern
         let protocol_relative = "//other.com/new";
-        
+
         // Protocol-relative URLs should parse
         if let Ok(url) = Url::parse(protocol_relative) {
             assert_eq!(url.host_str(), Some("other.com"));
@@ -579,7 +612,7 @@ mod tests {
         // Redirect from HTTP to HTTPS (common security practice)
         let base = Url::parse("http://example.com/path").unwrap();
         let https_location = "https://example.com/secure";
-        
+
         let joined = base.join(https_location);
         assert!(joined.is_ok());
         let url = joined.unwrap();
