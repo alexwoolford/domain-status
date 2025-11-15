@@ -27,7 +27,16 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Extracts security headers from an HTTP response.
+/// Extracts security-related HTTP headers from a response.
+///
+/// Scans the header map for common security headers including:
+/// - Content-Security-Policy
+/// - Strict-Transport-Security
+/// - X-Content-Type-Options
+/// - X-Frame-Options
+/// - X-XSS-Protection
+/// - Referrer-Policy
+/// - Permissions-Policy
 ///
 /// # Arguments
 ///
@@ -35,7 +44,8 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 ///
 /// # Returns
 ///
-/// A HashMap of security header names to values.
+/// A map of header names to header values. Only headers that are present in the
+/// response are included in the map.
 pub fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
     let headers_list = [
         crate::config::HEADER_CONTENT_SECURITY_POLICY,

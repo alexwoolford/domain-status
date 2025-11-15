@@ -42,6 +42,10 @@ pub enum DatabaseError {
     SqlError(#[from] sqlx::Error),
 }
 
+/// Types of errors that can occur during URL processing.
+///
+/// This enum categorizes different error conditions for tracking and reporting purposes.
+/// Each variant represents a specific failure mode in the URL checking pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
 pub enum ErrorType {
     HttpRequestBuilderError,
@@ -83,6 +87,14 @@ impl ErrorType {
     }
 }
 
+/// Thread-safe error statistics tracker.
+///
+/// Tracks the count of each error type using atomic counters, allowing concurrent
+/// access from multiple tasks. All error types are initialized to zero on creation.
+///
+/// # Thread Safety
+///
+/// This struct is thread-safe and can be shared across multiple tasks using `Arc`.
 pub struct ErrorStats {
     errors: HashMap<ErrorType, AtomicUsize>,
 }
@@ -117,6 +129,18 @@ impl ErrorStats {
     }
 }
 
+/// Dynamic rate limiter that adjusts backoff based on error rate.
+///
+/// Monitors the error rate and automatically applies backoff delays when the error
+/// rate exceeds a configured threshold. This helps prevent overwhelming systems
+/// during error conditions.
+///
+/// # Behavior
+///
+/// - Tracks total operations and errors
+/// - Calculates error rate periodically (every `LOGGING_INTERVAL` operations)
+/// - Applies exponential backoff when error rate exceeds threshold
+/// - Backoff duration is calculated as `error_rate / ERROR_RATE_BACKOFF_DIVISOR`
 #[derive(Clone)]
 pub struct ErrorRateLimiter {
     pub error_stats: Arc<ErrorStats>,
@@ -173,12 +197,32 @@ impl ErrorRateLimiter {
     }
 }
 
+/// Creates an exponential backoff retry strategy.
+///
+/// Returns a retry strategy configured with:
+/// - Initial delay: `RETRY_INITIAL_DELAY_MS` milliseconds
+/// - Backoff factor: `RETRY_FACTOR` (doubles delay each retry)
+/// - Maximum delay: `RETRY_MAX_DELAY_SECS` seconds
+///
+/// # Returns
+///
+/// An `ExponentialBackoff` strategy ready for use with `tokio_retry::Retry`.
 pub fn get_retry_strategy() -> ExponentialBackoff {
     ExponentialBackoff::from_millis(crate::config::RETRY_INITIAL_DELAY_MS)
         .factor(crate::config::RETRY_FACTOR) // Double the delay with each retry
         .max_delay(Duration::from_secs(crate::config::RETRY_MAX_DELAY_SECS)) // Maximum delay
 }
 
+/// Updates error statistics based on a `reqwest::Error`.
+///
+/// Analyzes the error and increments the appropriate `ErrorType` counter.
+/// Handles both HTTP status errors (e.g., 429 Too Many Requests) and network-level
+/// errors (timeouts, connection failures, etc.).
+///
+/// # Arguments
+///
+/// * `error_stats` - The error statistics tracker to update
+/// * `error` - The `reqwest::Error` to categorize and record
 pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
     let error_type = match error.status() {
         // When the error contains a status code, match on it

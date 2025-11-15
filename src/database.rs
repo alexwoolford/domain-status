@@ -13,7 +13,16 @@ use tempfile::tempdir;
 use crate::config::DB_PATH;
 use crate::error_handling::DatabaseError;
 
-/// Represents a single row to insert into `url_status`.
+/// Represents a complete URL status record for database insertion.
+///
+/// Contains all data extracted from a URL check including HTTP response details,
+/// HTML metadata, DNS information, TLS certificate data, and security headers.
+///
+/// # Database Schema
+///
+/// This struct maps directly to the `url_status` table. The `timestamp` field
+/// is stored as milliseconds since Unix epoch. All string fields that can be
+/// empty are stored as `TEXT NOT NULL` with empty strings as fallback.
 pub struct UrlRecord {
     pub initial_domain: String,
     pub final_domain: String,

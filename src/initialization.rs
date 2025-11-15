@@ -16,7 +16,23 @@ use colored::*;
 use log::LevelFilter;
 use rustls::crypto::{ring::default_provider, CryptoProvider};
 
-/// Initializes the logger for the application with the provided configuration.
+/// Initializes the logger with the specified level and format.
+///
+/// Configures `env_logger` with custom formatting. Supports both plain text
+/// (with colors and emojis) and JSON formats for structured logging.
+///
+/// # Arguments
+///
+/// * `level` - Minimum log level to display
+/// * `format` - Log format (Plain or Json)
+///
+/// # Returns
+///
+/// `Ok(())` if initialization succeeds, or an error if logger setup fails.
+///
+/// # Errors
+///
+/// Returns `InitializationError::LoggerError` if logger initialization fails.
 pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), InitializationError> {
     colored::control::set_override(true);
 
@@ -81,12 +97,42 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
     Ok(())
 }
 
-/// Initializes a semaphore with the specified count.
+/// Initializes a semaphore for controlling concurrency.
+///
+/// Creates a new semaphore with the specified permit count. This semaphore is used
+/// to limit the number of concurrent URL processing tasks.
+///
+/// # Arguments
+///
+/// * `count` - Maximum number of concurrent operations allowed
+///
+/// # Returns
+///
+/// An `Arc<Semaphore>` that can be shared across multiple tasks.
 pub fn init_semaphore(count: usize) -> Arc<Semaphore> {
     Arc::new(Semaphore::new(count))
 }
 
 /// Initializes the HTTP client with default settings.
+///
+/// Creates a `reqwest::Client` configured with:
+/// - User-Agent header from options
+/// - Timeout from options
+/// - Redirect following enabled (up to 10 hops)
+/// - HTTP/2 support enabled
+/// - Rustls TLS backend (no native TLS)
+///
+/// # Arguments
+///
+/// * `opt` - Command-line options containing user-agent and timeout settings
+///
+/// # Returns
+///
+/// A configured HTTP client ready for making requests.
+///
+/// # Errors
+///
+/// Returns a `reqwest::Error` if client creation fails.
 pub async fn init_client(opt: &Opt) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     let client = ClientBuilder::new()
         .timeout(Duration::from_secs(opt.timeout_seconds))
@@ -96,7 +142,22 @@ pub async fn init_client(opt: &Opt) -> Result<Arc<reqwest::Client>, reqwest::Err
 }
 
 /// Initializes a shared HTTP client for redirect resolution.
-/// This client has redirects disabled so we can manually track the redirect chain.
+///
+/// Creates a `reqwest::Client` with redirects disabled so we can manually track
+/// the redirect chain. This allows us to capture the full redirect path including
+/// intermediate URLs.
+///
+/// # Arguments
+///
+/// * `opt` - Command-line options containing user-agent and timeout settings
+///
+/// # Returns
+///
+/// A configured HTTP client with redirects disabled.
+///
+/// # Errors
+///
+/// Returns a `reqwest::Error` if client creation fails.
 pub async fn init_redirect_client(opt: &Opt) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     let client = ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
@@ -106,18 +167,45 @@ pub async fn init_redirect_client(opt: &Opt) -> Result<Arc<reqwest::Client>, req
     Ok(Arc::new(client))
 }
 
-/// Initializes the TLD extractor.
+/// Initializes the Public Suffix List extractor.
+///
+/// Creates a new `publicsuffix::List` instance for extracting registrable domains
+/// from URLs. The list is loaded from the built-in data.
+///
+/// # Returns
+///
+/// An `Arc<List>` that can be shared across multiple tasks for domain extraction.
 pub fn init_extractor() -> Arc<List> {
     Arc::new(List::new())
 }
 
-/// Installs the default CryptoProvider required by rustls.
+/// Initializes the crypto provider for TLS operations.
+///
+/// Configures the global crypto provider for `rustls`. This must be called before
+/// any TLS connections are established. Uses the default provider which supports
+/// all standard TLS features.
 pub fn init_crypto_provider() {
     // The return value is ignored because reinstalling the provider is harmless
     let _ = CryptoProvider::install_default(default_provider());
 }
 
-/// Initializes a shared DNS resolver from system configuration.
+/// Initializes the DNS resolver for hostname lookups.
+///
+/// Attempts to create a DNS resolver using system configuration. If that fails,
+/// falls back to default configuration (Google DNS: 8.8.8.8, 8.8.4.4).
+///
+/// The resolver supports both forward lookups (hostname → IP) and reverse lookups
+/// (IP → hostname) using PTR records.
+///
+/// # Returns
+///
+/// A configured `TokioAsyncResolver` wrapped in `Arc` for sharing across tasks,
+/// or an error if initialization fails.
+///
+/// # Errors
+///
+/// Returns `InitializationError::DnsResolverError` if both system and fallback
+/// configurations fail (though fallback should rarely fail).
 pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
     // Try system configuration first
     match TokioAsyncResolver::tokio_from_system_conf() {
@@ -136,7 +224,18 @@ pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
     }
 }
 
-/// Simple token-bucket rate limiter
+/// Token-bucket rate limiter for controlling request rate.
+///
+/// Implements a token bucket algorithm where tokens are replenished at a fixed
+/// rate (requests per second). Each request consumes a token, and requests
+/// are blocked when no tokens are available.
+///
+/// # Behavior
+///
+/// - Tokens are replenished continuously at the specified rate
+/// - Burst capacity allows short bursts above the base rate
+/// - Uses a background task for token replenishment
+/// - Supports graceful shutdown via `CancellationToken`
 pub struct RateLimiter {
     permits: Arc<TokioSemaphore>,
     #[allow(dead_code)]
@@ -151,6 +250,21 @@ impl RateLimiter {
     }
 }
 
+/// Initializes a token-bucket rate limiter.
+///
+/// Creates a rate limiter that controls request rate using a token bucket algorithm.
+/// If `rps` is 0, rate limiting is disabled and `None` is returned.
+///
+/// # Arguments
+///
+/// * `rps` - Requests per second (0 disables rate limiting)
+/// * `burst` - Burst capacity (maximum tokens in bucket)
+///
+/// # Returns
+///
+/// A tuple of `(RateLimiter, CancellationToken)` if rate limiting is enabled,
+/// or `None` if disabled. The cancellation token can be used to gracefully shut
+/// down the background token replenishment task.
 pub fn init_rate_limiter(
     rps: u32,
     burst: usize,

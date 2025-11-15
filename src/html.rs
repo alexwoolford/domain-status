@@ -27,16 +27,20 @@ static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
         .expect("Failed to parse meta description selector - this is a bug")
 });
 
-/// Extracts the title from an HTML document.
+/// Extracts the page title from an HTML document.
+///
+/// Searches for the first `<title>` element and returns its text content, trimmed
+/// of whitespace. If no title is found, increments the error counter and returns
+/// an empty string.
 ///
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Error statistics tracker for recording extraction failures
 ///
 /// # Returns
 ///
-/// The page title, or an empty string if not found.
+/// The page title as a string, or an empty string if not found.
 pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
     match document.select(&TITLE_SELECTOR).next() {
         Some(element) => element.inner_html().trim().to_string(),
@@ -49,14 +53,18 @@ pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
 
 /// Extracts meta keywords from an HTML document.
 ///
+/// Searches for a `<meta name="keywords">` element and parses its `content` attribute
+/// as a comma-separated list of keywords. Returns `None` if the meta tag is not found
+/// or if the content is empty.
+///
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Error statistics tracker (currently unused for this function)
 ///
 /// # Returns
 ///
-/// A vector of keyword strings, or `None` if no keywords are found.
+/// A vector of keyword strings, or `None` if no keywords meta tag is found.
 pub fn extract_meta_keywords(document: &Html, error_stats: &ErrorStats) -> Option<Vec<String>> {
     let meta_keywords = document
         .select(&META_KEYWORDS_SELECTOR)
@@ -87,14 +95,17 @@ pub fn extract_meta_keywords(document: &Html, error_stats: &ErrorStats) -> Optio
 
 /// Extracts the meta description from an HTML document.
 ///
+/// Searches for a `<meta name="description">` element and returns its `content`
+/// attribute value, trimmed of whitespace. Returns `None` if the meta tag is not found.
+///
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Error statistics tracker (currently unused for this function)
 ///
 /// # Returns
 ///
-/// The meta description string, or `None` if not found.
+/// The meta description as a string, or `None` if not found.
 pub fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Option<String> {
     let meta_description = document
         .select(&META_DESCRIPTION_SELECTOR)
@@ -113,12 +124,16 @@ pub fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Op
     meta_description
 }
 
-/// Extracts the LinkedIn company slug from LinkedIn URLs found in the HTML.
+/// Extracts the LinkedIn company slug from an HTML document.
+///
+/// Searches for anchor tags (`<a>`) with `href` attributes matching the LinkedIn
+/// company URL pattern (`https://www.linkedin.com/company/{slug}`) and extracts
+/// the slug portion. Returns `None` if no matching link is found.
 ///
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Error statistics tracker for recording extraction failures
 ///
 /// # Returns
 ///
