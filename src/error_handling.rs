@@ -213,3 +213,84 @@ pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error
 
     error_stats.increment(error_type);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_stats_initialization() {
+        let stats = ErrorStats::new();
+        // All error types should be initialized to 0
+        for error_type in ErrorType::iter() {
+            assert_eq!(stats.get_count(error_type), 0);
+        }
+    }
+
+    #[test]
+    fn test_error_stats_increment() {
+        let stats = ErrorStats::new();
+        stats.increment(ErrorType::TitleExtractError);
+        assert_eq!(stats.get_count(ErrorType::TitleExtractError), 1);
+        assert_eq!(stats.get_count(ErrorType::KeywordExtractError), 0);
+    }
+
+    #[test]
+    fn test_error_stats_multiple_increments() {
+        let stats = ErrorStats::new();
+        stats.increment(ErrorType::TitleExtractError);
+        stats.increment(ErrorType::TitleExtractError);
+        stats.increment(ErrorType::TitleExtractError);
+        assert_eq!(stats.get_count(ErrorType::TitleExtractError), 3);
+    }
+
+    #[test]
+    fn test_error_stats_total_count() {
+        let stats = ErrorStats::new();
+        stats.increment(ErrorType::TitleExtractError);
+        stats.increment(ErrorType::KeywordExtractError);
+        stats.increment(ErrorType::TitleExtractError);
+        assert_eq!(stats.total_error_count(), 3);
+    }
+
+    #[test]
+    fn test_error_rate_limiter_calculate_error_rate_zero_operations() {
+        let stats = Arc::new(ErrorStats::new());
+        let limiter = ErrorRateLimiter::new(stats, 60.0);
+        // With zero operations, error rate should be 0
+        assert_eq!(limiter.calculate_error_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_error_rate_limiter_calculate_error_rate_no_errors() {
+        let stats = Arc::new(ErrorStats::new());
+        let limiter = ErrorRateLimiter::new(stats, 60.0);
+        // Simulate operations without errors
+        limiter.operation_count.store(100, Ordering::SeqCst);
+        assert_eq!(limiter.calculate_error_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_error_rate_limiter_calculate_error_rate_with_errors() {
+        let stats = Arc::new(ErrorStats::new());
+        let limiter = ErrorRateLimiter::new(stats.clone(), 60.0);
+        // 10 errors out of 100 operations = 10%
+        limiter.operation_count.store(100, Ordering::SeqCst);
+        for _ in 0..10 {
+            stats.increment(ErrorType::TitleExtractError);
+        }
+        assert_eq!(limiter.calculate_error_rate(), 10.0);
+    }
+
+    #[test]
+    fn test_error_rate_limiter_calculate_error_rate_100_percent() {
+        let stats = Arc::new(ErrorStats::new());
+        let limiter = ErrorRateLimiter::new(stats.clone(), 60.0);
+        // 50 errors out of 50 operations = 100%
+        limiter.operation_count.store(50, Ordering::SeqCst);
+        for _ in 0..50 {
+            stats.increment(ErrorType::TitleExtractError);
+        }
+        assert_eq!(limiter.calculate_error_rate(), 100.0);
+    }
+}
