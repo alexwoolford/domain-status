@@ -1,17 +1,31 @@
-use lazy_static::lazy_static;
 use regex::Regex;
 use scraper::{Html, Selector};
+use std::sync::LazyLock;
 
 use crate::error_handling::{ErrorStats, ErrorType};
 
-lazy_static! {
-    static ref TITLE_SELECTOR: Selector =
-        Selector::parse("title").expect("Failed to parse title selector - this is a bug");
-    static ref META_KEYWORDS_SELECTOR: Selector = Selector::parse("meta[name='keywords']")
-        .expect("Failed to parse meta keywords selector - this is a bug");
-    static ref META_DESCRIPTION_SELECTOR: Selector = Selector::parse("meta[name='description']")
-        .expect("Failed to parse meta description selector - this is a bug");
-}
+// CSS selector strings
+const TITLE_SELECTOR_STR: &str = "title";
+const META_KEYWORDS_SELECTOR_STR: &str = "meta[name='keywords']";
+const META_DESCRIPTION_SELECTOR_STR: &str = "meta[name='description']";
+const LINKEDIN_ANCHOR_SELECTOR_STR: &str = "a[href]";
+
+// Regex patterns
+const LINKEDIN_URL_PATTERN: &str = r"https?://www\.linkedin\.com/company/([^/?#]+)";
+
+static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(TITLE_SELECTOR_STR).expect("Failed to parse title selector - this is a bug")
+});
+
+static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(META_KEYWORDS_SELECTOR_STR)
+        .expect("Failed to parse meta keywords selector - this is a bug")
+});
+
+static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(META_DESCRIPTION_SELECTOR_STR)
+        .expect("Failed to parse meta description selector - this is a bug")
+});
 
 /// Extracts the title from an HTML document.
 ///
@@ -110,7 +124,7 @@ pub fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Op
 ///
 /// The LinkedIn company slug, or `None` if not found.
 pub fn extract_linkedin_slug(document: &Html, error_stats: &ErrorStats) -> Option<String> {
-    let selector = match Selector::parse("a[href]") {
+    let selector = match Selector::parse(LINKEDIN_ANCHOR_SELECTOR_STR) {
         Ok(s) => s,
         Err(e) => {
             log::error!("Failed to parse LinkedIn selector: {e}");
@@ -118,7 +132,7 @@ pub fn extract_linkedin_slug(document: &Html, error_stats: &ErrorStats) -> Optio
             return None;
         }
     };
-    let re = match Regex::new(r"https?://www\.linkedin\.com/company/([^/?#]+)") {
+    let re = match Regex::new(LINKEDIN_URL_PATTERN) {
         Ok(r) => r,
         Err(e) => {
             log::error!("Failed to compile LinkedIn regex: {e}");

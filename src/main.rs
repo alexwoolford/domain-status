@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
 
     let completed_urls = Arc::new(AtomicUsize::new(0));
 
-    let url_regex = Regex::new(r"^https?://")
+    let url_regex = Regex::new(crate::config::URL_SCHEME_PATTERN)
         .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
 
     for line in reader.lines() {

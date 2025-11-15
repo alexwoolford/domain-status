@@ -10,6 +10,18 @@ pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DB_PATH: &str = "./url_checker.db";
 
+// URL validation
+pub const URL_SCHEME_PATTERN: &str = r"^https?://";
+
+// Security header names
+pub const HEADER_CONTENT_SECURITY_POLICY: &str = "Content-Security-Policy";
+pub const HEADER_STRICT_TRANSPORT_SECURITY: &str = "Strict-Transport-Security";
+pub const HEADER_X_CONTENT_TYPE_OPTIONS: &str = "X-Content-Type-Options";
+pub const HEADER_X_FRAME_OPTIONS: &str = "X-Frame-Options";
+pub const HEADER_X_XSS_PROTECTION: &str = "X-XSS-Protection";
+pub const HEADER_REFERRER_POLICY: &str = "Referrer-Policy";
+pub const HEADER_PERMISSIONS_POLICY: &str = "Permissions-Policy";
+
 // Response and body size limits
 /// Maximum response body size in bytes (2MB)
 /// Responses larger than this are skipped to prevent memory exhaustion

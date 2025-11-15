@@ -38,13 +38,13 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 /// A HashMap of security header names to values.
 pub fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
     let headers_list = [
-        "Content-Security-Policy",
-        "Strict-Transport-Security",
-        "X-Content-Type-Options",
-        "X-Frame-Options",
-        "X-XSS-Protection",
-        "Referrer-Policy",
-        "Permissions-Policy",
+        crate::config::HEADER_CONTENT_SECURITY_POLICY,
+        crate::config::HEADER_STRICT_TRANSPORT_SECURITY,
+        crate::config::HEADER_X_CONTENT_TYPE_OPTIONS,
+        crate::config::HEADER_X_FRAME_OPTIONS,
+        crate::config::HEADER_X_XSS_PROTECTION,
+        crate::config::HEADER_REFERRER_POLICY,
+        crate::config::HEADER_PERMISSIONS_POLICY,
     ];
 
     headers_list
