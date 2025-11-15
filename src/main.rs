@@ -24,8 +24,14 @@ use crate::error_handling::{ErrorRateLimiter, ErrorStats, ErrorType};
 
 mod config;
 mod database;
+mod dns;
+mod domain;
 mod error_handling;
+mod html;
+mod http;
 mod initialization;
+mod models;
+mod tls;
 mod utils;
 
 fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize>) {
