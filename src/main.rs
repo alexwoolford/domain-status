@@ -1,5 +1,6 @@
 // main.rs
 use anyhow::{Context, Result};
+use chrono::Utc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -26,11 +27,12 @@ mod database;
 mod dns;
 mod domain;
 mod error_handling;
-mod html;
-mod http;
+mod fetch;
+mod fingerprint;
 mod initialization;
 mod models;
-mod tech_detection;
+mod parse;
+mod storage;
 mod tls;
 mod utils;
 
@@ -106,15 +108,30 @@ async fn main() -> Result<()> {
         .context("Failed to run database migrations")?;
 
     // Initialize technology fingerprint ruleset
-    tech_detection::init_ruleset(opt.fingerprints.as_deref(), None)
+    let ruleset = fingerprint::init_ruleset(opt.fingerprints.as_deref(), None)
         .await
         .context("Failed to initialize fingerprint ruleset")?;
 
+    // Generate run_id and start_time for time-series tracking
+    // Format: run_<timestamp_millis> for human-readable, sortable IDs
+    let start_time_epoch = Utc::now().timestamp_millis();
+    let run_id = format!("run_{}", start_time_epoch);
+    info!("Starting run: {}", run_id);
+
+    // Store run metadata (fingerprints_source and fingerprints_version are run-level, not per-URL)
+    let fingerprints_source = Some(ruleset.metadata.source.as_str());
+    let fingerprints_version = Some(ruleset.metadata.version.as_str());
+    database::insert_run_metadata(&pool, &run_id, start_time_epoch, fingerprints_source, fingerprints_version)
+        .await
+        .context("Failed to insert run metadata")?;
+
+    // Start time for measuring elapsed time during processing
     let start_time = std::time::Instant::now();
 
     let error_stats = Arc::new(ErrorStats::new());
 
     let completed_urls = Arc::new(AtomicUsize::new(0));
+    let total_urls_attempted = Arc::new(AtomicUsize::new(0));
 
     let url_regex = Regex::new(crate::config::URL_SCHEME_PATTERN)
         .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
@@ -151,6 +168,9 @@ async fn main() -> Result<()> {
             }
         }
 
+        // Increment total URLs counter for every URL that passes validation
+        total_urls_attempted.fetch_add(1, Ordering::SeqCst);
+
         let permit = match Arc::clone(&semaphore).acquire_owned().await {
             Ok(permit) => permit,
             Err(_) => {
@@ -171,6 +191,9 @@ async fn main() -> Result<()> {
 
         // Wrap URL in Arc to avoid cloning on retries
         let url_arc = Arc::new(url);
+
+        // Clone run_id for this task
+        let run_id_clone = run_id.clone();
 
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         tasks.push(tokio::spawn(async move {
@@ -193,6 +216,7 @@ async fn main() -> Result<()> {
                     extractor_clone,
                     resolver_clone,
                     error_stats_clone.clone(),
+                    Some(run_id_clone),
                 ),
             )
             .await;
@@ -235,6 +259,7 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Wait for all tasks to complete
     while (tasks.next().await).is_some() {}
 
     // Signal logging task to stop and await it
@@ -248,6 +273,22 @@ async fn main() -> Result<()> {
 
     // Log one final time before printing the error summary
     log_progress(start_time, &completed_urls);
+
+    // Calculate run statistics
+    // All tasks have completed at this point, so counters should be final
+    let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
+    let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
+    let failed_urls = total_urls - successful_urls;
+    
+    info!(
+        "Run statistics: total={}, successful={}, failed={}",
+        total_urls, successful_urls, failed_urls
+    );
+
+    // Update run statistics in database
+    database::update_run_stats(&pool, &run_id, total_urls, successful_urls, failed_urls)
+        .await
+        .context("Failed to update run statistics")?;
 
     // Print the error counts
     info!("Error Counts:");
