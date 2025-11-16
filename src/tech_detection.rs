@@ -776,10 +776,8 @@ fn matches_technology(
     }
 
     // Match URL
-    if !tech.url.is_empty() {
-        if matches_pattern(&tech.url, url) {
-            return true;
-        }
+    if !tech.url.is_empty() && matches_pattern(&tech.url, url) {
+        return true;
     }
 
     false
@@ -838,6 +836,7 @@ mod tests {
     use super::*;
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
+    #[allow(dead_code)]
     fn create_test_headers() -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
