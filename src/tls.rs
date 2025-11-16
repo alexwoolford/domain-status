@@ -108,6 +108,13 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
         .map(|v| format!("{v:?}"))
         .unwrap_or_else(|| "Unknown".to_string());
 
+    // Extract negotiated cipher suite
+    let cipher_suite = tls_stream
+        .get_ref()
+        .1
+        .negotiated_cipher_suite()
+        .map(|cs| format!("{:?}", cs.suite()));
+
     let request = format!(
         "GET / HTTP/1.1\r\n\
          Host: {domain}\r\n\
@@ -128,6 +135,24 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
 
             let subject = cert.tbs_certificate.subject.to_string();
             let issuer = cert.tbs_certificate.issuer.to_string();
+
+            // Extract public key algorithm from certificate
+            let key_algorithm = {
+                let oid_str = tbs_cert.subject_pki.algorithm.algorithm.to_string();
+                // Map OID to algorithm name
+                if oid_str.contains("1.2.840.113549.1.1.1") {
+                    "RSA".to_string()
+                } else if oid_str.contains("1.2.840.10045.2.1") {
+                    "ECDSA".to_string()
+                } else if oid_str.contains("1.3.101.112") {
+                    "Ed25519".to_string()
+                } else if oid_str.contains("1.3.101.113") {
+                    "Ed448".to_string()
+                } else {
+                    // Return OID if unknown
+                    oid_str
+                }
+            };
 
             let oids = extract_certificate_policies(&cert).unwrap_or_else(|_| Vec::new());
             let unique_oids: HashSet<String> = oids.into_iter().collect();
@@ -158,6 +183,8 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 valid_from: Some(valid_from),
                 valid_to: Some(valid_to),
                 oids: Some(serialized_oids),
+                cipher_suite,
+                key_algorithm: Some(key_algorithm),
             });
         }
     }

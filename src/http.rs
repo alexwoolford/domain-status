@@ -9,7 +9,10 @@ use std::collections::HashMap;
 
 use crate::config::MAX_REDIRECT_HOPS;
 use crate::database::{insert_url_record, UrlRecord};
-use crate::dns::{resolve_host_to_ip, reverse_dns_lookup};
+use crate::dns::{
+    extract_dmarc_record, extract_spf_record, lookup_mx_records, lookup_ns_records,
+    lookup_txt_records, resolve_host_to_ip, reverse_dns_lookup,
+};
 use crate::domain::extract_domain;
 use crate::error_handling::{update_error_stats, ErrorStats};
 use crate::html::{
@@ -158,7 +161,7 @@ pub async fn handle_response(
         .host_str()
         .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
 
-    let (tls_version, subject, issuer, valid_from, valid_to, oids) =
+    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
         if final_url.starts_with("https://") {
             match get_ssl_certificate_info(host.to_string()).await {
                 Ok(cert_info) => (
@@ -168,14 +171,16 @@ pub async fn handle_response(
                     cert_info.valid_from,
                     cert_info.valid_to,
                     cert_info.oids,
+                    cert_info.cipher_suite,
+                    cert_info.key_algorithm,
                 ),
                 Err(e) => {
                     log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-                    (None, None, None, None, None, None)
+                    (None, None, None, None, None, None, None, None)
                 }
             }
         } else {
-            (None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None)
         };
 
     debug!("Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}");
@@ -241,6 +246,77 @@ pub async fn handle_response(
 
     let reverse_dns_name = reverse_dns_lookup(&ip_address, resolver).await?;
     debug!("Resolved reverse DNS name: {reverse_dns_name:?}");
+
+    // Query additional DNS records (NS, TXT, MX)
+    // These queries are done in parallel for efficiency
+    let (ns_result, txt_result, mx_result) = tokio::join!(
+        lookup_ns_records(&final_domain, resolver),
+        lookup_txt_records(&final_domain, resolver),
+        lookup_mx_records(&final_domain, resolver)
+    );
+
+    let nameservers = match ns_result {
+        Ok(ns) if !ns.is_empty() => {
+            debug!("Found {} nameservers for {}", ns.len(), final_domain);
+            Some(serialize_json(&ns))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("Failed to lookup NS records for {final_domain}: {e}");
+            None
+        }
+    };
+
+    // Extract TXT records for both JSON storage and SPF/DMARC extraction
+    let txt_for_extraction = txt_result.as_ref().ok().cloned().unwrap_or_default();
+
+    let txt_records = match txt_result {
+        Ok(txt) if !txt.is_empty() => {
+            debug!("Found {} TXT records for {}", txt.len(), final_domain);
+            Some(serialize_json(&txt))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("Failed to lookup TXT records for {final_domain}: {e}");
+            None
+        }
+    };
+
+    // Extract SPF and DMARC from TXT records
+    let spf_record = extract_spf_record(&txt_for_extraction);
+    let dmarc_record = extract_dmarc_record(&txt_for_extraction);
+
+    // Also check _dmarc subdomain for DMARC
+    let dmarc_record = if dmarc_record.is_none() {
+        match lookup_txt_records(&format!("_dmarc.{}", final_domain), resolver).await {
+            Ok(dmarc_txt) => extract_dmarc_record(&dmarc_txt),
+            Err(_) => None,
+        }
+    } else {
+        dmarc_record
+    };
+
+    let mx_records = match mx_result {
+        Ok(mx) if !mx.is_empty() => {
+            debug!("Found {} MX records for {}", mx.len(), final_domain);
+            // Store as JSON array of objects: [{"priority": 10, "hostname": "mail.example.com"}, ...]
+            let mx_json: Vec<serde_json::Value> = mx
+                .into_iter()
+                .map(|(priority, hostname)| {
+                    serde_json::json!({
+                        "priority": priority,
+                        "hostname": hostname
+                    })
+                })
+                .collect();
+            Some(serialize_json(&mx_json))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("Failed to lookup MX records for {final_domain}: {e}");
+            None
+        }
+    };
 
     let security_headers = extract_security_headers(&headers);
     let security_headers_json = serialize_json(&security_headers);
@@ -308,6 +384,13 @@ pub async fn handle_response(
         technologies,
         fingerprints_source,
         fingerprints_version,
+        nameservers,
+        txt_records,
+        mx_records,
+        spf_record,
+        dmarc_record,
+        cipher_suite,
+        key_algorithm,
     };
 
     let update_result = insert_url_record(pool, &record).await;

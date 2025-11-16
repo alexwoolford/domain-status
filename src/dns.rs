@@ -1,4 +1,5 @@
 use anyhow::{Error, Result};
+use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::TokioAsyncResolver;
 
 /// Resolves a hostname to an IP address using DNS.
@@ -52,4 +53,157 @@ pub async fn reverse_dns_lookup(
             Ok(None)
         }
     }
+}
+
+/// Queries NS (nameserver) records for a domain.
+///
+/// # Arguments
+///
+/// * `domain` - The domain to query
+/// * `resolver` - The DNS resolver instance
+///
+/// # Returns
+///
+/// A vector of nameserver hostnames, or an empty vector if the query fails.
+pub async fn lookup_ns_records(
+    domain: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<Vec<String>, Error> {
+    match resolver.lookup(domain, RecordType::NS).await {
+        Ok(lookup) => {
+            let nameservers: Vec<String> = lookup
+                .iter()
+                .filter_map(|rdata| {
+                    if let RData::NS(ns) = rdata {
+                        Some(ns.to_utf8())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(nameservers)
+        }
+        Err(e) => {
+            log::warn!("Failed to lookup NS records for {domain}: {e}");
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Queries TXT records for a domain.
+///
+/// TXT records commonly contain SPF, DMARC, DKIM, and other policy records.
+///
+/// # Arguments
+///
+/// * `domain` - The domain to query
+/// * `resolver` - The DNS resolver instance
+///
+/// # Returns
+///
+/// A vector of TXT record strings, or an empty vector if the query fails.
+pub async fn lookup_txt_records(
+    domain: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<Vec<String>, Error> {
+    match resolver.lookup(domain, RecordType::TXT).await {
+        Ok(lookup) => {
+            let txt_records: Vec<String> = lookup
+                .iter()
+                .filter_map(|rdata| {
+                    if let RData::TXT(txt) = rdata {
+                        // TXT records can be split across multiple byte slices, join them
+                        // Convert each byte slice to a string, handling UTF-8
+                        let parts: Result<Vec<String>, _> = txt
+                            .iter()
+                            .map(|bytes| String::from_utf8(bytes.to_vec()))
+                            .collect();
+                        parts.ok().map(|parts| parts.join(""))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(txt_records)
+        }
+        Err(e) => {
+            log::warn!("Failed to lookup TXT records for {domain}: {e}");
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Queries MX (mail exchange) records for a domain.
+///
+/// # Arguments
+///
+/// * `domain` - The domain to query
+/// * `resolver` - The DNS resolver instance
+///
+/// # Returns
+///
+/// A vector of tuples (priority, hostname), sorted by priority (lower is higher priority),
+/// or an empty vector if the query fails.
+pub async fn lookup_mx_records(
+    domain: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<Vec<(u16, String)>, Error> {
+    match resolver.lookup(domain, RecordType::MX).await {
+        Ok(lookup) => {
+            let mut mx_records: Vec<(u16, String)> = lookup
+                .iter()
+                .filter_map(|rdata| {
+                    if let RData::MX(mx) = rdata {
+                        Some((mx.preference(), mx.exchange().to_utf8()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            // Sort by priority (lower preference = higher priority)
+            mx_records.sort_by_key(|(priority, _)| *priority);
+            Ok(mx_records)
+        }
+        Err(e) => {
+            log::warn!("Failed to lookup MX records for {domain}: {e}");
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Extracts SPF record from TXT records.
+///
+/// SPF records start with "v=spf1".
+///
+/// # Arguments
+///
+/// * `txt_records` - Vector of TXT record strings
+///
+/// # Returns
+///
+/// The first SPF record found, or `None` if no SPF record exists.
+pub fn extract_spf_record(txt_records: &[String]) -> Option<String> {
+    txt_records
+        .iter()
+        .find(|txt| txt.trim().starts_with("v=spf1"))
+        .map(|s| s.trim().to_string())
+}
+
+/// Extracts DMARC record from TXT records.
+///
+/// DMARC records are typically at `_dmarc.<domain>` but we check the provided records.
+/// DMARC records start with "v=DMARC1".
+///
+/// # Arguments
+///
+/// * `txt_records` - Vector of TXT record strings
+///
+/// # Returns
+///
+/// The first DMARC record found, or `None` if no DMARC record exists.
+pub fn extract_dmarc_record(txt_records: &[String]) -> Option<String> {
+    txt_records
+        .iter()
+        .find(|txt| txt.trim().starts_with("v=DMARC1"))
+        .map(|s| s.trim().to_string())
 }

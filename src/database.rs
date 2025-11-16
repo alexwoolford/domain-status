@@ -48,6 +48,13 @@ pub struct UrlRecord {
     pub technologies: Option<String>,
     pub fingerprints_source: Option<String>,
     pub fingerprints_version: Option<String>,
+    pub nameservers: Option<String>,
+    pub txt_records: Option<String>,
+    pub mx_records: Option<String>,
+    pub spf_record: Option<String>,
+    pub dmarc_record: Option<String>,
+    pub cipher_suite: Option<String>,
+    pub key_algorithm: Option<String>,
 }
 
 pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
@@ -115,8 +122,9 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
             response_time, title, keywords, description, linkedin_slug, security_headers, tls_version, ssl_cert_subject,
             ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, is_mobile_friendly, timestamp, redirect_chain, technologies,
-            fingerprints_source, fingerprints_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            fingerprints_source, fingerprints_version, nameservers, txt_records, mx_records, spf_record, dmarc_record,
+            cipher_suite, key_algorithm
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(final_domain, timestamp) DO UPDATE SET
             domain=excluded.domain,
             ip_address=excluded.ip_address,
@@ -139,7 +147,14 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
             redirect_chain=excluded.redirect_chain,
             technologies=excluded.technologies,
             fingerprints_source=excluded.fingerprints_source,
-            fingerprints_version=excluded.fingerprints_version"
+            fingerprints_version=excluded.fingerprints_version,
+            nameservers=excluded.nameservers,
+            txt_records=excluded.txt_records,
+            mx_records=excluded.mx_records,
+            spf_record=excluded.spf_record,
+            dmarc_record=excluded.dmarc_record,
+            cipher_suite=excluded.cipher_suite,
+            key_algorithm=excluded.key_algorithm"
     )
         .bind(&record.initial_domain)
         .bind(&record.final_domain)
@@ -165,6 +180,13 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
         .bind(&record.technologies)
         .bind(&record.fingerprints_source)
         .bind(&record.fingerprints_version)
+        .bind(&record.nameservers)
+        .bind(&record.txt_records)
+        .bind(&record.mx_records)
+        .bind(&record.spf_record)
+        .bind(&record.dmarc_record)
+        .bind(&record.cipher_suite)
+        .bind(&record.key_algorithm)
         .execute(pool)
         .await;
 
