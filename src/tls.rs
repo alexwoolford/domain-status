@@ -83,20 +83,46 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
     };
 
     log::info!("Attempting to connect to domain: {domain}");
-    let sock = match TcpStream::connect((domain.clone(), 443)).await {
-        Ok(sock) => sock,
-        Err(e) => {
+    let sock = match tokio::time::timeout(
+        std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
+        TcpStream::connect((domain.clone(), 443)),
+    )
+    .await
+    {
+        Ok(Ok(sock)) => sock,
+        Ok(Err(e)) => {
             error!("Failed to connect to {domain}:443 - {e}");
             return Err(anyhow::anyhow!("Failed to connect to {}:443", domain));
+        }
+        Err(_) => {
+            error!("TCP connection timeout for {domain}:443");
+            return Err(anyhow::anyhow!(
+                "TCP connection timeout for {}:443 ({}s)",
+                domain,
+                crate::config::TCP_CONNECT_TIMEOUT_SECS
+            ));
         }
     };
 
     let connector = TlsConnector::from(Arc::new(config));
-    let mut tls_stream = match connector.connect(server_name, sock).await {
-        Ok(stream) => stream,
-        Err(e) => {
+    let mut tls_stream = match tokio::time::timeout(
+        std::time::Duration::from_secs(crate::config::TLS_HANDSHAKE_TIMEOUT_SECS),
+        connector.connect(server_name, sock),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
             error!("TLS connection failed for {domain}: {e}");
             return Err(anyhow::anyhow!("TLS connection failed for {}", domain));
+        }
+        Err(_) => {
+            error!("TLS handshake timeout for {domain}");
+            return Err(anyhow::anyhow!(
+                "TLS handshake timeout for {} ({}s)",
+                domain,
+                crate::config::TLS_HANDSHAKE_TIMEOUT_SECS
+            ));
         }
     };
 

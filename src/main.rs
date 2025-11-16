@@ -1,7 +1,5 @@
 // main.rs
 use anyhow::{Context, Result};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -12,6 +10,7 @@ use futures::StreamExt;
 use log::info;
 use log::warn;
 use regex::Regex;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
 use config::*;
@@ -20,7 +19,7 @@ use initialization::*;
 use strum::IntoEnumIterator;
 use utils::*;
 
-use crate::error_handling::{ErrorRateLimiter, ErrorStats, ErrorType};
+use crate::error_handling::{ErrorStats, ErrorType};
 
 mod config;
 mod database;
@@ -64,8 +63,11 @@ async fn main() -> Result<()> {
     init_logger_with(log_level.into(), log_format).context("Failed to initialize logger")?;
     init_crypto_provider();
 
-    let file = File::open(&opt.file).context("Failed to open input file")?;
+    let file = tokio::fs::File::open(&opt.file)
+        .await
+        .context("Failed to open input file")?;
     let reader = BufReader::new(file);
+    let mut lines = reader.lines();
 
     let mut tasks = FuturesUnordered::new();
 
@@ -112,22 +114,22 @@ async fn main() -> Result<()> {
 
     let error_stats = Arc::new(ErrorStats::new());
 
-    let rate_limiter = ErrorRateLimiter::new(error_stats.clone(), opt.error_rate);
-
     let completed_urls = Arc::new(AtomicUsize::new(0));
 
     let url_regex = Regex::new(crate::config::URL_SCHEME_PATTERN)
         .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
 
-    for line in reader.lines() {
-        let url = match line {
-            Ok(line) => {
+    loop {
+        let line_result = lines.next_line().await;
+        let url = match line_result {
+            Ok(Some(line)) => {
                 if !url_regex.is_match(&line) {
                     format!("https://{line}")
                 } else {
                     line
                 }
             }
+            Ok(None) => break, // EOF reached
             Err(e) => {
                 warn!("Failed to read line from input file: {e}");
                 continue;
@@ -149,8 +151,6 @@ async fn main() -> Result<()> {
             }
         }
 
-        rate_limiter.allow_operation().await;
-
         let permit = match Arc::clone(&semaphore).acquire_owned().await {
             Ok(permit) => permit,
             Err(_) => {
@@ -169,6 +169,9 @@ async fn main() -> Result<()> {
 
         let error_stats_clone = error_stats.clone();
 
+        // Wrap URL in Arc to avoid cloning on retries
+        let url_arc = Arc::new(url);
+
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
@@ -177,10 +180,13 @@ async fn main() -> Result<()> {
                 limiter.acquire().await;
             }
 
+            // Clone Arc for error messages (cheap - just pointer increment)
+            let url_for_logging = Arc::clone(&url_arc);
+
             let result = tokio::time::timeout(
                 URL_PROCESSING_TIMEOUT,
                 process_url(
-                    url.clone(),
+                    url_arc,
                     client_clone,
                     redirect_client_clone,
                     pool_clone,
@@ -196,11 +202,11 @@ async fn main() -> Result<()> {
                     completed_urls_clone.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(Err(e)) => {
-                    log::warn!("Failed to process URL {url}: {e}");
+                    log::warn!("Failed to process URL {url_for_logging}: {e}");
                     error_stats_clone.increment(ErrorType::HttpRequestOtherError);
                 }
                 Err(_) => {
-                    log::warn!("Timeout processing URL {url}");
+                    log::warn!("Timeout processing URL {url_for_logging}");
                     error_stats_clone.increment(ErrorType::ProcessUrlTimeout);
                 }
             }

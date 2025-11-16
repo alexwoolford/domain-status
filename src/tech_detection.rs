@@ -6,7 +6,6 @@
 
 use anyhow::{Context, Result};
 use reqwest::header::HeaderMap;
-use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -598,7 +597,7 @@ async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result
     Ok(())
 }
 
-/// Detects technologies from HTML, headers, and URL.
+/// Detects technologies from extracted HTML data, headers, and URL.
 ///
 /// This is a simplified matcher that only uses single-request fields:
 /// - Headers
@@ -607,8 +606,18 @@ async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result
 /// - Script sources
 /// - HTML text patterns
 /// - URL patterns
+///
+/// # Arguments
+///
+/// * `meta_tags` - Map of meta tag name -> content
+/// * `script_sources` - Vector of script src URLs
+/// * `html_text` - HTML text content (first 50KB)
+/// * `headers` - HTTP response headers
+/// * `url` - The URL being analyzed
 pub async fn detect_technologies(
-    html: &str,
+    meta_tags: &HashMap<String, String>,
+    script_sources: &[String],
+    html_text: &str,
     headers: &HeaderMap,
     url: &str,
 ) -> Result<HashSet<String>> {
@@ -618,45 +627,6 @@ pub async fn detect_technologies(
         .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() first"))?;
 
     let mut detected = HashSet::new();
-
-    // Extract data from HTML (before async operations)
-    let (meta_tags, script_sources, html_text) = {
-        let document = Html::parse_document(html);
-
-        // Extract meta tags
-        let mut meta_tags = HashMap::new();
-        let meta_selector =
-            Selector::parse("meta").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
-        for element in document.select(&meta_selector) {
-            if let (Some(name), Some(content)) = (
-                element.value().attr("name"),
-                element.value().attr("content"),
-            ) {
-                meta_tags.insert(name.to_string().to_lowercase(), content.to_string());
-            }
-        }
-
-        // Extract script sources
-        let mut script_sources = Vec::new();
-        let script_selector =
-            Selector::parse("script").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
-        for element in document.select(&script_selector) {
-            if let Some(src) = element.value().attr("src") {
-                script_sources.push(src.to_string());
-            }
-        }
-
-        // Extract text content (first 50KB for performance)
-        let html_text = document
-            .root_element()
-            .text()
-            .collect::<String>()
-            .chars()
-            .take(50_000)
-            .collect::<String>();
-
-        (meta_tags, script_sources, html_text)
-    };
 
     // Extract cookies from headers
     let cookies: HashMap<String, String> = headers
@@ -861,12 +831,14 @@ mod tests {
     async fn test_detect_technologies_empty() {
         // This test requires ruleset initialization
         // For now, just verify the function signature works
-        let html = "";
+        let meta_tags = HashMap::new();
+        let script_sources = Vec::new();
+        let html_text = "";
         let headers = HeaderMap::new();
         let url = "https://example.com";
 
         // Without ruleset, this will fail - that's expected
-        let result = detect_technologies(html, &headers, url).await;
+        let result = detect_technologies(&meta_tags, &script_sources, html_text, &headers, url).await;
         assert!(result.is_err());
     }
 }

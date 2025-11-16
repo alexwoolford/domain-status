@@ -3,7 +3,7 @@ use hickory_resolver::TokioAsyncResolver;
 use log::debug;
 use publicsuffix::List;
 use reqwest::Url;
-use scraper::Html;
+use scraper::{Html, Selector};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
@@ -161,30 +161,6 @@ pub async fn handle_response(
         .host_str()
         .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
 
-    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
-        if final_url.starts_with("https://") {
-            match get_ssl_certificate_info(host.to_string()).await {
-                Ok(cert_info) => (
-                    cert_info.tls_version,
-                    cert_info.subject,
-                    cert_info.issuer,
-                    cert_info.valid_from,
-                    cert_info.valid_to,
-                    cert_info.oids,
-                    cert_info.cipher_suite,
-                    cert_info.key_algorithm,
-                ),
-                Err(e) => {
-                    log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-                    (None, None, None, None, None, None, None, None)
-                }
-            }
-        } else {
-            (None, None, None, None, None, None, None, None)
-        };
-
-    debug!("Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}");
-
     let headers = response.headers().clone();
     let status = response.status();
     let status_desc = status.canonical_reason().unwrap_or("Unknown Status Code");
@@ -212,7 +188,7 @@ pub async fn handle_response(
 
     // Parse HTML once and extract all data before any async operations
     // (Html is not Send, so we extract everything in a block scope)
-    let (title, keywords_str, description, linkedin_slug, is_mobile_friendly) = {
+    let (title, keywords_str, description, linkedin_slug, is_mobile_friendly, meta_tags, script_sources, html_text) = {
         let document = Html::parse_document(&body);
 
         let title = extract_title(&document, error_stats);
@@ -230,21 +206,111 @@ pub async fn handle_response(
 
         let is_mobile_friendly = is_mobile_friendly(&body);
 
+        // Extract data needed for technology detection (to avoid double-parsing)
+        let mut meta_tags = HashMap::new();
+        let meta_selector =
+            Selector::parse("meta").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
+        for element in document.select(&meta_selector) {
+            if let (Some(name), Some(content)) = (
+                element.value().attr("name"),
+                element.value().attr("content"),
+            ) {
+                meta_tags.insert(name.to_string().to_lowercase(), content.to_string());
+            }
+        }
+
+        let mut script_sources = Vec::new();
+        let script_selector =
+            Selector::parse("script").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
+        for element in document.select(&script_selector) {
+            if let Some(src) = element.value().attr("src") {
+                script_sources.push(src.to_string());
+            }
+        }
+
+        // Extract text content (first 50KB for performance)
+        let html_text = document
+            .root_element()
+            .text()
+            .collect::<String>()
+            .chars()
+            .take(50_000)
+            .collect::<String>();
+
         (
             title,
             keywords_str,
             description,
             linkedin_slug,
             is_mobile_friendly,
+            meta_tags,
+            script_sources,
+            html_text,
         )
     };
 
     debug!("Resolved host: {host}");
 
-    let ip_address = resolve_host_to_ip(host, resolver).await?;
-    debug!("Resolved IP address: {ip_address}");
+    // Run TLS and DNS operations in parallel (they're independent)
+    let (tls_result, dns_result) = tokio::join!(
+        // TLS certificate extraction (only for HTTPS)
+        async {
+            if final_url.starts_with("https://") {
+                get_ssl_certificate_info(host.to_string()).await
+            } else {
+                use crate::models::CertificateInfo;
+                Ok(CertificateInfo {
+                    tls_version: None,
+                    subject: None,
+                    issuer: None,
+                    valid_from: None,
+                    valid_to: None,
+                    oids: None,
+                    cipher_suite: None,
+                    key_algorithm: None,
+                })
+            }
+        },
+        // DNS resolution (IP address and reverse DNS)
+        async {
+            let ip = resolve_host_to_ip(host, resolver).await?;
+            let reverse_dns = reverse_dns_lookup(&ip, resolver).await?;
+            Ok((ip, reverse_dns))
+        }
+    );
 
-    let reverse_dns_name = reverse_dns_lookup(&ip_address, resolver).await?;
+    // Extract TLS info
+    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
+        match tls_result {
+            Ok(cert_info) => (
+                cert_info.tls_version,
+                cert_info.subject,
+                cert_info.issuer,
+                cert_info.valid_from,
+                cert_info.valid_to,
+                cert_info.oids,
+                cert_info.cipher_suite,
+                cert_info.key_algorithm,
+            ),
+            Err(e) => {
+                log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
+                error_stats.increment(crate::error_handling::ErrorType::TlsCertificateError);
+                (None, None, None, None, None, None, None, None)
+            }
+        };
+
+    debug!("Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}");
+
+    // Extract DNS info
+    let (ip_address, reverse_dns_name) = match dns_result {
+        Ok((ip, reverse_dns)) => (ip, reverse_dns),
+        Err(e) => {
+            log::error!("Failed to resolve DNS for {final_domain}: {e}");
+            return Err(e);
+        }
+    };
+
+    debug!("Resolved IP address: {ip_address}");
     debug!("Resolved reverse DNS name: {reverse_dns_name:?}");
 
     // Query additional DNS records (NS, TXT, MX)
@@ -263,6 +329,7 @@ pub async fn handle_response(
         Ok(_) => None,
         Err(e) => {
             log::warn!("Failed to lookup NS records for {final_domain}: {e}");
+            error_stats.increment(crate::error_handling::ErrorType::DnsNsLookupError);
             None
         }
     };
@@ -278,6 +345,7 @@ pub async fn handle_response(
         Ok(_) => None,
         Err(e) => {
             log::warn!("Failed to lookup TXT records for {final_domain}: {e}");
+            error_stats.increment(crate::error_handling::ErrorType::DnsTxtLookupError);
             None
         }
     };
@@ -314,6 +382,7 @@ pub async fn handle_response(
         Ok(_) => None,
         Err(e) => {
             log::warn!("Failed to lookup MX records for {final_domain}: {e}");
+            error_stats.increment(crate::error_handling::ErrorType::DnsMxLookupError);
             None
         }
     };
@@ -323,7 +392,7 @@ pub async fn handle_response(
 
     // Detect technologies using community-maintained fingerprint rulesets
     let (technologies, fingerprints_metadata) =
-        match detect_technologies(&body, &headers, &final_url).await {
+        match detect_technologies(&meta_tags, &script_sources, &html_text, &headers, &final_url).await {
             Ok(techs) => {
                 if !techs.is_empty() {
                     debug!(
@@ -344,6 +413,7 @@ pub async fn handle_response(
             }
             Err(e) => {
                 log::warn!("Failed to detect technologies for {final_domain}: {e}");
+                error_stats.increment(crate::error_handling::ErrorType::TechnologyDetectionError);
                 (None, None)
             }
         };

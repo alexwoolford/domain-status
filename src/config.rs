@@ -10,6 +10,14 @@ pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DB_PATH: &str = "./url_checker.db";
 
+// Network operation timeouts
+/// DNS query timeout in seconds
+pub const DNS_TIMEOUT_SECS: u64 = 5;
+/// TCP connection timeout in seconds
+pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
+/// TLS handshake timeout in seconds
+pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 5;
+
 /// Default User-Agent string for HTTP requests.
 ///
 /// Uses a generic Chrome-like string without a specific version number to avoid
@@ -46,11 +54,6 @@ pub const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
 /// Maximum number of redirect hops to follow
 /// Prevents infinite redirect loops and excessive request chains
 pub const MAX_REDIRECT_HOPS: usize = 10;
-
-// Error rate limiting
-/// Divisor used to calculate backoff duration from error rate
-/// Higher values result in shorter backoff times
-pub const ERROR_RATE_BACKOFF_DIVISOR: f64 = 5.0;
 
 // Retry strategy
 /// Initial delay in milliseconds before first retry
@@ -123,9 +126,6 @@ pub struct Opt {
     #[arg(value_parser)]
     pub file: PathBuf,
 
-    /// Error rate threshold
-    #[arg(long, default_value = "60.0")]
-    pub error_rate: f64,
 
     /// Log level: error|warn|info|debug|trace
     #[arg(long, value_enum, default_value_t = LogLevel::Info)]

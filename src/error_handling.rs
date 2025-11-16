@@ -1,16 +1,13 @@
-use log::warn;
 use log::SetLoggerError;
 use reqwest::Error as ReqwestError;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter as EnumIterMacro;
 use thiserror::Error;
 use tokio_retry::strategy::ExponentialBackoff;
 
-use crate::config::LOGGING_INTERVAL;
 
 /// Error types for initialization failures.
 #[derive(Error, Debug)]
@@ -63,6 +60,14 @@ pub enum ErrorType {
     MetaDescriptionExtractError,
     LinkedInSlugExtractError,
     ProcessUrlTimeout,
+    // DNS errors
+    DnsNsLookupError,
+    DnsTxtLookupError,
+    DnsMxLookupError,
+    // TLS errors
+    TlsCertificateError,
+    // Technology detection errors
+    TechnologyDetectionError,
 }
 
 impl ErrorType {
@@ -83,6 +88,11 @@ impl ErrorType {
             ErrorType::MetaDescriptionExtractError => "Meta description extract error",
             ErrorType::LinkedInSlugExtractError => "LinkedIn slug extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
+            ErrorType::DnsNsLookupError => "DNS NS lookup error",
+            ErrorType::DnsTxtLookupError => "DNS TXT lookup error",
+            ErrorType::DnsMxLookupError => "DNS MX lookup error",
+            ErrorType::TlsCertificateError => "TLS certificate error",
+            ErrorType::TechnologyDetectionError => "Technology detection error",
         }
     }
 }
@@ -129,73 +139,6 @@ impl ErrorStats {
     }
 }
 
-/// Dynamic rate limiter that adjusts backoff based on error rate.
-///
-/// Monitors the error rate and automatically applies backoff delays when the error
-/// rate exceeds a configured threshold. This helps prevent overwhelming systems
-/// during error conditions.
-///
-/// # Behavior
-///
-/// - Tracks total operations and errors
-/// - Calculates error rate periodically (every `LOGGING_INTERVAL` operations)
-/// - Applies exponential backoff when error rate exceeds threshold
-/// - Backoff duration is calculated as `error_rate / ERROR_RATE_BACKOFF_DIVISOR`
-#[derive(Clone)]
-pub struct ErrorRateLimiter {
-    pub error_stats: Arc<ErrorStats>,
-    operation_count: Arc<AtomicUsize>,
-    error_rate: Arc<AtomicUsize>,
-    error_rate_threshold: f64,
-}
-
-impl ErrorRateLimiter {
-    pub fn new(error_stats: Arc<ErrorStats>, error_rate_threshold: f64) -> Self {
-        ErrorRateLimiter {
-            error_stats,
-            operation_count: Arc::new(AtomicUsize::new(0)),
-            error_rate: Arc::new(AtomicUsize::new(0)),
-            error_rate_threshold,
-        }
-    }
-
-    pub async fn allow_operation(&self) {
-        self.operation_count.fetch_add(1, Ordering::SeqCst);
-
-        if self
-            .operation_count
-            .load(Ordering::SeqCst)
-            .is_multiple_of(LOGGING_INTERVAL)
-        {
-            let error_rate = self.calculate_error_rate();
-
-            self.error_rate.store(error_rate as usize, Ordering::SeqCst);
-
-            let total_errors = self.error_stats.total_error_count();
-
-            if error_rate > self.error_rate_threshold {
-                // increase backoff time
-                let sleep_duration = Duration::from_secs_f64(
-                    (error_rate / crate::config::ERROR_RATE_BACKOFF_DIVISOR).max(1.0),
-                );
-                warn!("Throttled; error rate of {:.2}% has exceeded the set threshold. There were {} errors out of {} operations. Backoff time is {:.2} seconds.",
-                    error_rate, total_errors, self.operation_count.load(Ordering::SeqCst), sleep_duration.as_secs_f64());
-                tokio::time::sleep(sleep_duration).await;
-            }
-        }
-    }
-
-    fn calculate_error_rate(&self) -> f64 {
-        let total_errors = self.error_stats.total_error_count();
-        let total_operations = self.operation_count.load(Ordering::SeqCst);
-
-        if total_operations == 0 {
-            return 0.0;
-        }
-
-        (total_errors as f64 / total_operations as f64) * 100.0
-    }
-}
 
 /// Creates an exponential backoff retry strategy.
 ///
@@ -295,46 +238,5 @@ mod tests {
         stats.increment(ErrorType::KeywordExtractError);
         stats.increment(ErrorType::TitleExtractError);
         assert_eq!(stats.total_error_count(), 3);
-    }
-
-    #[test]
-    fn test_error_rate_limiter_calculate_error_rate_zero_operations() {
-        let stats = Arc::new(ErrorStats::new());
-        let limiter = ErrorRateLimiter::new(stats, 60.0);
-        // With zero operations, error rate should be 0
-        assert_eq!(limiter.calculate_error_rate(), 0.0);
-    }
-
-    #[test]
-    fn test_error_rate_limiter_calculate_error_rate_no_errors() {
-        let stats = Arc::new(ErrorStats::new());
-        let limiter = ErrorRateLimiter::new(stats, 60.0);
-        // Simulate operations without errors
-        limiter.operation_count.store(100, Ordering::SeqCst);
-        assert_eq!(limiter.calculate_error_rate(), 0.0);
-    }
-
-    #[test]
-    fn test_error_rate_limiter_calculate_error_rate_with_errors() {
-        let stats = Arc::new(ErrorStats::new());
-        let limiter = ErrorRateLimiter::new(stats.clone(), 60.0);
-        // 10 errors out of 100 operations = 10%
-        limiter.operation_count.store(100, Ordering::SeqCst);
-        for _ in 0..10 {
-            stats.increment(ErrorType::TitleExtractError);
-        }
-        assert_eq!(limiter.calculate_error_rate(), 10.0);
-    }
-
-    #[test]
-    fn test_error_rate_limiter_calculate_error_rate_100_percent() {
-        let stats = Arc::new(ErrorStats::new());
-        let limiter = ErrorRateLimiter::new(stats.clone(), 60.0);
-        // 50 errors out of 50 operations = 100%
-        limiter.operation_count.store(50, Ordering::SeqCst);
-        for _ in 0..50 {
-            stats.increment(ErrorType::TitleExtractError);
-        }
-        assert_eq!(limiter.calculate_error_rate(), 100.0);
     }
 }
