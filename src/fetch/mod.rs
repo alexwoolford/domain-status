@@ -227,7 +227,10 @@ pub async fn handle_response(
         log::warn!("No title tag found in raw HTML for {final_domain}");
         // Log first 500 chars of HTML to help debug bot detection
         let preview = body.chars().take(500).collect::<String>();
-        log::debug!("HTML preview (first 500 chars) for {final_domain}: {}", preview);
+        log::debug!(
+            "HTML preview (first 500 chars) for {final_domain}: {}",
+            preview
+        );
     }
 
     // Parse HTML once and extract all data before any async operations
