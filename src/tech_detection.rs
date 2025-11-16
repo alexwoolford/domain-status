@@ -838,7 +838,8 @@ mod tests {
         let url = "https://example.com";
 
         // Without ruleset, this will fail - that's expected
-        let result = detect_technologies(&meta_tags, &script_sources, html_text, &headers, url).await;
+        let result =
+            detect_technologies(&meta_tags, &script_sources, html_text, &headers, url).await;
         assert!(result.is_err());
     }
 }

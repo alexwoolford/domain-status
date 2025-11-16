@@ -8,7 +8,6 @@ use strum_macros::EnumIter as EnumIterMacro;
 use thiserror::Error;
 use tokio_retry::strategy::ExponentialBackoff;
 
-
 /// Error types for initialization failures.
 #[derive(Error, Debug)]
 #[allow(clippy::enum_variant_names)] // All variants end with "Error" by convention
@@ -138,7 +137,6 @@ impl ErrorStats {
             .sum()
     }
 }
-
 
 /// Creates an exponential backoff retry strategy.
 ///

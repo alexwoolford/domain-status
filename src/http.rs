@@ -188,7 +188,16 @@ pub async fn handle_response(
 
     // Parse HTML once and extract all data before any async operations
     // (Html is not Send, so we extract everything in a block scope)
-    let (title, keywords_str, description, linkedin_slug, is_mobile_friendly, meta_tags, script_sources, html_text) = {
+    let (
+        title,
+        keywords_str,
+        description,
+        linkedin_slug,
+        is_mobile_friendly,
+        meta_tags,
+        script_sources,
+        html_text,
+    ) = {
         let document = Html::parse_document(&body);
 
         let title = extract_title(&document, error_stats);
@@ -391,32 +400,39 @@ pub async fn handle_response(
     let security_headers_json = serialize_json(&security_headers);
 
     // Detect technologies using community-maintained fingerprint rulesets
-    let (technologies, fingerprints_metadata) =
-        match detect_technologies(&meta_tags, &script_sources, &html_text, &headers, &final_url).await {
-            Ok(techs) => {
-                if !techs.is_empty() {
-                    debug!(
-                        "Detected {} technologies for {final_domain}: {:?}",
-                        techs.len(),
-                        techs
-                    );
-                    let mut tech_vec: Vec<String> = techs.into_iter().collect();
-                    tech_vec.sort();
-                    (
-                        Some(serialize_json(&tech_vec)),
-                        get_ruleset_metadata().await,
-                    )
-                } else {
-                    debug!("No technologies detected for {final_domain}");
-                    (None, get_ruleset_metadata().await)
-                }
+    let (technologies, fingerprints_metadata) = match detect_technologies(
+        &meta_tags,
+        &script_sources,
+        &html_text,
+        &headers,
+        &final_url,
+    )
+    .await
+    {
+        Ok(techs) => {
+            if !techs.is_empty() {
+                debug!(
+                    "Detected {} technologies for {final_domain}: {:?}",
+                    techs.len(),
+                    techs
+                );
+                let mut tech_vec: Vec<String> = techs.into_iter().collect();
+                tech_vec.sort();
+                (
+                    Some(serialize_json(&tech_vec)),
+                    get_ruleset_metadata().await,
+                )
+            } else {
+                debug!("No technologies detected for {final_domain}");
+                (None, get_ruleset_metadata().await)
             }
-            Err(e) => {
-                log::warn!("Failed to detect technologies for {final_domain}: {e}");
-                error_stats.increment(crate::error_handling::ErrorType::TechnologyDetectionError);
-                (None, None)
-            }
-        };
+        }
+        Err(e) => {
+            log::warn!("Failed to detect technologies for {final_domain}: {e}");
+            error_stats.increment(crate::error_handling::ErrorType::TechnologyDetectionError);
+            (None, None)
+        }
+    };
 
     let (fingerprints_source, fingerprints_version) = if let Some(meta) = fingerprints_metadata {
         (Some(meta.source), Some(meta.version))

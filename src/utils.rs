@@ -36,7 +36,7 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
                     _ => {}
                 }
             }
-            
+
             // Check reqwest error types
             if reqwest_err.is_timeout() {
                 return true; // Timeouts are retriable
@@ -52,12 +52,12 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
                 return false;
             }
         }
-        
+
         // Check for URL parsing errors (not retriable)
         if cause.downcast_ref::<url::ParseError>().is_some() {
             return false;
         }
-        
+
         // Check for DNS errors (retriable - network issue)
         // Note: hickory_resolver errors are wrapped in anyhow, so we check the message
         // DNS errors are typically network-related and should be retried
@@ -65,12 +65,12 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
         if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
             return true;
         }
-        
+
         // Check for database errors (not retriable)
         if cause.downcast_ref::<sqlx::Error>().is_some() {
             return false;
         }
-        
+
         // Check error message for specific patterns (fallback for unknown error types)
         if msg.contains("404") || msg.contains("not found") {
             return false;
@@ -82,7 +82,7 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
             return false;
         }
     }
-    
+
     // Default: retry unknown errors (might be transient network issue)
     true
 }
@@ -142,7 +142,7 @@ pub async fn process_url(
                 start_time,
             )
             .await;
-            
+
             // Only retry if error is retriable
             match &result {
                 Ok(_) => result,

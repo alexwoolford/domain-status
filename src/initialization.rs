@@ -210,12 +210,12 @@ pub fn init_crypto_provider() {
 /// configurations fail (though fallback should rarely fail).
 pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
     use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-    
+
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(crate::config::DNS_TIMEOUT_SECS);
     opts.attempts = 2; // Reduce retry attempts to fail faster
-    
+
     // Use default resolver configuration with timeouts
     // This ensures consistent timeout behavior across all DNS queries
     Ok(Arc::new(TokioAsyncResolver::tokio(

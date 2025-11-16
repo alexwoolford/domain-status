@@ -126,7 +126,6 @@ pub struct Opt {
     #[arg(value_parser)]
     pub file: PathBuf,
 
-
     /// Log level: error|warn|info|debug|trace
     #[arg(long, value_enum, default_value_t = LogLevel::Info)]
     pub log_level: LogLevel,
