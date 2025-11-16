@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::error_handling::{get_retry_strategy, ErrorStats};
-use crate::http::handle_http_request;
+use crate::fetch::handle_http_request;
 
 /// Determines if an error is retriable (should be retried).
 ///
@@ -101,10 +101,12 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
 /// * `extractor` - Public Suffix List extractor
 /// * `resolver` - DNS resolver
 /// * `error_stats` - Error statistics tracker
+/// * `run_id` - Unique identifier for this run (for time-series tracking)
 ///
 /// # Errors
 ///
 /// Returns an error if all retry attempts fail or if a non-retriable error occurs.
+#[allow(clippy::too_many_arguments)]
 pub async fn process_url(
     url: Arc<String>,
     client: Arc<reqwest::Client>,
@@ -113,6 +115,7 @@ pub async fn process_url(
     extractor: Arc<List>,
     resolver: Arc<TokioAsyncResolver>,
     error_stats: Arc<ErrorStats>,
+    run_id: Option<String>,
 ) -> Result<(), Error> {
     log::debug!("Starting process for URL: {url}");
 
@@ -129,6 +132,7 @@ pub async fn process_url(
         let extractor = Arc::clone(&extractor);
         let error_stats = Arc::clone(&error_stats);
         let resolver = Arc::clone(&resolver);
+        let run_id_clone = run_id.clone();
 
         async move {
             let result = handle_http_request(
@@ -140,6 +144,7 @@ pub async fn process_url(
                 &resolver,
                 &error_stats,
                 start_time,
+                run_id_clone.as_deref(),
             )
             .await;
 

@@ -66,41 +66,360 @@ domain_status urls.txt \
 
 ### Data Captured
 
-The tool captures comprehensive information for each URL:
+The tool captures comprehensive information for each URL. The database uses a **normalized star schema** with a fact table (`url_status`) and multiple dimension/junction tables for multi-valued fields.
 
-| Field                   | Description                                                    |
-|-------------------------|----------------------------------------------------------------|
-| `domain`                | Initial domain extracted from the original URL                |
-| `final_domain`          | Final domain after following all redirects                     |
-| `ip_address`            | IP address resolved via DNS (hickory-resolver)                 |
-| `reverse_dns_name`      | Reverse DNS (PTR) record for the IP address                    |
-| `status`                | HTTP status code (e.g., 200, 301, 404)                          |
-| `status_description`    | Human-readable HTTP status description                          |
-| `response_time`         | Time taken to get the response in seconds                      |
-| `title`                 | HTML `<title>` tag content                                      |
-| `keywords`              | Meta keywords from `<meta name="keywords">` (comma-separated) |
-| `description`           | Meta description from `<meta name="description">`              |
-| `linkedin_slug`         | LinkedIn company slug extracted from LinkedIn URLs in the page |
-| `security_headers`      | JSON object containing security headers (CSP, HSTS, X-Frame-Options, etc.) |
-| `tls_version`           | TLS version used (e.g., TLSv1.3) - only for HTTPS            |
-| `ssl_cert_subject`      | SSL certificate subject (CN, O, etc.) - only for HTTPS         |
-| `ssl_cert_issuer`       | SSL certificate issuer - only for HTTPS                        |
-| `ssl_cert_valid_from`   | Certificate validity start timestamp (milliseconds since epoch)  |
-| `ssl_cert_valid_to`     | Certificate validity end timestamp (milliseconds since epoch)   |
-| `oids`                  | JSON array of certificate policy OIDs from the SSL certificate |
-| `cipher_suite`         | Negotiated TLS cipher suite (e.g., "TLS13_AES_256_GCM_SHA384") - only for HTTPS |
-| `key_algorithm`        | Certificate public key algorithm (RSA, ECDSA, Ed25519, Ed448) - only for HTTPS |
-| `is_mobile_friendly`    | Boolean indicating mobile-friendliness (viewport meta tag present) |
-| `timestamp`            | Unix timestamp (milliseconds) when the data was captured        |
-| `redirect_chain`       | JSON array of URLs in the redirect chain (from initial to final) |
-| `technologies`         | JSON array of detected web technologies (CMS, frameworks, analytics, etc.) |
-| `fingerprints_source`  | Source URL or path of the technology fingerprint ruleset used |
-| `fingerprints_version` | Version identifier (commit SHA) of the fingerprint ruleset |
-| `nameservers`          | JSON array of nameserver (NS) records for the domain |
-| `txt_records`          | JSON array of TXT records for the domain |
-| `mx_records`           | JSON array of MX records with priority and hostname |
-| `spf_record`           | Extracted SPF record from TXT records (if present) |
-| `dmarc_record`         | Extracted DMARC record from TXT records (if present) |
+## 📊 Database Schema
+
+### Entity-Relationship Diagram
+
+```mermaid
+erDiagram
+    runs ||--o{ url_status : "has"
+    url_status ||--o{ url_technologies : "has"
+    url_status ||--o{ url_nameservers : "has"
+    url_status ||--o{ url_txt_records : "has"
+    url_status ||--o{ url_mx_records : "has"
+    url_status ||--o{ url_security_headers : "has"
+    url_status ||--o{ url_oids : "has"
+    url_status ||--o{ url_redirect_chain : "has"
+
+    runs {
+        TEXT run_id PK
+        TEXT fingerprints_source
+        TEXT fingerprints_version
+        INTEGER start_time
+        INTEGER end_time
+        INTEGER total_urls
+        INTEGER successful_urls
+        INTEGER failed_urls
+    }
+
+    url_status {
+        INTEGER id PK
+        TEXT domain
+        TEXT final_domain
+        TEXT ip_address
+        TEXT reverse_dns_name
+        INTEGER status
+        TEXT status_description
+        NUMERIC response_time
+        TEXT title
+        TEXT keywords
+        TEXT description
+        TEXT linkedin_slug
+        TEXT tls_version
+        TEXT ssl_cert_subject
+        TEXT ssl_cert_issuer
+        INTEGER ssl_cert_valid_from
+        INTEGER ssl_cert_valid_to
+        BOOLEAN is_mobile_friendly
+        INTEGER timestamp
+        TEXT spf_record
+        TEXT dmarc_record
+        TEXT cipher_suite
+        TEXT key_algorithm
+        TEXT run_id FK
+    }
+
+    url_technologies {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT technology_name
+        TEXT technology_category
+    }
+
+    url_nameservers {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT nameserver
+    }
+
+    url_txt_records {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT txt_record
+        TEXT record_type
+    }
+
+    url_mx_records {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        INTEGER priority
+        TEXT mail_exchange
+    }
+
+    url_security_headers {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT header_name
+        TEXT header_value
+    }
+
+    url_oids {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT oid
+    }
+
+    url_redirect_chain {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        INTEGER sequence_order
+        TEXT url
+    }
+```
+
+### Table Descriptions
+
+#### `runs` (Dimension Table)
+Stores run-level metadata that applies to an entire execution, not individual URLs.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `run_id` | TEXT (PK) | Unique identifier for the run (format: `run_<timestamp_millis>`) |
+| `fingerprints_source` | TEXT | Source URL or path of the technology fingerprint ruleset used |
+| `fingerprints_version` | TEXT | Version identifier (commit SHA) of the fingerprint ruleset |
+| `start_time` | INTEGER | Run start time (milliseconds since Unix epoch) |
+| `end_time` | INTEGER | Run end time (milliseconds since Unix epoch, NULL if in progress) |
+| `total_urls` | INTEGER | Total number of URLs attempted in this run |
+| `successful_urls` | INTEGER | Number of URLs successfully processed |
+| `failed_urls` | INTEGER | Number of URLs that failed (timeouts, errors, etc.) |
+
+**Indexes:**
+- `idx_runs_start_time` on `start_time` (for chronological queries)
+
+#### `url_status` (Fact Table)
+Main table storing atomic, single-valued fields for each URL check. This is the central fact table in the star schema.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `domain` | TEXT | Initial domain extracted from the original URL |
+| `final_domain` | TEXT | Final domain after following all redirects |
+| `ip_address` | TEXT | IP address resolved via DNS |
+| `reverse_dns_name` | TEXT | Reverse DNS (PTR) record for the IP address |
+| `status` | INTEGER | HTTP status code (e.g., 200, 301, 404) |
+| `status_description` | TEXT | Human-readable HTTP status description |
+| `response_time` | NUMERIC(10,2) | Time taken to get the response in seconds |
+| `title` | TEXT | HTML `<title>` tag content |
+| `keywords` | TEXT | Meta keywords from `<meta name="keywords">` |
+| `description` | TEXT | Meta description from `<meta name="description">` |
+| `linkedin_slug` | TEXT | LinkedIn company slug extracted from LinkedIn URLs |
+| `tls_version` | TEXT | TLS version used (e.g., TLSv1.3) - NULL for HTTP |
+| `ssl_cert_subject` | TEXT | SSL certificate subject (CN, O, etc.) - NULL for HTTP |
+| `ssl_cert_issuer` | TEXT | SSL certificate issuer - NULL for HTTP |
+| `ssl_cert_valid_from` | INTEGER | Certificate validity start (milliseconds since epoch) |
+| `ssl_cert_valid_to` | INTEGER | Certificate validity end (milliseconds since epoch) |
+| `is_mobile_friendly` | BOOLEAN | Mobile-friendliness (viewport meta tag present) |
+| `timestamp` | INTEGER | Unix timestamp (milliseconds) when data was captured |
+| `spf_record` | TEXT | Extracted SPF record from TXT records |
+| `dmarc_record` | TEXT | Extracted DMARC record from TXT records |
+| `cipher_suite` | TEXT | Negotiated TLS cipher suite - NULL for HTTP |
+| `key_algorithm` | TEXT | Certificate public key algorithm (RSA, ECDSA, etc.) - NULL for HTTP |
+| `run_id` | TEXT (FK) | Foreign key to `runs.run_id` for time-series tracking |
+
+**Constraints:**
+- `UNIQUE (final_domain, timestamp)` - Enables UPSERT semantics
+- Foreign key to `runs.run_id`
+
+**Indexes:**
+- `idx_url_status_domain` on `domain`
+- `idx_url_status_final_domain` on `final_domain`
+- `idx_url_status_timestamp` on `timestamp`
+- `idx_url_status_run_id_timestamp` on `(run_id, timestamp)`
+
+#### `url_technologies` (Junction Table)
+Stores detected web technologies (one row per technology per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `technology_name` | TEXT | Name of the detected technology (e.g., "WordPress", "React") |
+| `technology_category` | TEXT | Category of the technology (optional) |
+
+**Constraints:**
+- `UNIQUE (url_status_id, technology_name)` - Prevents duplicate technologies per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_technologies_name` on `technology_name` (for queries like "find all sites using WordPress")
+- `idx_url_technologies_status_id` on `url_status_id`
+
+#### `url_nameservers` (Junction Table)
+Stores DNS nameserver (NS) records (one row per nameserver per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `nameserver` | TEXT | Nameserver hostname (e.g., "ns1.example.com") |
+
+**Constraints:**
+- `UNIQUE (url_status_id, nameserver)` - Prevents duplicate nameservers per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_nameservers_nameserver` on `nameserver`
+- `idx_url_nameservers_status_id` on `url_status_id`
+
+#### `url_txt_records` (Junction Table)
+Stores DNS TXT records with automatic type detection (one row per TXT record per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `txt_record` | TEXT | Full TXT record content |
+| `record_type` | TEXT | Detected type: `SPF`, `DMARC`, `VERIFICATION`, or `OTHER` |
+
+**Constraints:**
+- Foreign key with `ON DELETE CASCADE`
+- No UNIQUE constraint (multiple identical TXT records are possible)
+
+**Indexes:**
+- `idx_url_txt_records_type` on `record_type` (for filtering by type)
+- `idx_url_txt_records_status_id` on `url_status_id`
+
+#### `url_mx_records` (Junction Table)
+Stores DNS MX (mail exchange) records with priority (one row per MX record per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `priority` | INTEGER | MX record priority (lower = higher priority) |
+| `mail_exchange` | TEXT | Mail server hostname (e.g., "mail.example.com") |
+
+**Constraints:**
+- `UNIQUE (url_status_id, priority, mail_exchange)` - Prevents duplicate MX records
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_mx_records_exchange` on `mail_exchange`
+- `idx_url_mx_records_status_id` on `url_status_id`
+
+#### `url_security_headers` (Junction Table)
+Stores HTTP security headers as key-value pairs (one row per header per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `header_name` | TEXT | Security header name (e.g., "Content-Security-Policy", "Strict-Transport-Security") |
+| `header_value` | TEXT | Full header value |
+
+**Headers Captured:**
+- `Content-Security-Policy`
+- `Strict-Transport-Security`
+- `X-Content-Type-Options`
+- `X-Frame-Options`
+- `X-XSS-Protection`
+- `Referrer-Policy`
+- `Permissions-Policy`
+
+**Constraints:**
+- `UNIQUE (url_status_id, header_name)` - One value per header per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_security_headers_name` on `header_name` (for queries like "find all sites with HSTS")
+- `idx_url_security_headers_status_id` on `url_status_id`
+
+#### `url_oids` (Junction Table)
+Stores SSL certificate policy OIDs (Object Identifiers) from the certificate (one row per OID per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `oid` | TEXT | Certificate policy OID (e.g., "2.23.140.1.2.1" for EV certificate) |
+
+**Constraints:**
+- `UNIQUE (url_status_id, oid)` - Prevents duplicate OIDs per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_oids_oid` on `oid` (for queries like "find all EV certificates")
+- `idx_url_oids_status_id` on `url_status_id`
+
+#### `url_redirect_chain` (Junction Table)
+Stores redirect chain URLs in sequence order (one row per URL in the chain).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `sequence_order` | INTEGER | Order of the URL in the redirect chain (1 = first, 2 = second, etc.) |
+| `url` | TEXT | Full URL at this step in the redirect chain |
+
+**Constraints:**
+- `UNIQUE (url_status_id, sequence_order)` - Ensures one URL per position
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_redirect_chain_status_id` on `url_status_id`
+
+**Notes:**
+- Sequence order is preserved to maintain the redirect flow
+- First URL in chain has `sequence_order = 1`
+- Final URL (after all redirects) is stored in `url_status.final_domain`
+
+### Schema Design Principles
+
+The database uses a **star schema** design pattern:
+
+1. **Fact Table** (`url_status`): Contains atomic, single-valued fields (measures and dimensions)
+2. **Dimension Table** (`runs`): Stores run-level metadata
+3. **Junction Tables**: Store multi-valued fields in normalized form:
+   - `url_technologies` - Technologies detected
+   - `url_nameservers` - DNS nameservers
+   - `url_txt_records` - DNS TXT records
+   - `url_mx_records` - DNS MX records
+   - `url_security_headers` - HTTP security headers
+   - `url_oids` - Certificate OIDs
+   - `url_redirect_chain` - Redirect chain URLs
+
+**Benefits:**
+- **No Data Duplication**: Each piece of data stored once
+- **Efficient Queries**: Indexes on normalized tables enable fast lookups
+- **Analytics-Friendly**: Easy to aggregate and join (e.g., "find all sites using WordPress")
+- **Time-Series Support**: `run_id` enables comparing data across different runs
+- **Scalability**: Normalized structure scales better than JSON columns
+
+**Query Examples:**
+
+```sql
+-- Find all sites using WordPress
+SELECT DISTINCT us.domain 
+FROM url_status us
+JOIN url_technologies ut ON us.id = ut.url_status_id
+WHERE ut.technology_name = 'WordPress';
+
+-- Find all sites with HSTS enabled
+SELECT DISTINCT us.domain, ush.header_value
+FROM url_status us
+JOIN url_security_headers ush ON us.id = ush.url_status_id
+WHERE ush.header_name = 'Strict-Transport-Security';
+
+-- Get redirect chain for a domain
+SELECT urc.sequence_order, urc.url
+FROM url_status us
+JOIN url_redirect_chain urc ON us.id = urc.url_status_id
+WHERE us.final_domain = 'example.com'
+ORDER BY urc.sequence_order;
+
+-- Compare technologies between runs
+SELECT ut1.technology_name, 
+       COUNT(DISTINCT us1.id) as run1_count,
+       COUNT(DISTINCT us2.id) as run2_count
+FROM url_status us1
+JOIN url_technologies ut1 ON us1.id = ut1.url_status_id
+LEFT JOIN url_status us2 ON us1.final_domain = us2.final_domain
+LEFT JOIN url_technologies ut2 ON us2.id = ut2.url_status_id AND ut1.technology_name = ut2.technology_name
+WHERE us1.run_id = 'run_123' AND us2.run_id = 'run_456'
+GROUP BY ut1.technology_name;
+```
 
 **Notes:**
 - TLS/SSL fields (`tls_version`, `cipher_suite`, `key_algorithm`, etc.) are `NULL` for HTTP (non-HTTPS) URLs

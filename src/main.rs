@@ -121,9 +121,15 @@ async fn main() -> Result<()> {
     // Store run metadata (fingerprints_source and fingerprints_version are run-level, not per-URL)
     let fingerprints_source = Some(ruleset.metadata.source.as_str());
     let fingerprints_version = Some(ruleset.metadata.version.as_str());
-    database::insert_run_metadata(&pool, &run_id, start_time_epoch, fingerprints_source, fingerprints_version)
-        .await
-        .context("Failed to insert run metadata")?;
+    database::insert_run_metadata(
+        &pool,
+        &run_id,
+        start_time_epoch,
+        fingerprints_source,
+        fingerprints_version,
+    )
+    .await
+    .context("Failed to insert run metadata")?;
 
     // Start time for measuring elapsed time during processing
     let start_time = std::time::Instant::now();
@@ -279,7 +285,7 @@ async fn main() -> Result<()> {
     let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
     let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
     let failed_urls = total_urls - successful_urls;
-    
+
     info!(
         "Run statistics: total={}, successful={}, failed={}",
         total_urls, successful_urls, failed_urls

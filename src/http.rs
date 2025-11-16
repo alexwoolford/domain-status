@@ -15,11 +15,11 @@ use crate::dns::{
 };
 use crate::domain::extract_domain;
 use crate::error_handling::{update_error_stats, ErrorStats};
-use crate::html::{
+use crate::parse::{
     extract_linkedin_slug, extract_meta_description, extract_meta_keywords, extract_title,
     is_mobile_friendly,
 };
-use crate::tech_detection::{detect_technologies, get_ruleset_metadata};
+use crate::fingerprint::detect_technologies;
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
@@ -132,6 +132,7 @@ pub async fn resolve_redirect_chain(
 /// * `error_stats` - Error statistics tracker
 /// * `elapsed` - Response time in seconds
 /// * `redirect_chain_json` - JSON array of redirect chain URLs
+/// * `run_id` - Unique identifier for this run (for time-series tracking)
 ///
 /// # Errors
 ///
@@ -142,6 +143,7 @@ pub async fn handle_response(
     final_url_str: &str,
     pool: &SqlitePool,
     extractor: &List,
+    run_id: Option<&str>,
     resolver: &TokioAsyncResolver,
     error_stats: &ErrorStats,
     elapsed: f64,
@@ -418,7 +420,7 @@ pub async fn handle_response(
     let security_headers_json = serialize_json(&security_headers);
 
     // Detect technologies using community-maintained fingerprint rulesets
-    let (technologies, fingerprints_metadata) = match detect_technologies(
+    let technologies = match detect_technologies(
         &meta_tags,
         &script_sources,
         &html_text,
@@ -436,27 +438,24 @@ pub async fn handle_response(
                 );
                 let mut tech_vec: Vec<String> = techs.into_iter().collect();
                 tech_vec.sort();
-                (
-                    Some(serialize_json(&tech_vec)),
-                    get_ruleset_metadata().await,
-                )
+                Some(serialize_json(&tech_vec))
             } else {
                 debug!("No technologies detected for {final_domain}");
-                (None, get_ruleset_metadata().await)
+                None
             }
         }
         Err(e) => {
             log::warn!("Failed to detect technologies for {final_domain}: {e}");
             error_stats.increment(crate::error_handling::ErrorType::TechnologyDetectionError);
-            (None, None)
+            None
         }
     };
 
-    let (fingerprints_source, fingerprints_version) = if let Some(meta) = fingerprints_metadata {
-        (Some(meta.source), Some(meta.version))
-    } else {
-        (None, None)
-    };
+    // Note: fingerprints_source and fingerprints_version are now stored at run level
+    // in the runs table, not per URL. We set them to None here for backward compatibility
+    // but they should be queried from the runs table instead.
+    let fingerprints_source = None;
+    let fingerprints_version = None;
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
@@ -495,6 +494,7 @@ pub async fn handle_response(
         dmarc_record,
         cipher_suite,
         key_algorithm,
+        run_id: run_id.map(|s| s.to_string()),
     };
 
     let update_result = insert_url_record(pool, &record).await;
@@ -520,6 +520,7 @@ pub async fn handle_response(
 /// * `resolver` - DNS resolver
 /// * `error_stats` - Error statistics tracker
 /// * `start_time` - Request start time for calculating response time
+/// * `run_id` - Unique identifier for this run (for time-series tracking)
 ///
 /// # Errors
 ///
@@ -533,6 +534,7 @@ pub async fn handle_http_request(
     resolver: &TokioAsyncResolver,
     error_stats: &ErrorStats,
     start_time: std::time::Instant,
+    run_id: Option<&str>,
 ) -> Result<(), Error> {
     debug!("Resolving redirects for {url}");
 
@@ -580,6 +582,7 @@ pub async fn handle_http_request(
         &final_url_string,
         pool,
         extractor,
+        run_id,
         resolver,
         error_stats,
         elapsed,

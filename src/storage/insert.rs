@@ -303,7 +303,9 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
     // Parse security headers from JSON string (backward compatibility) or use HashMap directly
     if let Some(security_headers_json) = &record.security_headers {
         if !security_headers_json.is_empty() && security_headers_json != "{}" {
-            if let Ok(headers_map) = serde_json::from_str::<std::collections::HashMap<String, String>>(security_headers_json) {
+            if let Ok(headers_map) = serde_json::from_str::<std::collections::HashMap<String, String>>(
+                security_headers_json,
+            ) {
                 for (header_name, header_value) in headers_map {
                     if let Err(e) = sqlx::query(
                         "INSERT INTO url_security_headers (url_status_id, header_name, header_value)
@@ -365,7 +367,11 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
                     .execute(&mut *tx)
                     .await
                     {
-                        log::warn!("Failed to insert redirect chain URL at position {}: {}", sequence_order, e);
+                        log::warn!(
+                            "Failed to insert redirect chain URL at position {}: {}",
+                            sequence_order,
+                            e
+                        );
                     }
                 }
             }
@@ -397,7 +403,6 @@ pub async fn insert_run_metadata(
     fingerprints_source: Option<&str>,
     fingerprints_version: Option<&str>,
 ) -> Result<(), DatabaseError> {
-
     sqlx::query(
         "INSERT INTO runs (run_id, fingerprints_source, fingerprints_version, start_time)
          VALUES (?, ?, ?, ?)
