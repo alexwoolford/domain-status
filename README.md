@@ -2,16 +2,19 @@
 
 [![Rust](https://github.com/alexwoolford/domain_status/actions/workflows/rust.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/rust.yml)
 
-**domain_status** is a Rust-based tool designed for high-performance concurrent checking of URL statuses and redirections. Built with async/await (Tokio), it processes URLs efficiently while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, and redirect chains.
+**domain_status** is a Rust-based tool designed for high-performance concurrent checking of URL statuses and redirections. Built with async/await (Tokio), it processes URLs efficiently while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains.
 
 ## 🌟 Features
 
 * **High-Performance Concurrency**: Utilizes async/await with configurable concurrency limits (default: 500 concurrent requests)
-* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, and complete redirect chains
+* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, and complete redirect chains
+* **Technology Fingerprinting**: Detects web technologies (CMS, frameworks, analytics, etc.) using community-maintained rulesets (HTTP Archive Wappalyzer fork)
+* **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
+* **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
 * **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and detailed error categorization
 * **Rate Limiting**: Optional token-bucket rate limiting to control request rates and prevent overwhelming target servers
 * **Robust Data Storage**: SQLite database with WAL mode, UPSERT semantics, and unique constraints for idempotent processing
-* **Flexible Configuration**: Extensive CLI options for logging, timeouts, concurrency, rate limits, and database paths
+* **Flexible Configuration**: Extensive CLI options for logging, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
 * **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
 
 ## 🔧 Getting Started
@@ -39,7 +42,8 @@ domain_status urls.txt \
   --log-level debug \
   --log-format json \
   --rate-limit-rps 10 \
-  --rate-burst 50
+  --rate-burst 50 \
+  --fingerprints https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
 ```
 
 **Command-line Options:**
@@ -52,6 +56,7 @@ domain_status urls.txt \
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
 - `--rate-limit-rps <N>`: Requests per second rate limit, 0 disables (default: 0)
 - `--rate-burst <N>`: Rate limit burst capacity, defaults to max concurrency if 0 (default: 0)
+- `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
 
 **URL Input:**
 - URLs can be provided with or without `http://` or `https://` prefix
@@ -83,12 +88,26 @@ The tool captures comprehensive information for each URL:
 | `ssl_cert_valid_from`   | Certificate validity start timestamp (milliseconds since epoch)  |
 | `ssl_cert_valid_to`     | Certificate validity end timestamp (milliseconds since epoch)   |
 | `oids`                  | JSON array of certificate policy OIDs from the SSL certificate |
+| `cipher_suite`         | Negotiated TLS cipher suite (e.g., "TLS13_AES_256_GCM_SHA384") - only for HTTPS |
+| `key_algorithm`        | Certificate public key algorithm (RSA, ECDSA, Ed25519, Ed448) - only for HTTPS |
 | `is_mobile_friendly`    | Boolean indicating mobile-friendliness (viewport meta tag present) |
 | `timestamp`            | Unix timestamp (milliseconds) when the data was captured        |
 | `redirect_chain`       | JSON array of URLs in the redirect chain (from initial to final) |
+| `technologies`         | JSON array of detected web technologies (CMS, frameworks, analytics, etc.) |
+| `fingerprints_source`  | Source URL or path of the technology fingerprint ruleset used |
+| `fingerprints_version` | Version identifier (commit SHA) of the fingerprint ruleset |
+| `nameservers`          | JSON array of nameserver (NS) records for the domain |
+| `txt_records`          | JSON array of TXT records for the domain |
+| `mx_records`           | JSON array of MX records with priority and hostname |
+| `spf_record`           | Extracted SPF record from TXT records (if present) |
+| `dmarc_record`         | Extracted DMARC record from TXT records (if present) |
 
 **Notes:**
-- TLS/SSL fields are `NULL` for HTTP (non-HTTPS) URLs
+- TLS/SSL fields (`tls_version`, `cipher_suite`, `key_algorithm`, etc.) are `NULL` for HTTP (non-HTTPS) URLs
+- DNS records (NS, TXT, MX) are queried for the final domain after redirects
+- SPF and DMARC records are automatically extracted from TXT records; DMARC is also checked at `_dmarc.<domain>`
+- Technology fingerprints are detected using community-maintained rulesets (default: HTTP Archive Wappalyzer fork)
+- Fingerprint rulesets are cached locally in `.fingerprints_cache/` for 7 days to reduce network requests
 - The database uses UPSERT semantics: duplicate `(final_domain, timestamp)` pairs update existing records
 - Response body size is capped at 2MB to prevent memory exhaustion
 - Only HTML content-types are processed (others are skipped)
@@ -149,10 +168,11 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
 
 **Dependencies:**
 - **HTTP Client**: `reqwest` with `rustls` TLS backend (no native TLS)
-- **DNS Resolution**: `hickory-resolver` (async DNS with system config fallback)
+- **DNS Resolution**: `hickory-resolver` (async DNS with system config fallback, supports NS/TXT/MX queries)
 - **Domain Extraction**: `publicsuffix` for accurate domain parsing
 - **HTML Parsing**: `scraper` (CSS selector-based extraction)
-- **TLS/Certificates**: `tokio-rustls` and `x509-parser` for certificate analysis
+- **TLS/Certificates**: `tokio-rustls` and `x509-parser` for certificate analysis (cipher suite, key algorithm)
+- **Technology Detection**: Custom implementation using community-maintained Wappalyzer rulesets
 - **Database**: `sqlx` with SQLite (WAL mode enabled)
 - **Async Runtime**: Tokio
 
