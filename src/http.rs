@@ -166,8 +166,9 @@ pub async fn handle_response(
     let status_desc = status.canonical_reason().unwrap_or("Unknown Status Code");
 
     // Enforce HTML content-type, else skip
+    // Note: HTTP headers are case-insensitive, so we check case-insensitively
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
-        let ct = ct.to_str().unwrap_or("");
+        let ct = ct.to_str().unwrap_or("").to_lowercase();
         if !ct.starts_with("text/html") {
             debug!("Skipping non-HTML content-type: {ct}");
             return Ok(());
@@ -183,8 +184,25 @@ pub async fn handle_response(
             }
             String::from_utf8_lossy(&bytes).to_string()
         }
-        Err(_) => String::new(),
+        Err(e) => {
+            log::warn!("Failed to read response body for {final_domain}: {e}");
+            String::new()
+        }
     };
+
+    if body.is_empty() {
+        log::warn!("Empty response body for {final_domain}, skipping HTML extraction");
+        return Ok(());
+    }
+
+    log::info!("Body length for {final_domain}: {} bytes", body.len());
+
+    // Check if title tag exists in raw HTML (for debugging)
+    if body.contains("<title") || body.contains("<TITLE") {
+        log::debug!("Title tag found in raw HTML for {final_domain}");
+    } else {
+        log::warn!("No title tag found in raw HTML for {final_domain}");
+    }
 
     // Parse HTML once and extract all data before any async operations
     // (Html is not Send, so we extract everything in a block scope)

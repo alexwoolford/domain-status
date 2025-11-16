@@ -42,9 +42,34 @@ static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
 ///
 /// The page title as a string, or an empty string if not found.
 pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
-    match document.select(&TITLE_SELECTOR).next() {
-        Some(element) => element.inner_html().trim().to_string(),
+    let elements: Vec<_> = document.select(&TITLE_SELECTOR).collect();
+    log::debug!("Found {} title elements", elements.len());
+
+    match elements.first() {
+        Some(element) => {
+            // Use text() to get text content, which handles HTML entities and nested tags correctly
+            let title: String = element.text().collect::<String>().trim().to_string();
+            log::debug!(
+                "Extracted title text: '{}' (length: {})",
+                title,
+                title.len()
+            );
+            if title.is_empty() {
+                // Try inner_html as fallback in case text() doesn't work
+                let inner = element.inner_html().trim().to_string();
+                log::debug!("Title inner_html: '{}' (length: {})", inner, inner.len());
+                if inner.is_empty() {
+                    error_stats.increment(ErrorType::TitleExtractError);
+                    String::from("")
+                } else {
+                    inner
+                }
+            } else {
+                title
+            }
+        }
         None => {
+            log::debug!("No title element found in document");
             error_stats.increment(ErrorType::TitleExtractError);
             String::from("")
         }
