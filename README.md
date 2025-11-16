@@ -327,21 +327,67 @@ Stores HTTP security headers as key-value pairs (one row per header per URL).
 - `idx_url_security_headers_status_id` on `url_status_id`
 
 #### `url_oids` (Junction Table)
-Stores SSL certificate policy OIDs (Object Identifiers) from the certificate (one row per OID per URL).
+Stores SSL certificate OIDs (Object Identifiers) from the certificate (one row per OID per URL).
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER (PK) | Primary key, auto-increment |
 | `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
-| `oid` | TEXT | Certificate policy OID (e.g., "2.23.140.1.2.1" for EV certificate) |
+| `oid` | TEXT | Certificate OID (see below for common OIDs) |
+
+**OIDs Captured:**
+
+1. **Extension OIDs** (identifiers for certificate extensions):
+   - `2.5.29.32` - Certificate Policies
+   - `2.5.29.37` - Extended Key Usage
+   - `2.5.29.15` - Key Usage
+   - `2.5.29.17` - Subject Alternative Name
+   - `2.5.29.35` - Authority Key Identifier
+   - `2.5.29.14` - Subject Key Identifier
+   - `2.5.29.19` - Basic Constraints
+   - `2.5.29.31` - CRL Distribution Points
+
+2. **Certificate Policy OIDs** (validation levels):
+   - `2.23.140.1.1` - Extended Validation (EV) Certificate
+   - `2.23.140.1.2.1` - Domain Validated (DV) Certificate
+   - `2.23.140.1.2.2` - Organization Validated (OV) Certificate
+   - `2.23.140.1.2.3` - Individual Validated (IV) Certificate
+
+3. **Extended Key Usage OIDs** (key purposes):
+   - `1.3.6.1.5.5.7.3.1` - Server Authentication
+   - `1.3.6.1.5.5.7.3.2` - Client Authentication
+   - `1.3.6.1.5.5.7.3.3` - Code Signing
+   - `1.3.6.1.5.5.7.3.4` - Email Protection
+   - `1.3.6.1.5.5.7.3.8` - Time Stamping
+   - `1.3.6.1.5.5.7.3.9` - OCSP Signing
+
+4. **CA-Specific OIDs** (proprietary policy OIDs from certificate authorities)
 
 **Constraints:**
 - `UNIQUE (url_status_id, oid)` - Prevents duplicate OIDs per URL
 - Foreign key with `ON DELETE CASCADE`
 
 **Indexes:**
-- `idx_url_oids_oid` on `oid` (for queries like "find all EV certificates")
+- `idx_url_oids_oid` on `oid` (for queries like "find all EV certificates" or "find all certificates with server auth")
 - `idx_url_oids_status_id` on `url_status_id`
+
+**Query Examples:**
+```sql
+-- Find all EV certificates
+SELECT DISTINCT us.domain FROM url_status us
+JOIN url_oids uo ON us.id = uo.url_status_id
+WHERE uo.oid = '2.23.140.1.1';
+
+-- Find all certificates with server authentication
+SELECT DISTINCT us.domain FROM url_status us
+JOIN url_oids uo ON us.id = uo.url_status_id
+WHERE uo.oid = '1.3.6.1.5.5.7.3.1';
+
+-- Find certificates with Extended Key Usage extension
+SELECT DISTINCT us.domain FROM url_status us
+JOIN url_oids uo ON us.id = uo.url_status_id
+WHERE uo.oid = '2.5.29.37';
+```
 
 #### `url_redirect_chain` (Junction Table)
 Stores redirect chain URLs in sequence order (one row per URL in the chain).

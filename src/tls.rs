@@ -21,7 +21,12 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Extracts certificate policy OIDs from an X.509 certificate.
+/// Extracts all relevant OIDs from an X.509 certificate.
+///
+/// This function extracts OIDs from multiple certificate extensions:
+/// - Certificate Policies (validation levels: DV, OV, EV)
+/// - Extended Key Usage (key purposes: server auth, client auth, etc.)
+/// - Extension OIDs themselves (identifiers for each extension)
 ///
 /// # Arguments
 ///
@@ -30,16 +35,72 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 /// # Returns
 ///
 /// A vector of OID strings, or an error if parsing fails.
-fn extract_certificate_policies(
+fn extract_certificate_oids(
     cert: &x509_parser::certificate::X509Certificate<'_>,
 ) -> Result<Vec<String>> {
     let mut oids: Vec<String> = Vec::new();
 
     for ext in cert.extensions() {
-        if let ParsedExtension::CertificatePolicies(ref policies) = *ext.parsed_extension() {
-            oids.extend(policies.iter().map(|policy| policy.policy_id.to_string()));
+        // Extract the extension OID itself (e.g., 2.5.29.32 for Certificate Policies)
+        let ext_oid = ext.oid.to_string();
+        oids.push(ext_oid.clone());
+
+        // Extract OIDs from specific extension types
+        match ext.parsed_extension() {
+            // Certificate Policies Extension (OID: 2.5.29.32)
+            // Contains policy OIDs like 2.23.140.1.1 (EV), 2.23.140.1.2.1 (DV), etc.
+            ParsedExtension::CertificatePolicies(ref policies) => {
+                oids.extend(policies.iter().map(|policy| policy.policy_id.to_string()));
+            }
+
+            // Extended Key Usage Extension (OID: 2.5.29.37)
+            // Contains purpose OIDs like 1.3.6.1.5.5.7.3.1 (serverAuth), etc.
+            ParsedExtension::ExtendedKeyUsage(ref eku) => {
+                // ExtendedKeyUsage has boolean fields for each purpose
+                // Map each enabled purpose to its corresponding OID
+                if eku.server_auth {
+                    oids.push("1.3.6.1.5.5.7.3.1".to_string()); // Server Authentication
+                }
+                if eku.client_auth {
+                    oids.push("1.3.6.1.5.5.7.3.2".to_string()); // Client Authentication
+                }
+                if eku.code_signing {
+                    oids.push("1.3.6.1.5.5.7.3.3".to_string()); // Code Signing
+                }
+                if eku.email_protection {
+                    oids.push("1.3.6.1.5.5.7.3.4".to_string()); // Email Protection
+                }
+                if eku.time_stamping {
+                    oids.push("1.3.6.1.5.5.7.3.8".to_string()); // Time Stamping
+                }
+                if eku.ocsp_signing {
+                    oids.push("1.3.6.1.5.5.7.3.9".to_string()); // OCSP Signing
+                }
+                // Note: The 'any' field is a boolean flag, not a vector of OIDs.
+                // Custom OIDs in Extended Key Usage would be in the extension itself,
+                // which we've already captured via the extension OID (2.5.29.37).
+            }
+
+            // Key Usage Extension (OID: 2.5.29.15)
+            // This is a bitmask, not OIDs, but we've already captured the extension OID above
+            // No additional OIDs to extract here
+
+            // Subject Alternative Name (OID: 2.5.29.17)
+            // Contains names, not OIDs, but we've already captured the extension OID above
+
+            // Authority Key Identifier (OID: 2.5.29.35)
+            // Contains key identifiers, not OIDs, but we've already captured the extension OID above
+
+            // Subject Key Identifier (OID: 2.5.29.14)
+            // Contains key identifiers, not OIDs, but we've already captured the extension OID above
+
+            // Other extensions - we've already captured the extension OID above
+            _ => {
+                // Extension OID already added above
+            }
         }
     }
+
     Ok(oids)
 }
 
@@ -47,6 +108,7 @@ fn extract_certificate_policies(
 ///
 /// This function establishes a TLS connection to the domain and extracts
 /// certificate details including version, subject, issuer, validity period, and OIDs.
+/// OIDs are extracted from Certificate Policies, Extended Key Usage, and other extensions.
 ///
 /// # Arguments
 ///
@@ -180,7 +242,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 }
             };
 
-            let oids = extract_certificate_policies(&cert).unwrap_or_else(|_| Vec::new());
+            let oids = extract_certificate_oids(&cert).unwrap_or_else(|_| Vec::new());
             let unique_oids: HashSet<String> = oids.into_iter().collect();
             let serialized_oids = serialize_json(&unique_oids);
 
