@@ -15,11 +15,11 @@ use crate::dns::{
 };
 use crate::domain::extract_domain;
 use crate::error_handling::{update_error_stats, ErrorStats};
+use crate::fingerprint::detect_technologies;
 use crate::parse::{
     extract_linkedin_slug, extract_meta_description, extract_meta_keywords, extract_title,
     is_mobile_friendly,
 };
-use crate::fingerprint::detect_technologies;
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
