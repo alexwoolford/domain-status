@@ -16,6 +16,7 @@ use crate::html::{
     extract_linkedin_slug, extract_meta_description, extract_meta_keywords, extract_title,
     is_mobile_friendly,
 };
+use crate::tech_detection::{detect_technologies, get_ruleset_metadata};
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
@@ -244,6 +245,31 @@ pub async fn handle_response(
     let security_headers = extract_security_headers(&headers);
     let security_headers_json = serialize_json(&security_headers);
 
+    // Detect technologies using community-maintained fingerprint rulesets
+    let (technologies, fingerprints_metadata) = match detect_technologies(&body, &headers, &final_url).await {
+        Ok(techs) => {
+            if !techs.is_empty() {
+                debug!("Detected {} technologies for {final_domain}: {:?}", techs.len(), techs);
+                let mut tech_vec: Vec<String> = techs.into_iter().collect();
+                tech_vec.sort();
+                (Some(serialize_json(&tech_vec)), get_ruleset_metadata().await)
+            } else {
+                debug!("No technologies detected for {final_domain}");
+                (None, get_ruleset_metadata().await)
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to detect technologies for {final_domain}: {e}");
+            (None, None)
+        }
+    };
+
+    let (fingerprints_source, fingerprints_version) = if let Some(meta) = fingerprints_metadata {
+        (Some(meta.source), Some(meta.version))
+    } else {
+        (None, None)
+    };
+
     let timestamp = chrono::Utc::now().timestamp_millis();
 
     debug!("Preparing to insert record for URL: {final_url}");
@@ -271,6 +297,9 @@ pub async fn handle_response(
         is_mobile_friendly,
         timestamp,
         redirect_chain: redirect_chain_json,
+        technologies,
+        fingerprints_source,
+        fingerprints_version,
     };
 
     let update_result = insert_url_record(pool, &record).await;
@@ -317,9 +346,21 @@ pub async fn handle_http_request(
 
     debug!("Sending request to final URL {final_url_string}");
 
+    // Add realistic browser headers to reduce bot detection
+    // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
+    // help with other detection methods (header analysis, behavioral patterns)
     let res = client
         .get(&final_url_string)
-        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+        .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
+        .header(reqwest::header::REFERER, "https://www.google.com/")
+        .header(reqwest::header::HeaderName::from_static("sec-fetch-dest"), "document")
+        .header(reqwest::header::HeaderName::from_static("sec-fetch-mode"), "navigate")
+        .header(reqwest::header::HeaderName::from_static("sec-fetch-site"), "none")
+        .header(reqwest::header::HeaderName::from_static("sec-fetch-user"), "?1")
+        .header(reqwest::header::UPGRADE_INSECURE_REQUESTS, "1")
+        .header(reqwest::header::CACHE_CONTROL, "max-age=0")
         .send()
         .await;
 

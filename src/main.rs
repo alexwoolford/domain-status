@@ -31,6 +31,7 @@ mod html;
 mod http;
 mod initialization;
 mod models;
+mod tech_detection;
 mod tls;
 mod utils;
 
@@ -101,6 +102,11 @@ async fn main() -> Result<()> {
     run_migrations(&pool)
         .await
         .context("Failed to run database migrations")?;
+
+    // Initialize technology fingerprint ruleset
+    tech_detection::init_ruleset(opt.fingerprints.as_deref(), None)
+        .await
+        .context("Failed to initialize fingerprint ruleset")?;
 
     let start_time = std::time::Instant::now();
 

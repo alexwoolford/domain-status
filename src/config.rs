@@ -10,6 +10,21 @@ pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DB_PATH: &str = "./url_checker.db";
 
+/// Default User-Agent string for HTTP requests.
+///
+/// Uses a generic Chrome-like string without a specific version number to avoid
+/// becoming outdated. The pattern mimics a modern Chrome browser on Windows.
+///
+/// **Note:** This should be updated periodically to match current browser patterns.
+/// Users can override this via the `--user-agent` CLI flag.
+///
+/// For better bot evasion, consider:
+/// - Using a more recent browser version pattern
+/// - Rotating between different User-Agent strings
+/// - Customizing per target site
+pub const DEFAULT_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 // URL validation
 pub const URL_SCHEME_PATTERN: &str = r"^https?://";
 
@@ -132,11 +147,12 @@ pub struct Opt {
     #[arg(long, default_value_t = 10)]
     pub timeout_seconds: u64,
 
-    /// HTTP User-Agent header value
-    #[arg(
-        long,
-        default_value = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-    )]
+    /// HTTP User-Agent header value.
+    ///
+    /// Defaults to a Chrome-like browser string. Can be overridden to match
+    /// specific browser versions or patterns. For better bot evasion, consider
+    /// using a recent browser version or rotating User-Agent strings.
+    #[arg(long, default_value = DEFAULT_USER_AGENT)]
     pub user_agent: String,
 
     /// Requests per second rate limit (0 disables limiting)
@@ -146,4 +162,11 @@ pub struct Opt {
     /// Rate limit burst capacity (tokens), defaults to max concurrency if 0
     #[arg(long, default_value_t = 0)]
     pub rate_burst: usize,
+
+    /// Fingerprints source URL or local path (default: HTTP Archive)
+    /// Examples:
+    ///   --fingerprints https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
+    ///   --fingerprints /path/to/technologies.json
+    #[arg(long)]
+    pub fingerprints: Option<String>,
 }
