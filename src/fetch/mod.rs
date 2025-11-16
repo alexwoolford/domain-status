@@ -192,14 +192,20 @@ pub async fn handle_response(
         }
     }
 
-    // Cap body size
-    let body = match response.bytes().await {
-        Ok(bytes) => {
-            if bytes.len() > crate::config::MAX_RESPONSE_BODY_SIZE {
-                debug!("Skipping large body: {} bytes", bytes.len());
+    // Check Content-Encoding header for debugging
+    if let Some(encoding) = headers.get(reqwest::header::CONTENT_ENCODING) {
+        debug!("Content-Encoding for {final_domain}: {:?}", encoding);
+    }
+
+    // Cap body size and read as text (reqwest automatically decompresses gzip/deflate/br)
+    // Using .text() instead of .bytes() ensures automatic decompression
+    let body = match response.text().await {
+        Ok(text) => {
+            if text.len() > crate::config::MAX_RESPONSE_BODY_SIZE {
+                debug!("Skipping large body: {} bytes", text.len());
                 return Ok(());
             }
-            String::from_utf8_lossy(&bytes).to_string()
+            text
         }
         Err(e) => {
             log::warn!("Failed to read response body for {final_domain}: {e}");
@@ -219,6 +225,9 @@ pub async fn handle_response(
         log::debug!("Title tag found in raw HTML for {final_domain}");
     } else {
         log::warn!("No title tag found in raw HTML for {final_domain}");
+        // Log first 500 chars of HTML to help debug bot detection
+        let preview = body.chars().take(500).collect::<String>();
+        log::debug!("HTML preview (first 500 chars) for {final_domain}: {}", preview);
     }
 
     // Parse HTML once and extract all data before any async operations

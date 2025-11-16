@@ -7,7 +7,7 @@ description = "A Rust project that scrapes urls and captures status information 
 
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate"] }
 http = "1.0" # Updated for wappalyzer compatibility
 tokio = { version = "1.48", features = ["full"] }
 tokio-util = { version = "0.7" }
