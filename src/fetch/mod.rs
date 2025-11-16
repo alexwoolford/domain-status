@@ -101,7 +101,22 @@ pub async fn resolve_redirect_chain(
 
     for _ in 0..max_hops {
         chain.push(current.clone());
-        let resp = client.get(&current).send().await?;
+        // Add realistic browser headers to reduce bot detection during redirect resolution
+        // This is critical because sites may serve different content (or block) based on headers
+        let resp = client
+            .get(&current)
+            .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+            .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
+            .header(reqwest::header::REFERER, "https://www.google.com/")
+            .header(reqwest::header::HeaderName::from_static("sec-fetch-dest"), "document")
+            .header(reqwest::header::HeaderName::from_static("sec-fetch-mode"), "navigate")
+            .header(reqwest::header::HeaderName::from_static("sec-fetch-site"), "none")
+            .header(reqwest::header::HeaderName::from_static("sec-fetch-user"), "?1")
+            .header(reqwest::header::UPGRADE_INSECURE_REQUESTS, "1")
+            .header(reqwest::header::CACHE_CONTROL, "max-age=0")
+            .send()
+            .await?;
         if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
             let loc = loc.to_str().unwrap_or("").to_string();
             let new_url = Url::parse(&loc)
