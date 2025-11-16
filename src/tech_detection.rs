@@ -662,9 +662,9 @@ pub async fn detect_technologies(
             tech,
             &header_map,
             &cookies,
-            &meta_tags,
-            &script_sources,
-            &html_text,
+            meta_tags,
+            script_sources,
+            html_text,
             url,
         ) {
             detected.insert(tech_name.clone());
