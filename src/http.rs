@@ -246,23 +246,31 @@ pub async fn handle_response(
     let security_headers_json = serialize_json(&security_headers);
 
     // Detect technologies using community-maintained fingerprint rulesets
-    let (technologies, fingerprints_metadata) = match detect_technologies(&body, &headers, &final_url).await {
-        Ok(techs) => {
-            if !techs.is_empty() {
-                debug!("Detected {} technologies for {final_domain}: {:?}", techs.len(), techs);
-                let mut tech_vec: Vec<String> = techs.into_iter().collect();
-                tech_vec.sort();
-                (Some(serialize_json(&tech_vec)), get_ruleset_metadata().await)
-            } else {
-                debug!("No technologies detected for {final_domain}");
-                (None, get_ruleset_metadata().await)
+    let (technologies, fingerprints_metadata) =
+        match detect_technologies(&body, &headers, &final_url).await {
+            Ok(techs) => {
+                if !techs.is_empty() {
+                    debug!(
+                        "Detected {} technologies for {final_domain}: {:?}",
+                        techs.len(),
+                        techs
+                    );
+                    let mut tech_vec: Vec<String> = techs.into_iter().collect();
+                    tech_vec.sort();
+                    (
+                        Some(serialize_json(&tech_vec)),
+                        get_ruleset_metadata().await,
+                    )
+                } else {
+                    debug!("No technologies detected for {final_domain}");
+                    (None, get_ruleset_metadata().await)
+                }
             }
-        }
-        Err(e) => {
-            log::warn!("Failed to detect technologies for {final_domain}: {e}");
-            (None, None)
-        }
-    };
+            Err(e) => {
+                log::warn!("Failed to detect technologies for {final_domain}: {e}");
+                (None, None)
+            }
+        };
 
     let (fingerprints_source, fingerprints_version) = if let Some(meta) = fingerprints_metadata {
         (Some(meta.source), Some(meta.version))

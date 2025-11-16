@@ -228,7 +228,7 @@ async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technology>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .build()?;
-    
+
     // Check if URL points to a directory (GitHub) or a file
     // For HTTP Archive, we need to fetch all JSON files from the directory
     // raw.githubusercontent.com URLs that don't end in .json are directories
@@ -237,20 +237,24 @@ async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technology>> {
         log::debug!("Detected GitHub directory URL, fetching via API");
         return fetch_from_github_directory(url, &client).await;
     }
-    
+
     // Single file - fetch directly
     log::debug!("Fetching single file from: {}", url);
     let response = client.get(url).send().await?;
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to fetch {}: {}", url, response.status()));
+        return Err(anyhow::anyhow!(
+            "Failed to fetch {}: {}",
+            url,
+            response.status()
+        ));
     }
-    
+
     let json_text = response.text().await?;
-    
+
     // Parse as a map of technology name -> Technology
-    let technologies: HashMap<String, Technology> = serde_json::from_str(&json_text)
-        .context("Failed to parse technologies JSON")?;
-    
+    let technologies: HashMap<String, Technology> =
+        serde_json::from_str(&json_text).context("Failed to parse technologies JSON")?;
+
     Ok(technologies)
 }
 
@@ -270,7 +274,10 @@ async fn fetch_from_github_directory(
             let owner = parts[3];
             let repo = parts[4];
             let path = parts[6..].join("/");
-            format!("https://api.github.com/repos/{}/{}/contents/{}", owner, repo, path)
+            format!(
+                "https://api.github.com/repos/{}/{}/contents/{}",
+                owner, repo, path
+            )
         } else {
             return Err(anyhow::anyhow!("Invalid GitHub URL format: {}", dir_url));
         }
@@ -279,12 +286,15 @@ async fn fetch_from_github_directory(
         dir_url.to_string()
     };
 
-    log::info!("Fetching technology files from GitHub directory: {}", api_url);
+    log::info!(
+        "Fetching technology files from GitHub directory: {}",
+        api_url
+    );
 
     // Fetch directory listing
     let api_url_with_ref = format!("{}?ref=main", api_url);
     log::debug!("Fetching directory listing from: {}", api_url_with_ref);
-    
+
     let response = client
         .get(&api_url_with_ref)
         .header("Accept", "application/vnd.github.v3+json")
@@ -294,7 +304,10 @@ async fn fetch_from_github_directory(
 
     if !response.status().is_success() {
         let status = response.status();
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         return Err(anyhow::anyhow!(
             "Failed to fetch directory listing: {} - {}",
             status,
@@ -311,8 +324,8 @@ async fn fetch_from_github_directory(
     }
 
     let json_text = response.text().await?;
-    let entries: Vec<FileEntry> = serde_json::from_str(&json_text)
-        .context("Failed to parse GitHub API response")?;
+    let entries: Vec<FileEntry> =
+        serde_json::from_str(&json_text).context("Failed to parse GitHub API response")?;
 
     // Filter for JSON files only
     let json_files: Vec<_> = entries
@@ -333,7 +346,8 @@ async fn fetch_from_github_directory(
                         if resp.status().is_success() {
                             match resp.text().await {
                                 Ok(text) => {
-                                    match serde_json::from_str::<HashMap<String, Technology>>(&text) {
+                                    match serde_json::from_str::<HashMap<String, Technology>>(&text)
+                                    {
                                         Ok(techs) => Some(techs),
                                         Err(e) => {
                                             log::warn!("Failed to parse {}: {}", download_url, e);
@@ -368,12 +382,15 @@ async fn fetch_from_github_directory(
         }
     }
 
-    log::info!("Successfully loaded {} technologies", all_technologies.len());
+    log::info!(
+        "Successfully loaded {} technologies",
+        all_technologies.len()
+    );
     Ok(all_technologies)
 }
 
 /// Gets the latest commit SHA for a GitHub repository path
-/// 
+///
 /// This extracts the Git commit hash that identifies the exact version of the
 /// ruleset being used. This is important for reproducibility - you can see
 /// exactly which version of the fingerprints was used for each detection.
@@ -383,9 +400,13 @@ async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     // URL structure: https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}
     let parts: Vec<&str> = repo_path.split('/').collect();
     log::debug!("URL parts count: {}, URL: {}", parts.len(), repo_path);
-    
+
     if parts.len() < 7 {
-        log::debug!("Invalid GitHub URL format for SHA extraction: {} (length: {})", repo_path, parts.len());
+        log::debug!(
+            "Invalid GitHub URL format for SHA extraction: {} (length: {})",
+            repo_path,
+            parts.len()
+        );
         return None;
     }
 
@@ -396,7 +417,7 @@ async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     // parts[4] = repo (e.g., "wappalyzer")
     // parts[5] = branch (e.g., "main")
     // parts[6..] = path (e.g., "src/technologies")
-    
+
     let owner = match parts.get(3) {
         Some(o) => o,
         None => {
@@ -426,7 +447,7 @@ async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         reqwest::header::USER_AGENT,
         reqwest::header::HeaderValue::from_static("domain_status/0.1.0"),
     );
-    
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .default_headers(headers)
@@ -444,30 +465,36 @@ async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
             let status = resp.status();
             if status.is_success() {
                 match resp.text().await {
-                    Ok(text) => {
-                        match serde_json::from_str::<Vec<Commit>>(&text) {
-                            Ok(commits) => {
-                                if let Some(commit) = commits.first() {
-                                    log::debug!("Found commit SHA: {}", commit.sha);
-                                    Some(commit.sha.clone())
-                                } else {
-                                    log::warn!("No commits found in response for path: {}", path);
-                                    None
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to parse commit response: {} (first 200 chars: {})", e, &text[..text.len().min(200)]);
+                    Ok(text) => match serde_json::from_str::<Vec<Commit>>(&text) {
+                        Ok(commits) => {
+                            if let Some(commit) = commits.first() {
+                                log::debug!("Found commit SHA: {}", commit.sha);
+                                Some(commit.sha.clone())
+                            } else {
+                                log::warn!("No commits found in response for path: {}", path);
                                 None
                             }
                         }
-                    }
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to parse commit response: {} (first 200 chars: {})",
+                                e,
+                                &text[..text.len().min(200)]
+                            );
+                            None
+                        }
+                    },
                     Err(e) => {
                         log::warn!("Failed to read commit response: {}", e);
                         None
                     }
                 }
             } else {
-                log::warn!("GitHub API returned status: {} for URL: {}", status, api_url);
+                log::warn!(
+                    "GitHub API returned status: {} for URL: {}",
+                    status,
+                    api_url
+                );
                 None
             }
         }
@@ -484,7 +511,7 @@ async fn load_from_path(path: &Path) -> Result<HashMap<String, Technology>> {
         // Load all JSON files from directory
         let mut all_technologies = HashMap::new();
         let mut entries = fs::read_dir(path).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let file_path = entry.path();
             if file_path.extension().and_then(|s| s.to_str()) == Some("json") {
@@ -505,23 +532,20 @@ async fn load_from_path(path: &Path) -> Result<HashMap<String, Technology>> {
                 }
             }
         }
-        
+
         Ok(all_technologies)
     } else {
         // Single file
         let content = fs::read_to_string(path).await?;
-        let technologies: HashMap<String, Technology> = serde_json::from_str(&content)
-            .context("Failed to parse technologies JSON")?;
-        
+        let technologies: HashMap<String, Technology> =
+            serde_json::from_str(&content).context("Failed to parse technologies JSON")?;
+
         Ok(technologies)
     }
 }
 
 /// Loads ruleset from cache if it exists and is fresh
-async fn load_from_cache(
-    cache_dir: &Path,
-    source: &str,
-) -> Result<FingerprintRuleset> {
+async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRuleset> {
     let metadata_path = cache_dir.join("metadata.json");
     let technologies_path = cache_dir.join("technologies.json");
 
@@ -557,10 +581,7 @@ async fn load_from_cache(
 }
 
 /// Saves ruleset to cache
-async fn save_to_cache(
-    ruleset: &FingerprintRuleset,
-    cache_dir: &Path,
-) -> Result<()> {
+async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
 
     let metadata_path = cache_dir.join("metadata.json");
@@ -601,12 +622,11 @@ pub async fn detect_technologies(
     // Extract data from HTML (before async operations)
     let (meta_tags, script_sources, html_text) = {
         let document = Html::parse_document(html);
-        
+
         // Extract meta tags
         let mut meta_tags = HashMap::new();
-        let meta_selector = Selector::parse("meta").unwrap_or_else(|_| {
-            Selector::parse("invalid").unwrap()
-        });
+        let meta_selector =
+            Selector::parse("meta").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
         for element in document.select(&meta_selector) {
             if let (Some(name), Some(content)) = (
                 element.value().attr("name"),
@@ -618,9 +638,8 @@ pub async fn detect_technologies(
 
         // Extract script sources
         let mut script_sources = Vec::new();
-        let script_selector = Selector::parse("script").unwrap_or_else(|_| {
-            Selector::parse("invalid").unwrap()
-        });
+        let script_selector =
+            Selector::parse("script").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
         for element in document.select(&script_selector) {
             if let Some(src) = element.value().attr("src") {
                 script_sources.push(src.to_string());
@@ -660,17 +679,26 @@ pub async fn detect_technologies(
     let header_map: HashMap<String, String> = headers
         .iter()
         .filter_map(|(name, value)| {
-            value.to_str().ok().map(|v| {
-                (name.as_str().to_lowercase(), v.to_string())
-            })
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.as_str().to_lowercase(), v.to_string()))
         })
         .collect();
 
     // Match each technology
     for (tech_name, tech) in &ruleset.technologies {
-        if matches_technology(tech, &header_map, &cookies, &meta_tags, &script_sources, &html_text, url) {
+        if matches_technology(
+            tech,
+            &header_map,
+            &cookies,
+            &meta_tags,
+            &script_sources,
+            &html_text,
+            url,
+        ) {
             detected.insert(tech_name.clone());
-            
+
             // Add implied technologies
             for implied in &tech.implies {
                 detected.insert(implied.clone());
@@ -685,7 +713,7 @@ pub async fn detect_technologies(
         let is_excluded = tech
             .map(|t| t.excludes.iter().any(|ex| detected.contains(ex)))
             .unwrap_or(false);
-        
+
         if !is_excluded {
             final_detected.insert(tech_name.clone());
         }
@@ -783,11 +811,7 @@ fn matches_pattern(pattern: &str, text: &str) -> bool {
     if is_regex {
         // Try to compile as regex
         // Remove version extraction syntax (e.g., ";version:\\1") for matching
-        let pattern_for_match = pattern
-            .split(';')
-            .next()
-            .unwrap_or(pattern)
-            .trim();
+        let pattern_for_match = pattern.split(';').next().unwrap_or(pattern).trim();
 
         match regex::Regex::new(pattern_for_match) {
             Ok(re) => re.is_match(text),
@@ -841,7 +865,7 @@ mod tests {
         let html = "";
         let headers = HeaderMap::new();
         let url = "https://example.com";
-        
+
         // Without ruleset, this will fail - that's expected
         let result = detect_technologies(html, &headers, url).await;
         assert!(result.is_err());
