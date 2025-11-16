@@ -129,13 +129,6 @@ impl ErrorStats {
         // All ErrorType variants are initialized in new(), so unwrap() is safe
         self.errors.get(&error).unwrap().load(Ordering::SeqCst)
     }
-
-    pub fn total_error_count(&self) -> usize {
-        self.errors
-            .values()
-            .map(|counter| counter.load(Ordering::SeqCst))
-            .sum()
-    }
 }
 
 /// Creates an exponential backoff retry strategy.
@@ -229,12 +222,4 @@ mod tests {
         assert_eq!(stats.get_count(ErrorType::TitleExtractError), 3);
     }
 
-    #[test]
-    fn test_error_stats_total_count() {
-        let stats = ErrorStats::new();
-        stats.increment(ErrorType::TitleExtractError);
-        stats.increment(ErrorType::KeywordExtractError);
-        stats.increment(ErrorType::TitleExtractError);
-        assert_eq!(stats.total_error_count(), 3);
-    }
 }
