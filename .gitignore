@@ -5,3 +5,7 @@ Cargo.lock
 .idea/
 *.db-shm
 *.db-wal
+
+# Fingerprint cache files (runtime data, not source code)
+.fingerprints_cache/*
+!.fingerprints_cache/.gitkeep
