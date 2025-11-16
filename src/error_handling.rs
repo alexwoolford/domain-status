@@ -221,5 +221,4 @@ mod tests {
         stats.increment(ErrorType::TitleExtractError);
         assert_eq!(stats.get_count(ErrorType::TitleExtractError), 3);
     }
-
 }
