@@ -4,7 +4,7 @@
 //! resources needed for processing URLs, reducing function argument counts
 //! and improving maintainability.
 
-use hickory_resolver::TokioResolver;
+use hickory_resolver::TokioAsyncResolver;
 use publicsuffix::List;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub struct ProcessingContext {
     /// Public Suffix List extractor for domain extraction
     pub extractor: Arc<List>,
     /// DNS resolver for hostname lookups
-    pub resolver: Arc<TokioResolver>,
+    pub resolver: Arc<TokioAsyncResolver>,
     /// Error statistics tracker
     pub error_stats: Arc<ErrorStats>,
     /// Unique identifier for this run (for time-series tracking)
@@ -40,7 +40,7 @@ impl ProcessingContext {
         redirect_client: Arc<reqwest::Client>,
         pool: Arc<SqlitePool>,
         extractor: Arc<List>,
-        resolver: Arc<TokioResolver>,
+        resolver: Arc<TokioAsyncResolver>,
         error_stats: Arc<ErrorStats>,
         run_id: Option<String>,
     ) -> Self {

@@ -17,7 +17,7 @@ rustls = "0.23"
 webpki-roots = "1.0"
 x509-parser = "0.18"
 tokio-rustls = "0.26"
-hickory-resolver = "0.25"
+hickory-resolver = "0.24"
 
 # Database related
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "migrate"] }

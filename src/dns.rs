@@ -1,6 +1,6 @@
 use anyhow::{Error, Result};
 use hickory_resolver::proto::rr::{RData, RecordType};
-use hickory_resolver::TokioResolver;
+use hickory_resolver::TokioAsyncResolver;
 
 /// Resolves a hostname to an IP address using DNS.
 ///
@@ -16,15 +16,12 @@ use hickory_resolver::TokioResolver;
 /// # Errors
 ///
 /// Returns an error if DNS resolution fails or no IP addresses are found.
-pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<String, Error> {
-    // Ensure host is fully qualified (ends with .) to prevent search domain appending
-    // This fixes the issue where "amazon.com" becomes "amazon.com.local." on macOS
-    let fqdn = if host.ends_with('.') {
-        host.to_string()
-    } else {
-        format!("{host}.")
-    };
-    let response = resolver.lookup_ip(&fqdn).await.map_err(Error::new)?;
+pub async fn resolve_host_to_ip(
+    host: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<String, Error> {
+    // In 0.24, this worked fine without FQDN workarounds
+    let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
     let ip = response
         .iter()
         .next()
@@ -45,7 +42,7 @@ pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<
 /// The reverse DNS name, or `None` if the lookup fails.
 pub async fn reverse_dns_lookup(
     ip: &str,
-    resolver: &TokioResolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<Option<String>, Error> {
     match resolver.reverse_lookup(ip.parse()?).await {
         Ok(response) => {
@@ -71,7 +68,7 @@ pub async fn reverse_dns_lookup(
 /// A vector of nameserver hostnames, or an empty vector if the query fails.
 pub async fn lookup_ns_records(
     domain: &str,
-    resolver: &TokioResolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<Vec<String>, Error> {
     // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
     match resolver.lookup(domain, RecordType::NS).await {
@@ -116,11 +113,9 @@ pub async fn lookup_ns_records(
 /// A vector of TXT record strings, or an empty vector if the query fails.
 pub async fn lookup_txt_records(
     domain: &str,
-    resolver: &TokioResolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<Vec<String>, Error> {
-    // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
-    // The resolver handles domain resolution correctly without FQDN
-    // FQDN (trailing dot) is only needed for IP resolution to avoid search domain issues
+    // In 0.24, this worked fine without FQDN workarounds
     match resolver.lookup(domain, RecordType::TXT).await {
         Ok(lookup) => {
             let txt_records: Vec<String> = lookup
@@ -168,9 +163,9 @@ pub async fn lookup_txt_records(
 /// or an empty vector if the query fails.
 pub async fn lookup_mx_records(
     domain: &str,
-    resolver: &TokioResolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<Vec<(u16, String)>, Error> {
-    // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
+    // In 0.24, this worked fine without FQDN workarounds
     match resolver.lookup(domain, RecordType::MX).await {
         Ok(lookup) => {
             let mut mx_records: Vec<(u16, String)> = lookup

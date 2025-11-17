@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::Opt;
-use hickory_resolver::TokioResolver;
+use hickory_resolver::TokioAsyncResolver;
 use publicsuffix::List;
 use reqwest::ClientBuilder;
 use tokio::sync::Semaphore;
@@ -205,39 +205,31 @@ pub fn init_crypto_provider() {
 ///
 /// # Returns
 ///
-/// A configured `TokioResolver` wrapped in `Arc` for sharing across tasks,
+/// A configured `TokioAsyncResolver` wrapped in `Arc` for sharing across tasks,
 /// or an error if initialization fails.
 ///
 /// # Errors
 ///
 /// Returns `InitializationError::DnsResolverError` if both system and fallback
 /// configurations fail (though fallback should rarely fail).
-pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
+pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
     use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(crate::config::DNS_TIMEOUT_SECS);
     opts.attempts = 2; // Reduce retry attempts to fail faster
-                       // Set ndots to 0 to prevent search domain appending
-                       // This prevents "google.com" from becoming "google.com.local" on macOS
-                       // However, this may not fully solve the issue - using Google DNS directly would be better
+                       // Set ndots to 0 to prevent search domain appending (preserved from 0.25 workaround)
     opts.ndots = 0;
 
     // Use default resolver configuration with timeouts
     // This ensures consistent timeout behavior across all DNS queries
-    // In hickory-resolver 0.25, use builder_tokio() and override options
-    // Note: System DNS config on macOS includes .local search domain
-    // TODO: Use Google DNS (8.8.8.8, 8.8.4.4) directly to avoid search domain issues
-    // The builder_tokio() API doesn't easily support custom config, so we use system resolver
-    // with ndots=0 as a workaround
-    let mut builder = TokioResolver::builder_tokio()
-        .map_err(|e| InitializationError::DnsResolverError(e.to_string()))?;
-    // Override with our custom options (config uses system default)
-    *builder.options_mut() = opts;
-    let resolver = builder.build();
-
-    Ok(Arc::new(resolver))
+    // In hickory-resolver 0.24, use TokioAsyncResolver::tokio() with ResolverConfig::default()
+    // This worked correctly and didn't have the search domain issues of 0.25
+    Ok(Arc::new(TokioAsyncResolver::tokio(
+        ResolverConfig::default(),
+        opts,
+    )))
 }
 
 /// Token-bucket rate limiter for controlling request rate.
