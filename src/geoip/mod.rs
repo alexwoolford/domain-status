@@ -139,7 +139,9 @@ pub async fn init_geoip(
 
     // Check if City database already loaded
     let should_load = {
-        let reader = GEOIP_CITY_READER.read().unwrap();
+        let reader = GEOIP_CITY_READER
+            .read()
+            .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {}", e))?;
         if let Some((_, ref metadata)) = *reader {
             // Check if source matches
             if metadata.source == path {
@@ -157,7 +159,9 @@ pub async fn init_geoip(
         // Still try to load ASN database if not already loaded
         init_asn_database(&cache_path).await?;
         // Get metadata to return
-        let reader = GEOIP_CITY_READER.read().unwrap();
+        let reader = GEOIP_CITY_READER
+            .read()
+            .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {}", e))?;
         if let Some((_, ref metadata)) = *reader {
             return Ok(Some(metadata.clone()));
         }
@@ -173,7 +177,10 @@ pub async fn init_geoip(
     };
 
     let reader_arc = Arc::new(reader);
-    *GEOIP_CITY_READER.write().unwrap() = Some((reader_arc, metadata.clone()));
+    *GEOIP_CITY_READER
+        .write()
+        .map_err(|e| anyhow::anyhow!("GeoIP City writer lock poisoned: {}", e))? =
+        Some((reader_arc, metadata.clone()));
 
     log::info!(
         "GeoIP City database loaded: {} (version: {})",
@@ -191,7 +198,9 @@ pub async fn init_geoip(
 async fn init_asn_database(cache_dir: &Path) -> Result<()> {
     // Check if ASN database already loaded
     {
-        let reader = GEOIP_ASN_READER.read().unwrap();
+        let reader = GEOIP_ASN_READER
+            .read()
+            .map_err(|e| anyhow::anyhow!("GeoIP ASN reader lock poisoned: {}", e))?;
         if reader.is_some() {
             return Ok(()); // Already loaded
         }
@@ -226,7 +235,9 @@ async fn init_asn_database(cache_dir: &Path) -> Result<()> {
                 match load_from_url(&download_url, cache_dir, "GeoLite2-ASN").await {
                     Ok((reader, metadata)) => {
                         let reader_arc = Arc::new(reader);
-                        *GEOIP_ASN_READER.write().unwrap() = Some((reader_arc, metadata));
+                        *GEOIP_ASN_READER.write().map_err(|e| {
+                            anyhow::anyhow!("GeoIP ASN writer lock poisoned: {}", e)
+                        })? = Some((reader_arc, metadata));
                         log::info!("GeoIP ASN database loaded successfully");
                     }
                     Err(e) => {
@@ -243,7 +254,9 @@ async fn init_asn_database(cache_dir: &Path) -> Result<()> {
                         load_from_file(cache_file.to_str().unwrap()).await
                     {
                         let reader_arc = Arc::new(reader);
-                        *GEOIP_ASN_READER.write().unwrap() = Some((reader_arc, metadata));
+                        *GEOIP_ASN_READER.write().map_err(|e| {
+                            anyhow::anyhow!("GeoIP ASN writer lock poisoned: {}", e)
+                        })? = Some((reader_arc, metadata));
                         log::info!("GeoIP ASN database loaded from cache");
                     }
                 }
@@ -456,7 +469,7 @@ async fn save_metadata(metadata: &GeoIpMetadata, metadata_file: &Path) -> Result
 ///
 /// Returns `None` if GeoIP is not initialized or if the lookup fails.
 pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
-    let city_reader = GEOIP_CITY_READER.read().unwrap();
+    let city_reader = GEOIP_CITY_READER.read().ok()?;
     let (city_reader, _) = city_reader.as_ref()?;
 
     // Parse IP address
@@ -507,7 +520,7 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     }
 
     // Lookup ASN data if ASN database is available
-    let asn_reader = GEOIP_ASN_READER.read().unwrap();
+    let asn_reader = GEOIP_ASN_READER.read().ok()?;
     if let Some((asn_reader, _)) = asn_reader.as_ref() {
         if let Ok(asn_result) = asn_reader.lookup::<maxminddb::geoip2::Asn>(ip_addr) {
             geo_result.asn = asn_result.autonomous_system_number;
@@ -523,6 +536,6 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
 /// Gets the current GeoIP City metadata if initialized
 #[allow(dead_code)]
 pub fn get_metadata() -> Option<GeoIpMetadata> {
-    let reader = GEOIP_CITY_READER.read().unwrap();
+    let reader = GEOIP_CITY_READER.read().ok()?;
     reader.as_ref().map(|(_, metadata)| metadata.clone())
 }

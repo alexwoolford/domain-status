@@ -129,6 +129,10 @@ fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32, String)>> 
 /// * `http_headers` - HTTP headers HashMap (will be inserted into url_http_headers table)
 /// * `oids` - Vector of OID strings (will be inserted into url_oids table)
 /// * `redirect_chain` - Vector of redirect URLs (will be inserted into url_redirect_chain table)
+///
+/// # Returns
+///
+/// Returns the `id` of the inserted (or updated) `url_status` record, or an error if insertion fails.
 pub async fn insert_url_record(
     pool: &SqlitePool,
     record: &UrlRecord,
@@ -136,7 +140,7 @@ pub async fn insert_url_record(
     http_headers: &std::collections::HashMap<String, String>,
     oids: &std::collections::HashSet<String>,
     redirect_chain: &[String],
-) -> Result<(), DatabaseError> {
+) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(record.ssl_cert_valid_to.as_ref());
 
@@ -404,7 +408,7 @@ pub async fn insert_url_record(
     // Commit transaction
     tx.commit().await.map_err(DatabaseError::SqlError)?;
 
-    Ok(())
+    Ok(url_status_id)
 }
 
 /// Inserts GeoIP data for a URL status record.
