@@ -155,7 +155,9 @@ pub async fn insert_url_record(
     let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
 
     // 1. Insert into main url_status table
-    let result = sqlx::query(
+    // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
+    // This eliminates the need for a separate SELECT query and improves performance
+    let url_status_id = sqlx::query_scalar::<_, i64>(
         "INSERT INTO url_status (
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
             response_time, title, keywords, description, tls_version, ssl_cert_subject,
@@ -182,7 +184,8 @@ pub async fn insert_url_record(
             dmarc_record=excluded.dmarc_record,
             cipher_suite=excluded.cipher_suite,
             key_algorithm=excluded.key_algorithm,
-            run_id=excluded.run_id",
+            run_id=excluded.run_id
+        RETURNING id",
     )
     .bind(&record.initial_domain)
     .bind(&record.final_domain)
@@ -212,41 +215,16 @@ pub async fn insert_url_record(
     .bind(&record.cipher_suite)
     .bind(&record.key_algorithm)
     .bind(&record.run_id)
-    .execute(&mut *tx)
-    .await;
-
-    let url_status_id = match result {
-        Ok(_) => {
-            // Get the last inserted row ID (or existing ID if ON CONFLICT updated)
-            // For ON CONFLICT, we need to query the ID separately
-            // Use final_domain and timestamp since that's the unique constraint
-            let id_result = sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM url_status WHERE final_domain = ? AND timestamp = ?",
-            )
-            .bind(&record.final_domain)
-            .bind(record.timestamp)
-            .fetch_one(&mut *tx)
-            .await;
-
-            match id_result {
-                Ok(id) => id,
-                Err(e) => {
-                    log::error!("Failed to get url_status_id: {}", e);
-                    tx.rollback().await.ok();
-                    return Err(DatabaseError::SqlError(e));
-                }
-            }
-        }
-        Err(e) => {
-            log::error!(
-                "Failed to insert UrlRecord for domain {}: {}",
-                record.initial_domain,
-                e
-            );
-            tx.rollback().await.ok();
-            return Err(DatabaseError::SqlError(e));
-        }
-    };
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        log::error!(
+            "Failed to insert UrlRecord for domain {}: {}",
+            record.initial_domain,
+            e
+        );
+        DatabaseError::SqlError(e)
+    })?;
 
     // 2. Insert normalized technologies (passed directly, no JSON parsing)
     for tech in technologies {
