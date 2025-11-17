@@ -733,7 +733,7 @@ pub async fn handle_response(
         dmarc_record: additional_dns.dmarc_record.clone(),
         cipher_suite: tls_dns_data.cipher_suite.clone(),
         key_algorithm: tls_dns_data.key_algorithm.clone(),
-        run_id: ctx.run_id.as_ref().map(|s| s.clone()),
+        run_id: ctx.run_id.clone(),
     };
 
     // Parse OIDs from JSON string to HashSet
