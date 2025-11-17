@@ -64,13 +64,13 @@ async fn main() -> Result<()> {
     // Load environment variables from .env file (if it exists)
     // This allows setting MAXMIND_LICENSE_KEY in .env without exporting it manually
     // Try loading from current directory first, then from the executable's directory
-    if dotenv::dotenv().is_err() {
+    if dotenvy::dotenv().is_err() {
         // If .env not found in current dir, try next to the executable
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
                 let env_path = exe_dir.join(".env");
                 if env_path.exists() {
-                    let _ = dotenv::from_path(&env_path);
+                    let _ = dotenvy::from_path(&env_path);
                 }
             }
         }
