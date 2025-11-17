@@ -7,7 +7,7 @@ use clap::{Parser, ValueEnum};
 #[allow(dead_code)]
 pub const SEMAPHORE_LIMIT: usize = 500;
 pub const LOGGING_INTERVAL: usize = 5;
-pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(10);
+pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DB_PATH: &str = "./url_checker.db";
 
 // Network operation timeouts

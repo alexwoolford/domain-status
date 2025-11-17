@@ -129,6 +129,7 @@ fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32, String)>> 
 /// * `http_headers` - HTTP headers HashMap (will be inserted into url_http_headers table)
 /// * `oids` - Vector of OID strings (will be inserted into url_oids table)
 /// * `redirect_chain` - Vector of redirect URLs (will be inserted into url_redirect_chain table)
+/// * `technologies` - Vector of detected technology names (will be inserted into url_technologies table)
 ///
 /// # Returns
 ///
@@ -140,6 +141,7 @@ pub async fn insert_url_record(
     http_headers: &std::collections::HashMap<String, String>,
     oids: &std::collections::HashSet<String>,
     redirect_chain: &[String],
+    technologies: &[String],
 ) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(record.ssl_cert_valid_to.as_ref());
@@ -246,25 +248,23 @@ pub async fn insert_url_record(
         }
     };
 
-    // 2. Insert normalized technologies
-    if let Some(techs) = parse_json_array(&record.technologies) {
-        for tech in techs {
-            // Get category for this technology
-            let category = fingerprint::get_technology_category(&tech).await;
+    // 2. Insert normalized technologies (passed directly, no JSON parsing)
+    for tech in technologies {
+        // Get category for this technology
+        let category = fingerprint::get_technology_category(tech).await;
 
-            if let Err(e) = sqlx::query(
-                "INSERT INTO url_technologies (url_status_id, technology_name, technology_category)
-                 VALUES (?, ?, ?)
-                 ON CONFLICT(url_status_id, technology_name) DO NOTHING",
-            )
-            .bind(url_status_id)
-            .bind(&tech)
-            .bind(&category)
-            .execute(&mut *tx)
-            .await
-            {
-                log::warn!("Failed to insert technology {}: {}", tech, e);
-            }
+        if let Err(e) = sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, technology_category)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_status_id, technology_name) DO NOTHING",
+        )
+        .bind(url_status_id)
+        .bind(tech)
+        .bind(&category)
+        .execute(&mut *tx)
+        .await
+        {
+            log::warn!("Failed to insert technology {}: {}", tech, e);
         }
     }
 

@@ -12,15 +12,6 @@ use x509_parser::extensions::ParsedExtension;
 
 use crate::models::CertificateInfo;
 
-/// Serializes a value to JSON string.
-///
-/// Note: JSON object key order is not guaranteed by the JSON spec, but serde_json
-/// typically preserves insertion order for HashMap. If deterministic key ordering
-/// is required, use BTreeMap in the source data structure instead.
-fn serialize_json<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
-}
-
 /// Extracts all relevant OIDs from an X.509 certificate.
 ///
 /// This function extracts OIDs from multiple certificate extensions:
@@ -244,7 +235,6 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
 
             let oids = extract_certificate_oids(&cert).unwrap_or_else(|_| Vec::new());
             let unique_oids: HashSet<String> = oids.into_iter().collect();
-            let serialized_oids = serialize_json(&unique_oids);
 
             log::info!("Extracting validity period for domain: {domain}");
             let valid_from_str =
@@ -270,7 +260,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 issuer: Some(issuer),
                 valid_from: Some(valid_from),
                 valid_to: Some(valid_to),
-                oids: Some(serialized_oids),
+                oids: Some(unique_oids),
                 cipher_suite,
                 key_algorithm: Some(key_algorithm),
             });

@@ -31,7 +31,7 @@ pub struct UrlRecord {
     pub ssl_cert_valid_to: Option<NaiveDateTime>,
     pub is_mobile_friendly: bool,
     pub timestamp: i64,
-    pub technologies: Option<String>,
+    // Removed: technologies (now passed directly to insert_url_record, not stored in url_status table)
     // Removed: fingerprints_source and fingerprints_version (now stored in runs table)
     pub nameservers: Option<String>,
     pub txt_records: Option<String>,

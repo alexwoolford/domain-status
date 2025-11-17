@@ -14,7 +14,7 @@ use chrono::NaiveDateTime;
 /// * `issuer` - Certificate issuer (e.g., "CN=Let's Encrypt")
 /// * `valid_from` - Certificate validity start date
 /// * `valid_to` - Certificate validity end date
-/// * `oids` - JSON-serialized set of certificate OIDs (includes policy OIDs, extended key usage OIDs, and extension OIDs)
+/// * `oids` - Set of certificate OIDs (includes policy OIDs, extended key usage OIDs, and extension OIDs)
 /// * `cipher_suite` - Negotiated cipher suite (e.g., "TLS13_AES_256_GCM_SHA384")
 /// * `key_algorithm` - Public key algorithm (e.g., "RSA", "ECDSA", "Ed25519")
 pub struct CertificateInfo {
@@ -23,7 +23,7 @@ pub struct CertificateInfo {
     pub issuer: Option<String>,
     pub valid_from: Option<NaiveDateTime>,
     pub valid_to: Option<NaiveDateTime>,
-    pub oids: Option<String>,
+    pub oids: Option<std::collections::HashSet<String>>,
     pub cipher_suite: Option<String>,
     pub key_algorithm: Option<String>,
 }
