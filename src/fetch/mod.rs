@@ -1,11 +1,11 @@
 use anyhow::{Error, Result};
-use hickory_resolver::TokioAsyncResolver;
 use log::debug;
-use publicsuffix::List;
 use reqwest::Url;
 use scraper::{Html, Selector};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
+
+mod context;
+pub use context::ProcessingContext;
 
 use crate::config::MAX_REDIRECT_HOPS;
 use crate::database::{insert_url_record, UrlRecord};
@@ -14,7 +14,7 @@ use crate::dns::{
     lookup_txt_records, resolve_host_to_ip, reverse_dns_lookup,
 };
 use crate::domain::extract_domain;
-use crate::error_handling::{update_error_stats, ErrorStats};
+use crate::error_handling::update_error_stats;
 use crate::fingerprint::detect_technologies;
 use crate::geoip;
 use crate::parse::{
@@ -151,42 +151,40 @@ pub async fn resolve_redirect_chain(
     Ok((current, chain_json))
 }
 
-#[allow(clippy::too_many_arguments)]
-/// Handles an HTTP response, extracting all relevant data and storing it in the database.
-///
-/// This function orchestrates domain extraction, TLS certificate retrieval, DNS lookups,
-/// HTML parsing, and database insertion.
+/// Extracted response data from HTTP response.
+#[derive(Debug)]
+struct ResponseData {
+    final_url: String,
+    initial_domain: String,
+    final_domain: String,
+    host: String,
+    status: u16,
+    status_desc: String,
+    headers: reqwest::header::HeaderMap,
+    security_headers: HashMap<String, String>,
+    http_headers: HashMap<String, String>,
+    body: String,
+}
+
+/// Extracts and validates response data from an HTTP response.
 ///
 /// # Arguments
 ///
 /// * `response` - The HTTP response
 /// * `original_url` - The original URL before redirects
 /// * `final_url_str` - The final URL after redirects
-/// * `pool` - Database connection pool
 /// * `extractor` - Public Suffix List extractor
-/// * `resolver` - DNS resolver
-/// * `error_stats` - Error statistics tracker
-/// * `elapsed` - Response time in seconds
-/// * `redirect_chain_json` - JSON array of redirect chain URLs (will be parsed and inserted into url_redirect_chain table)
-/// * `run_id` - Unique identifier for this run (for time-series tracking)
 ///
 /// # Errors
 ///
-/// Returns an error if domain extraction, DNS resolution, or database insertion fails.
-pub async fn handle_response(
+/// Returns an error if domain extraction fails or response body cannot be read.
+/// Returns `Ok(None)` if content-type is not HTML or body is empty/large.
+async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
-    final_url_str: &str,
-    pool: &SqlitePool,
-    extractor: &List,
-    run_id: Option<&str>,
-    resolver: &TokioAsyncResolver,
-    error_stats: &ErrorStats,
-    elapsed: f64,
-    redirect_chain_json: Option<String>,
-) -> Result<(), Error> {
-    debug!("Started processing response for {final_url_str}");
-
+    _final_url_str: &str,
+    extractor: &publicsuffix::List,
+) -> Result<Option<ResponseData>, Error> {
     let final_url = response.url().to_string();
     debug!("Final url after redirects: {final_url}");
 
@@ -197,19 +195,26 @@ pub async fn handle_response(
     let parsed_url = Url::parse(&final_url)?;
     let host = parsed_url
         .host_str()
-        .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?;
+        .ok_or_else(|| anyhow::Error::msg("Failed to extract host"))?
+        .to_string();
 
-    let headers = response.headers().clone();
     let status = response.status();
-    let status_desc = status.canonical_reason().unwrap_or("Unknown Status Code");
+    let status_desc = status
+        .canonical_reason()
+        .unwrap_or("Unknown Status Code")
+        .to_string();
+
+    // Extract headers before consuming response
+    let headers = response.headers().clone();
+    let security_headers = extract_security_headers(&headers);
+    let http_headers = extract_http_headers(&headers);
 
     // Enforce HTML content-type, else skip
-    // Note: HTTP headers are case-insensitive, so we check case-insensitively
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
         let ct = ct.to_str().unwrap_or("").to_lowercase();
         if !ct.starts_with("text/html") {
             debug!("Skipping non-HTML content-type: {ct}");
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -219,12 +224,11 @@ pub async fn handle_response(
     }
 
     // Cap body size and read as text (reqwest automatically decompresses gzip/deflate/br)
-    // Using .text() instead of .bytes() ensures automatic decompression
     let body = match response.text().await {
         Ok(text) => {
             if text.len() > crate::config::MAX_RESPONSE_BODY_SIZE {
                 debug!("Skipping large body: {} bytes", text.len());
-                return Ok(());
+                return Ok(None);
             }
             text
         }
@@ -236,7 +240,7 @@ pub async fn handle_response(
 
     if body.is_empty() {
         log::warn!("Empty response body for {final_domain}, skipping HTML extraction");
-        return Ok(());
+        return Ok(None);
     }
 
     log::info!("Body length for {final_domain}: {} bytes", body.len());
@@ -246,7 +250,6 @@ pub async fn handle_response(
         log::debug!("Title tag found in raw HTML for {final_domain}");
     } else {
         log::warn!("No title tag found in raw HTML for {final_domain}");
-        // Log first 500 chars of HTML to help debug bot detection
         let preview = body.chars().take(500).collect::<String>();
         log::debug!(
             "HTML preview (first 500 chars) for {final_domain}: {}",
@@ -254,9 +257,113 @@ pub async fn handle_response(
         );
     }
 
-    // Parse HTML once and extract all data before any async operations
-    // (Html is not Send, so we extract everything in a block scope)
-    let (
+    Ok(Some(ResponseData {
+        final_url,
+        initial_domain,
+        final_domain,
+        host,
+        status: status.as_u16(),
+        status_desc,
+        headers,
+        security_headers,
+        http_headers,
+        body,
+    }))
+}
+
+/// Extracted HTML data from parsed document.
+#[derive(Debug)]
+struct HtmlData {
+    title: String,
+    keywords_str: Option<String>,
+    description: Option<String>,
+    is_mobile_friendly: bool,
+    structured_data: crate::parse::StructuredData,
+    social_media_links: Vec<crate::parse::SocialMediaLink>,
+    meta_tags: HashMap<String, String>,
+    script_sources: Vec<String>,
+    html_text: String,
+}
+
+/// Parses HTML content and extracts all relevant data.
+///
+/// # Arguments
+///
+/// * `body` - The HTML body content
+/// * `final_domain` - The final domain (for logging)
+/// * `error_stats` - Error statistics tracker
+///
+/// # Returns
+///
+/// Extracted HTML data including title, keywords, description, structured data, etc.
+fn parse_html_content(
+    body: &str,
+    final_domain: &str,
+    error_stats: &crate::error_handling::ErrorStats,
+) -> HtmlData {
+    let document = Html::parse_document(body);
+
+    let title = extract_title(&document, error_stats);
+    debug!("Extracted title for {final_domain}: {title:?}");
+
+    let keywords = extract_meta_keywords(&document, error_stats);
+    let keywords_str = keywords.map(|kw| kw.join(", "));
+    debug!("Extracted keywords for {final_domain}: {keywords_str:?}");
+
+    let description = extract_meta_description(&document, error_stats);
+    debug!("Extracted description for {final_domain}: {description:?}");
+
+    let is_mobile_friendly = is_mobile_friendly(body);
+
+    // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
+    let structured_data = extract_structured_data(&document, body);
+    debug!(
+        "Extracted structured data for {final_domain}: {} JSON-LD scripts, {} OG tags, {} Twitter tags, {} schema types",
+        structured_data.json_ld.len(),
+        structured_data.open_graph.len(),
+        structured_data.twitter_cards.len(),
+        structured_data.schema_types.len()
+    );
+
+    // Extract social media links
+    let social_media_links = extract_social_media_links(&document);
+    debug!(
+        "Extracted {} social media links for {final_domain}",
+        social_media_links.len()
+    );
+
+    // Extract data needed for technology detection (to avoid double-parsing)
+    let mut meta_tags = HashMap::new();
+    let meta_selector = Selector::parse("meta")
+        .expect("Failed to parse 'meta' selector - this is a programming error");
+    for element in document.select(&meta_selector) {
+        if let (Some(name), Some(content)) = (
+            element.value().attr("name"),
+            element.value().attr("content"),
+        ) {
+            meta_tags.insert(name.to_string().to_lowercase(), content.to_string());
+        }
+    }
+
+    let mut script_sources = Vec::new();
+    let script_selector = Selector::parse("script")
+        .expect("Failed to parse 'script' selector - this is a programming error");
+    for element in document.select(&script_selector) {
+        if let Some(src) = element.value().attr("src") {
+            script_sources.push(src.to_string());
+        }
+    }
+
+    // Extract text content (first 50KB for performance)
+    let html_text = document
+        .root_element()
+        .text()
+        .collect::<String>()
+        .chars()
+        .take(50_000)
+        .collect::<String>();
+
+    HtmlData {
         title,
         keywords_str,
         description,
@@ -266,83 +373,44 @@ pub async fn handle_response(
         meta_tags,
         script_sources,
         html_text,
-    ) = {
-        let document = Html::parse_document(&body);
+    }
+}
 
-        let title = extract_title(&document, error_stats);
-        debug!("Extracted title for {final_domain}: {title:?}");
+/// TLS and DNS resolution results.
+#[derive(Debug)]
+struct TlsDnsData {
+    tls_version: Option<String>,
+    subject: Option<String>,
+    issuer: Option<String>,
+    valid_from: Option<chrono::NaiveDateTime>,
+    valid_to: Option<chrono::NaiveDateTime>,
+    oids_json: Option<String>,
+    cipher_suite: Option<String>,
+    key_algorithm: Option<String>,
+    ip_address: String,
+    reverse_dns_name: Option<String>,
+}
 
-        let keywords = extract_meta_keywords(&document, error_stats);
-        let keywords_str = keywords.map(|kw| kw.join(", "));
-        debug!("Extracted keywords for {final_domain}: {keywords_str:?}");
-
-        let description = extract_meta_description(&document, error_stats);
-        debug!("Extracted description for {final_domain}: {description:?}");
-
-        let is_mobile_friendly = is_mobile_friendly(&body);
-
-        // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
-        let structured_data = extract_structured_data(&document, &body);
-        debug!("Extracted structured data for {final_domain}: {} JSON-LD scripts, {} OG tags, {} Twitter tags, {} schema types",
-            structured_data.json_ld.len(),
-            structured_data.open_graph.len(),
-            structured_data.twitter_cards.len(),
-            structured_data.schema_types.len());
-
-        // Extract social media links
-        let social_media_links = extract_social_media_links(&document);
-        debug!(
-            "Extracted {} social media links for {final_domain}",
-            social_media_links.len()
-        );
-
-        // Extract data needed for technology detection (to avoid double-parsing)
-        let mut meta_tags = HashMap::new();
-        let meta_selector =
-            Selector::parse("meta").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
-        for element in document.select(&meta_selector) {
-            if let (Some(name), Some(content)) = (
-                element.value().attr("name"),
-                element.value().attr("content"),
-            ) {
-                meta_tags.insert(name.to_string().to_lowercase(), content.to_string());
-            }
-        }
-
-        let mut script_sources = Vec::new();
-        let script_selector =
-            Selector::parse("script").unwrap_or_else(|_| Selector::parse("invalid").unwrap());
-        for element in document.select(&script_selector) {
-            if let Some(src) = element.value().attr("src") {
-                script_sources.push(src.to_string());
-            }
-        }
-
-        // Extract text content (first 50KB for performance)
-        let html_text = document
-            .root_element()
-            .text()
-            .collect::<String>()
-            .chars()
-            .take(50_000)
-            .collect::<String>();
-
-        // document is dropped here when the block ends
-        (
-            title,
-            keywords_str,
-            description,
-            is_mobile_friendly,
-            structured_data,
-            social_media_links,
-            meta_tags,
-            script_sources,
-            html_text,
-        )
-    };
-
-    debug!("Resolved host: {host}");
-
+/// Fetches TLS certificate information and DNS resolution in parallel.
+///
+/// # Arguments
+///
+/// * `final_url` - The final URL (to check if HTTPS)
+/// * `host` - The hostname to resolve
+/// * `resolver` - DNS resolver
+/// * `final_domain` - The final domain (for logging)
+/// * `error_stats` - Error statistics tracker
+///
+/// # Errors
+///
+/// Returns an error if DNS resolution fails.
+async fn fetch_tls_and_dns(
+    final_url: &str,
+    host: &str,
+    resolver: &hickory_resolver::TokioAsyncResolver,
+    final_domain: &str,
+    error_stats: &crate::error_handling::ErrorStats,
+) -> Result<TlsDnsData, Error> {
     // Run TLS and DNS operations in parallel (they're independent)
     let (tls_result, dns_result) = tokio::join!(
         // TLS certificate extraction (only for HTTPS)
@@ -399,7 +467,9 @@ pub async fn handle_response(
         }
     };
 
-    debug!("Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}");
+    debug!(
+        "Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}"
+    );
 
     // Extract DNS info
     let (ip_address, reverse_dns_name) = match dns_result {
@@ -413,12 +483,47 @@ pub async fn handle_response(
     debug!("Resolved IP address: {ip_address}");
     debug!("Resolved reverse DNS name: {reverse_dns_name:?}");
 
-    // Query additional DNS records (NS, TXT, MX)
-    // These queries are done in parallel for efficiency
+    Ok(TlsDnsData {
+        tls_version,
+        subject,
+        issuer,
+        valid_from,
+        valid_to,
+        oids_json,
+        cipher_suite,
+        key_algorithm,
+        ip_address,
+        reverse_dns_name,
+    })
+}
+
+/// Additional DNS records (NS, TXT, MX).
+#[derive(Debug)]
+struct AdditionalDnsData {
+    nameservers: Option<String>,
+    txt_records: Option<String>,
+    mx_records: Option<String>,
+    spf_record: Option<String>,
+    dmarc_record: Option<String>,
+}
+
+/// Fetches additional DNS records (NS, TXT, MX) in parallel.
+///
+/// # Arguments
+///
+/// * `final_domain` - The final domain to query
+/// * `resolver` - DNS resolver
+/// * `error_stats` - Error statistics tracker
+async fn fetch_additional_dns_records(
+    final_domain: &str,
+    resolver: &hickory_resolver::TokioAsyncResolver,
+    error_stats: &crate::error_handling::ErrorStats,
+) -> AdditionalDnsData {
+    // Query additional DNS records (NS, TXT, MX) in parallel
     let (ns_result, txt_result, mx_result) = tokio::join!(
-        lookup_ns_records(&final_domain, resolver),
-        lookup_txt_records(&final_domain, resolver),
-        lookup_mx_records(&final_domain, resolver)
+        lookup_ns_records(final_domain, resolver),
+        lookup_txt_records(final_domain, resolver),
+        lookup_mx_records(final_domain, resolver)
     );
 
     let nameservers = match ns_result {
@@ -452,17 +557,16 @@ pub async fn handle_response(
 
     // Extract SPF and DMARC from TXT records
     let spf_record = extract_spf_record(&txt_for_extraction);
-    let dmarc_record = extract_dmarc_record(&txt_for_extraction);
+    let mut dmarc_record = extract_dmarc_record(&txt_for_extraction);
 
     // Also check _dmarc subdomain for DMARC
-    let dmarc_record = if dmarc_record.is_none() {
-        match lookup_txt_records(&format!("_dmarc.{}", final_domain), resolver).await {
-            Ok(dmarc_txt) => extract_dmarc_record(&dmarc_txt),
-            Err(_) => None,
+    if dmarc_record.is_none() {
+        if let Ok(dmarc_txt) =
+            lookup_txt_records(&format!("_dmarc.{}", final_domain), resolver).await
+        {
+            dmarc_record = extract_dmarc_record(&dmarc_txt);
         }
-    } else {
-        dmarc_record
-    };
+    }
 
     let mx_records = match mx_result {
         Ok(mx) if !mx.is_empty() => {
@@ -487,37 +591,100 @@ pub async fn handle_response(
         }
     };
 
-    let security_headers = extract_security_headers(&headers);
-    let http_headers = extract_http_headers(&headers);
+    AdditionalDnsData {
+        nameservers,
+        txt_records,
+        mx_records,
+        spf_record,
+        dmarc_record,
+    }
+}
+
+/// Handles an HTTP response, extracting all relevant data and storing it in the database.
+///
+/// This function orchestrates domain extraction, TLS certificate retrieval, DNS lookups,
+/// HTML parsing, and database insertion.
+///
+/// # Arguments
+///
+/// * `response` - The HTTP response
+/// * `original_url` - The original URL before redirects
+/// * `final_url_str` - The final URL after redirects
+/// * `ctx` - Processing context containing all shared resources
+/// * `elapsed` - Response time in seconds
+/// * `redirect_chain_json` - JSON array of redirect chain URLs (will be parsed and inserted into url_redirect_chain table)
+///
+/// # Errors
+///
+/// Returns an error if domain extraction, DNS resolution, or database insertion fails.
+pub async fn handle_response(
+    response: reqwest::Response,
+    original_url: &str,
+    final_url_str: &str,
+    ctx: &ProcessingContext,
+    elapsed: f64,
+    redirect_chain_json: Option<String>,
+) -> Result<(), Error> {
+    debug!("Started processing response for {final_url_str}");
+
+    // Extract and validate response data
+    let Some(resp_data) =
+        extract_response_data(response, original_url, final_url_str, &ctx.extractor).await?
+    else {
+        return Ok(()); // Non-HTML or empty response, skip
+    };
+
+    // Parse HTML content
+    let html_data = parse_html_content(&resp_data.body, &resp_data.final_domain, &ctx.error_stats);
+
+    // Fetch TLS and DNS data in parallel
+    let tls_dns_data = fetch_tls_and_dns(
+        &resp_data.final_url,
+        &resp_data.host,
+        &ctx.resolver,
+        &resp_data.final_domain,
+        &ctx.error_stats,
+    )
+    .await?;
+
+    // Fetch additional DNS records in parallel
+    let additional_dns =
+        fetch_additional_dns_records(&resp_data.final_domain, &ctx.resolver, &ctx.error_stats)
+            .await;
 
     // Detect technologies using community-maintained fingerprint rulesets
     let technologies = match detect_technologies(
-        &meta_tags,
-        &script_sources,
-        &html_text,
-        &headers,
-        &final_url,
+        &html_data.meta_tags,
+        &html_data.script_sources,
+        &html_data.html_text,
+        &resp_data.headers,
+        &resp_data.final_url,
     )
     .await
     {
         Ok(techs) => {
             if !techs.is_empty() {
                 debug!(
-                    "Detected {} technologies for {final_domain}: {:?}",
+                    "Detected {} technologies for {}: {:?}",
                     techs.len(),
+                    resp_data.final_domain,
                     techs
                 );
                 let mut tech_vec: Vec<String> = techs.into_iter().collect();
                 tech_vec.sort();
                 Some(serialize_json(&tech_vec))
             } else {
-                debug!("No technologies detected for {final_domain}");
+                debug!("No technologies detected for {}", resp_data.final_domain);
                 None
             }
         }
         Err(e) => {
-            log::warn!("Failed to detect technologies for {final_domain}: {e}");
-            error_stats.increment(crate::error_handling::ErrorType::TechnologyDetectionError);
+            log::warn!(
+                "Failed to detect technologies for {}: {e}",
+                resp_data.final_domain
+            );
+            ctx.error_stats
+                .increment(crate::error_handling::ErrorType::TechnologyDetectionError);
             None
         }
     };
@@ -527,55 +694,62 @@ pub async fn handle_response(
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
-    debug!("Preparing to insert record for URL: {final_url}");
-    log::info!("Attempting to insert record into database for domain: {initial_domain}");
+    debug!(
+        "Preparing to insert record for URL: {}",
+        resp_data.final_url
+    );
+    log::info!(
+        "Attempting to insert record into database for domain: {}",
+        resp_data.initial_domain
+    );
 
     // Clone values needed for GeoIP lookup after record creation
-    let ip_address_clone = ip_address.clone();
-    let final_domain_clone = final_domain.clone();
+    let ip_address_clone = tls_dns_data.ip_address.clone();
+    let final_domain_clone = resp_data.final_domain.clone();
 
     let record = UrlRecord {
-        initial_domain,
-        final_domain,
-        ip_address,
-        reverse_dns_name,
-        status: status.as_u16(),
-        status_desc: status_desc.to_string(),
+        initial_domain: resp_data.initial_domain.clone(),
+        final_domain: resp_data.final_domain.clone(),
+        ip_address: tls_dns_data.ip_address.clone(),
+        reverse_dns_name: tls_dns_data.reverse_dns_name.clone(),
+        status: resp_data.status,
+        status_desc: resp_data.status_desc.clone(),
         response_time: elapsed,
-        title,
-        keywords: keywords_str,
-        description,
-        tls_version,
-        ssl_cert_subject: subject,
-        ssl_cert_issuer: issuer,
-        ssl_cert_valid_from: valid_from,
-        ssl_cert_valid_to: valid_to,
-        is_mobile_friendly,
+        title: html_data.title.clone(),
+        keywords: html_data.keywords_str.clone(),
+        description: html_data.description.clone(),
+        tls_version: tls_dns_data.tls_version.clone(),
+        ssl_cert_subject: tls_dns_data.subject.clone(),
+        ssl_cert_issuer: tls_dns_data.issuer.clone(),
+        ssl_cert_valid_from: tls_dns_data.valid_from,
+        ssl_cert_valid_to: tls_dns_data.valid_to,
+        is_mobile_friendly: html_data.is_mobile_friendly,
         timestamp,
         technologies,
-        nameservers,
-        txt_records,
-        mx_records,
-        spf_record,
-        dmarc_record,
-        cipher_suite,
-        key_algorithm,
-        run_id: run_id.map(|s| s.to_string()),
+        nameservers: additional_dns.nameservers.clone(),
+        txt_records: additional_dns.txt_records.clone(),
+        mx_records: additional_dns.mx_records.clone(),
+        spf_record: additional_dns.spf_record.clone(),
+        dmarc_record: additional_dns.dmarc_record.clone(),
+        cipher_suite: tls_dns_data.cipher_suite.clone(),
+        key_algorithm: tls_dns_data.key_algorithm.clone(),
+        run_id: ctx.run_id.as_ref().map(|s| s.clone()),
     };
 
     // Parse OIDs from JSON string to HashSet
-    let oids_set: std::collections::HashSet<String> = if let Some(oids_json) = &oids_json {
-        if !oids_json.is_empty() && oids_json != "[]" {
-            serde_json::from_str::<Vec<String>>(oids_json)
-                .unwrap_or_default()
-                .into_iter()
-                .collect()
+    let oids_set: std::collections::HashSet<String> =
+        if let Some(oids_json) = &tls_dns_data.oids_json {
+            if !oids_json.is_empty() && oids_json != "[]" {
+                serde_json::from_str::<Vec<String>>(oids_json)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            }
         } else {
             std::collections::HashSet::new()
-        }
-    } else {
-        std::collections::HashSet::new()
-    };
+        };
 
     // Parse redirect chain from JSON string to Vec
     let redirect_chain_vec: Vec<String> = if let Some(chain_json) = &redirect_chain_json {
@@ -588,122 +762,105 @@ pub async fn handle_response(
         Vec::new()
     };
 
-    let update_result = insert_url_record(
-        pool,
+    match insert_url_record(
+        &ctx.pool,
         &record,
-        &security_headers,
-        &http_headers,
+        &resp_data.security_headers,
+        &resp_data.http_headers,
         &oids_set,
         &redirect_chain_vec,
     )
-    .await;
+    .await
+    {
+        Ok(url_status_id) => {
+            log::info!(
+                "Record successfully inserted for URL: {}",
+                resp_data.final_url
+            );
 
-    match update_result {
-        Ok(_) => {
-            log::info!("Record successfully inserted for URL: {final_url}");
-
-            // Get url_status_id for GeoIP and structured data insertion
-            // We need to query it since insert_url_record doesn't return it
-            if let Ok(Some(url_status_id)) = sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM url_status WHERE final_domain = ? AND timestamp = ?",
-            )
-            .bind(&final_domain_clone)
-            .bind(timestamp)
-            .fetch_optional(pool)
-            .await
-            {
-                // Perform GeoIP lookup and insert if enabled
-                if let Some(geoip_result) = geoip::lookup_ip(&ip_address_clone) {
-                    if let Err(e) =
-                        insert_geoip_data(pool, url_status_id, &ip_address_clone, &geoip_result)
-                            .await
-                    {
-                        log::warn!(
-                            "Failed to insert GeoIP data for {}: {}",
-                            final_domain_clone,
-                            e
-                        );
-                    } else {
-                        debug!("GeoIP data inserted for {}", final_domain_clone);
-                    }
-                }
-
-                // Insert structured data
-                if let Err(e) = insert_structured_data(pool, url_status_id, &structured_data).await
-                {
-                    log::warn!(
-                        "Failed to insert structured data for {}: {}",
-                        final_domain_clone,
-                        e
-                    );
-                } else {
-                    debug!("Structured data inserted for {}", final_domain_clone);
-                }
-
-                // Insert social media links
+            // Perform GeoIP lookup and insert if enabled
+            if let Some(geoip_result) = geoip::lookup_ip(&ip_address_clone) {
                 if let Err(e) =
-                    insert_social_media_links(pool, url_status_id, &social_media_links).await
+                    insert_geoip_data(&ctx.pool, url_status_id, &ip_address_clone, &geoip_result)
+                        .await
                 {
                     log::warn!(
-                        "Failed to insert social media links for {}: {}",
+                        "Failed to insert GeoIP data for {}: {}",
                         final_domain_clone,
                         e
                     );
                 } else {
-                    debug!(
-                        "Social media links inserted for {}: {} links",
-                        final_domain_clone,
-                        social_media_links.len()
-                    );
+                    debug!("GeoIP data inserted for {}", final_domain_clone);
                 }
             }
+
+            // Insert structured data
+            if let Err(e) =
+                insert_structured_data(&ctx.pool, url_status_id, &html_data.structured_data).await
+            {
+                log::warn!(
+                    "Failed to insert structured data for {}: {}",
+                    final_domain_clone,
+                    e
+                );
+            } else {
+                debug!("Structured data inserted for {}", final_domain_clone);
+            }
+
+            // Insert social media links
+            if let Err(e) =
+                insert_social_media_links(&ctx.pool, url_status_id, &html_data.social_media_links)
+                    .await
+            {
+                log::warn!(
+                    "Failed to insert social media links for {}: {}",
+                    final_domain_clone,
+                    e
+                );
+            } else {
+                debug!(
+                    "Social media links inserted for {}: {} links",
+                    final_domain_clone,
+                    html_data.social_media_links.len()
+                );
+            }
         }
-        Err(e) => log::error!("Failed to insert record for URL {final_url}: {e}"),
+        Err(e) => log::error!(
+            "Failed to insert record for URL {}: {e}",
+            resp_data.final_url
+        ),
     };
 
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Handles an HTTP request, resolving redirects and processing the response.
 ///
 /// # Arguments
 ///
-/// * `client` - HTTP client for making requests
-/// * `redirect_client` - HTTP client with redirects disabled for manual redirect tracking
+/// * `ctx` - Processing context containing all shared resources
 /// * `url` - The URL to process
-/// * `pool` - Database connection pool
-/// * `extractor` - Public Suffix List extractor
-/// * `resolver` - DNS resolver
-/// * `error_stats` - Error statistics tracker
 /// * `start_time` - Request start time for calculating response time
-/// * `run_id` - Unique identifier for this run (for time-series tracking)
 ///
 /// # Errors
 ///
 /// Returns an error if redirect resolution, HTTP request, or response handling fails.
 pub async fn handle_http_request(
-    client: &reqwest::Client,
-    redirect_client: &reqwest::Client,
+    ctx: &ProcessingContext,
     url: &str,
-    pool: &SqlitePool,
-    extractor: &List,
-    resolver: &TokioAsyncResolver,
-    error_stats: &ErrorStats,
     start_time: std::time::Instant,
-    run_id: Option<&str>,
 ) -> Result<(), Error> {
     debug!("Resolving redirects for {url}");
 
     let (final_url_string, redirect_chain_json) =
-        resolve_redirect_chain(url, MAX_REDIRECT_HOPS, redirect_client).await?;
+        resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.redirect_client).await?;
 
     debug!("Sending request to final URL {final_url_string}");
 
     // Add realistic browser headers to reduce bot detection
     // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
     // help with other detection methods (header analysis, behavioral patterns)
-    let res = client
+    let res = ctx.client
         .get(&final_url_string)
         .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
         .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
@@ -718,41 +875,30 @@ pub async fn handle_http_request(
         .send()
         .await;
 
-    let elapsed = start_time.elapsed().as_secs_f64();
-
-    let response = match res {
-        Ok(response) => {
-            debug!("Received response from {url}");
-            response
-        }
+    match res {
+        Ok(response) => match response.error_for_status() {
+            Ok(response) => {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                handle_response(
+                    response,
+                    url,
+                    &final_url_string,
+                    ctx,
+                    elapsed,
+                    Some(redirect_chain_json),
+                )
+                .await
+            }
+            Err(e) => {
+                update_error_stats(&ctx.error_stats, &e).await;
+                Err(Error::from(e).context(format!("HTTP request failed for {url}")))
+            }
+        },
         Err(e) => {
-            log::error!("Error occurred while accessing {url}: {e:?}");
-            update_error_stats(error_stats, &e).await;
-            return Err(e.into());
+            update_error_stats(&ctx.error_stats, &e).await;
+            Err(Error::from(e).context(format!("HTTP request failed for {url}")))
         }
-    };
-
-    debug!("Handling response for {final_url_string}");
-    let handle_result = handle_response(
-        response,
-        url,
-        &final_url_string,
-        pool,
-        extractor,
-        run_id,
-        resolver,
-        error_stats,
-        elapsed,
-        Some(redirect_chain_json),
-    )
-    .await;
-
-    match &handle_result {
-        Ok(_) => debug!("Handled response for {url}"),
-        Err(e) => log::error!("Failed to handle response for {url}: {e}"),
     }
-
-    handle_result
 }
 
 #[cfg(test)]
@@ -765,8 +911,12 @@ mod tests {
     }
 
     fn add_header(headers: &mut HeaderMap, name: &str, value: &str) {
-        let header_name = HeaderName::from_bytes(name.as_bytes()).unwrap();
-        let header_value = HeaderValue::from_str(value).unwrap();
+        // In tests, we use known-good header names and values
+        // If parsing fails, it's a test setup error and should fail fast
+        let header_name = HeaderName::from_bytes(name.as_bytes())
+            .unwrap_or_else(|_| panic!("Invalid header name in test: {}", name));
+        let header_value = HeaderValue::from_str(value)
+            .unwrap_or_else(|_| panic!("Invalid header value in test: {}", value));
         headers.insert(header_name, header_value);
     }
 

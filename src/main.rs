@@ -21,6 +21,7 @@ use strum::IntoEnumIterator;
 use utils::*;
 
 use crate::error_handling::{ErrorStats, ErrorType};
+use crate::fetch::ProcessingContext;
 
 mod config;
 mod database;
@@ -217,21 +218,23 @@ async fn main() -> Result<()> {
             }
         };
 
-        let client_clone = Arc::clone(&client);
-        let redirect_client_clone = Arc::clone(&redirect_client);
-        let pool_clone = Arc::clone(&pool);
-        let extractor_clone = Arc::clone(&extractor);
-        let resolver_clone = Arc::clone(&resolver);
+        // Create processing context for this task
+        let ctx = Arc::new(ProcessingContext::new(
+            Arc::clone(&client),
+            Arc::clone(&redirect_client),
+            Arc::clone(&pool),
+            Arc::clone(&extractor),
+            Arc::clone(&resolver),
+            error_stats.clone(),
+            Some(run_id.clone()),
+        ));
 
-        let completed_urls_clone = Arc::clone(&completed_urls);
-
+        // Clone error_stats for use in the task (it's also in ctx, but we need it here for error reporting)
         let error_stats_clone = error_stats.clone();
+        let completed_urls_clone = Arc::clone(&completed_urls);
 
         // Wrap URL in Arc to avoid cloning on retries
         let url_arc = Arc::new(url);
-
-        // Clone run_id for this task
-        let run_id_clone = run_id.clone();
 
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         tasks.push(tokio::spawn(async move {
@@ -244,20 +247,8 @@ async fn main() -> Result<()> {
             // Clone Arc for error messages (cheap - just pointer increment)
             let url_for_logging = Arc::clone(&url_arc);
 
-            let result = tokio::time::timeout(
-                URL_PROCESSING_TIMEOUT,
-                process_url(
-                    url_arc,
-                    client_clone,
-                    redirect_client_clone,
-                    pool_clone,
-                    extractor_clone,
-                    resolver_clone,
-                    error_stats_clone.clone(),
-                    Some(run_id_clone),
-                ),
-            )
-            .await;
+            let result =
+                tokio::time::timeout(URL_PROCESSING_TIMEOUT, process_url(url_arc, ctx)).await;
 
             match result {
                 Ok(Ok(())) => {
