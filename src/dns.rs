@@ -94,7 +94,14 @@ pub async fn lookup_ns_records(
             Ok(nameservers)
         }
         Err(e) => {
-            log::warn!("Failed to lookup NS records for {domain}: {e}");
+            // Only warn on timeouts or actual errors, not on "no records found" which is expected
+            let error_msg = e.to_string();
+            if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                log::warn!("NS record lookup timed out for {domain}: {e}");
+            } else if !error_msg.contains("no records found") {
+                // "no records found" is expected for some domains, don't warn
+                log::warn!("Failed to lookup NS records for {domain}: {e}");
+            }
             Ok(Vec::new())
         }
     }
@@ -144,7 +151,14 @@ pub async fn lookup_txt_records(
             Ok(txt_records)
         }
         Err(e) => {
-            log::warn!("Failed to lookup TXT records for {domain}: {e}");
+            // Only warn on timeouts or actual errors, not on "no records found" which is expected
+            let error_msg = e.to_string();
+            if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                log::warn!("TXT record lookup timed out for {domain}: {e}");
+            } else if !error_msg.contains("no records found") {
+                // "no records found" is expected for many domains, don't warn
+                log::warn!("Failed to lookup TXT records for {domain}: {e}");
+            }
             Ok(Vec::new())
         }
     }
@@ -188,7 +202,14 @@ pub async fn lookup_mx_records(
             Ok(mx_records)
         }
         Err(e) => {
-            log::warn!("Failed to lookup MX records for {domain}: {e}");
+            // Only warn on timeouts or actual errors, not on "no records found" which is expected
+            let error_msg = e.to_string();
+            if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                log::warn!("MX record lookup timed out for {domain}: {e}");
+            } else if !error_msg.contains("no records found") {
+                // "no records found" is expected for domains without mail servers, don't warn
+                log::warn!("Failed to lookup MX records for {domain}: {e}");
+            }
             Ok(Vec::new())
         }
     }
