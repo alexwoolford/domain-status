@@ -220,19 +220,24 @@ pub struct Opt {
     #[arg(long, default_value = DEFAULT_USER_AGENT)]
     pub user_agent: String,
 
-    /// Requests per second rate limit (0 disables limiting)
+    /// Initial requests per second (adaptive rate limiting always enabled)
     ///
-    /// Default 10 RPS provides reasonable throughput while avoiding bot detection.
+    /// Rate limiting automatically adjusts based on error rates:
+    /// - Starts at this RPS value
+    /// - Reduces by 50% when error rate exceeds threshold (default: 20%)
+    /// - Increases by 10% when error rate is below threshold
+    /// - Minimum RPS: 1, Maximum RPS: this initial value
+    ///
     /// Set to 0 to disable rate limiting (not recommended for production).
     #[arg(long, default_value_t = 10)]
     pub rate_limit_rps: u32,
 
-    /// Rate limit burst capacity (tokens)
+    /// Error rate threshold for adaptive rate limiting (0.0-1.0, default: 0.2 = 20%)
     ///
-    /// If 0, automatically calculated as `min(max_concurrency, rate_limit_rps * 2)`.
-    /// This ensures burst doesn't exceed concurrency limits and prevents excessive queuing.
-    #[arg(long, default_value_t = 0)]
-    pub rate_burst: usize,
+    /// When error rate (429s + timeouts) exceeds this threshold, RPS is reduced.
+    /// Advanced option - default 20% works well for most cases.
+    #[arg(long, default_value_t = 0.2, hide = true)]
+    pub adaptive_error_threshold: f64,
 
     /// Fingerprints source URL or local path (default: HTTP Archive)
     /// Examples:

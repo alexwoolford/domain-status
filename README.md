@@ -43,7 +43,6 @@ domain_status urls.txt \
   --log-level debug \
   --log-format json \
   --rate-limit-rps 10 \
-  --rate-burst 50 \
   --fingerprints https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
 ```
 
@@ -55,8 +54,9 @@ domain_status urls.txt \
 - `--max-concurrency <N>`: Maximum concurrent requests (default: 20)
 - `--timeout-seconds <N>`: Per-request timeout in seconds (default: 10)
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
-- `--rate-limit-rps <N>`: Requests per second rate limit, 0 disables (default: 10)
-- `--rate-burst <N>`: Rate limit burst capacity, auto-calculated as `min(concurrency, rps * 2)` if 0 (default: 0)
+- `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 10)
+  - Rate limiter automatically adjusts based on error rates
+  - Set to 0 to disable rate limiting (not recommended)
 - `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
 - `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set. Otherwise, GeoIP lookup is disabled.
 
@@ -751,10 +751,16 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
 - **Concurrent Processing**: Default 20 concurrent requests (configurable via `--max-concurrency`)
   - Lower default reduces bot detection risk with Cloudflare and similar services
   - High concurrency can trigger rate limiting even with low RPS
-- **Rate Limiting**: Default 10 requests per second (configurable via `--rate-limit-rps`)
-  - Primary control mechanism to avoid overwhelming target servers
+- **Adaptive Rate Limiting**: Automatic RPS adjustment based on error rates (always enabled)
+  - Starts at initial RPS (default: 10, configurable via `--rate-limit-rps`)
+  - Monitors 429 errors and timeouts in a sliding window (last 30 seconds, 100 requests)
+  - Automatically reduces RPS by 50% when error rate exceeds threshold (default: 20%)
+  - Gradually increases RPS by 10% when error rate is below threshold
+  - **Ceiling**: Maximum RPS is capped at the initial `--rate-limit-rps` value (prevents runaway increases)
+  - **Floor**: Minimum RPS is 1 (prevents complete shutdown)
+  - Adjusts every 5 seconds based on recent error patterns
   - Burst capacity automatically capped at `min(concurrency, rps * 2)` for coordinated control
-  - Set to 0 to disable (not recommended for production)
+  - Set `--rate-limit-rps 0` to disable (not recommended for production)
 - **Resource Efficiency**: Shared HTTP clients, DNS resolver, and HTML parser instances
 - **Database Optimization**: SQLite WAL mode for concurrent writes, indexed queries
 - **Memory Safety**: Response body size capped at 2MB, redirect chains limited to 10 hops
@@ -766,6 +772,14 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
 - Rate limiting is the primary control mechanism; concurrency acts as a safety cap
 - Burst capacity is automatically coordinated with concurrency to prevent excessive queuing
 - For aggressive crawling, increase `--rate-limit-rps` rather than `--max-concurrency`
+
+**Adaptive Rate Limiting (Always Enabled):**
+- Rate limiting automatically adjusts RPS based on error rates (no flag needed)
+- Monitors 429 (Too Many Requests) errors and timeouts in a sliding window
+- When error rate > threshold (default 20%): reduces RPS by 50% (multiplicative decrease)
+- When error rate < threshold/2 (default 10%): increases RPS by 10% (additive increase)
+- Adjusts every 5 seconds, requires at least 10 requests in the window to make adjustments
+- Example: Start at 10 RPS, if 429s spike → reduce to 5 RPS, when errors clear → gradually increase back
 
 **System Requirements:**
 - If you encounter system-specific errors related to file limits, check and adjust your system's `ulimit` settings

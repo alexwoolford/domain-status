@@ -23,6 +23,7 @@ use utils::*;
 use crate::error_handling::{ErrorStats, ErrorType};
 use crate::fetch::ProcessingContext;
 
+mod adaptive_rate_limiter;
 mod config;
 mod database;
 mod dns;
@@ -93,22 +94,47 @@ async fn main() -> Result<()> {
     let semaphore = init_semaphore(opt.max_concurrency);
     // Calculate burst capacity: cap at min(concurrency, rps * 2) to prevent excessive queuing
     // This ensures rate limiting and concurrency work together, not independently
-    let rate_burst = if opt.rate_burst == 0 {
-        if opt.rate_limit_rps > 0 {
-            // Cap burst at 2x RPS or concurrency, whichever is smaller
-            std::cmp::min(opt.max_concurrency, (opt.rate_limit_rps * 2) as usize)
-        } else {
-            // If rate limiting disabled, use concurrency as burst (legacy behavior)
-            opt.max_concurrency
-        }
+    let rate_burst = if opt.rate_limit_rps > 0 {
+        // Cap burst at 2x RPS or concurrency, whichever is smaller
+        std::cmp::min(opt.max_concurrency, (opt.rate_limit_rps * 2) as usize)
     } else {
-        opt.rate_burst
+        // If rate limiting disabled, use concurrency as burst
+        opt.max_concurrency
     };
     let (request_limiter, rate_limiter_shutdown) =
         match init_rate_limiter(opt.rate_limit_rps, rate_burst) {
             Some((limiter, shutdown)) => (Some(limiter), Some(shutdown)),
             None => (None, None),
         };
+
+    // Initialize adaptive rate limiter (always enabled when rate limiting is on)
+    let adaptive_limiter = if opt.rate_limit_rps > 0 {
+        use adaptive_rate_limiter::AdaptiveRateLimiter;
+        let adaptive = Arc::new(AdaptiveRateLimiter::new(
+            opt.rate_limit_rps,
+            Some(1),                  // min RPS
+            Some(opt.rate_limit_rps), // max RPS (initial value)
+            Some(opt.adaptive_error_threshold),
+            None, // default window size (100)
+            None, // default window duration (30s)
+        ));
+
+        // Start adaptive adjustment task
+        if let Some(ref rate_limiter) = request_limiter {
+            let rate_limiter_clone = Arc::clone(rate_limiter);
+            let _shutdown_token = adaptive.start_adaptive_adjustment(
+                move |new_rps| {
+                    rate_limiter_clone.update_rps(new_rps);
+                },
+                None, // default adjustment interval (5s)
+            );
+            // Shutdown token is dropped here - the task will run until main exits
+        }
+
+        Some(adaptive)
+    } else {
+        None
+    };
 
     // Override DB path env for init if needed
     std::env::set_var(
@@ -245,6 +271,7 @@ async fn main() -> Result<()> {
         let url_arc = Arc::new(url);
 
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
+        let adaptive_limiter_for_task = adaptive_limiter.as_ref().map(Arc::clone);
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
 
@@ -261,14 +288,36 @@ async fn main() -> Result<()> {
             match result {
                 Ok(Ok(())) => {
                     completed_urls_clone.fetch_add(1, Ordering::SeqCst);
+                    if let Some(adaptive) = adaptive_limiter_for_task {
+                        adaptive.record_success().await;
+                    }
                 }
                 Ok(Err(e)) => {
                     log::warn!("Failed to process URL {url_for_logging}: {e}");
-                    error_stats_clone.increment(ErrorType::HttpRequestOtherError);
+                    // Check if this is a 429 error
+                    let is_429 = e.chain().any(|cause| {
+                        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+                            reqwest_err.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)
+                        } else {
+                            false
+                        }
+                    });
+
+                    if is_429 {
+                        error_stats_clone.increment(ErrorType::HttpRequestTooManyRequests);
+                        if let Some(adaptive) = adaptive_limiter_for_task {
+                            adaptive.record_rate_limited().await;
+                        }
+                    } else {
+                        error_stats_clone.increment(ErrorType::HttpRequestOtherError);
+                    }
                 }
                 Err(_) => {
                     log::warn!("Timeout processing URL {url_for_logging}");
                     error_stats_clone.increment(ErrorType::ProcessUrlTimeout);
+                    if let Some(adaptive) = adaptive_limiter_for_task {
+                        adaptive.record_timeout().await;
+                    }
                 }
             }
         }));
