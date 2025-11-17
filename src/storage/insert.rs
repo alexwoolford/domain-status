@@ -6,6 +6,7 @@ use log;
 use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
+use crate::fingerprint;
 
 use super::models::UrlRecord;
 
@@ -111,11 +112,11 @@ fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32, String)>> 
 ///
 /// This function inserts data into:
 /// 1. The main `url_status` table (fact table with atomic fields)
-/// 2. Normalized child tables (url_technologies, url_nameservers, url_txt_records, url_mx_records, url_security_headers)
+/// 2. Normalized child tables (url_technologies, url_nameservers, url_txt_records, url_mx_records, url_security_headers, url_http_headers)
 ///
 /// All inserts are wrapped in a transaction for atomicity.
 ///
-/// Note: Multi-valued fields (technologies, nameservers, txt_records, mx_records, security_headers,
+/// Note: Multi-valued fields (technologies, nameservers, txt_records, mx_records, security_headers, http_headers,
 /// oids, redirect_chain) are stored only in normalized child tables, not as JSON in the main table.
 /// This eliminates data duplication and establishes a single source of truth.
 pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<(), DatabaseError> {
@@ -228,13 +229,17 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
     // 2. Insert normalized technologies
     if let Some(techs) = parse_json_array(&record.technologies) {
         for tech in techs {
+            // Get category for this technology
+            let category = fingerprint::get_technology_category(&tech).await;
+
             if let Err(e) = sqlx::query(
-                "INSERT INTO url_technologies (url_status_id, technology_name)
-                 VALUES (?, ?)
+                "INSERT INTO url_technologies (url_status_id, technology_name, technology_category)
+                 VALUES (?, ?, ?)
                  ON CONFLICT(url_status_id, technology_name) DO NOTHING",
             )
             .bind(url_status_id)
             .bind(&tech)
+            .bind(&category)
             .execute(&mut *tx)
             .await
             {
@@ -326,7 +331,34 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
         }
     }
 
-    // 7. Insert normalized OIDs
+    // 7. Insert normalized HTTP headers (non-security)
+    // Parse HTTP headers from JSON string (backward compatibility) or use HashMap directly
+    if let Some(http_headers_json) = &record.http_headers {
+        if !http_headers_json.is_empty() && http_headers_json != "{}" {
+            if let Ok(headers_map) =
+                serde_json::from_str::<std::collections::HashMap<String, String>>(http_headers_json)
+            {
+                for (header_name, header_value) in headers_map {
+                    if let Err(e) = sqlx::query(
+                        "INSERT INTO url_http_headers (url_status_id, header_name, header_value)
+                         VALUES (?, ?, ?)
+                         ON CONFLICT(url_status_id, header_name) DO UPDATE SET
+                         header_value=excluded.header_value",
+                    )
+                    .bind(url_status_id)
+                    .bind(&header_name)
+                    .bind(&header_value)
+                    .execute(&mut *tx)
+                    .await
+                    {
+                        log::warn!("Failed to insert HTTP header {}: {}", header_name, e);
+                    }
+                }
+            }
+        }
+    }
+
+    // 8. Insert normalized OIDs
     if let Some(oids_json) = &record.oids {
         if !oids_json.is_empty() && oids_json != "[]" {
             if let Ok(oids_vec) = serde_json::from_str::<Vec<String>>(oids_json) {

@@ -26,6 +26,7 @@ pub struct UrlRecord {
     pub description: Option<String>,
     pub linkedin_slug: Option<String>,
     pub security_headers: Option<String>, // Deprecated: stored in url_security_headers table, kept for backward compatibility during migration
+    pub http_headers: Option<String>, // Deprecated: stored in url_http_headers table, kept for backward compatibility during migration
     pub tls_version: Option<String>,
     pub ssl_cert_subject: Option<String>,
     pub ssl_cert_issuer: Option<String>,

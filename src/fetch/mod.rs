@@ -35,14 +35,8 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 
 /// Extracts security-related HTTP headers from a response.
 ///
-/// Scans the header map for common security headers including:
-/// - Content-Security-Policy
-/// - Strict-Transport-Security
-/// - X-Content-Type-Options
-/// - X-Frame-Options
-/// - X-XSS-Protection
-/// - Referrer-Policy
-/// - Permissions-Policy
+/// Uses the `SECURITY_HEADERS` list from `config.rs` to determine which headers to capture.
+/// These headers are stored in the `url_security_headers` table.
 ///
 /// # Arguments
 ///
@@ -53,17 +47,40 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 /// A map of header names to header values. Only headers that are present in the
 /// response are included in the map.
 pub fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
-    let headers_list = [
-        crate::config::HEADER_CONTENT_SECURITY_POLICY,
-        crate::config::HEADER_STRICT_TRANSPORT_SECURITY,
-        crate::config::HEADER_X_CONTENT_TYPE_OPTIONS,
-        crate::config::HEADER_X_FRAME_OPTIONS,
-        crate::config::HEADER_X_XSS_PROTECTION,
-        crate::config::HEADER_REFERRER_POLICY,
-        crate::config::HEADER_PERMISSIONS_POLICY,
-    ];
+    crate::config::SECURITY_HEADERS
+        .iter()
+        .filter_map(|&header_name| {
+            headers.get(header_name).map(|value| {
+                (
+                    header_name.to_string(),
+                    value.to_str().unwrap_or_default().to_string(),
+                )
+            })
+        })
+        .collect()
+}
 
-    headers_list
+/// Extracts other HTTP headers (non-security) from a response.
+///
+/// Uses the `HTTP_HEADERS` list from `config.rs` to determine which headers to capture.
+/// These headers are stored in the `url_http_headers` table.
+///
+/// Headers captured include:
+/// - Infrastructure: Server, X-Powered-By, X-Generator (technology detection)
+/// - CDN/Proxy: CF-Ray, X-Served-By, Via (infrastructure analysis)
+/// - Performance: Server-Timing, X-Cache (performance monitoring)
+/// - Caching: Cache-Control, ETag, Last-Modified (cache analysis)
+///
+/// # Arguments
+///
+/// * `headers` - The HTTP response headers
+///
+/// # Returns
+///
+/// A map of header names to header values. Only headers that are present in the
+/// response are included in the map.
+pub fn extract_http_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
+    crate::config::HTTP_HEADERS
         .iter()
         .filter_map(|&header_name| {
             headers.get(header_name).map(|value| {
@@ -465,6 +482,15 @@ pub async fn handle_response(
         Some(serialize_json(&security_headers))
     };
 
+    let http_headers = extract_http_headers(&headers);
+    // Serialize to JSON for backward compatibility during migration
+    // The normalized table will be populated from this JSON
+    let http_headers_json = if http_headers.is_empty() {
+        None
+    } else {
+        Some(serialize_json(&http_headers))
+    };
+
     // Detect technologies using community-maintained fingerprint rulesets
     let technologies = match detect_technologies(
         &meta_tags,
@@ -522,6 +548,7 @@ pub async fn handle_response(
         description,
         linkedin_slug,
         security_headers: security_headers_json,
+        http_headers: http_headers_json,
         tls_version,
         ssl_cert_subject: subject,
         ssl_cert_issuer: issuer,
