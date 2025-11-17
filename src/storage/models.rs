@@ -24,18 +24,13 @@ pub struct UrlRecord {
     pub title: String,
     pub keywords: Option<String>,
     pub description: Option<String>,
-    pub linkedin_slug: Option<String>,
-    pub security_headers: Option<String>, // Deprecated: stored in url_security_headers table, kept for backward compatibility during migration
-    pub http_headers: Option<String>, // Deprecated: stored in url_http_headers table, kept for backward compatibility during migration
     pub tls_version: Option<String>,
     pub ssl_cert_subject: Option<String>,
     pub ssl_cert_issuer: Option<String>,
     pub ssl_cert_valid_from: Option<NaiveDateTime>,
     pub ssl_cert_valid_to: Option<NaiveDateTime>,
-    pub oids: Option<String>, // Deprecated: stored in url_oids table, kept for backward compatibility during migration
     pub is_mobile_friendly: bool,
     pub timestamp: i64,
-    pub redirect_chain: Option<String>, // Deprecated: stored in url_redirect_chain table, kept for backward compatibility during migration
     pub technologies: Option<String>,
     // Removed: fingerprints_source and fingerprints_version (now stored in runs table)
     pub nameservers: Option<String>,

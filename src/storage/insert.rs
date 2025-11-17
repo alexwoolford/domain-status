@@ -7,6 +7,7 @@ use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
 use crate::fingerprint;
+use crate::parse::SocialMediaLink;
 
 use super::models::UrlRecord;
 
@@ -112,14 +113,30 @@ fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32, String)>> 
 ///
 /// This function inserts data into:
 /// 1. The main `url_status` table (fact table with atomic fields)
-/// 2. Normalized child tables (url_technologies, url_nameservers, url_txt_records, url_mx_records, url_security_headers, url_http_headers)
+/// 2. Normalized child tables (url_technologies, url_nameservers, url_txt_records, url_mx_records, url_security_headers, url_http_headers, url_oids, url_redirect_chain)
 ///
 /// All inserts are wrapped in a transaction for atomicity.
 ///
 /// Note: Multi-valued fields (technologies, nameservers, txt_records, mx_records, security_headers, http_headers,
 /// oids, redirect_chain) are stored only in normalized child tables, not as JSON in the main table.
 /// This eliminates data duplication and establishes a single source of truth.
-pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<(), DatabaseError> {
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `record` - The URL record to insert
+/// * `security_headers` - Security headers HashMap (will be inserted into url_security_headers table)
+/// * `http_headers` - HTTP headers HashMap (will be inserted into url_http_headers table)
+/// * `oids` - Vector of OID strings (will be inserted into url_oids table)
+/// * `redirect_chain` - Vector of redirect URLs (will be inserted into url_redirect_chain table)
+pub async fn insert_url_record(
+    pool: &SqlitePool,
+    record: &UrlRecord,
+    security_headers: &std::collections::HashMap<String, String>,
+    http_headers: &std::collections::HashMap<String, String>,
+    oids: &std::collections::HashSet<String>,
+    redirect_chain: &[String],
+) -> Result<(), DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(record.ssl_cert_valid_to.as_ref());
 
@@ -135,10 +152,10 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
     let result = sqlx::query(
         "INSERT INTO url_status (
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
-            response_time, title, keywords, description, linkedin_slug, tls_version, ssl_cert_subject,
+            response_time, title, keywords, description, tls_version, ssl_cert_subject,
             ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, is_mobile_friendly, timestamp,
             spf_record, dmarc_record, cipher_suite, key_algorithm, run_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(final_domain, timestamp) DO UPDATE SET
             domain=excluded.domain,
             ip_address=excluded.ip_address,
@@ -149,7 +166,6 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
             title=excluded.title,
             keywords=excluded.keywords,
             description=excluded.description,
-            linkedin_slug=excluded.linkedin_slug,
             tls_version=excluded.tls_version,
             ssl_cert_subject=excluded.ssl_cert_subject,
             ssl_cert_issuer=excluded.ssl_cert_issuer,
@@ -160,38 +176,38 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
             dmarc_record=excluded.dmarc_record,
             cipher_suite=excluded.cipher_suite,
             key_algorithm=excluded.key_algorithm,
-            run_id=excluded.run_id"
+            run_id=excluded.run_id",
     )
-        .bind(&record.initial_domain)
-        .bind(&record.final_domain)
-        .bind(&record.ip_address)
-        .bind(&record.reverse_dns_name)
-        .bind(record.status)
-        .bind(&record.status_desc)
-        .bind(record.response_time)
-        .bind(&record.title)
-        .bind(&record.keywords)
-        .bind(&record.description)
-        .bind(&record.linkedin_slug)
-        // Removed: security_headers (stored in url_security_headers table)
-        .bind(&record.tls_version)
-        .bind(&record.ssl_cert_subject)
-        .bind(&record.ssl_cert_issuer)
-        .bind(valid_from_millis)
-        .bind(valid_to_millis)
-        // Removed: oids (stored in url_oids table)
-        .bind(record.is_mobile_friendly)
-        .bind(record.timestamp)
-        // Removed: redirect_chain (stored in url_redirect_chain table)
-        // Removed: technologies, nameservers, txt_records, mx_records (stored in normalized child tables)
-        // Removed: fingerprints_source, fingerprints_version (stored in runs table)
-        .bind(&record.spf_record)
-        .bind(&record.dmarc_record)
-        .bind(&record.cipher_suite)
-        .bind(&record.key_algorithm)
-        .bind(&record.run_id)
-        .execute(&mut *tx)
-        .await;
+    .bind(&record.initial_domain)
+    .bind(&record.final_domain)
+    .bind(&record.ip_address)
+    .bind(&record.reverse_dns_name)
+    .bind(record.status)
+    .bind(&record.status_desc)
+    .bind(record.response_time)
+    .bind(&record.title)
+    .bind(&record.keywords)
+    .bind(&record.description)
+    // Removed: linkedin_slug (now stored in url_social_media_links table)
+    // Removed: security_headers (stored in url_security_headers table)
+    .bind(&record.tls_version)
+    .bind(&record.ssl_cert_subject)
+    .bind(&record.ssl_cert_issuer)
+    .bind(valid_from_millis)
+    .bind(valid_to_millis)
+    // Removed: oids (stored in url_oids table)
+    .bind(record.is_mobile_friendly)
+    .bind(record.timestamp)
+    // Removed: redirect_chain (stored in url_redirect_chain table)
+    // Removed: technologies, nameservers, txt_records, mx_records (stored in normalized child tables)
+    // Removed: fingerprints_source, fingerprints_version (stored in runs table)
+    .bind(&record.spf_record)
+    .bind(&record.dmarc_record)
+    .bind(&record.cipher_suite)
+    .bind(&record.key_algorithm)
+    .bind(&record.run_id)
+    .execute(&mut *tx)
+    .await;
 
     let url_status_id = match result {
         Ok(_) => {
@@ -305,108 +321,78 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
     }
 
     // 6. Insert normalized security headers
-    // Parse security headers from JSON string (backward compatibility) or use HashMap directly
-    if let Some(security_headers_json) = &record.security_headers {
-        if !security_headers_json.is_empty() && security_headers_json != "{}" {
-            if let Ok(headers_map) = serde_json::from_str::<std::collections::HashMap<String, String>>(
-                security_headers_json,
-            ) {
-                for (header_name, header_value) in headers_map {
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO url_security_headers (url_status_id, header_name, header_value)
-                         VALUES (?, ?, ?)
-                         ON CONFLICT(url_status_id, header_name) DO UPDATE SET
-                         header_value=excluded.header_value",
-                    )
-                    .bind(url_status_id)
-                    .bind(&header_name)
-                    .bind(&header_value)
-                    .execute(&mut *tx)
-                    .await
-                    {
-                        log::warn!("Failed to insert security header {}: {}", header_name, e);
-                    }
-                }
-            }
+    for (header_name, header_value) in security_headers {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO url_security_headers (url_status_id, header_name, header_value)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_status_id, header_name) DO UPDATE SET
+             header_value=excluded.header_value",
+        )
+        .bind(url_status_id)
+        .bind(header_name)
+        .bind(header_value)
+        .execute(&mut *tx)
+        .await
+        {
+            log::warn!("Failed to insert security header {}: {}", header_name, e);
         }
     }
 
     // 7. Insert normalized HTTP headers (non-security)
-    // Parse HTTP headers from JSON string (backward compatibility) or use HashMap directly
-    if let Some(http_headers_json) = &record.http_headers {
-        if !http_headers_json.is_empty() && http_headers_json != "{}" {
-            if let Ok(headers_map) =
-                serde_json::from_str::<std::collections::HashMap<String, String>>(http_headers_json)
-            {
-                for (header_name, header_value) in headers_map {
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO url_http_headers (url_status_id, header_name, header_value)
-                         VALUES (?, ?, ?)
-                         ON CONFLICT(url_status_id, header_name) DO UPDATE SET
-                         header_value=excluded.header_value",
-                    )
-                    .bind(url_status_id)
-                    .bind(&header_name)
-                    .bind(&header_value)
-                    .execute(&mut *tx)
-                    .await
-                    {
-                        log::warn!("Failed to insert HTTP header {}: {}", header_name, e);
-                    }
-                }
-            }
+    for (header_name, header_value) in http_headers {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO url_http_headers (url_status_id, header_name, header_value)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_status_id, header_name) DO UPDATE SET
+             header_value=excluded.header_value",
+        )
+        .bind(url_status_id)
+        .bind(header_name)
+        .bind(header_value)
+        .execute(&mut *tx)
+        .await
+        {
+            log::warn!("Failed to insert HTTP header {}: {}", header_name, e);
         }
     }
 
     // 8. Insert normalized OIDs
-    if let Some(oids_json) = &record.oids {
-        if !oids_json.is_empty() && oids_json != "[]" {
-            if let Ok(oids_vec) = serde_json::from_str::<Vec<String>>(oids_json) {
-                for oid in oids_vec {
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO url_oids (url_status_id, oid)
-                         VALUES (?, ?)
-                         ON CONFLICT(url_status_id, oid) DO NOTHING",
-                    )
-                    .bind(url_status_id)
-                    .bind(&oid)
-                    .execute(&mut *tx)
-                    .await
-                    {
-                        log::warn!("Failed to insert OID {}: {}", oid, e);
-                    }
-                }
-            }
+    for oid in oids {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO url_oids (url_status_id, oid)
+             VALUES (?, ?)
+             ON CONFLICT(url_status_id, oid) DO NOTHING",
+        )
+        .bind(url_status_id)
+        .bind(oid)
+        .execute(&mut *tx)
+        .await
+        {
+            log::warn!("Failed to insert OID {}: {}", oid, e);
         }
     }
 
-    // 8. Insert normalized redirect chain
+    // 9. Insert normalized redirect chain
     // Preserve sequence order (redirects happen in order)
-    if let Some(redirect_chain_json) = &record.redirect_chain {
-        if !redirect_chain_json.is_empty() && redirect_chain_json != "[]" {
-            if let Ok(chain_vec) = serde_json::from_str::<Vec<String>>(redirect_chain_json) {
-                for (index, url) in chain_vec.iter().enumerate() {
-                    let sequence_order = (index + 1) as i32; // 1-based ordering
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO url_redirect_chain (url_status_id, sequence_order, url)
-                         VALUES (?, ?, ?)
-                         ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET
-                         url=excluded.url",
-                    )
-                    .bind(url_status_id)
-                    .bind(sequence_order)
-                    .bind(url)
-                    .execute(&mut *tx)
-                    .await
-                    {
-                        log::warn!(
-                            "Failed to insert redirect chain URL at position {}: {}",
-                            sequence_order,
-                            e
-                        );
-                    }
-                }
-            }
+    for (index, url) in redirect_chain.iter().enumerate() {
+        let sequence_order = (index + 1) as i32; // 1-based ordering
+        if let Err(e) = sqlx::query(
+            "INSERT INTO url_redirect_chain (url_status_id, sequence_order, url)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET
+             url=excluded.url",
+        )
+        .bind(url_status_id)
+        .bind(sequence_order)
+        .bind(url)
+        .execute(&mut *tx)
+        .await
+        {
+            log::warn!(
+                "Failed to insert redirect chain URL at position {}: {}",
+                sequence_order,
+                e
+            );
         }
     }
 
@@ -539,6 +525,44 @@ pub async fn insert_structured_data(
         .execute(pool)
         .await
         .map_err(DatabaseError::from)?;
+    }
+
+    Ok(())
+}
+
+/// Inserts social media links into the database.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - Foreign key to url_status.id
+/// * `links` - Vector of social media links extracted from HTML
+pub async fn insert_social_media_links(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    links: &[SocialMediaLink],
+) -> Result<(), DatabaseError> {
+    for link in links {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO url_social_media_links (url_status_id, platform, url, identifier)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(url_status_id, platform, url) DO UPDATE SET
+             identifier=excluded.identifier",
+        )
+        .bind(url_status_id)
+        .bind(&link.platform)
+        .bind(&link.url)
+        .bind(&link.identifier)
+        .execute(pool)
+        .await
+        {
+            log::warn!(
+                "Failed to insert social media link {} for platform {}: {}",
+                link.url,
+                link.platform,
+                e
+            );
+        }
     }
 
     Ok(())

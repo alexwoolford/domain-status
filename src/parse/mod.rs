@@ -9,10 +9,19 @@ use crate::error_handling::{ErrorStats, ErrorType};
 const TITLE_SELECTOR_STR: &str = "title";
 const META_KEYWORDS_SELECTOR_STR: &str = "meta[name='keywords']";
 const META_DESCRIPTION_SELECTOR_STR: &str = "meta[name='description']";
-const LINKEDIN_ANCHOR_SELECTOR_STR: &str = "a[href]";
+const ANCHOR_SELECTOR_STR: &str = "a[href]";
 
-// Regex patterns
-const LINKEDIN_URL_PATTERN: &str = r"https?://www\.linkedin\.com/company/([^/?#]+)";
+// Regex patterns for social media links
+const LINKEDIN_URL_PATTERN: &str = r"https?://(?:www\.)?linkedin\.com/(?:company|in|pub)/([^/?#]+)";
+const TWITTER_URL_PATTERN: &str = r"https?://(?:www\.)?(?:twitter\.com|x\.com)/([^/?#]+)";
+const FACEBOOK_URL_PATTERN: &str = r"https?://(?:www\.)?facebook\.com/([^/?#]+)";
+const INSTAGRAM_URL_PATTERN: &str = r"https?://(?:www\.)?instagram\.com/([^/?#]+)";
+const YOUTUBE_URL_PATTERN: &str = r"https?://(?:www\.)?youtube\.com/(?:channel|c|user)/([^/?#]+)";
+const GITHUB_URL_PATTERN: &str = r"https?://(?:www\.)?github\.com/([^/?#]+)";
+const TIKTOK_URL_PATTERN: &str = r"https?://(?:www\.)?tiktok\.com/@([^/?#]+)";
+const PINTEREST_URL_PATTERN: &str = r"https?://(?:www\.)?pinterest\.(?:com|co\.uk)/([^/?#]+)";
+const SNAPCHAT_URL_PATTERN: &str = r"https?://(?:www\.)?snapchat\.com/add/([^/?#]+)";
+const REDDIT_URL_PATTERN: &str = r"https?://(?:www\.)?reddit\.com/(?:r|u)/([^/?#]+)";
 
 static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse(TITLE_SELECTOR_STR).expect("Failed to parse title selector - this is a bug")
@@ -150,47 +159,117 @@ pub fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Op
     meta_description
 }
 
-/// Extracts the LinkedIn company slug from an HTML document.
+/// Social media link information
+#[derive(Debug, Clone, Default)]
+pub struct SocialMediaLink {
+    pub platform: String,
+    pub url: String,
+    pub identifier: Option<String>, // Username, handle, or ID extracted from URL
+}
+
+// Lazy static regex patterns for social media links
+static LINKEDIN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(LINKEDIN_URL_PATTERN).expect("Failed to compile LinkedIn regex"));
+static TWITTER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(TWITTER_URL_PATTERN).expect("Failed to compile Twitter regex"));
+static FACEBOOK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(FACEBOOK_URL_PATTERN).expect("Failed to compile Facebook regex"));
+static INSTAGRAM_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(INSTAGRAM_URL_PATTERN).expect("Failed to compile Instagram regex"));
+static YOUTUBE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(YOUTUBE_URL_PATTERN).expect("Failed to compile YouTube regex"));
+static GITHUB_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(GITHUB_URL_PATTERN).expect("Failed to compile GitHub regex"));
+static TIKTOK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(TIKTOK_URL_PATTERN).expect("Failed to compile TikTok regex"));
+static PINTEREST_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(PINTEREST_URL_PATTERN).expect("Failed to compile Pinterest regex"));
+static SNAPCHAT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(SNAPCHAT_URL_PATTERN).expect("Failed to compile Snapchat regex"));
+static REDDIT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(REDDIT_URL_PATTERN).expect("Failed to compile Reddit regex"));
+
+static ANCHOR_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(ANCHOR_SELECTOR_STR).expect("Failed to parse anchor selector - this is a bug")
+});
+
+/// Extracts social media links from an HTML document.
 ///
-/// Searches for anchor tags (`<a>`) with `href` attributes matching the LinkedIn
-/// company URL pattern (`https://www.linkedin.com/company/{slug}`) and extracts
-/// the slug portion. Returns `None` if no matching link is found.
+/// Searches for anchor tags (`<a>`) with `href` attributes matching common social media
+/// platform URL patterns and extracts the platform, full URL, and identifier (username/handle).
+///
+/// Supported platforms:
+/// - LinkedIn (company, profile, publisher pages)
+/// - Twitter/X
+/// - Facebook
+/// - Instagram
+/// - YouTube (channel, user pages)
+/// - GitHub
+/// - TikTok
+/// - Pinterest
+/// - Snapchat
+/// - Reddit (subreddits, users)
 ///
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker for recording extraction failures
 ///
 /// # Returns
 ///
-/// The LinkedIn company slug, or `None` if not found.
-pub fn extract_linkedin_slug(document: &Html, error_stats: &ErrorStats) -> Option<String> {
-    let selector = match Selector::parse(LINKEDIN_ANCHOR_SELECTOR_STR) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Failed to parse LinkedIn selector: {e}");
-            error_stats.increment(ErrorType::LinkedInSlugExtractError);
-            return None;
-        }
-    };
-    let re = match Regex::new(LINKEDIN_URL_PATTERN) {
-        Ok(r) => r,
-        Err(e) => {
-            log::error!("Failed to compile LinkedIn regex: {e}");
-            error_stats.increment(ErrorType::LinkedInSlugExtractError);
-            return None;
-        }
-    };
+/// A vector of `SocialMediaLink` structs containing platform, URL, and identifier.
+pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
+    let mut links = Vec::new();
+    let mut seen_urls = std::collections::HashSet::new();
 
-    for element in document.select(&selector) {
-        if let Some(link) = element.value().attr("href") {
-            if let Some(caps) = re.captures(link) {
-                return caps.get(1).map(|m| m.as_str().to_string());
+    // Pattern matching: (regex, platform_name)
+    let patterns: Vec<(&LazyLock<Regex>, &str)> = vec![
+        (&LINKEDIN_RE, "LinkedIn"),
+        (&TWITTER_RE, "Twitter"),
+        (&FACEBOOK_RE, "Facebook"),
+        (&INSTAGRAM_RE, "Instagram"),
+        (&YOUTUBE_RE, "YouTube"),
+        (&GITHUB_RE, "GitHub"),
+        (&TIKTOK_RE, "TikTok"),
+        (&PINTEREST_RE, "Pinterest"),
+        (&SNAPCHAT_RE, "Snapchat"),
+        (&REDDIT_RE, "Reddit"),
+    ];
+
+    for element in document.select(&ANCHOR_SELECTOR) {
+        if let Some(href) = element.value().attr("href") {
+            // Skip if we've already seen this URL
+            if seen_urls.contains(href) {
+                continue;
+            }
+
+            // Try each pattern
+            for (re, platform_name) in &patterns {
+                if let Some(caps) = re.captures(href) {
+                    let identifier = caps.get(1).map(|m| m.as_str().to_string());
+                    let full_url = if href.starts_with("http://") || href.starts_with("https://") {
+                        href.to_string()
+                    } else if href.starts_with("//") {
+                        format!("https:{}", href)
+                    } else if href.starts_with('/') {
+                        // Relative URL - skip for now (would need base URL)
+                        continue;
+                    } else {
+                        format!("https://{}", href)
+                    };
+
+                    seen_urls.insert(href.to_string());
+                    links.push(SocialMediaLink {
+                        platform: platform_name.to_string(),
+                        url: full_url,
+                        identifier,
+                    });
+                    break; // Found a match, move to next link
+                }
             }
         }
     }
-    error_stats.increment(ErrorType::LinkedInSlugExtractError);
-    None
+
+    links
 }
 
 /// Checks if an HTML document is mobile-friendly by looking for a viewport meta tag.
@@ -516,79 +595,6 @@ mod tests {
         let stats = test_error_stats();
         assert!(extract_meta_description(&document, &stats).is_none());
         assert_eq!(stats.get_count(ErrorType::MetaDescriptionExtractError), 1);
-    }
-
-    #[test]
-    fn test_extract_linkedin_slug_basic() {
-        let html = r#"<html><body><a href="https://www.linkedin.com/company/example">Link</a></body></html>"#;
-        let document = Html::parse_document(html);
-        let stats = test_error_stats();
-        assert_eq!(
-            extract_linkedin_slug(&document, &stats),
-            Some("example".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_linkedin_slug_with_query() {
-        // Edge case: LinkedIn URL with query parameters
-        let html = r#"<html><body><a href="https://www.linkedin.com/company/example?trk=test">Link</a></body></html>"#;
-        let document = Html::parse_document(html);
-        let stats = test_error_stats();
-        assert_eq!(
-            extract_linkedin_slug(&document, &stats),
-            Some("example".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_linkedin_slug_with_fragment() {
-        // Edge case: LinkedIn URL with fragment
-        let html = r#"<html><body><a href="https://www.linkedin.com/company/example#section">Link</a></body></html>"#;
-        let document = Html::parse_document(html);
-        let stats = test_error_stats();
-        assert_eq!(
-            extract_linkedin_slug(&document, &stats),
-            Some("example".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_linkedin_slug_http() {
-        // Should work with HTTP too
-        let html = r#"<html><body><a href="http://www.linkedin.com/company/example">Link</a></body></html>"#;
-        let document = Html::parse_document(html);
-        let stats = test_error_stats();
-        assert_eq!(
-            extract_linkedin_slug(&document, &stats),
-            Some("example".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_linkedin_slug_multiple_links() {
-        // Edge case: multiple LinkedIn links (should get first)
-        let html = r#"<html><body>
-            <a href="https://www.linkedin.com/company/first">First</a>
-            <a href="https://www.linkedin.com/company/second">Second</a>
-        </body></html>"#;
-        let document = Html::parse_document(html);
-        let stats = test_error_stats();
-        assert_eq!(
-            extract_linkedin_slug(&document, &stats),
-            Some("first".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_linkedin_slug_not_linkedin() {
-        // Should not match non-LinkedIn URLs
-        let html =
-            r#"<html><body><a href="https://example.com/company/test">Link</a></body></html>"#;
-        let document = Html::parse_document(html);
-        let stats = test_error_stats();
-        assert!(extract_linkedin_slug(&document, &stats).is_none());
-        assert_eq!(stats.get_count(ErrorType::LinkedInSlugExtractError), 1);
     }
 
     #[test]

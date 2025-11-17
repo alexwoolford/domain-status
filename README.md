@@ -88,6 +88,17 @@ The tool captures comprehensive information for each URL. The database uses a **
 - Requires MaxMind GeoLite2 databases (automatically downloaded if license key provided)
 - Stored in `url_geoip` table with one-to-one relationship to `url_status`
 
+**HTTP Headers:**
+- **Security headers**: Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, etc. (stored in `url_security_headers`)
+- **Other headers**: Server, X-Powered-By, CDN identifiers (CF-Ray, X-Served-By), caching headers (Cache-Control, ETag), performance headers (Server-Timing) (stored in `url_http_headers`)
+- Headers are configurable via arrays in `src/config.rs` (`SECURITY_HEADERS` and `HTTP_HEADERS`)
+
+**Social Media Links:**
+- Extracted from HTML anchor tags (`<a href="...">`)
+- Supports 10 platforms: LinkedIn, Twitter/X, Facebook, Instagram, YouTube, GitHub, TikTok, Pinterest, Snapchat, Reddit
+- Stores platform name, full URL, and identifier (username/handle)
+- Stored in `url_social_media_links` table
+
 ## 📊 Database Schema
 
 ### Entity-Relationship Diagram
@@ -100,8 +111,10 @@ erDiagram
     url_status ||--o{ url_txt_records : "has"
     url_status ||--o{ url_mx_records : "has"
     url_status ||--o{ url_security_headers : "has"
+    url_status ||--o{ url_http_headers : "has"
     url_status ||--o{ url_oids : "has"
     url_status ||--o{ url_redirect_chain : "has"
+    url_status ||--o{ url_social_media_links : "has"
 
     runs {
         TEXT run_id PK
@@ -126,7 +139,6 @@ erDiagram
         TEXT title
         TEXT keywords
         TEXT description
-        TEXT linkedin_slug
         TEXT tls_version
         TEXT ssl_cert_subject
         TEXT ssl_cert_issuer
@@ -175,6 +187,13 @@ erDiagram
         TEXT header_value
     }
 
+    url_http_headers {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT header_name
+        TEXT header_value
+    }
+
     url_oids {
         INTEGER id PK
         INTEGER url_status_id FK
@@ -186,6 +205,14 @@ erDiagram
         INTEGER url_status_id FK
         INTEGER sequence_order
         TEXT url
+    }
+
+    url_social_media_links {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT platform
+        TEXT url
+        TEXT identifier
     }
 ```
 
@@ -224,7 +251,6 @@ Main table storing atomic, single-valued fields for each URL check. This is the 
 | `title` | TEXT | HTML `<title>` tag content |
 | `keywords` | TEXT | Meta keywords from `<meta name="keywords">` |
 | `description` | TEXT | Meta description from `<meta name="description">` |
-| `linkedin_slug` | TEXT | LinkedIn company slug extracted from LinkedIn URLs |
 | `tls_version` | TEXT | TLS version used (e.g., TLSv1.3) - NULL for HTTP |
 | `ssl_cert_subject` | TEXT | SSL certificate subject (CN, O, etc.) - NULL for HTTP |
 | `ssl_cert_issuer` | TEXT | SSL certificate issuer - NULL for HTTP |
@@ -345,6 +371,69 @@ Stores HTTP security headers as key-value pairs (one row per header per URL).
 **Indexes:**
 - `idx_url_security_headers_name` on `header_name` (for queries like "find all sites with HSTS")
 - `idx_url_security_headers_status_id` on `url_status_id`
+
+#### `url_http_headers` (Junction Table)
+Stores HTTP headers (non-security) as key-value pairs (one row per header per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `header_name` | TEXT | HTTP header name (e.g., "Server", "CF-Ray", "Cache-Control") |
+| `header_value` | TEXT | Full header value |
+
+**Headers Captured:**
+
+The headers captured are defined in `src/config.rs` in the `HTTP_HEADERS` array. Currently includes:
+
+- **Infrastructure/Server identification:**
+  - `Server` - Web server software and version (e.g., "nginx/1.18.0", "Apache/2.4.41")
+  - `X-Powered-By` - Application framework (e.g., "PHP/7.4.3", "ASP.NET")
+  - `X-Generator` - CMS or site generator (e.g., "WordPress", "Drupal")
+
+- **CDN/Proxy identification:**
+  - `CF-Ray` - Cloudflare request ID
+  - `X-Served-By` - Fastly cache server
+  - `Via` - Proxy/CDN chain information
+
+- **Performance/Monitoring:**
+  - `Server-Timing` - Performance metrics
+  - `X-Cache` - Cache hit/miss status
+
+- **Caching:**
+  - `Cache-Control` - Cache directives
+  - `ETag` - Entity tag for cache validation
+  - `Last-Modified` - Resource modification timestamp
+
+**Note:** To add or remove headers, modify the `HTTP_HEADERS` array in `src/config.rs`.
+
+**Constraints:**
+- `UNIQUE (url_status_id, header_name)` - One value per header per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_http_headers_name` on `header_name` (for queries like "find all sites using nginx" or "find all Cloudflare sites")
+- `idx_url_http_headers_status_id` on `url_status_id`
+
+**Query Examples:**
+```sql
+-- Find all sites using nginx
+SELECT DISTINCT us.domain FROM url_status us
+JOIN url_http_headers uhh ON us.id = uhh.url_status_id
+WHERE uhh.header_name = 'Server' AND uhh.header_value LIKE 'nginx%';
+
+-- Find all sites behind Cloudflare
+SELECT DISTINCT us.domain FROM url_status us
+JOIN url_http_headers uhh ON us.id = uhh.url_status_id
+WHERE uhh.header_name = 'CF-Ray';
+
+-- Find sites with aggressive caching
+SELECT DISTINCT us.domain, uhh.header_value 
+FROM url_status us
+JOIN url_http_headers uhh ON us.id = uhh.url_status_id
+WHERE uhh.header_name = 'Cache-Control' 
+  AND uhh.header_value LIKE '%max-age=31536000%';
+```
 
 #### `url_oids` (Junction Table)
 Stores SSL certificate OIDs (Object Identifiers) from the certificate (one row per OID per URL).
@@ -488,6 +577,60 @@ GROUP BY g.country_code, g.country_name
 ORDER BY site_count DESC;
 ```
 
+#### `url_social_media_links` (Junction Table)
+Stores social media platform links extracted from HTML (one row per link per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `platform` | TEXT | Social media platform name (e.g., "LinkedIn", "Twitter", "Facebook", "Instagram", "YouTube", "GitHub", "TikTok", "Pinterest", "Snapchat", "Reddit") |
+| `url` | TEXT | Full URL to the social media profile/page |
+| `identifier` | TEXT | Username, handle, or ID extracted from URL (e.g., company slug, username) |
+
+**Platforms Supported:**
+- **LinkedIn**: Company pages (`/company/{slug}`), profiles (`/in/{slug}`), publisher pages (`/pub/{slug}`)
+- **Twitter/X**: User profiles (`twitter.com/{handle}` or `x.com/{handle}`)
+- **Facebook**: Pages and profiles (`facebook.com/{page}`)
+- **Instagram**: User profiles (`instagram.com/{username}`)
+- **YouTube**: Channels (`/channel/{id}`), users (`/user/{name}`), custom URLs (`/c/{name}`)
+- **GitHub**: User/organization profiles (`github.com/{username}`)
+- **TikTok**: User profiles (`tiktok.com/@{username}`)
+- **Pinterest**: User/board pages (`pinterest.com/{username}`)
+- **Snapchat**: User profiles (`snapchat.com/add/{username}`)
+- **Reddit**: Subreddits (`/r/{name}`) and users (`/u/{name}`)
+
+**Constraints:**
+- `UNIQUE (url_status_id, platform, url)` - Prevents duplicate links per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_social_media_links_platform` on `platform` (for queries like "find all sites with LinkedIn links")
+- `idx_url_social_media_links_status_id` on `url_status_id`
+- `idx_url_social_media_links_identifier` on `identifier` (for finding specific usernames/handles)
+
+**Query Examples:**
+```sql
+-- Find all sites with LinkedIn company pages
+SELECT DISTINCT us.domain, sml.url, sml.identifier
+FROM url_status us
+JOIN url_social_media_links sml ON us.id = sml.url_status_id
+WHERE sml.platform = 'LinkedIn' AND sml.url LIKE '%/company/%';
+
+-- Find all sites with Twitter/X links
+SELECT DISTINCT us.domain, sml.url, sml.identifier
+FROM url_status us
+JOIN url_social_media_links sml ON us.id = sml.url_status_id
+WHERE sml.platform = 'Twitter';
+
+-- Count social media platforms per site
+SELECT us.domain, COUNT(DISTINCT sml.platform) as platform_count
+FROM url_status us
+LEFT JOIN url_social_media_links sml ON us.id = sml.url_status_id
+GROUP BY us.domain
+ORDER BY platform_count DESC;
+```
+
 ### Schema Design Principles
 
 The database uses a **star schema** design pattern:
@@ -500,8 +643,10 @@ The database uses a **star schema** design pattern:
    - `url_txt_records` - DNS TXT records
    - `url_mx_records` - DNS MX records
    - `url_security_headers` - HTTP security headers
+   - `url_http_headers` - HTTP headers (non-security: Server, CDN, caching, etc.)
    - `url_oids` - Certificate OIDs
    - `url_redirect_chain` - Redirect chain URLs
+   - `url_social_media_links` - Social media platform links
 
 **Benefits:**
 - **No Data Duplication**: Each piece of data stored once
@@ -524,6 +669,12 @@ SELECT DISTINCT us.domain, ush.header_value
 FROM url_status us
 JOIN url_security_headers ush ON us.id = ush.url_status_id
 WHERE ush.header_name = 'Strict-Transport-Security';
+
+-- Find all sites using nginx
+SELECT DISTINCT us.domain, uhh.header_value
+FROM url_status us
+JOIN url_http_headers uhh ON us.id = uhh.url_status_id
+WHERE uhh.header_name = 'Server' AND uhh.header_value LIKE 'nginx%';
 
 -- Get redirect chain for a domain
 SELECT urc.sequence_order, urc.url

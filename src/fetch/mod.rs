@@ -18,10 +18,12 @@ use crate::error_handling::{update_error_stats, ErrorStats};
 use crate::fingerprint::detect_technologies;
 use crate::geoip;
 use crate::parse::{
-    extract_linkedin_slug, extract_meta_description, extract_meta_keywords,
+    extract_meta_description, extract_meta_keywords, extract_social_media_links,
     extract_structured_data, extract_title, is_mobile_friendly,
 };
-use crate::storage::insert::{insert_geoip_data, insert_structured_data};
+use crate::storage::insert::{
+    insert_geoip_data, insert_social_media_links, insert_structured_data,
+};
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
@@ -165,7 +167,7 @@ pub async fn resolve_redirect_chain(
 /// * `resolver` - DNS resolver
 /// * `error_stats` - Error statistics tracker
 /// * `elapsed` - Response time in seconds
-/// * `redirect_chain_json` - JSON array of redirect chain URLs
+/// * `redirect_chain_json` - JSON array of redirect chain URLs (will be parsed and inserted into url_redirect_chain table)
 /// * `run_id` - Unique identifier for this run (for time-series tracking)
 ///
 /// # Errors
@@ -258,9 +260,9 @@ pub async fn handle_response(
         title,
         keywords_str,
         description,
-        linkedin_slug,
         is_mobile_friendly,
         structured_data,
+        social_media_links,
         meta_tags,
         script_sources,
         html_text,
@@ -277,9 +279,6 @@ pub async fn handle_response(
         let description = extract_meta_description(&document, error_stats);
         debug!("Extracted description for {final_domain}: {description:?}");
 
-        let linkedin_slug = extract_linkedin_slug(&document, error_stats);
-        debug!("Extracted LinkedIn slug for {final_domain}: {linkedin_slug:?}");
-
         let is_mobile_friendly = is_mobile_friendly(&body);
 
         // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
@@ -289,6 +288,13 @@ pub async fn handle_response(
             structured_data.open_graph.len(),
             structured_data.twitter_cards.len(),
             structured_data.schema_types.len());
+
+        // Extract social media links
+        let social_media_links = extract_social_media_links(&document);
+        debug!(
+            "Extracted {} social media links for {final_domain}",
+            social_media_links.len()
+        );
 
         // Extract data needed for technology detection (to avoid double-parsing)
         let mut meta_tags = HashMap::new();
@@ -326,9 +332,9 @@ pub async fn handle_response(
             title,
             keywords_str,
             description,
-            linkedin_slug,
             is_mobile_friendly,
             structured_data,
+            social_media_links,
             meta_tags,
             script_sources,
             html_text,
@@ -366,24 +372,32 @@ pub async fn handle_response(
     );
 
     // Extract TLS info
-    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
-        match tls_result {
-            Ok(cert_info) => (
-                cert_info.tls_version,
-                cert_info.subject,
-                cert_info.issuer,
-                cert_info.valid_from,
-                cert_info.valid_to,
-                cert_info.oids,
-                cert_info.cipher_suite,
-                cert_info.key_algorithm,
-            ),
-            Err(e) => {
-                log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-                error_stats.increment(crate::error_handling::ErrorType::TlsCertificateError);
-                (None, None, None, None, None, None, None, None)
-            }
-        };
+    let (
+        tls_version,
+        subject,
+        issuer,
+        valid_from,
+        valid_to,
+        oids_json,
+        cipher_suite,
+        key_algorithm,
+    ) = match tls_result {
+        Ok(cert_info) => (
+            cert_info.tls_version,
+            cert_info.subject,
+            cert_info.issuer,
+            cert_info.valid_from,
+            cert_info.valid_to,
+            cert_info.oids,
+            cert_info.cipher_suite,
+            cert_info.key_algorithm,
+        ),
+        Err(e) => {
+            log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
+            error_stats.increment(crate::error_handling::ErrorType::TlsCertificateError);
+            (None, None, None, None, None, None, None, None)
+        }
+    };
 
     debug!("Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}");
 
@@ -474,22 +488,7 @@ pub async fn handle_response(
     };
 
     let security_headers = extract_security_headers(&headers);
-    // Serialize to JSON for backward compatibility during migration
-    // The normalized table will be populated from this JSON
-    let security_headers_json = if security_headers.is_empty() {
-        None
-    } else {
-        Some(serialize_json(&security_headers))
-    };
-
     let http_headers = extract_http_headers(&headers);
-    // Serialize to JSON for backward compatibility during migration
-    // The normalized table will be populated from this JSON
-    let http_headers_json = if http_headers.is_empty() {
-        None
-    } else {
-        Some(serialize_json(&http_headers))
-    };
 
     // Detect technologies using community-maintained fingerprint rulesets
     let technologies = match detect_technologies(
@@ -546,18 +545,13 @@ pub async fn handle_response(
         title,
         keywords: keywords_str,
         description,
-        linkedin_slug,
-        security_headers: security_headers_json,
-        http_headers: http_headers_json,
         tls_version,
         ssl_cert_subject: subject,
         ssl_cert_issuer: issuer,
         ssl_cert_valid_from: valid_from,
         ssl_cert_valid_to: valid_to,
-        oids,
         is_mobile_friendly,
         timestamp,
-        redirect_chain: redirect_chain_json,
         technologies,
         nameservers,
         txt_records,
@@ -569,7 +563,40 @@ pub async fn handle_response(
         run_id: run_id.map(|s| s.to_string()),
     };
 
-    let update_result = insert_url_record(pool, &record).await;
+    // Parse OIDs from JSON string to HashSet
+    let oids_set: std::collections::HashSet<String> = if let Some(oids_json) = &oids_json {
+        if !oids_json.is_empty() && oids_json != "[]" {
+            serde_json::from_str::<Vec<String>>(oids_json)
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Parse redirect chain from JSON string to Vec
+    let redirect_chain_vec: Vec<String> = if let Some(chain_json) = &redirect_chain_json {
+        if !chain_json.is_empty() && chain_json != "[]" {
+            serde_json::from_str::<Vec<String>>(chain_json).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let update_result = insert_url_record(
+        pool,
+        &record,
+        &security_headers,
+        &http_headers,
+        &oids_set,
+        &redirect_chain_vec,
+    )
+    .await;
 
     match update_result {
         Ok(_) => {
@@ -611,6 +638,23 @@ pub async fn handle_response(
                     );
                 } else {
                     debug!("Structured data inserted for {}", final_domain_clone);
+                }
+
+                // Insert social media links
+                if let Err(e) =
+                    insert_social_media_links(pool, url_status_id, &social_media_links).await
+                {
+                    log::warn!(
+                        "Failed to insert social media links for {}: {}",
+                        final_domain_clone,
+                        e
+                    );
+                } else {
+                    debug!(
+                        "Social media links inserted for {}: {} links",
+                        final_domain_clone,
+                        social_media_links.len()
+                    );
                 }
             }
         }

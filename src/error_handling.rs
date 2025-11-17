@@ -57,7 +57,6 @@ pub enum ErrorType {
     TitleExtractError,
     KeywordExtractError,
     MetaDescriptionExtractError,
-    LinkedInSlugExtractError,
     ProcessUrlTimeout,
     // DNS errors
     DnsNsLookupError,
@@ -85,7 +84,6 @@ impl ErrorType {
             ErrorType::TitleExtractError => "Title extract error",
             ErrorType::KeywordExtractError => "Keyword extract error",
             ErrorType::MetaDescriptionExtractError => "Meta description extract error",
-            ErrorType::LinkedInSlugExtractError => "LinkedIn slug extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
             ErrorType::DnsTxtLookupError => "DNS TXT lookup error",
