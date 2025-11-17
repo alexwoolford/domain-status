@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::Opt;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use publicsuffix::List;
 use reqwest::ClientBuilder;
 use tokio::sync::Semaphore;
@@ -201,15 +201,15 @@ pub fn init_crypto_provider() {
 ///
 /// # Returns
 ///
-/// A configured `TokioAsyncResolver` wrapped in `Arc` for sharing across tasks,
+/// A configured `TokioResolver` wrapped in `Arc` for sharing across tasks,
 /// or an error if initialization fails.
 ///
 /// # Errors
 ///
 /// Returns `InitializationError::DnsResolverError` if both system and fallback
 /// configurations fail (though fallback should rarely fail).
-pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
-    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
+    use hickory_resolver::config::ResolverOpts;
 
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
@@ -218,10 +218,14 @@ pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
 
     // Use default resolver configuration with timeouts
     // This ensures consistent timeout behavior across all DNS queries
-    Ok(Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        opts,
-    )))
+    // In hickory-resolver 0.25, use builder_tokio() and override options
+    let mut builder = TokioResolver::builder_tokio()
+        .map_err(|e| InitializationError::DnsResolverError(e.to_string()))?;
+    // Override with our custom options (config uses system default)
+    *builder.options_mut() = opts;
+    let resolver = builder.build();
+
+    Ok(Arc::new(resolver))
 }
 
 /// Token-bucket rate limiter for controlling request rate.

@@ -407,7 +407,7 @@ struct TlsDnsData {
 async fn fetch_tls_and_dns(
     final_url: &str,
     host: &str,
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
     final_domain: &str,
     error_stats: &crate::error_handling::ErrorStats,
 ) -> Result<TlsDnsData, Error> {
@@ -516,7 +516,7 @@ struct AdditionalDnsData {
 /// * `error_stats` - Error statistics tracker
 async fn fetch_additional_dns_records(
     final_domain: &str,
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
     error_stats: &crate::error_handling::ErrorStats,
 ) -> AdditionalDnsData {
     // Query additional DNS records (NS, TXT, MX) in parallel

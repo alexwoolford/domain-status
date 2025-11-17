@@ -1,6 +1,6 @@
 use anyhow::{Error, Result};
 use hickory_resolver::proto::rr::{RData, RecordType};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 /// Resolves a hostname to an IP address using DNS.
 ///
@@ -16,10 +16,7 @@ use hickory_resolver::TokioAsyncResolver;
 /// # Errors
 ///
 /// Returns an error if DNS resolution fails or no IP addresses are found.
-pub async fn resolve_host_to_ip(
-    host: &str,
-    resolver: &TokioAsyncResolver,
-) -> Result<String, Error> {
+pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<String, Error> {
     let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
     let ip = response
         .iter()
@@ -41,7 +38,7 @@ pub async fn resolve_host_to_ip(
 /// The reverse DNS name, or `None` if the lookup fails.
 pub async fn reverse_dns_lookup(
     ip: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Option<String>, Error> {
     match resolver.reverse_lookup(ip.parse()?).await {
         Ok(response) => {
@@ -67,7 +64,7 @@ pub async fn reverse_dns_lookup(
 /// A vector of nameserver hostnames, or an empty vector if the query fails.
 pub async fn lookup_ns_records(
     domain: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
     match resolver.lookup(domain, RecordType::NS).await {
         Ok(lookup) => {
@@ -104,7 +101,7 @@ pub async fn lookup_ns_records(
 /// A vector of TXT record strings, or an empty vector if the query fails.
 pub async fn lookup_txt_records(
     domain: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
     match resolver.lookup(domain, RecordType::TXT).await {
         Ok(lookup) => {
@@ -146,7 +143,7 @@ pub async fn lookup_txt_records(
 /// or an empty vector if the query fails.
 pub async fn lookup_mx_records(
     domain: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Vec<(u16, String)>, Error> {
     match resolver.lookup(domain, RecordType::MX).await {
         Ok(lookup) => {
