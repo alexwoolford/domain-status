@@ -479,7 +479,8 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
 
     // Lookup in City database
     let city_result: maxminddb::geoip2::City = match city_reader.lookup(ip_addr) {
-        Ok(city) => city,
+        Ok(Some(city)) => city,
+        Ok(None) => return None,
         Err(_) => return None,
     };
 
@@ -522,7 +523,7 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     // Lookup ASN data if ASN database is available
     let asn_reader = GEOIP_ASN_READER.read().ok()?;
     if let Some((asn_reader, _)) = asn_reader.as_ref() {
-        if let Ok(asn_result) = asn_reader.lookup::<maxminddb::geoip2::Asn>(ip_addr) {
+        if let Ok(Some(asn_result)) = asn_reader.lookup::<maxminddb::geoip2::Asn>(ip_addr) {
             geo_result.asn = asn_result.autonomous_system_number;
             geo_result.asn_org = asn_result
                 .autonomous_system_organization
