@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 
 // constants (used as defaults)
 #[allow(dead_code)]
-pub const SEMAPHORE_LIMIT: usize = 500;
+pub const SEMAPHORE_LIMIT: usize = 20;
 pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DB_PATH: &str = "./url_checker.db";
@@ -202,7 +202,10 @@ pub struct Opt {
     pub db_path: PathBuf,
 
     /// Maximum concurrent requests
-    #[arg(long, default_value_t = 500)]
+    ///
+    /// Lower default (20) reduces bot detection risk with Cloudflare and similar services.
+    /// High concurrency can trigger rate limiting even with low RPS.
+    #[arg(long, default_value_t = 20)]
     pub max_concurrency: usize,
 
     /// Per-request timeout in seconds
@@ -218,10 +221,16 @@ pub struct Opt {
     pub user_agent: String,
 
     /// Requests per second rate limit (0 disables limiting)
-    #[arg(long, default_value_t = 0)]
+    ///
+    /// Default 10 RPS provides reasonable throughput while avoiding bot detection.
+    /// Set to 0 to disable rate limiting (not recommended for production).
+    #[arg(long, default_value_t = 10)]
     pub rate_limit_rps: u32,
 
-    /// Rate limit burst capacity (tokens), defaults to max concurrency if 0
+    /// Rate limit burst capacity (tokens)
+    ///
+    /// If 0, automatically calculated as `min(max_concurrency, rate_limit_rps * 2)`.
+    /// This ensures burst doesn't exceed concurrency limits and prevents excessive queuing.
     #[arg(long, default_value_t = 0)]
     pub rate_burst: usize,
 

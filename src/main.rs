@@ -91,8 +91,16 @@ async fn main() -> Result<()> {
     let mut tasks = FuturesUnordered::new();
 
     let semaphore = init_semaphore(opt.max_concurrency);
+    // Calculate burst capacity: cap at min(concurrency, rps * 2) to prevent excessive queuing
+    // This ensures rate limiting and concurrency work together, not independently
     let rate_burst = if opt.rate_burst == 0 {
-        opt.max_concurrency
+        if opt.rate_limit_rps > 0 {
+            // Cap burst at 2x RPS or concurrency, whichever is smaller
+            std::cmp::min(opt.max_concurrency, (opt.rate_limit_rps * 2) as usize)
+        } else {
+            // If rate limiting disabled, use concurrency as burst (legacy behavior)
+            opt.max_concurrency
+        }
     } else {
         opt.rate_burst
     };

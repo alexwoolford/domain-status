@@ -6,7 +6,7 @@
 
 ## 🌟 Features
 
-* **High-Performance Concurrency**: Utilizes async/await with configurable concurrency limits (default: 500 concurrent requests)
+* **High-Performance Concurrency**: Utilizes async/await with configurable concurrency limits (default: 20 concurrent requests, 10 RPS rate limit)
 * **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, and complete redirect chains
 * **Technology Fingerprinting**: Detects web technologies (CMS, frameworks, analytics, etc.) using community-maintained rulesets (HTTP Archive Wappalyzer fork)
 * **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (City and ASN). Downloads and caches databases automatically when license key is provided.
@@ -52,11 +52,11 @@ domain_status urls.txt \
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
 - `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
 - `--db-path <PATH>`: SQLite database file path (default: `./url_checker.db`)
-- `--max-concurrency <N>`: Maximum concurrent requests (default: 500)
+- `--max-concurrency <N>`: Maximum concurrent requests (default: 20)
 - `--timeout-seconds <N>`: Per-request timeout in seconds (default: 10)
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
-- `--rate-limit-rps <N>`: Requests per second rate limit, 0 disables (default: 0)
-- `--rate-burst <N>`: Rate limit burst capacity, defaults to max concurrency if 0 (default: 0)
+- `--rate-limit-rps <N>`: Requests per second rate limit, 0 disables (default: 10)
+- `--rate-burst <N>`: Rate limit burst capacity, auto-calculated as `min(concurrency, rps * 2)` if 0 (default: 0)
 - `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
 - `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set. Otherwise, GeoIP lookup is disabled.
 
@@ -748,15 +748,28 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
 
 ## 🚀 Performance & Scalability
 
-- **Concurrent Processing**: Default 500 concurrent requests (configurable via `--max-concurrency`)
+- **Concurrent Processing**: Default 20 concurrent requests (configurable via `--max-concurrency`)
+  - Lower default reduces bot detection risk with Cloudflare and similar services
+  - High concurrency can trigger rate limiting even with low RPS
+- **Rate Limiting**: Default 10 requests per second (configurable via `--rate-limit-rps`)
+  - Primary control mechanism to avoid overwhelming target servers
+  - Burst capacity automatically capped at `min(concurrency, rps * 2)` for coordinated control
+  - Set to 0 to disable (not recommended for production)
 - **Resource Efficiency**: Shared HTTP clients, DNS resolver, and HTML parser instances
 - **Database Optimization**: SQLite WAL mode for concurrent writes, indexed queries
 - **Memory Safety**: Response body size capped at 2MB, redirect chains limited to 10 hops
 - **Timeout Protection**: Per-URL processing timeout (default 10 seconds) prevents hung requests
 
+**Rate Limiting & Bot Detection:**
+- Default settings (20 concurrency, 10 RPS) are designed to avoid triggering bot detection on Cloudflare and similar services
+- High concurrency can trigger rate limiting even with low RPS due to connection pattern detection
+- Rate limiting is the primary control mechanism; concurrency acts as a safety cap
+- Burst capacity is automatically coordinated with concurrency to prevent excessive queuing
+- For aggressive crawling, increase `--rate-limit-rps` rather than `--max-concurrency`
+
 **System Requirements:**
 - If you encounter system-specific errors related to file limits, check and adjust your system's `ulimit` settings
-- For very large datasets, consider using `--rate-limit-rps` to avoid overwhelming target servers
+- For very large datasets, consider adjusting `--rate-limit-rps` to balance throughput and server load
 
 ## 🛠️ Technical Details
 
