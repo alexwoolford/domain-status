@@ -13,3 +13,5 @@ pub use insert::update_run_stats;
 pub use migrations::run_migrations;
 pub use models::UrlRecord;
 pub use pool::init_db_pool;
+
+// Note: insert_geoip_data is used internally by fetch module, not exported here

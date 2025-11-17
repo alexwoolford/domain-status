@@ -9,3 +9,10 @@ Cargo.lock
 # Fingerprint cache files (runtime data, not source code)
 .fingerprints_cache/*
 !.fingerprints_cache/.gitkeep
+
+# GeoIP cache files (runtime data, not source code)
+.geoip_cache/*
+!.geoip_cache/.gitkeep
+
+# Environment variables (contains secrets)
+.env

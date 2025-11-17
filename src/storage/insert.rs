@@ -378,8 +378,60 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
         }
     }
 
+    // 6. Insert GeoIP data (if available)
+    // GeoIP lookup is done in fetch/mod.rs and passed via UrlRecord
+    // For now, we'll handle GeoIP insertion separately after UrlRecord is created
+    // This will be called from fetch/mod.rs after GeoIP lookup
+
     // Commit transaction
     tx.commit().await.map_err(DatabaseError::SqlError)?;
+
+    Ok(())
+}
+
+/// Inserts GeoIP data for a URL status record.
+///
+/// This should be called after `insert_url_record` to populate geographic
+/// and network information for the IP address.
+pub async fn insert_geoip_data(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    ip_address: &str,
+    geoip: &crate::geoip::GeoIpResult,
+) -> Result<(), DatabaseError> {
+    sqlx::query(
+        "INSERT INTO url_geoip (
+            url_status_id, ip_address, country_code, country_name, region, city,
+            latitude, longitude, postal_code, timezone, asn, asn_org
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url_status_id) DO UPDATE SET
+            ip_address=excluded.ip_address,
+            country_code=excluded.country_code,
+            country_name=excluded.country_name,
+            region=excluded.region,
+            city=excluded.city,
+            latitude=excluded.latitude,
+            longitude=excluded.longitude,
+            postal_code=excluded.postal_code,
+            timezone=excluded.timezone,
+            asn=excluded.asn,
+            asn_org=excluded.asn_org",
+    )
+    .bind(url_status_id)
+    .bind(ip_address)
+    .bind(&geoip.country_code)
+    .bind(&geoip.country_name)
+    .bind(&geoip.region)
+    .bind(&geoip.city)
+    .bind(geoip.latitude)
+    .bind(geoip.longitude)
+    .bind(&geoip.postal_code)
+    .bind(&geoip.timezone)
+    .bind(geoip.asn.map(|a| a as i64))
+    .bind(&geoip.asn_org)
+    .execute(pool)
+    .await
+    .map_err(DatabaseError::SqlError)?;
 
     Ok(())
 }
@@ -387,7 +439,7 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
 /// Inserts or updates run metadata in the runs table.
 ///
 /// This should be called at the start of a run to record run-level information
-/// like fingerprints_source and fingerprints_version.
+/// like fingerprints_source, fingerprints_version, and geoip_version.
 ///
 /// # Arguments
 ///
@@ -396,24 +448,28 @@ pub async fn insert_url_record(pool: &SqlitePool, record: &UrlRecord) -> Result<
 /// * `start_time` - Start time as milliseconds since Unix epoch
 /// * `fingerprints_source` - Source URL of the fingerprint ruleset
 /// * `fingerprints_version` - Version/commit hash of the fingerprint ruleset
+/// * `geoip_version` - Version/build date of the GeoIP database (None if GeoIP disabled)
 pub async fn insert_run_metadata(
     pool: &SqlitePool,
     run_id: &str,
     start_time: i64,
     fingerprints_source: Option<&str>,
     fingerprints_version: Option<&str>,
+    geoip_version: Option<&str>,
 ) -> Result<(), DatabaseError> {
     sqlx::query(
-        "INSERT INTO runs (run_id, fingerprints_source, fingerprints_version, start_time)
-         VALUES (?, ?, ?, ?)
+        "INSERT INTO runs (run_id, fingerprints_source, fingerprints_version, geoip_version, start_time)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(run_id) DO UPDATE SET
              fingerprints_source=excluded.fingerprints_source,
              fingerprints_version=excluded.fingerprints_version,
+             geoip_version=excluded.geoip_version,
              start_time=excluded.start_time",
     )
     .bind(run_id)
     .bind(fingerprints_source)
     .bind(fingerprints_version)
+    .bind(geoip_version)
     .bind(start_time)
     .execute(pool)
     .await

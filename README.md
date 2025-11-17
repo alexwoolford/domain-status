@@ -7,8 +7,9 @@
 ## 🌟 Features
 
 * **High-Performance Concurrency**: Utilizes async/await with configurable concurrency limits (default: 500 concurrent requests)
-* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, and complete redirect chains
+* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, and complete redirect chains
 * **Technology Fingerprinting**: Detects web technologies (CMS, frameworks, analytics, etc.) using community-maintained rulesets (HTTP Archive Wappalyzer fork)
+* **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (City and ASN). Downloads and caches databases automatically when license key is provided.
 * **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
 * **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
 * **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and detailed error categorization
@@ -57,6 +58,7 @@ domain_status urls.txt \
 - `--rate-limit-rps <N>`: Requests per second rate limit, 0 disables (default: 0)
 - `--rate-burst <N>`: Rate limit burst capacity, defaults to max concurrency if 0 (default: 0)
 - `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
+- `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set. Otherwise, GeoIP lookup is disabled.
 
 **URL Input:**
 - URLs can be provided with or without `http://` or `https://` prefix
@@ -64,9 +66,27 @@ domain_status urls.txt \
 - Only `http://` and `https://` URLs are accepted; other schemes are rejected
 - Invalid URLs are skipped with a warning
 
+**Environment Variables:**
+- `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
+- `URL_CHECKER_DB_PATH`: Override default database path (alternative to `--db-path`)
+
+**GeoIP Configuration:**
+- **Automatic Download**: If `MAXMIND_LICENSE_KEY` is set, the tool automatically downloads GeoLite2-City and GeoLite2-ASN databases on first run or when cache expires (7 days)
+- **Manual Path**: Use `--geoip /path/to/GeoLite2-City.mmdb` to specify a local database file
+- **Download URL**: Use `--geoip <url>` to download from a custom URL
+- **Cache Location**: Databases are cached in `.geoip_cache/` directory
+- **Graceful Degradation**: If GeoIP initialization fails (invalid key, network error, etc.), the application logs a warning and continues without GeoIP data
+- **CI/CD**: No license key needed for CI tests. The application will run successfully without GeoIP data.
+
 ### Data Captured
 
 The tool captures comprehensive information for each URL. The database uses a **normalized star schema** with a fact table (`url_status`) and multiple dimension/junction tables for multi-valued fields.
+
+**GeoIP Data:**
+- Geographic location (country, region, city, coordinates, postal code, timezone)
+- Network information (ASN number and organization)
+- Requires MaxMind GeoLite2 databases (automatically downloaded if license key provided)
+- Stored in `url_geoip` table with one-to-one relationship to `url_status`
 
 ## 📊 Database Schema
 
@@ -411,6 +431,63 @@ Stores redirect chain URLs in sequence order (one row per URL in the chain).
 - First URL in chain has `sequence_order = 1`
 - Final URL (after all redirects) is stored in `url_status.final_domain`
 
+#### `url_geoip` (Junction Table)
+Stores geographic and network information for IP addresses (one-to-one relationship with `url_status`).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` (one-to-one) |
+| `ip_address` | TEXT | IP address (denormalized from `url_status` for query convenience) |
+| `country_code` | TEXT | ISO 3166-1 alpha-2 country code (e.g., "US", "GB") |
+| `country_name` | TEXT | Full country name (e.g., "United States", "United Kingdom") |
+| `region` | TEXT | State/province/region name (e.g., "California", "England") |
+| `city` | TEXT | City name (e.g., "San Francisco", "London") |
+| `latitude` | REAL | Latitude coordinate |
+| `longitude` | REAL | Longitude coordinate |
+| `postal_code` | TEXT | Postal/ZIP code |
+| `timezone` | TEXT | Timezone (e.g., "America/Los_Angeles", "Europe/London") |
+| `asn` | INTEGER | Autonomous System Number (if available from ASN database) |
+| `asn_org` | TEXT | ASN organization name (e.g., "AS15169 Google LLC", "AS16509 AMAZON-02") |
+
+**Constraints:**
+- `UNIQUE (url_status_id)` - One-to-one relationship with `url_status`
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_geoip_country_code` on `country_code` (for geographic queries)
+- `idx_url_geoip_city` on `city`
+- `idx_url_geoip_asn` on `asn` (for network analysis)
+- `idx_url_geoip_url_status_id` on `url_status_id`
+
+**Notes:**
+- GeoIP data requires MaxMind GeoLite2 databases (City and ASN)
+- Databases are automatically downloaded and cached if `MAXMIND_LICENSE_KEY` environment variable is set
+- Cache TTL: 7 days (databases are updated weekly)
+- If GeoIP is disabled or lookup fails, this table will have no rows for those URLs
+- IP address is stored in both `url_status` and `url_geoip` (denormalized for query performance)
+
+**Query Examples:**
+```sql
+-- Find all sites hosted in the United States
+SELECT DISTINCT us.domain, g.city, g.region
+FROM url_status us
+JOIN url_geoip g ON us.id = g.url_status_id
+WHERE g.country_code = 'US';
+
+-- Find all sites hosted on AWS (ASN 16509)
+SELECT DISTINCT us.domain, g.asn_org
+FROM url_status us
+JOIN url_geoip g ON us.id = g.url_status_id
+WHERE g.asn = 16509;
+
+-- Geographic distribution of sites
+SELECT g.country_code, g.country_name, COUNT(*) as site_count
+FROM url_geoip g
+GROUP BY g.country_code, g.country_name
+ORDER BY site_count DESC;
+```
+
 ### Schema Design Principles
 
 The database uses a **star schema** design pattern:
@@ -473,6 +550,7 @@ GROUP BY ut1.technology_name;
 - SPF and DMARC records are automatically extracted from TXT records; DMARC is also checked at `_dmarc.<domain>`
 - Technology fingerprints are detected using community-maintained rulesets (default: HTTP Archive Wappalyzer fork)
 - Fingerprint rulesets are cached locally in `.fingerprints_cache/` for 7 days to reduce network requests
+- **GeoIP lookup**: Requires MaxMind GeoLite2 databases (City and ASN). If `MAXMIND_LICENSE_KEY` environment variable is set, databases are automatically downloaded and cached in `.geoip_cache/` for 7 days. If license key is not set or GeoIP initialization fails, the application continues without GeoIP data (no error).
 - The database uses UPSERT semantics: duplicate `(final_domain, timestamp)` pairs update existing records
 - Response body size is capped at 2MB to prevent memory exhaustion
 - Only HTML content-types are processed (others are skipped)

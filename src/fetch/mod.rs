@@ -16,10 +16,12 @@ use crate::dns::{
 use crate::domain::extract_domain;
 use crate::error_handling::{update_error_stats, ErrorStats};
 use crate::fingerprint::detect_technologies;
+use crate::geoip;
 use crate::parse::{
     extract_linkedin_slug, extract_meta_description, extract_meta_keywords, extract_title,
     is_mobile_friendly,
 };
+use crate::storage::insert::insert_geoip_data;
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
@@ -492,6 +494,10 @@ pub async fn handle_response(
     debug!("Preparing to insert record for URL: {final_url}");
     log::info!("Attempting to insert record into database for domain: {initial_domain}");
 
+    // Clone values needed for GeoIP lookup after record creation
+    let ip_address_clone = ip_address.clone();
+    let final_domain_clone = final_domain.clone();
+
     let record = UrlRecord {
         initial_domain,
         final_domain,
@@ -528,7 +534,36 @@ pub async fn handle_response(
     let update_result = insert_url_record(pool, &record).await;
 
     match update_result {
-        Ok(_) => log::info!("Record successfully inserted for URL: {final_url}"),
+        Ok(_) => {
+            log::info!("Record successfully inserted for URL: {final_url}");
+
+            // Perform GeoIP lookup and insert if enabled
+            if let Some(geoip_result) = geoip::lookup_ip(&ip_address_clone) {
+                // Get url_status_id for GeoIP insertion
+                // We need to query it since insert_url_record doesn't return it
+                if let Ok(Some(url_status_id)) = sqlx::query_scalar::<_, i64>(
+                    "SELECT id FROM url_status WHERE final_domain = ? AND timestamp = ?",
+                )
+                .bind(&final_domain_clone)
+                .bind(timestamp)
+                .fetch_optional(pool)
+                .await
+                {
+                    if let Err(e) =
+                        insert_geoip_data(pool, url_status_id, &ip_address_clone, &geoip_result)
+                            .await
+                    {
+                        log::warn!(
+                            "Failed to insert GeoIP data for {}: {}",
+                            final_domain_clone,
+                            e
+                        );
+                    } else {
+                        debug!("GeoIP data inserted for {}", final_domain_clone);
+                    }
+                }
+            }
+        }
         Err(e) => log::error!("Failed to insert record for URL {final_url}: {e}"),
     };
 

@@ -168,4 +168,13 @@ pub struct Opt {
     ///   --fingerprints /path/to/technologies.json
     #[arg(long)]
     pub fingerprints: Option<String>,
+
+    /// GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL
+    /// Examples:
+    ///   --geoip /path/to/GeoLite2-City.mmdb
+    ///   --geoip https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=YOUR_KEY&suffix=tar.gz
+    /// If not provided, GeoIP will auto-download if MAXMIND_LICENSE_KEY env var is set.
+    /// Otherwise, GeoIP lookup is disabled.
+    #[arg(long)]
+    pub geoip: Option<String>,
 }

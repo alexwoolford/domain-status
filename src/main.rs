@@ -29,6 +29,7 @@ mod domain;
 mod error_handling;
 mod fetch;
 mod fingerprint;
+mod geoip;
 mod initialization;
 mod models;
 mod parse;
@@ -59,6 +60,21 @@ fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load environment variables from .env file (if it exists)
+    // This allows setting MAXMIND_LICENSE_KEY in .env without exporting it manually
+    // Try loading from current directory first, then from the executable's directory
+    if dotenv::dotenv().is_err() {
+        // If .env not found in current dir, try next to the executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let env_path = exe_dir.join(".env");
+                if env_path.exists() {
+                    let _ = dotenv::from_path(&env_path);
+                }
+            }
+        }
+    }
+
     let opt = Opt::parse();
     let log_level = opt.log_level.clone();
     let log_format = opt.log_format.clone();
@@ -112,21 +128,37 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to initialize fingerprint ruleset")?;
 
+    // Initialize GeoIP database (optional)
+    // If initialization fails, we continue without GeoIP rather than aborting
+    let geoip_metadata = match geoip::init_geoip(opt.geoip.as_deref(), None).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            warn!(
+                "Failed to initialize GeoIP database: {}. Continuing without GeoIP lookup.",
+                e
+            );
+            warn!("To enable GeoIP, ensure MAXMIND_LICENSE_KEY in .env is valid and your MaxMind account has GeoLite2 access.");
+            None
+        }
+    };
+
     // Generate run_id and start_time for time-series tracking
     // Format: run_<timestamp_millis> for human-readable, sortable IDs
     let start_time_epoch = Utc::now().timestamp_millis();
     let run_id = format!("run_{}", start_time_epoch);
     info!("Starting run: {}", run_id);
 
-    // Store run metadata (fingerprints_source and fingerprints_version are run-level, not per-URL)
+    // Store run metadata (fingerprints_source, fingerprints_version, and geoip_version are run-level, not per-URL)
     let fingerprints_source = Some(ruleset.metadata.source.as_str());
     let fingerprints_version = Some(ruleset.metadata.version.as_str());
+    let geoip_version = geoip_metadata.as_ref().map(|m| m.version.as_str());
     database::insert_run_metadata(
         &pool,
         &run_id,
         start_time_epoch,
         fingerprints_source,
         fingerprints_version,
+        geoip_version,
     )
     .await
     .context("Failed to insert run metadata")?;
