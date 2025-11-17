@@ -219,12 +219,18 @@ pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(crate::config::DNS_TIMEOUT_SECS);
     opts.attempts = 2; // Reduce retry attempts to fail faster
+                       // Set ndots to 0 to prevent search domain appending
+                       // This prevents "google.com" from becoming "google.com.local" on macOS
+                       // However, this may not fully solve the issue - using Google DNS directly would be better
+    opts.ndots = 0;
 
     // Use default resolver configuration with timeouts
     // This ensures consistent timeout behavior across all DNS queries
     // In hickory-resolver 0.25, use builder_tokio() and override options
-    // Note: System DNS config on macOS includes .local search domain, but we handle this
-    // by ensuring domains are fully qualified (end with .) in DNS lookup functions
+    // Note: System DNS config on macOS includes .local search domain
+    // TODO: Use Google DNS (8.8.8.8, 8.8.4.4) directly to avoid search domain issues
+    // The builder_tokio() API doesn't easily support custom config, so we use system resolver
+    // with ndots=0 as a workaround
     let mut builder = TokioResolver::builder_tokio()
         .map_err(|e| InitializationError::DnsResolverError(e.to_string()))?;
     // Override with our custom options (config uses system default)
