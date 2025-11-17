@@ -4,7 +4,7 @@ This document codifies how agents and contributors should change, test, and oper
 
 ### Architecture snapshot
 - HTTP via `reqwest` and async `tokio` runtime
-- DNS via `trust-dns-resolver`
+- DNS via `hickory-resolver` (0.24)
 - HTML parsing via `scraper`
 - TLS info via `tokio-rustls` and `x509-parser`
 - Persistence via `sqlx` (SQLite / WAL)
