@@ -127,11 +127,23 @@ pub struct FingerprintMetadata {
     pub last_updated: SystemTime,
 }
 
+/// Category information from categories.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Category {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    priority: u32,
+}
+
 /// Fingerprint ruleset container
 #[derive(Debug, Clone)]
 pub struct FingerprintRuleset {
     /// Technologies indexed by name
     pub technologies: HashMap<String, Technology>,
+    /// Categories indexed by ID (u32) -> name
+    pub categories: HashMap<u32, String>,
     /// Metadata about the ruleset
     pub metadata: FingerprintMetadata,
 }
@@ -187,6 +199,27 @@ async fn fetch_ruleset(source: &str, cache_dir: &Path) -> Result<FingerprintRule
         load_from_path(Path::new(source)).await?
     };
 
+    // Fetch categories.json from the same source
+    let categories = if source.starts_with("http://") || source.starts_with("https://") {
+        fetch_categories_from_url(source).await.unwrap_or_else(|e| {
+            log::warn!(
+                "Failed to fetch categories: {}. Continuing without categories.",
+                e
+            );
+            HashMap::new()
+        })
+    } else {
+        load_categories_from_path(Path::new(source))
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "Failed to load categories from path: {}. Continuing without categories.",
+                    e
+                );
+                HashMap::new()
+            })
+    };
+
     // Get version from latest commit if possible
     // Check for GitHub URLs (both raw.githubusercontent.com and api.github.com)
     let is_github = source.contains("github.com") || source.contains("raw.githubusercontent.com");
@@ -213,6 +246,7 @@ async fn fetch_ruleset(source: &str, cache_dir: &Path) -> Result<FingerprintRule
 
     let ruleset = FingerprintRuleset {
         technologies,
+        categories,
         metadata,
     };
 
@@ -388,6 +422,106 @@ async fn fetch_from_github_directory(
     Ok(all_technologies)
 }
 
+/// Fetches categories.json from a URL
+async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, String>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()?;
+
+    // Convert technologies URL to categories URL
+    // e.g., https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
+    // -> https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/categories.json
+    let categories_url = if url.contains("raw.githubusercontent.com") && !url.ends_with(".json") {
+        // It's a directory - construct categories.json URL in parent directory
+        // e.g., .../src/technologies -> .../src/categories.json
+        let trimmed = url.trim_end_matches('/');
+        if trimmed.ends_with("/technologies") {
+            // Remove "/technologies" and add "/categories.json"
+            let base = &trimmed[..trimmed.len() - 12];
+            format!("{}/categories.json", base.trim_end_matches('/'))
+        } else {
+            format!("{}/../categories.json", trimmed)
+        }
+    } else if url.ends_with(".json") {
+        // Single file - replace with categories.json in same directory
+        let mut parts: Vec<&str> = url.split('/').collect();
+        if let Some(last) = parts.last_mut() {
+            *last = "categories.json";
+        }
+        parts.join("/")
+    } else {
+        // Fallback: try appending ../categories.json
+        format!("{}/../categories.json", url.trim_end_matches('/'))
+    };
+
+    log::debug!("Fetching categories from: {}", categories_url);
+    let response = client.get(&categories_url).send().await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Failed to fetch categories: {}",
+            response.status()
+        ));
+    }
+
+    let json_text = response.text().await?;
+    // Parse as a map of category ID (string) -> Category
+    let categories_map: HashMap<String, Category> =
+        serde_json::from_str(&json_text).context("Failed to parse categories JSON")?;
+
+    // Convert to HashMap<u32, String> (ID -> name)
+    let mut result = HashMap::new();
+    for (id_str, category) in categories_map {
+        if let Ok(id) = id_str.parse::<u32>() {
+            result.insert(id, category.name);
+        }
+    }
+
+    log::info!("Loaded {} categories", result.len());
+    Ok(result)
+}
+
+/// Loads categories.json from a local path
+async fn load_categories_from_path(path: &Path) -> Result<HashMap<u32, String>> {
+    let categories_path = if path.is_dir() {
+        // If it's a directory, look for categories.json in the parent or same directory
+        path.parent()
+            .map(|p| p.join("categories.json"))
+            .or_else(|| Some(path.join("categories.json")))
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine categories.json path"))?
+    } else {
+        // If it's a file, replace filename with categories.json
+        path.parent()
+            .map(|p| p.join("categories.json"))
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine categories.json path"))?
+    };
+
+    if !categories_path.exists() {
+        return Err(anyhow::anyhow!(
+            "categories.json not found at {:?}",
+            categories_path
+        ));
+    }
+
+    let content = fs::read_to_string(&categories_path).await?;
+    let categories_map: HashMap<String, Category> =
+        serde_json::from_str(&content).context("Failed to parse categories JSON")?;
+
+    // Convert to HashMap<u32, String> (ID -> name)
+    let mut result = HashMap::new();
+    for (id_str, category) in categories_map {
+        if let Ok(id) = id_str.parse::<u32>() {
+            result.insert(id, category.name);
+        }
+    }
+
+    log::info!(
+        "Loaded {} categories from {:?}",
+        result.len(),
+        categories_path
+    );
+    Ok(result)
+}
+
 /// Gets the latest commit SHA for a GitHub repository path
 ///
 /// This extracts the Git commit hash that identifies the exact version of the
@@ -547,6 +681,7 @@ async fn load_from_path(path: &Path) -> Result<HashMap<String, Technology>> {
 async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRuleset> {
     let metadata_path = cache_dir.join("metadata.json");
     let technologies_path = cache_dir.join("technologies.json");
+    let categories_path = cache_dir.join("categories.json");
 
     // Check if cache exists
     if !metadata_path.exists() || !technologies_path.exists() {
@@ -573,8 +708,34 @@ async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRu
     let technologies_json = fs::read_to_string(&technologies_path).await?;
     let technologies: HashMap<String, Technology> = serde_json::from_str(&technologies_json)?;
 
+    // Load categories (optional - may not exist in old cache)
+    let categories = if categories_path.exists() {
+        match fs::read_to_string(&categories_path).await {
+            Ok(categories_json) => {
+                match serde_json::from_str::<HashMap<u32, String>>(&categories_json) {
+                    Ok(cats) => {
+                        log::debug!("Loaded {} categories from cache", cats.len());
+                        cats
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to parse categories from cache: {}", e);
+                        HashMap::new()
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to read categories from cache: {}", e);
+                HashMap::new()
+            }
+        }
+    } else {
+        log::debug!("Categories cache not found, using empty map");
+        HashMap::new()
+    };
+
     Ok(FingerprintRuleset {
         technologies,
+        categories,
         metadata,
     })
 }
@@ -585,6 +746,7 @@ async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result
 
     let metadata_path = cache_dir.join("metadata.json");
     let technologies_path = cache_dir.join("technologies.json");
+    let categories_path = cache_dir.join("categories.json");
 
     // Save metadata
     let metadata_json = serde_json::to_string_pretty(&ruleset.metadata)?;
@@ -593,6 +755,10 @@ async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result
     // Save technologies
     let technologies_json = serde_json::to_string_pretty(&ruleset.technologies)?;
     fs::write(&technologies_path, technologies_json).await?;
+
+    // Save categories
+    let categories_json = serde_json::to_string_pretty(&ruleset.categories)?;
+    fs::write(&categories_path, categories_json).await?;
 
     Ok(())
 }
@@ -690,6 +856,19 @@ pub async fn detect_technologies(
     }
 
     Ok(final_detected)
+}
+
+/// Gets the category name for a technology, if available.
+///
+/// Returns the category name from the first category ID in the technology's `cats` array.
+/// Returns `None` if the technology is not found, has no categories, or the category ID is not in the ruleset.
+pub async fn get_technology_category(tech_name: &str) -> Option<String> {
+    let ruleset = RULESET.read().await;
+    let ruleset = ruleset.as_ref()?;
+
+    let tech = ruleset.technologies.get(tech_name)?;
+    let first_cat_id = tech.cats.first()?;
+    ruleset.categories.get(first_cat_id).cloned()
 }
 
 /// Checks if a technology matches based on its patterns
