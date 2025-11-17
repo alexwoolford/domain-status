@@ -47,15 +47,17 @@ pub struct GeoIpResult {
     pub asn_org: Option<String>,
 }
 
+/// Type alias for GeoIP reader cache entry
+type GeoIpReaderCache = Arc<RwLock<Option<(Arc<Reader<Vec<u8>>>, GeoIpMetadata)>>>;
+
 /// Global GeoIP City reader cache (lazy-loaded)
 /// Note: Reader owns the data, so we store the bytes separately
-static GEOIP_CITY_READER: LazyLock<Arc<RwLock<Option<(Arc<Reader<Vec<u8>>>, GeoIpMetadata)>>>> =
+static GEOIP_CITY_READER: LazyLock<GeoIpReaderCache> =
     LazyLock::new(|| Arc::new(RwLock::new(None)));
 
 /// Global GeoIP ASN reader cache (lazy-loaded)
 /// ASN data requires a separate database (GeoLite2-ASN)
-static GEOIP_ASN_READER: LazyLock<Arc<RwLock<Option<(Arc<Reader<Vec<u8>>>, GeoIpMetadata)>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(None)));
+static GEOIP_ASN_READER: LazyLock<GeoIpReaderCache> = LazyLock::new(|| Arc::new(RwLock::new(None)));
 
 /// Initializes the GeoIP database from a local file path or automatic download.
 ///
@@ -65,7 +67,7 @@ static GEOIP_ASN_READER: LazyLock<Arc<RwLock<Option<(Arc<Reader<Vec<u8>>>, GeoIp
 /// # Arguments
 ///
 /// * `geoip_path` - Optional path to the MaxMind GeoLite2 database file (.mmdb) or download URL.
-///                  If None, will attempt automatic download using MAXMIND_LICENSE_KEY env var.
+///   If None, will attempt automatic download using MAXMIND_LICENSE_KEY env var.
 /// * `cache_dir` - Optional cache directory for downloaded databases
 ///
 /// # Returns
@@ -136,16 +138,28 @@ pub async fn init_geoip(
     };
 
     // Check if City database already loaded
-    {
+    let should_load = {
         let reader = GEOIP_CITY_READER.read().unwrap();
         if let Some((_, ref metadata)) = *reader {
             // Check if source matches
             if metadata.source == path {
                 log::info!("GeoIP City database already loaded: {}", path);
-                // Still try to load ASN database if not already loaded
-                init_asn_database(&cache_path).await?;
-                return Ok(Some(metadata.clone()));
+                false // Don't reload, but still try ASN
+            } else {
+                true // Different source, need to reload
             }
+        } else {
+            true // Not loaded yet
+        }
+    };
+
+    if !should_load {
+        // Still try to load ASN database if not already loaded
+        init_asn_database(&cache_path).await?;
+        // Get metadata to return
+        let reader = GEOIP_CITY_READER.read().unwrap();
+        if let Some((_, ref metadata)) = *reader {
+            return Ok(Some(metadata.clone()));
         }
     }
 

@@ -18,10 +18,10 @@ use crate::error_handling::{update_error_stats, ErrorStats};
 use crate::fingerprint::detect_technologies;
 use crate::geoip;
 use crate::parse::{
-    extract_linkedin_slug, extract_meta_description, extract_meta_keywords, extract_title,
-    is_mobile_friendly,
+    extract_linkedin_slug, extract_meta_description, extract_meta_keywords,
+    extract_structured_data, extract_title, is_mobile_friendly,
 };
-use crate::storage::insert::insert_geoip_data;
+use crate::storage::insert::{insert_geoip_data, insert_structured_data};
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
@@ -243,6 +243,7 @@ pub async fn handle_response(
         description,
         linkedin_slug,
         is_mobile_friendly,
+        structured_data,
         meta_tags,
         script_sources,
         html_text,
@@ -263,6 +264,14 @@ pub async fn handle_response(
         debug!("Extracted LinkedIn slug for {final_domain}: {linkedin_slug:?}");
 
         let is_mobile_friendly = is_mobile_friendly(&body);
+
+        // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
+        let structured_data = extract_structured_data(&document, &body);
+        debug!("Extracted structured data for {final_domain}: {} JSON-LD scripts, {} OG tags, {} Twitter tags, {} schema types",
+            structured_data.json_ld.len(),
+            structured_data.open_graph.len(),
+            structured_data.twitter_cards.len(),
+            structured_data.schema_types.len());
 
         // Extract data needed for technology detection (to avoid double-parsing)
         let mut meta_tags = HashMap::new();
@@ -295,12 +304,14 @@ pub async fn handle_response(
             .take(50_000)
             .collect::<String>();
 
+        // document is dropped here when the block ends
         (
             title,
             keywords_str,
             description,
             linkedin_slug,
             is_mobile_friendly,
+            structured_data,
             meta_tags,
             script_sources,
             html_text,
@@ -537,18 +548,18 @@ pub async fn handle_response(
         Ok(_) => {
             log::info!("Record successfully inserted for URL: {final_url}");
 
-            // Perform GeoIP lookup and insert if enabled
-            if let Some(geoip_result) = geoip::lookup_ip(&ip_address_clone) {
-                // Get url_status_id for GeoIP insertion
-                // We need to query it since insert_url_record doesn't return it
-                if let Ok(Some(url_status_id)) = sqlx::query_scalar::<_, i64>(
-                    "SELECT id FROM url_status WHERE final_domain = ? AND timestamp = ?",
-                )
-                .bind(&final_domain_clone)
-                .bind(timestamp)
-                .fetch_optional(pool)
-                .await
-                {
+            // Get url_status_id for GeoIP and structured data insertion
+            // We need to query it since insert_url_record doesn't return it
+            if let Ok(Some(url_status_id)) = sqlx::query_scalar::<_, i64>(
+                "SELECT id FROM url_status WHERE final_domain = ? AND timestamp = ?",
+            )
+            .bind(&final_domain_clone)
+            .bind(timestamp)
+            .fetch_optional(pool)
+            .await
+            {
+                // Perform GeoIP lookup and insert if enabled
+                if let Some(geoip_result) = geoip::lookup_ip(&ip_address_clone) {
                     if let Err(e) =
                         insert_geoip_data(pool, url_status_id, &ip_address_clone, &geoip_result)
                             .await
@@ -561,6 +572,18 @@ pub async fn handle_response(
                     } else {
                         debug!("GeoIP data inserted for {}", final_domain_clone);
                     }
+                }
+
+                // Insert structured data
+                if let Err(e) = insert_structured_data(pool, url_status_id, &structured_data).await
+                {
+                    log::warn!(
+                        "Failed to insert structured data for {}: {}",
+                        final_domain_clone,
+                        e
+                    );
+                } else {
+                    debug!("Structured data inserted for {}", final_domain_clone);
                 }
             }
         }
