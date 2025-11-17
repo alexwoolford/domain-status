@@ -36,6 +36,16 @@ cargo build --release
 - [ ] Dependency features are minimal; avoid enabling unused features
 - [ ] If DB schema changed, add a migration and bump the app version
 
+### File hygiene
+- **NEVER commit temporary LLM-generated working files** such as:
+  - `*_REVIEW.md` (e.g., `CODE_REVIEW.md`, `QUALITY_ASSESSMENT.md`, `TECHNICAL_DEBT_REVIEW.md`)
+  - `*_PLAN.md` (e.g., `ARCHITECTURE_PLAN.md`)
+  - `*_ASSESSMENT.md` (e.g., `QUALITY_ASSESSMENT.md`)
+  - `ARCHITECTURE_EXAMPLE.md`
+- These files are for LLM analysis only and should be excluded via `.gitignore`
+- If you create such files during analysis, delete them before committing
+- Only commit permanent documentation files: `README.md`, `AGENTS.md`, and user-requested documentation
+
 ### Dependency hygiene
 - Pin to compatible minor versions, avoid wildcard (`*`).
 - Prefer `default-features = false` and explicitly enable what you use.
@@ -96,6 +106,7 @@ Coverage targets:
 - [ ] DB migrations added (if schema touched)
 - [ ] CLI/README/AGENTS updated (if behavior changed)
 - [ ] Logs are actionable and not overly verbose
+- [ ] No temporary LLM-generated markdown files committed (e.g., `*_REVIEW.md`, `*_PLAN.md`, `*_ASSESSMENT.md`)
 
 ### CI recommendations
 - Build matrix: stable (required), beta (optional)
