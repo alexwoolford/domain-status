@@ -213,7 +213,7 @@ pub fn init_crypto_provider() {
 /// Returns `InitializationError::DnsResolverError` if both system and fallback
 /// configurations fail (though fallback should rarely fail).
 pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
-    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+    use hickory_resolver::config::ResolverOpts;
 
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
