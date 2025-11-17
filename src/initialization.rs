@@ -45,6 +45,10 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
     builder.filter_module("reqwest", LevelFilter::Info);
     builder.filter_module("hyper", LevelFilter::Info);
     builder.filter_module("selectors", LevelFilter::Warn);
+    // Suppress hickory UDP client stream warnings about malformed DNS messages
+    // These are expected when DNS responses are truncated or malformed, and hickory handles them gracefully
+    // Filter all hickory_proto warnings to Error level to suppress UDP malformed message warnings
+    builder.filter_module("hickory_proto", LevelFilter::Error);
     builder.filter_module("domain_status", level);
 
     match format {
@@ -209,7 +213,7 @@ pub fn init_crypto_provider() {
 /// Returns `InitializationError::DnsResolverError` if both system and fallback
 /// configurations fail (though fallback should rarely fail).
 pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
-    use hickory_resolver::config::ResolverOpts;
+    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
@@ -219,6 +223,8 @@ pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
     // Use default resolver configuration with timeouts
     // This ensures consistent timeout behavior across all DNS queries
     // In hickory-resolver 0.25, use builder_tokio() and override options
+    // Note: System DNS config on macOS includes .local search domain, but we handle this
+    // by ensuring domains are fully qualified (end with .) in DNS lookup functions
     let mut builder = TokioResolver::builder_tokio()
         .map_err(|e| InitializationError::DnsResolverError(e.to_string()))?;
     // Override with our custom options (config uses system default)

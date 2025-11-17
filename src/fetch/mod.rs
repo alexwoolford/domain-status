@@ -105,9 +105,9 @@ pub fn extract_http_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Str
 ///
 /// # Returns
 ///
-/// A tuple of (final_url, redirect_chain_json) where:
+/// A tuple of (final_url, redirect_chain) where:
 /// - `final_url` is the final URL after all redirects
-/// - `redirect_chain_json` is a JSON array of all URLs in the chain
+/// - `redirect_chain` is a vector of all URLs in the chain
 ///
 /// # Errors
 ///
@@ -116,7 +116,7 @@ pub async fn resolve_redirect_chain(
     start_url: &str,
     max_hops: usize,
     client: &reqwest::Client,
-) -> Result<(String, String), Error> {
+) -> Result<(String, Vec<String>), Error> {
     let mut chain: Vec<String> = Vec::new();
     let mut current = start_url.to_string();
 
@@ -147,8 +147,7 @@ pub async fn resolve_redirect_chain(
         }
         break;
     }
-    let chain_json = serde_json::to_string(&chain).unwrap_or_else(|_| "[]".to_string());
-    Ok((current, chain_json))
+    Ok((current, chain))
 }
 
 /// Extracted response data from HTTP response.
@@ -384,7 +383,7 @@ struct TlsDnsData {
     issuer: Option<String>,
     valid_from: Option<chrono::NaiveDateTime>,
     valid_to: Option<chrono::NaiveDateTime>,
-    oids_json: Option<String>,
+    oids: Option<std::collections::HashSet<String>>,
     cipher_suite: Option<String>,
     key_algorithm: Option<String>,
     ip_address: String,
@@ -433,50 +432,51 @@ async fn fetch_tls_and_dns(
         },
         // DNS resolution (IP address and reverse DNS)
         async {
-            let ip = resolve_host_to_ip(host, resolver).await?;
-            let reverse_dns = reverse_dns_lookup(&ip, resolver).await?;
-            Ok((ip, reverse_dns))
+            match resolve_host_to_ip(host, resolver).await {
+                Ok(ip) => match reverse_dns_lookup(&ip, resolver).await {
+                    Ok(reverse_dns) => Ok((ip, reverse_dns)),
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            }
         }
     );
 
     // Extract TLS info
-    let (
-        tls_version,
-        subject,
-        issuer,
-        valid_from,
-        valid_to,
-        oids_json,
-        cipher_suite,
-        key_algorithm,
-    ) = match tls_result {
-        Ok(cert_info) => (
-            cert_info.tls_version,
-            cert_info.subject,
-            cert_info.issuer,
-            cert_info.valid_from,
-            cert_info.valid_to,
-            cert_info.oids,
-            cert_info.cipher_suite,
-            cert_info.key_algorithm,
-        ),
-        Err(e) => {
-            log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-            error_stats.increment(crate::error_handling::ErrorType::TlsCertificateError);
-            (None, None, None, None, None, None, None, None)
-        }
-    };
+    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
+        match tls_result {
+            Ok(cert_info) => (
+                cert_info.tls_version,
+                cert_info.subject,
+                cert_info.issuer,
+                cert_info.valid_from,
+                cert_info.valid_to,
+                cert_info.oids,
+                cert_info.cipher_suite,
+                cert_info.key_algorithm,
+            ),
+            Err(e) => {
+                log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
+                error_stats.increment(crate::error_handling::ErrorType::TlsCertificateError);
+                (None, None, None, None, None, None, None, None)
+            }
+        };
 
     debug!(
         "Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}"
     );
 
     // Extract DNS info
+    // If DNS resolution fails, continue with None values rather than failing the entire request
+    // This makes the system more resilient to DNS issues
     let (ip_address, reverse_dns_name) = match dns_result {
         Ok((ip, reverse_dns)) => (ip, reverse_dns),
         Err(e) => {
-            log::error!("Failed to resolve DNS for {final_domain}: {e}");
-            return Err(e);
+            log::warn!(
+                "Failed to resolve DNS for {final_domain}: {e} - continuing without IP address"
+            );
+            error_stats.increment(crate::error_handling::ErrorType::DnsNsLookupError);
+            (String::new(), None) // Use empty string for IP, None for reverse DNS
         }
     };
 
@@ -489,7 +489,7 @@ async fn fetch_tls_and_dns(
         issuer,
         valid_from,
         valid_to,
-        oids_json,
+        oids,
         cipher_suite,
         key_algorithm,
         ip_address,
@@ -612,7 +612,7 @@ async fn fetch_additional_dns_records(
 /// * `final_url_str` - The final URL after redirects
 /// * `ctx` - Processing context containing all shared resources
 /// * `elapsed` - Response time in seconds
-/// * `redirect_chain_json` - JSON array of redirect chain URLs (will be parsed and inserted into url_redirect_chain table)
+/// * `redirect_chain` - Vector of redirect chain URLs (will be inserted into url_redirect_chain table)
 ///
 /// # Errors
 ///
@@ -623,7 +623,7 @@ pub async fn handle_response(
     final_url_str: &str,
     ctx: &ProcessingContext,
     elapsed: f64,
-    redirect_chain_json: Option<String>,
+    redirect_chain: Option<Vec<String>>,
 ) -> Result<(), Error> {
     debug!("Started processing response for {final_url_str}");
 
@@ -653,7 +653,7 @@ pub async fn handle_response(
             .await;
 
     // Detect technologies using community-maintained fingerprint rulesets
-    let technologies = match detect_technologies(
+    let technologies_vec: Vec<String> = match detect_technologies(
         &html_data.meta_tags,
         &html_data.script_sources,
         &html_data.html_text,
@@ -672,10 +672,10 @@ pub async fn handle_response(
                 );
                 let mut tech_vec: Vec<String> = techs.into_iter().collect();
                 tech_vec.sort();
-                Some(serialize_json(&tech_vec))
+                tech_vec
             } else {
                 debug!("No technologies detected for {}", resp_data.final_domain);
-                None
+                Vec::new()
             }
         }
         Err(e) => {
@@ -685,7 +685,7 @@ pub async fn handle_response(
             );
             ctx.error_stats
                 .increment(crate::error_handling::ErrorType::TechnologyDetectionError);
-            None
+            Vec::new()
         }
     };
 
@@ -725,7 +725,6 @@ pub async fn handle_response(
         ssl_cert_valid_to: tls_dns_data.valid_to,
         is_mobile_friendly: html_data.is_mobile_friendly,
         timestamp,
-        technologies,
         nameservers: additional_dns.nameservers.clone(),
         txt_records: additional_dns.txt_records.clone(),
         mx_records: additional_dns.mx_records.clone(),
@@ -736,31 +735,11 @@ pub async fn handle_response(
         run_id: ctx.run_id.clone(),
     };
 
-    // Parse OIDs from JSON string to HashSet
-    let oids_set: std::collections::HashSet<String> =
-        if let Some(oids_json) = &tls_dns_data.oids_json {
-            if !oids_json.is_empty() && oids_json != "[]" {
-                serde_json::from_str::<Vec<String>>(oids_json)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect()
-            } else {
-                std::collections::HashSet::new()
-            }
-        } else {
-            std::collections::HashSet::new()
-        };
+    // Extract OIDs directly (no JSON parsing needed)
+    let oids_set: std::collections::HashSet<String> = tls_dns_data.oids.clone().unwrap_or_default();
 
-    // Parse redirect chain from JSON string to Vec
-    let redirect_chain_vec: Vec<String> = if let Some(chain_json) = &redirect_chain_json {
-        if !chain_json.is_empty() && chain_json != "[]" {
-            serde_json::from_str::<Vec<String>>(chain_json).unwrap_or_default()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
+    // Extract redirect chain directly (no JSON parsing needed)
+    let redirect_chain_vec: Vec<String> = redirect_chain.unwrap_or_default();
 
     match insert_url_record(
         &ctx.pool,
@@ -769,6 +748,7 @@ pub async fn handle_response(
         &resp_data.http_headers,
         &oids_set,
         &redirect_chain_vec,
+        &technologies_vec,
     )
     .await
     {
@@ -852,7 +832,7 @@ pub async fn handle_http_request(
 ) -> Result<(), Error> {
     debug!("Resolving redirects for {url}");
 
-    let (final_url_string, redirect_chain_json) =
+    let (final_url_string, redirect_chain) =
         resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.redirect_client).await?;
 
     debug!("Sending request to final URL {final_url_string}");
@@ -885,7 +865,7 @@ pub async fn handle_http_request(
                     &final_url_string,
                     ctx,
                     elapsed,
-                    Some(redirect_chain_json),
+                    Some(redirect_chain),
                 )
                 .await
             }

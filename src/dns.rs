@@ -17,7 +17,14 @@ use hickory_resolver::TokioResolver;
 ///
 /// Returns an error if DNS resolution fails or no IP addresses are found.
 pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<String, Error> {
-    let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
+    // Ensure host is fully qualified (ends with .) to prevent search domain appending
+    // This fixes the issue where "amazon.com" becomes "amazon.com.local." on macOS
+    let fqdn = if host.ends_with('.') {
+        host.to_string()
+    } else {
+        format!("{host}.")
+    };
+    let response = resolver.lookup_ip(&fqdn).await.map_err(Error::new)?;
     let ip = response
         .iter()
         .next()
@@ -66,7 +73,13 @@ pub async fn lookup_ns_records(
     domain: &str,
     resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
-    match resolver.lookup(domain, RecordType::NS).await {
+    // Ensure domain is fully qualified (ends with .) to prevent search domain appending
+    let fqdn = if domain.ends_with('.') {
+        domain.to_string()
+    } else {
+        format!("{domain}.")
+    };
+    match resolver.lookup(&fqdn, RecordType::NS).await {
         Ok(lookup) => {
             let nameservers: Vec<String> = lookup
                 .iter()
@@ -103,7 +116,14 @@ pub async fn lookup_txt_records(
     domain: &str,
     resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
-    match resolver.lookup(domain, RecordType::TXT).await {
+    // Ensure domain is fully qualified (ends with .) to prevent search domain appending
+    // This fixes the issue where "amazon.com" becomes "amazon.com.local." on macOS
+    let fqdn = if domain.ends_with('.') {
+        domain.to_string()
+    } else {
+        format!("{domain}.")
+    };
+    match resolver.lookup(&fqdn, RecordType::TXT).await {
         Ok(lookup) => {
             let txt_records: Vec<String> = lookup
                 .iter()
@@ -145,7 +165,13 @@ pub async fn lookup_mx_records(
     domain: &str,
     resolver: &TokioResolver,
 ) -> Result<Vec<(u16, String)>, Error> {
-    match resolver.lookup(domain, RecordType::MX).await {
+    // Ensure domain is fully qualified (ends with .) to prevent search domain appending
+    let fqdn = if domain.ends_with('.') {
+        domain.to_string()
+    } else {
+        format!("{domain}.")
+    };
+    match resolver.lookup(&fqdn, RecordType::MX).await {
         Ok(lookup) => {
             let mut mx_records: Vec<(u16, String)> = lookup
                 .iter()
