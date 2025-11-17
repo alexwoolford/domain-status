@@ -73,13 +73,8 @@ pub async fn lookup_ns_records(
     domain: &str,
     resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
-    // Ensure domain is fully qualified (ends with .) to prevent search domain appending
-    let fqdn = if domain.ends_with('.') {
-        domain.to_string()
-    } else {
-        format!("{domain}.")
-    };
-    match resolver.lookup(&fqdn, RecordType::NS).await {
+    // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
+    match resolver.lookup(domain, RecordType::NS).await {
         Ok(lookup) => {
             let nameservers: Vec<String> = lookup
                 .iter()
@@ -123,14 +118,10 @@ pub async fn lookup_txt_records(
     domain: &str,
     resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
-    // Ensure domain is fully qualified (ends with .) to prevent search domain appending
-    // This fixes the issue where "amazon.com" becomes "amazon.com.local." on macOS
-    let fqdn = if domain.ends_with('.') {
-        domain.to_string()
-    } else {
-        format!("{domain}.")
-    };
-    match resolver.lookup(&fqdn, RecordType::TXT).await {
+    // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
+    // The resolver handles domain resolution correctly without FQDN
+    // FQDN (trailing dot) is only needed for IP resolution to avoid search domain issues
+    match resolver.lookup(domain, RecordType::TXT).await {
         Ok(lookup) => {
             let txt_records: Vec<String> = lookup
                 .iter()
@@ -179,13 +170,8 @@ pub async fn lookup_mx_records(
     domain: &str,
     resolver: &TokioResolver,
 ) -> Result<Vec<(u16, String)>, Error> {
-    // Ensure domain is fully qualified (ends with .) to prevent search domain appending
-    let fqdn = if domain.ends_with('.') {
-        domain.to_string()
-    } else {
-        format!("{domain}.")
-    };
-    match resolver.lookup(&fqdn, RecordType::MX).await {
+    // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
+    match resolver.lookup(domain, RecordType::MX).await {
         Ok(lookup) => {
             let mut mx_records: Vec<(u16, String)> = lookup
                 .iter()

@@ -12,7 +12,8 @@ pub const DB_PATH: &str = "./url_checker.db";
 
 // Network operation timeouts
 /// DNS query timeout in seconds
-pub const DNS_TIMEOUT_SECS: u64 = 5;
+/// Increased from 5s to 10s to reduce timeout errors on TXT/NS/MX lookups
+pub const DNS_TIMEOUT_SECS: u64 = 10;
 /// TCP connection timeout in seconds
 pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
 /// TLS handshake timeout in seconds
