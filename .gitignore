@@ -16,3 +16,13 @@ Cargo.lock
 
 # Environment variables (contains secrets)
 .env
+
+# Temporary LLM-generated working files (should never be committed)
+*_REVIEW.md
+*_PLAN.md
+*_ASSESSMENT.md
+ARCHITECTURE_EXAMPLE.md
+ARCHITECTURE_PLAN.md
+CODE_REVIEW.md
+QUALITY_ASSESSMENT.md
+TECHNICAL_DEBT_REVIEW.md
