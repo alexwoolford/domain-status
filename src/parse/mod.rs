@@ -539,11 +539,13 @@ mod tests {
     #[test]
     fn test_extract_meta_keywords_empty_content() {
         // Edge case: empty content attribute
+        // Empty keywords is not an error - meta keywords tag is deprecated and optional
         let html = r#"<html><head><meta name="keywords" content=""></head></html>"#;
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert!(extract_meta_keywords(&document, &stats).is_none());
-        assert_eq!(stats.get_count(ErrorType::KeywordExtractError), 1);
+        // No error should be counted - missing/empty keywords is not an error
+        assert_eq!(stats.get_count(ErrorType::KeywordExtractError), 0);
     }
 
     #[test]
@@ -590,11 +592,13 @@ mod tests {
 
     #[test]
     fn test_extract_meta_description_missing() {
+        // Missing meta description is not an error - it's optional metadata
         let html = r#"<html><head></head></html>"#;
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert!(extract_meta_description(&document, &stats).is_none());
-        assert_eq!(stats.get_count(ErrorType::MetaDescriptionExtractError), 1);
+        // No error should be counted - missing meta description is not an error
+        assert_eq!(stats.get_count(ErrorType::MetaDescriptionExtractError), 0);
     }
 
     #[test]

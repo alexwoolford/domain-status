@@ -350,14 +350,20 @@ fn parse_html_content(
             element.value().attr("property"),
             element.value().attr("content"),
         ) {
-            meta_tags.insert(format!("property:{}", property.to_lowercase()), content.to_string());
+            meta_tags.insert(
+                format!("property:{}", property.to_lowercase()),
+                content.to_string(),
+            );
         }
         // Check http-equiv attribute
         if let (Some(http_equiv), Some(content)) = (
             element.value().attr("http-equiv"),
             element.value().attr("content"),
         ) {
-            meta_tags.insert(format!("http-equiv:{}", http_equiv.to_lowercase()), content.to_string());
+            meta_tags.insert(
+                format!("http-equiv:{}", http_equiv.to_lowercase()),
+                content.to_string(),
+            );
         }
     }
 
@@ -382,7 +388,12 @@ fn parse_html_content(
             let text = element.text().collect::<String>();
             if !text.trim().is_empty() {
                 inline_script_count += 1;
-                script_content.push_str(&text.chars().take(crate::config::MAX_SCRIPT_CONTENT_SIZE).collect::<String>());
+                script_content.push_str(
+                    &text
+                        .chars()
+                        .take(crate::config::MAX_SCRIPT_CONTENT_SIZE)
+                        .collect::<String>(),
+                );
                 script_content.push('\n'); // Separate scripts with newline
             }
         }

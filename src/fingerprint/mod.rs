@@ -17,8 +17,8 @@
 //! - Fallback to regex: If JavaScript execution fails, falls back to regex matching
 
 use anyhow::{Context as AnyhowContext, Result};
-use regex;
 use reqwest::header::HeaderMap;
+use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -26,7 +26,6 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
 use tokio::sync::RwLock;
-use rquickjs::{Context, Runtime};
 
 /// Default URLs for fingerprint sources (merged, matching Go implementation)
 /// The Go implementation fetches from both sources and merges them
@@ -161,11 +160,10 @@ where
             while let Some((key, value)) = map.next_entry::<String, serde_json::Value>()? {
                 let patterns = match value {
                     serde_json::Value::String(s) => vec![s],
-                    serde_json::Value::Array(arr) => {
-                        arr.into_iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    }
+                    serde_json::Value::Array(arr) => arr
+                        .into_iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect(),
                     _ => {
                         return Err(de::Error::invalid_type(
                             de::Unexpected::Other("expected string or array"),
@@ -238,9 +236,12 @@ pub async fn init_ruleset(
         vec![source.to_string()]
     } else {
         // Use default sources (both enthec and HTTPArchive)
-        DEFAULT_FINGERPRINTS_URLS.iter().map(|s| s.to_string()).collect()
+        DEFAULT_FINGERPRINTS_URLS
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     };
-    
+
     let cache_path = cache_dir
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
@@ -254,14 +255,20 @@ pub async fn init_ruleset(
 
     // Try to load from cache first
     if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key).await {
-        log::info!("Loaded fingerprint ruleset from cache ({} sources)", sources.len());
+        log::info!(
+            "Loaded fingerprint ruleset from cache ({} sources)",
+            sources.len()
+        );
         let ruleset_arc = Arc::new(ruleset);
         *RULESET.write().await = Some(ruleset_arc.clone());
         return Ok(ruleset_arc);
     }
 
     // Fetch from all sources and merge
-    log::info!("Fetching fingerprint ruleset from {} source(s)", sources.len());
+    log::info!(
+        "Fetching fingerprint ruleset from {} source(s)",
+        sources.len()
+    );
     let ruleset = fetch_ruleset_from_multiple_sources(&sources, &cache_path).await?;
     let ruleset_arc = Arc::new(ruleset);
     *RULESET.write().await = Some(ruleset_arc.clone());
@@ -280,7 +287,7 @@ async fn fetch_ruleset_from_multiple_sources(
     // Fetch from all sources and merge
     for source in sources {
         log::info!("Fetching from source: {}", source);
-        
+
         let technologies = if source.starts_with("http://") || source.starts_with("https://") {
             fetch_from_url(source).await?
         } else {
@@ -297,14 +304,14 @@ async fn fetch_ruleset_from_multiple_sources(
                 normalized_headers.insert(header_name.to_lowercase(), pattern.to_lowercase());
             }
             tech.headers = normalized_headers;
-            
+
             // Normalize cookie keys and patterns to lowercase (matching Go: strings.ToLower(cookie), strings.ToLower(value))
             let mut normalized_cookies = HashMap::new();
             for (cookie_name, pattern) in tech.cookies {
                 normalized_cookies.insert(cookie_name.to_lowercase(), pattern.to_lowercase());
             }
             tech.cookies = normalized_cookies;
-            
+
             all_technologies.insert(tech_name, tech);
         }
 
@@ -335,7 +342,8 @@ async fn fetch_ruleset_from_multiple_sources(
         }
 
         // Get version from this source
-        let is_github = source.contains("github.com") || source.contains("raw.githubusercontent.com");
+        let is_github =
+            source.contains("github.com") || source.contains("raw.githubusercontent.com");
         if is_github {
             if let Some(sha) = get_latest_commit_sha(source).await {
                 versions.push(format!("{}:{}", source, sha));
@@ -825,11 +833,19 @@ async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRu
         if source.starts_with("merged:") || metadata.source.starts_with("merged:") {
             // Both are merged keys - must match exactly
             if metadata.source != source {
-                return Err(anyhow::anyhow!("Cache source mismatch: expected '{}', got '{}'", source, metadata.source));
+                return Err(anyhow::anyhow!(
+                    "Cache source mismatch: expected '{}', got '{}'",
+                    source,
+                    metadata.source
+                ));
             }
         } else {
             // Single source mismatch
-            return Err(anyhow::anyhow!("Cache source mismatch: expected '{}', got '{}'", source, metadata.source));
+            return Err(anyhow::anyhow!(
+                "Cache source mismatch: expected '{}', got '{}'",
+                source,
+                metadata.source
+            ));
         }
     }
 
@@ -980,7 +996,7 @@ pub async fn detect_technologies(
     // Fetch external scripts and combine with inline scripts for JavaScript execution
     // This matches the behavior of the Golang Wappalyzer tool
     let all_script_content = fetch_and_combine_scripts(script_sources, script_content, url).await;
-    
+
     log::debug!(
         "Technology detection for {}: {} inline script bytes, {} external script sources, {} total script bytes",
         url,
@@ -993,7 +1009,10 @@ pub async fn detect_technologies(
     for (tech_name, tech) in &ruleset.technologies {
         // Log when checking New Relic for debugging
         if tech_name == "New Relic" {
-            log::debug!("Checking New Relic technology with {} JS properties", tech.js.len());
+            log::debug!(
+                "Checking New Relic technology with {} JS properties",
+                tech.js.len()
+            );
         }
         if matches_technology(
             tech,
@@ -1047,6 +1066,7 @@ pub async fn get_technology_category(tech_name: &str) -> Option<String> {
 }
 
 /// Checks if a technology matches based on its patterns
+#[allow(clippy::too_many_arguments)] // Technology matching requires many parameters
 async fn matches_technology(
     tech: &Technology,
     headers: &HashMap<String, String>,
@@ -1084,10 +1104,12 @@ async fn matches_technology(
     // Note: meta values are now Vec<String> to handle both string and array formats (from enthec source)
     for (meta_key, patterns) in &tech.meta {
         let meta_key_lower = meta_key.to_lowercase();
-        
+
         // Check if key already has a prefix (property: or http-equiv:)
         if meta_key_lower.starts_with("property:") {
-            let key_without_prefix = meta_key_lower.strip_prefix("property:").unwrap_or(&meta_key_lower);
+            let key_without_prefix = meta_key_lower
+                .strip_prefix("property:")
+                .unwrap_or(&meta_key_lower);
             if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
                 // Check all patterns (meta can have multiple patterns)
                 for pattern in patterns {
@@ -1097,7 +1119,9 @@ async fn matches_technology(
                 }
             }
         } else if meta_key_lower.starts_with("http-equiv:") {
-            let key_without_prefix = meta_key_lower.strip_prefix("http-equiv:").unwrap_or(&meta_key_lower);
+            let key_without_prefix = meta_key_lower
+                .strip_prefix("http-equiv:")
+                .unwrap_or(&meta_key_lower);
             if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
                 // Check all patterns
                 for pattern in patterns {
@@ -1175,13 +1199,17 @@ async fn matches_technology(
             log::info!("Technology matched via script tag ID '{}'", js_property);
             return true;
         }
-        
+
         // Try JavaScript execution for window properties
         // Following WappalyzerGo's approach: execute scripts and check for global variables
         if !all_script_content.trim().is_empty() {
             // Log for debugging New Relic specifically
             if js_property == "NREUM" || js_property == "newrelic" {
-                log::debug!("Checking for New Relic property '{}' with {} bytes of script content", js_property, all_script_content.len());
+                log::debug!(
+                    "Checking for New Relic property '{}' with {} bytes of script content",
+                    js_property,
+                    all_script_content.len()
+                );
             }
             if check_js_property_async(all_script_content, js_property, pattern).await {
                 log::info!("Technology matched via JS property '{}'", js_property);
@@ -1189,7 +1217,10 @@ async fn matches_technology(
             } else {
                 // Log when property check fails for debugging
                 if js_property == "NREUM" || js_property == "newrelic" {
-                    log::debug!("New Relic property '{}' not found after JavaScript execution", js_property);
+                    log::debug!(
+                        "New Relic property '{}' not found after JavaScript execution",
+                        js_property
+                    );
                 }
             }
         } else {
@@ -1204,18 +1235,18 @@ async fn matches_technology(
 }
 
 /// Fetches external JavaScript files and combines them with inline scripts.
-/// 
+///
 /// This function fetches up to MAX_EXTERNAL_SCRIPTS external scripts and combines
 /// them with inline script content for JavaScript execution.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `script_sources` - Vector of script src URLs
 /// * `inline_script_content` - Inline script content from HTML
 /// * `base_url` - Base URL for resolving relative script URLs
-/// 
+///
 /// # Returns
-/// 
+///
 /// Combined script content (inline + external scripts)
 async fn fetch_and_combine_scripts(
     script_sources: &[String],
@@ -1223,17 +1254,17 @@ async fn fetch_and_combine_scripts(
     base_url: &str,
 ) -> String {
     let mut all_scripts = String::from(inline_script_content);
-    
+
     // Limit the number of external scripts to prevent excessive fetching
     let scripts_to_fetch = script_sources
         .iter()
         .take(crate::config::MAX_EXTERNAL_SCRIPTS)
         .collect::<Vec<_>>();
-    
+
     if scripts_to_fetch.is_empty() {
         return all_scripts;
     }
-    
+
     // Create HTTP client with shorter timeout to prevent blocking
     // Reduced from 5s to 2s to prevent timeouts when fetching multiple scripts
     let client = reqwest::Client::builder()
@@ -1241,29 +1272,30 @@ async fn fetch_and_combine_scripts(
         .user_agent(crate::config::DEFAULT_USER_AGENT)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    
+
     // Fetch external scripts in parallel
     let mut tasks = Vec::new();
     for script_src in scripts_to_fetch {
         let client = client.clone();
         let base_url = base_url.to_string();
         let script_src = script_src.clone();
-        
+
         tasks.push(tokio::spawn(async move {
             // Resolve relative URLs
-            let script_url = if script_src.starts_with("http://") || script_src.starts_with("https://") {
-                script_src
-            } else if script_src.starts_with("//") {
-                format!("https:{}", script_src)
-            } else {
-                // Relative URL - resolve against base URL
-                url::Url::parse(&base_url)
-                    .ok()
-                    .and_then(|base| base.join(&script_src).ok())
-                    .map(|url| url.to_string())
-                    .unwrap_or_else(|| script_src)
-            };
-            
+            let script_url =
+                if script_src.starts_with("http://") || script_src.starts_with("https://") {
+                    script_src
+                } else if script_src.starts_with("//") {
+                    format!("https:{}", script_src)
+                } else {
+                    // Relative URL - resolve against base URL
+                    url::Url::parse(&base_url)
+                        .ok()
+                        .and_then(|base| base.join(&script_src).ok())
+                        .map(|url| url.to_string())
+                        .unwrap_or_else(|| script_src)
+                };
+
             match client.get(&script_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     match resp.text().await {
@@ -1292,22 +1324,24 @@ async fn fetch_and_combine_scripts(
             }
         }));
     }
-    
+
     // Collect results and append to all_scripts
     let mut fetched_count = 0;
     for task in tasks {
         if let Ok(Some(script_content)) = task.await {
             fetched_count += 1;
             // Check total size limit
-            if all_scripts.len() + script_content.len() > crate::config::MAX_TOTAL_SCRIPT_CONTENT_SIZE {
+            if all_scripts.len() + script_content.len()
+                > crate::config::MAX_TOTAL_SCRIPT_CONTENT_SIZE
+            {
                 log::debug!("Total script content size limit reached, skipping remaining scripts");
                 break;
             }
-            all_scripts.push_str("\n");
+            all_scripts.push('\n');
             all_scripts.push_str(&script_content);
         }
     }
-    
+
     if fetched_count > 0 {
         log::debug!(
             "Fetched {} external scripts ({} bytes total) for {}",
@@ -1316,27 +1350,27 @@ async fn fetch_and_combine_scripts(
             base_url
         );
     }
-    
+
     all_scripts
 }
 
 /// Checks if a JavaScript property exists by executing JavaScript code (async version).
-/// 
+///
 /// This function executes JavaScript code and checks if properties exist on the window object,
 /// matching the behavior of the Golang Wappalyzer tool.
-/// 
+///
 /// **Security:** This function enforces strict limits on script size and execution time
 /// to prevent DoS attacks. Scripts are limited to 100KB per script and 500KB total,
 /// and execution is limited to 1 second with a 10MB memory limit.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `script_content` - The JavaScript code to execute (inline + external scripts)
 /// * `js_property` - The property path to check (e.g., "jQuery" or "window.React")
 /// * `pattern` - Optional pattern to match against the property value
-/// 
+///
 /// # Returns
-/// 
+///
 /// `true` if the property exists (and matches the pattern if provided), `false` otherwise
 async fn check_js_property_async(script_content: &str, js_property: &str, pattern: &str) -> bool {
     // Skip if script content is empty
@@ -1360,7 +1394,7 @@ async fn check_js_property_async(script_content: &str, js_property: &str, patter
                 log::info!("JavaScript execution found property '{}'", js_property);
             }
             result
-        },
+        }
         Err(e) => {
             log::debug!(
                 "JavaScript execution failed or timed out for '{}': {e}",
@@ -1372,10 +1406,10 @@ async fn check_js_property_async(script_content: &str, js_property: &str, patter
 }
 
 /// Executes JavaScript code and checks if a property exists with timeout protection.
-/// 
+///
 /// Uses QuickJS to execute the script and check property existence on the window object.
 /// Enforces strict security limits: memory limit, execution timeout, and size limits.
-/// 
+///
 /// **Security measures:**
 /// - Memory limit: 10MB per context
 /// - Execution timeout: 1 second (via Tokio timeout)
@@ -1387,41 +1421,49 @@ async fn execute_js_property_check_with_timeout(
 ) -> Result<bool> {
     // Use Tokio timeout to prevent infinite loops and CPU exhaustion
     // Note: QuickJS execution is blocking, so we run it in spawn_blocking
-    let timeout_duration = std::time::Duration::from_millis(
-        crate::config::MAX_JS_EXECUTION_TIME_MS
-    );
-    
+    let timeout_duration =
+        std::time::Duration::from_millis(crate::config::MAX_JS_EXECUTION_TIME_MS);
+
     let script_content = script_content.to_string();
     let js_property = js_property.to_string();
     let pattern = pattern.to_string();
-    
+
     // Use spawn_blocking to run QuickJS in a blocking thread pool
     // This prevents blocking the async runtime
     let handle = tokio::task::spawn_blocking(move || {
         execute_js_property_check(&script_content, &js_property, &pattern)
     });
-    
+
     // Apply timeout to the spawned task
     tokio::time::timeout(timeout_duration, handle)
         .await
-        .map_err(|_| anyhow::anyhow!("JavaScript execution timed out after {}ms", 
-            crate::config::MAX_JS_EXECUTION_TIME_MS))?
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "JavaScript execution timed out after {}ms",
+                crate::config::MAX_JS_EXECUTION_TIME_MS
+            )
+        })?
         .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
 }
 
 /// Executes JavaScript code and checks if a property exists.
-/// 
+///
 /// Uses QuickJS (via rquickjs) to execute the script and check property existence on the window object.
-/// 
+///
 /// **Security:** This function enforces a memory limit but does NOT enforce execution timeout.
 /// Callers should use `execute_js_property_check_with_timeout` instead.
-fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &str) -> Result<bool> {
+fn execute_js_property_check(
+    script_content: &str,
+    js_property: &str,
+    pattern: &str,
+) -> Result<bool> {
     // Create a QuickJS runtime with memory limit to prevent memory exhaustion attacks
-    let runtime = Runtime::new().map_err(|e| anyhow::anyhow!("Failed to create QuickJS runtime: {e}"))?;
-    
+    let runtime =
+        Runtime::new().map_err(|e| anyhow::anyhow!("Failed to create QuickJS runtime: {e}"))?;
+
     // Set memory limit
     runtime.set_memory_limit(crate::config::MAX_JS_MEMORY_LIMIT);
-    
+
     // Create a context within the runtime
     let context = Context::full(&runtime)
         .map_err(|e| anyhow::anyhow!("Failed to create QuickJS context: {e}"))?;
@@ -1474,7 +1516,10 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
             };
         "#;
         if let Err(e) = ctx.eval::<rquickjs::Value, _>(init_code) {
-            log::debug!("Failed to initialize browser stubs for property '{}': {e}", js_property);
+            log::debug!(
+                "Failed to initialize browser stubs for property '{}': {e}",
+                js_property
+            );
         }
     });
 
@@ -1495,7 +1540,10 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
     // Execute the script (ignore errors - some scripts may fail but still set properties)
     context.with(|ctx| {
         if let Err(e) = ctx.eval::<rquickjs::Value, _>(setup_code.as_str()) {
-            log::debug!("Script execution error (non-fatal) for property '{}': {e}", js_property);
+            log::debug!(
+                "Script execution error (non-fatal) for property '{}': {e}",
+                js_property
+            );
         }
     });
 
@@ -1508,9 +1556,10 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
     } else if js_property.contains('.') {
         // Property path with dots (e.g., "window.React" or "ufe.funnelData")
         // Use as-is if it starts with window/global/self, otherwise prepend window
-        if js_property.starts_with("window.") 
-            || js_property.starts_with("global.") 
-            || js_property.starts_with("self.") {
+        if js_property.starts_with("window.")
+            || js_property.starts_with("global.")
+            || js_property.starts_with("self.")
+        {
             js_property.to_string()
         } else {
             format!("window.{}", js_property)
@@ -1520,7 +1569,7 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
         // Check both window.NREUM and global NREUM (some scripts set it globally, not on window)
         format!("window.{}", js_property)
     };
-    
+
     // Also check global scope for properties that might not be on window
     // Some scripts (like New Relic) set properties globally: NREUM={} not window.NREUM={}
     let global_property_expr = if js_property.contains('.') {
@@ -1542,14 +1591,21 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
         // For other patterns, convert to string and check
         // Escape single quotes and backslashes in pattern for JavaScript string
         let escaped_pattern = pattern.replace('\\', "\\\\").replace('\'', "\\'");
-        format!("return String(value).indexOf('{}') !== -1;", escaped_pattern)
+        format!(
+            "return String(value).indexOf('{}') !== -1;",
+            escaped_pattern
+        )
     };
-    
+
     // Check if property exists by trying to access it
     // Following WappalyzerGo's approach: check typeof and then access the property
     // window should exist from initialization in global scope
     // For simple properties, also check global scope (some scripts set NREUM={} not window.NREUM={})
-    let check_code = if !js_property.contains('.') && !js_property.starts_with("window.") && !js_property.starts_with("global.") && !js_property.starts_with("self.") {
+    let check_code = if !js_property.contains('.')
+        && !js_property.starts_with("window.")
+        && !js_property.starts_with("global.")
+        && !js_property.starts_with("self.")
+    {
         // Simple property name - check both window.property and global property
         // This handles cases like New Relic where NREUM={} sets it globally, not window.NREUM={}
         format!(
@@ -1577,8 +1633,8 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
                 }}
             }})()
             "#,
-            property_expr, // typeof window.NREUM !== 'undefined'
-            property_expr, // window.NREUM
+            property_expr,        // typeof window.NREUM !== 'undefined'
+            property_expr,        // window.NREUM
             global_property_expr, // typeof NREUM !== 'undefined'
             global_property_expr, // NREUM
             pattern_check
@@ -1622,9 +1678,9 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
             Err(e) => {
                 log::debug!("JavaScript eval error for property '{}': {e}", js_property);
                 return Err(anyhow::anyhow!("Failed to execute property check: {e}"));
-            },
+            }
         };
-        
+
         // Result should be a boolean - rquickjs returns Value which we need to convert
         // Check if it's a boolean value
         if let Some(bool_val) = result.as_bool() {
@@ -1637,19 +1693,19 @@ fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &
 }
 
 /// Checks if a JavaScript property exists using regex-based pattern matching (fallback).
-/// 
+///
 /// **Note:** This function is currently unused. We rely solely on JavaScript execution
 /// for property detection to avoid false positives. This function is kept for potential
 /// future use or debugging.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `js_search_text` - The JavaScript code to search (with comments/strings stripped)
 /// * `js_property` - The property path to check (e.g., "jQuery" or "window.React")
 /// * `pattern` - Optional pattern to match against the property value
-/// 
+///
 /// # Returns
-/// 
+///
 /// `true` if the property is found (and matches the pattern if provided), `false` otherwise
 #[allow(dead_code)]
 fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &str) -> bool {
@@ -1673,14 +1729,20 @@ fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &st
             // CRITICAL: Property must be complete identifier, not substring
             // e.g., "Fundiin" should NOT match in "websiteMaximumSuggestFundiinWithPrediction"
             let escaped = regex::escape(js_property);
-            
+
             // For properties starting with $ or __, they're likely globals
             if js_property.starts_with('$') || js_property.starts_with("__") {
                 // Match as global: window.Property (most reliable)
                 // Or as standalone at start of line/expression
                 let patterns = vec![
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])", escaped),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])",
+                        escaped
+                    ),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])",
+                        escaped
+                    ),
                     format!(r"(?m)(?<![a-zA-Z0-9_$])^\s*{}\b(?![a-zA-Z0-9_$])", escaped),
                     format!(r"(?m)(?<![a-zA-Z0-9_$])\.{}\b(?![a-zA-Z0-9_$])", escaped),
                 ];
@@ -1698,15 +1760,33 @@ fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &st
                 let patterns = vec![
                     // Global object access - most reliable (window, global, self)
                     // Negative lookbehind/lookahead ensures it's not part of longer name
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])", escaped),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])", escaped),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bself\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])",
+                        escaped
+                    ),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])",
+                        escaped
+                    ),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bself\.{}\b(?![a-zA-Z0-9_$])",
+                        escaped
+                    ),
                     // Variable declarations - must be followed by = or ; and be complete identifier
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bvar\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])", escaped),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\blet\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])", escaped),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bconst\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])", escaped),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bvar\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])",
+                        escaped
+                    ),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\blet\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])",
+                        escaped
+                    ),
+                    format!(
+                        r"(?m)(?<![a-zA-Z0-9_$])\bconst\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])",
+                        escaped
+                    ),
                 ];
-                
+
                 for regex_pattern in patterns {
                     if let Ok(re) = regex::Regex::new(&regex_pattern) {
                         if re.is_match(js_search_text) {
@@ -1733,15 +1813,19 @@ fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &st
             } else {
                 pattern
             };
-            
+
             // Look for property path followed by = or : and then the pattern
-            let regex_pattern = format!(r"(?m)\b{}\s*[=:]\s*{}", escaped_prop, regex::escape(value_pattern));
+            let regex_pattern = format!(
+                r"(?m)\b{}\s*[=:]\s*{}",
+                escaped_prop,
+                regex::escape(value_pattern)
+            );
             if let Ok(re) = regex::Regex::new(&regex_pattern) {
                 if re.is_match(js_search_text) {
                     return true;
                 }
             }
-            
+
             // Also try matching the pattern in the context of the property
             if matches_pattern(pattern, js_search_text) {
                 // Additional check: ensure the property path exists nearby
@@ -1764,11 +1848,11 @@ fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &st
 }
 
 /// Strips JavaScript comments and string literals from code to avoid false positives.
-/// 
+///
 /// **Note:** This function is currently unused in production code. We rely solely on
 /// JavaScript execution for property detection, which naturally ignores comments and strings.
 /// This function is kept for tests and potential future use.
-/// 
+///
 /// Handles:
 /// - Single-line comments (// ...)
 /// - Multi-line comments (/* ... */)
@@ -1785,10 +1869,10 @@ fn strip_js_comments_and_strings(code: &str) -> String {
     let mut in_single_line_comment = false;
     let mut in_multi_line_comment = false;
     let mut prev_char = '\0';
-    
+
     while let Some(ch) = chars.next() {
         let next_char = chars.peek().copied().unwrap_or('\0');
-        
+
         // Handle escaping in strings
         if (in_single_quote || in_double_quote || in_template_literal) && ch == '\\' {
             // Skip escaped character
@@ -1799,7 +1883,7 @@ fn strip_js_comments_and_strings(code: &str) -> String {
             prev_char = ch;
             continue;
         }
-        
+
         // Check for string/template literal start/end
         if !in_single_line_comment && !in_multi_line_comment {
             if ch == '\'' && !in_double_quote && !in_template_literal {
@@ -1821,14 +1905,14 @@ fn strip_js_comments_and_strings(code: &str) -> String {
                 continue;
             }
         }
-        
+
         // If we're in a string, skip it
         if in_single_quote || in_double_quote || in_template_literal {
             result.push(' ');
             prev_char = ch;
             continue;
         }
-        
+
         // Check for comment start
         if !in_single_line_comment && !in_multi_line_comment {
             if ch == '/' && next_char == '/' {
@@ -1846,7 +1930,7 @@ fn strip_js_comments_and_strings(code: &str) -> String {
                 continue;
             }
         }
-        
+
         // Check for comment end
         if in_multi_line_comment && prev_char == '*' && ch == '/' {
             in_multi_line_comment = false;
@@ -1860,19 +1944,19 @@ fn strip_js_comments_and_strings(code: &str) -> String {
             prev_char = ch;
             continue;
         }
-        
+
         // If we're in a comment, skip it
         if in_single_line_comment || in_multi_line_comment {
             result.push(' ');
             prev_char = ch;
             continue;
         }
-        
+
         // Regular code character
         result.push(ch);
         prev_char = ch;
     }
-    
+
     result
 }
 
@@ -1959,14 +2043,14 @@ mod tests {
         let stripped = strip_js_comments_and_strings(code);
         assert!(!stripped.contains("websiteMaximumSuggestFundiinWithPrediction"));
         assert!(!stripped.contains("lz_chat_execute"));
-        
+
         // Test string stripping
         let code2 = r#"var x = "websiteMaximumSuggestFundiinWithPrediction";
         var y = 'lz_chat_execute';"#;
         let stripped2 = strip_js_comments_and_strings(code2);
         assert!(!stripped2.contains("websiteMaximumSuggestFundiinWithPrediction"));
         assert!(!stripped2.contains("lz_chat_execute"));
-        
+
         // Test that actual code is preserved
         let code3 = r#"window.websiteMaximumSuggestFundiinWithPrediction = true;
         var lz_chat_execute = function() {};"#;
@@ -1987,6 +2071,7 @@ mod tests {
         let url = "https://example.com";
 
         // Without ruleset, this will fail - that's expected
+        let script_tag_ids = HashSet::new();
         let result = detect_technologies(
             &meta_tags,
             &script_sources,
@@ -1994,6 +2079,7 @@ mod tests {
             html_text,
             &headers,
             url,
+            &script_tag_ids,
         )
         .await;
         assert!(result.is_err());
