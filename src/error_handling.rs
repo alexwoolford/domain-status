@@ -135,14 +135,18 @@ impl ErrorStats {
 /// - Initial delay: `RETRY_INITIAL_DELAY_MS` milliseconds
 /// - Backoff factor: `RETRY_FACTOR` (doubles delay each retry)
 /// - Maximum delay: `RETRY_MAX_DELAY_SECS` seconds
+/// - Maximum attempts: `RETRY_MAX_ATTEMPTS` (prevents infinite retries)
 ///
 /// # Returns
 ///
-/// An `ExponentialBackoff` strategy ready for use with `tokio_retry::Retry`.
-pub fn get_retry_strategy() -> ExponentialBackoff {
+/// A retry strategy iterator ready for use with `tokio_retry::Retry`.
+/// The iterator is limited to `RETRY_MAX_ATTEMPTS` attempts to prevent
+/// infinite retries and ensure we don't exceed `URL_PROCESSING_TIMEOUT`.
+pub fn get_retry_strategy() -> impl Iterator<Item = Duration> {
     ExponentialBackoff::from_millis(crate::config::RETRY_INITIAL_DELAY_MS)
         .factor(crate::config::RETRY_FACTOR) // Double the delay with each retry
         .max_delay(Duration::from_secs(crate::config::RETRY_MAX_DELAY_SECS)) // Maximum delay
+        .take(crate::config::RETRY_MAX_ATTEMPTS) // Limit total attempts (initial + retries)
 }
 
 /// Updates error statistics based on a `reqwest::Error`.

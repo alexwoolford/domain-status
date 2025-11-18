@@ -95,12 +95,12 @@ pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker (currently unused for this function)
+/// * `_error_stats` - Error statistics tracker (unused - missing keywords is not an error)
 ///
 /// # Returns
 ///
 /// A vector of keyword strings, or `None` if no keywords meta tag is found.
-pub fn extract_meta_keywords(document: &Html, error_stats: &ErrorStats) -> Option<Vec<String>> {
+pub fn extract_meta_keywords(document: &Html, _error_stats: &ErrorStats) -> Option<Vec<String>> {
     let meta_keywords = document
         .select(&META_KEYWORDS_SELECTOR)
         .next()
@@ -115,14 +115,16 @@ pub fn extract_meta_keywords(document: &Html, error_stats: &ErrorStats) -> Optio
                 .collect();
 
             if keywords.is_empty() {
-                error_stats.increment(ErrorType::KeywordExtractError);
+                // Empty keywords is not an error - meta keywords tag is deprecated
+                // Many modern websites don't use it, so we don't count this as an error
                 None
             } else {
                 Some(keywords)
             }
         }
         None => {
-            error_stats.increment(ErrorType::KeywordExtractError);
+            // Missing keywords meta tag is not an error - it's deprecated and optional
+            // Many modern websites don't use it, so we don't count this as an error
             None
         }
     }
@@ -141,7 +143,7 @@ pub fn extract_meta_keywords(document: &Html, error_stats: &ErrorStats) -> Optio
 /// # Returns
 ///
 /// The meta description as a string, or `None` if not found.
-pub fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Option<String> {
+pub fn extract_meta_description(document: &Html, _error_stats: &ErrorStats) -> Option<String> {
     let meta_description = document
         .select(&META_DESCRIPTION_SELECTOR)
         .next()
@@ -152,10 +154,8 @@ pub fn extract_meta_description(document: &Html, error_stats: &ErrorStats) -> Op
                 .map(|content| content.trim().to_string())
         });
 
-    if meta_description.is_none() {
-        error_stats.increment(ErrorType::MetaDescriptionExtractError);
-    }
-
+    // Missing meta description is not an error - it's optional metadata
+    // Some websites don't include it, so we don't count this as an error
     meta_description
 }
 

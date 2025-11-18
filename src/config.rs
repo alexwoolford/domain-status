@@ -7,7 +7,9 @@ use clap::{Parser, ValueEnum};
 #[allow(dead_code)]
 pub const SEMAPHORE_LIMIT: usize = 20;
 pub const LOGGING_INTERVAL: usize = 5;
-pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30);
+/// Per-URL processing timeout in seconds
+/// Increased from 30s to 45s to account for DNS, TLS, and HTTP operations
+pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(45);
 pub const DB_PATH: &str = "./url_checker.db";
 
 // Network operation timeouts
@@ -113,6 +115,25 @@ pub const HTTP_HEADERS: &[&str] = &[
 /// Responses larger than this are skipped to prevent memory exhaustion
 pub const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
 
+// Script content size limits
+/// Maximum script content size in bytes (100KB per script)
+/// Limits the amount of JavaScript we extract per script tag
+/// This is enforced in src/fetch/mod.rs when extracting script content
+pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
+/// Maximum total script content size in bytes (500KB total across all scripts)
+/// Limits the total amount of JavaScript we execute to prevent DoS attacks
+pub const MAX_TOTAL_SCRIPT_CONTENT_SIZE: usize = 500 * 1024; // 500KB total across all scripts
+/// Maximum JavaScript execution time in milliseconds (1 second)
+/// Prevents infinite loops and CPU exhaustion attacks
+pub const MAX_JS_EXECUTION_TIME_MS: u64 = 1000;
+/// Maximum memory limit for QuickJS context in bytes (10MB)
+/// Prevents memory exhaustion attacks
+pub const MAX_JS_MEMORY_LIMIT: usize = 10 * 1024 * 1024;
+/// Maximum number of external scripts to fetch per page
+/// Set to 0 to disable external script fetching (faster, but may miss some technologies)
+/// External script fetching can cause timeouts on slow sites
+pub const MAX_EXTERNAL_SCRIPTS: usize = 0;
+
 // Redirect handling
 /// Maximum number of redirect hops to follow
 /// Prevents infinite redirect loops and excessive request chains
@@ -125,6 +146,10 @@ pub const RETRY_INITIAL_DELAY_MS: u64 = 1000;
 pub const RETRY_FACTOR: u64 = 2;
 /// Maximum delay between retries in seconds
 pub const RETRY_MAX_DELAY_SECS: u64 = 20;
+/// Maximum number of retry attempts (including initial attempt)
+/// Set to 3 = initial attempt + 2 retries (total 3 attempts)
+/// This prevents infinite retries and ensures we don't exceed URL_PROCESSING_TIMEOUT
+pub const RETRY_MAX_ATTEMPTS: usize = 3;
 
 /// Logging level for the application.
 ///

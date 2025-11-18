@@ -3,8 +3,21 @@
 //! This module implements technology detection by fetching and applying
 //! fingerprint rules from community sources like HTTP Archive or Enthec.
 //! Rules are cached locally and can be updated periodically.
+//!
+//! # JavaScript Property Detection
+//!
+//! This module executes JavaScript code (both inline and external scripts) to detect
+//! JavaScript object properties, matching the behavior of the Golang Wappalyzer tool.
+//!
+//! **Security measures:**
+//! - Memory limit: 10MB per JavaScript context
+//! - Execution timeout: 1 second per property check
+//! - Script size limits: 100KB per script, 500KB total
+//! - Maximum external scripts: 10 per page (to prevent excessive fetching)
+//! - Fallback to regex: If JavaScript execution fails, falls back to regex matching
 
-use anyhow::{Context, Result};
+use anyhow::{Context as AnyhowContext, Result};
+use regex;
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -13,11 +26,14 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
 use tokio::sync::RwLock;
+use rquickjs::{Context, Runtime};
 
-/// Default URL for HTTP Archive's Wappalyzer fork (technologies directory)
-/// The rules are split into multiple JSON files (a.json, b.json, etc.)
-const DEFAULT_FINGERPRINTS_URL: &str =
-    "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies";
+/// Default URLs for fingerprint sources (merged, matching Go implementation)
+/// The Go implementation fetches from both sources and merges them
+const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
+    "https://raw.githubusercontent.com/enthec/webappanalyzer/main/src/technologies",
+    "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies",
+];
 
 /// Default cache directory for fingerprint rules
 const DEFAULT_CACHE_DIR: &str = ".fingerprints_cache";
@@ -42,9 +58,11 @@ pub struct Technology {
     /// Cookie patterns: cookie_name -> pattern
     #[serde(default)]
     pub cookies: HashMap<String, String>,
-    /// Meta tag patterns: meta_name -> pattern
+    /// Meta tag patterns: meta_name -> pattern(s)
+    /// In Wappalyzer, meta values can be either a string or an array of strings
     #[serde(default)]
-    pub meta: HashMap<String, String>,
+    #[serde(deserialize_with = "deserialize_meta_map")]
+    pub meta: HashMap<String, Vec<String>>,
     /// Script source patterns (can be string or array) - Wappalyzer uses "scriptSrc"
     #[serde(default)]
     #[serde(alias = "scriptSrc")]
@@ -54,9 +72,10 @@ pub struct Technology {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_string_or_array")]
     pub html: Vec<String>,
-    /// URL patterns
+    /// URL patterns (can be string or array)
     #[serde(default)]
-    pub url: String,
+    #[serde(deserialize_with = "deserialize_string_or_array")]
+    pub url: Vec<String>,
     /// JavaScript object properties to check
     #[serde(default)]
     pub js: HashMap<String, String>,
@@ -116,6 +135,53 @@ where
     deserializer.deserialize_any(StringOrArrayVisitor)
 }
 
+/// Deserializes a meta map where values can be either strings or arrays of strings
+/// This matches the Go implementation which uses reflection to handle both cases
+fn deserialize_meta_map<'de, D>(deserializer: D) -> Result<HashMap<String, Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, MapAccess, Visitor};
+    use std::fmt;
+
+    struct MetaMapVisitor;
+
+    impl<'de> Visitor<'de> for MetaMapVisitor {
+        type Value = HashMap<String, Vec<String>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a map of string to string or array of strings")
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut result = HashMap::new();
+            while let Some((key, value)) = map.next_entry::<String, serde_json::Value>()? {
+                let patterns = match value {
+                    serde_json::Value::String(s) => vec![s],
+                    serde_json::Value::Array(arr) => {
+                        arr.into_iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    }
+                    _ => {
+                        return Err(de::Error::invalid_type(
+                            de::Unexpected::Other("expected string or array"),
+                            &self,
+                        ));
+                    }
+                };
+                result.insert(key, patterns);
+            }
+            Ok(result)
+        }
+    }
+
+    deserializer.deserialize_map(MetaMapVisitor)
+}
+
 /// Fingerprint ruleset metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintMetadata {
@@ -168,92 +234,150 @@ pub async fn init_ruleset(
         }
     }
 
-    let source = fingerprints_source.unwrap_or(DEFAULT_FINGERPRINTS_URL);
+    let sources = if let Some(source) = fingerprints_source {
+        vec![source.to_string()]
+    } else {
+        // Use default sources (both enthec and HTTPArchive)
+        DEFAULT_FINGERPRINTS_URLS.iter().map(|s| s.to_string()).collect()
+    };
+    
     let cache_path = cache_dir
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
 
+    // Create a cache key from all sources
+    let cache_key = if sources.len() == 1 {
+        sources[0].clone()
+    } else {
+        format!("merged:{}", sources.join("+"))
+    };
+
     // Try to load from cache first
-    if let Ok(ruleset) = load_from_cache(&cache_path, source).await {
-        log::info!("Loaded fingerprint ruleset from cache: {}", source);
+    if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key).await {
+        log::info!("Loaded fingerprint ruleset from cache ({} sources)", sources.len());
         let ruleset_arc = Arc::new(ruleset);
         *RULESET.write().await = Some(ruleset_arc.clone());
         return Ok(ruleset_arc);
     }
 
-    // Fetch from source
-    log::info!("Fetching fingerprint ruleset from: {}", source);
-    let ruleset = fetch_ruleset(source, &cache_path).await?;
+    // Fetch from all sources and merge
+    log::info!("Fetching fingerprint ruleset from {} source(s)", sources.len());
+    let ruleset = fetch_ruleset_from_multiple_sources(&sources, &cache_path).await?;
     let ruleset_arc = Arc::new(ruleset);
     *RULESET.write().await = Some(ruleset_arc.clone());
     Ok(ruleset_arc)
 }
 
-/// Fetches ruleset from URL and caches it locally
-async fn fetch_ruleset(source: &str, cache_dir: &Path) -> Result<FingerprintRuleset> {
-    let technologies = if source.starts_with("http://") || source.starts_with("https://") {
-        // Fetch from URL - handle both single file and directory
-        fetch_from_url(source).await?
-    } else {
-        // Load from local path - handle both single file and directory
-        load_from_path(Path::new(source)).await?
-    };
+/// Fetches ruleset from multiple sources and merges them (matching Go implementation)
+async fn fetch_ruleset_from_multiple_sources(
+    sources: &[String],
+    cache_dir: &Path,
+) -> Result<FingerprintRuleset> {
+    let mut all_technologies = HashMap::new();
+    let mut all_categories = HashMap::new();
+    let mut versions = Vec::new();
 
-    // Fetch categories.json from the same source
-    let categories = if source.starts_with("http://") || source.starts_with("https://") {
-        fetch_categories_from_url(source).await.unwrap_or_else(|e| {
-            log::warn!(
-                "Failed to fetch categories: {}. Continuing without categories.",
-                e
-            );
-            HashMap::new()
-        })
-    } else {
-        load_categories_from_path(Path::new(source))
-            .await
-            .unwrap_or_else(|e| {
+    // Fetch from all sources and merge
+    for source in sources {
+        log::info!("Fetching from source: {}", source);
+        
+        let technologies = if source.starts_with("http://") || source.starts_with("https://") {
+            fetch_from_url(source).await?
+        } else {
+            load_from_path(Path::new(source)).await?
+        };
+
+        // Merge technologies (later sources overwrite earlier ones for same tech name)
+        // This matches the Go implementation behavior
+        // Normalize header and cookie keys/values to lowercase (matching Go implementation)
+        for (tech_name, mut tech) in technologies {
+            // Normalize header keys and patterns to lowercase (matching Go: strings.ToLower(header), strings.ToLower(pattern))
+            let mut normalized_headers = HashMap::new();
+            for (header_name, pattern) in tech.headers {
+                normalized_headers.insert(header_name.to_lowercase(), pattern.to_lowercase());
+            }
+            tech.headers = normalized_headers;
+            
+            // Normalize cookie keys and patterns to lowercase (matching Go: strings.ToLower(cookie), strings.ToLower(value))
+            let mut normalized_cookies = HashMap::new();
+            for (cookie_name, pattern) in tech.cookies {
+                normalized_cookies.insert(cookie_name.to_lowercase(), pattern.to_lowercase());
+            }
+            tech.cookies = normalized_cookies;
+            
+            all_technologies.insert(tech_name, tech);
+        }
+
+        // Fetch categories from this source
+        let categories = if source.starts_with("http://") || source.starts_with("https://") {
+            fetch_categories_from_url(source).await.unwrap_or_else(|e| {
                 log::warn!(
-                    "Failed to load categories from path: {}. Continuing without categories.",
-                    e
+                    "Failed to fetch categories from {}: {}. Continuing without categories from this source.",
+                    source, e
                 );
                 HashMap::new()
             })
-    };
+        } else {
+            load_categories_from_path(Path::new(source))
+                .await
+                .unwrap_or_else(|e| {
+                    log::warn!(
+                        "Failed to load categories from path {}: {}. Continuing without categories from this source.",
+                        source, e
+                    );
+                    HashMap::new()
+                })
+        };
 
-    // Get version from latest commit if possible
-    // Check for GitHub URLs (both raw.githubusercontent.com and api.github.com)
-    let is_github = source.contains("github.com") || source.contains("raw.githubusercontent.com");
-    let version = if is_github {
-        match get_latest_commit_sha(source).await {
-            Some(sha) => {
-                log::info!("Extracted commit SHA for fingerprints: {}", sha);
-                sha
-            }
-            None => {
-                log::warn!("Failed to extract commit SHA for {}", source);
-                "unknown".to_string()
+        // Merge categories (later sources overwrite earlier ones)
+        for (cat_id, cat_name) in categories {
+            all_categories.insert(cat_id, cat_name);
+        }
+
+        // Get version from this source
+        let is_github = source.contains("github.com") || source.contains("raw.githubusercontent.com");
+        if is_github {
+            if let Some(sha) = get_latest_commit_sha(source).await {
+                versions.push(format!("{}:{}", source, sha));
             }
         }
-    } else {
+    }
+
+    let version = if versions.is_empty() {
         "unknown".to_string()
+    } else {
+        versions.join(";")
     };
 
+    let source_str = sources.join("+");
     let metadata = FingerprintMetadata {
-        source: source.to_string(),
+        source: source_str.clone(),
         version,
         last_updated: SystemTime::now(),
     };
 
+    log::info!(
+        "Merged {} technologies from {} source(s)",
+        all_technologies.len(),
+        sources.len()
+    );
+
     let ruleset = FingerprintRuleset {
-        technologies,
-        categories,
+        technologies: all_technologies,
+        categories: all_categories,
         metadata,
     };
 
-    // Cache it
+    // Cache it with the merged source key
     save_to_cache(&ruleset, cache_dir).await?;
 
     Ok(ruleset)
+}
+
+/// Fetches ruleset from a single URL and caches it locally (legacy function, kept for compatibility)
+#[allow(dead_code)] // Kept for potential future use or external API
+async fn fetch_ruleset(source: &str, cache_dir: &Path) -> Result<FingerprintRuleset> {
+    fetch_ruleset_from_multiple_sources(&[source.to_string()], cache_dir).await
 }
 
 /// Fetches technologies from a URL (handles both single file and directory)
@@ -692,9 +816,21 @@ async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRu
     let metadata_json = fs::read_to_string(&metadata_path).await?;
     let metadata: FingerprintMetadata = serde_json::from_str(&metadata_json)?;
 
-    // Check if cache is for the same source
+    // Check if cache is for the same source(s)
+    // Handle both single source and merged sources (format: "merged:url1+url2")
     if metadata.source != source {
-        return Err(anyhow::anyhow!("Cache source mismatch"));
+        // If source is a merged key, check if it matches the metadata source
+        // If metadata source is also merged, they should match exactly
+        // If source is a single URL but metadata is merged, that's a mismatch
+        if source.starts_with("merged:") || metadata.source.starts_with("merged:") {
+            // Both are merged keys - must match exactly
+            if metadata.source != source {
+                return Err(anyhow::anyhow!("Cache source mismatch: expected '{}', got '{}'", source, metadata.source));
+            }
+        } else {
+            // Single source mismatch
+            return Err(anyhow::anyhow!("Cache source mismatch: expected '{}', got '{}'", source, metadata.source));
+        }
     }
 
     // Check if cache is fresh
@@ -790,6 +926,7 @@ pub async fn detect_technologies(
     html_text: &str,
     headers: &HeaderMap,
     url: &str,
+    script_tag_ids: &HashSet<String>, // Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
 ) -> Result<HashSet<String>> {
     let ruleset = RULESET.read().await;
     let ruleset = ruleset
@@ -799,6 +936,7 @@ pub async fn detect_technologies(
     let mut detected = HashSet::new();
 
     // Extract cookies from SET_COOKIE headers (response cookies)
+    // Normalize cookie names and values to lowercase (matching Go implementation)
     let mut cookies: HashMap<String, String> = headers
         .get_all(reqwest::header::SET_COOKIE)
         .iter()
@@ -807,7 +945,7 @@ pub async fn detect_technologies(
             cookie_str.split(';').next().and_then(|pair| {
                 let mut parts = pair.splitn(2, '=');
                 if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
-                    Some((name.trim().to_lowercase(), value.trim().to_string()))
+                    Some((name.trim().to_lowercase(), value.trim().to_lowercase()))
                 } else {
                     None
                 }
@@ -816,44 +954,60 @@ pub async fn detect_technologies(
         .collect();
 
     // Also extract cookies from Cookie header (request cookies)
+    // Normalize cookie names and values to lowercase (matching Go implementation)
     if let Some(cookie_header) = headers.get(reqwest::header::COOKIE) {
         if let Ok(cookie_str) = cookie_header.to_str() {
             for cookie_pair in cookie_str.split(';') {
                 let mut parts = cookie_pair.trim().splitn(2, '=');
                 if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
-                    cookies.insert(name.to_lowercase(), value.to_string());
+                    cookies.insert(name.trim().to_lowercase(), value.trim().to_lowercase());
                 }
             }
         }
     }
 
-    // Convert headers to lowercase map for matching
+    // Convert headers to lowercase map for matching (matching Go: strings.ToLower(header), strings.ToLower(value))
     let header_map: HashMap<String, String> = headers
         .iter()
         .filter_map(|(name, value)| {
             value
                 .to_str()
                 .ok()
-                .map(|v| (name.as_str().to_lowercase(), v.to_string()))
+                .map(|v| (name.as_str().to_lowercase(), v.to_lowercase()))
         })
         .collect();
 
-    // Combine script content and HTML text for js field detection
-    // (JavaScript object properties can appear in either)
-    let js_search_text = format!("{}\n{}", script_content, html_text);
+    // Fetch external scripts and combine with inline scripts for JavaScript execution
+    // This matches the behavior of the Golang Wappalyzer tool
+    let all_script_content = fetch_and_combine_scripts(script_sources, script_content, url).await;
+    
+    log::debug!(
+        "Technology detection for {}: {} inline script bytes, {} external script sources, {} total script bytes",
+        url,
+        script_content.len(),
+        script_sources.len(),
+        all_script_content.len()
+    );
 
     // Match each technology
     for (tech_name, tech) in &ruleset.technologies {
+        // Log when checking New Relic for debugging
+        if tech_name == "New Relic" {
+            log::debug!("Checking New Relic technology with {} JS properties", tech.js.len());
+        }
         if matches_technology(
             tech,
             &header_map,
             &cookies,
             meta_tags,
             script_sources,
-            &js_search_text,
+            &all_script_content,
             html_text,
             url,
-        ) {
+            script_tag_ids,
+        )
+        .await
+        {
             detected.insert(tech_name.clone());
 
             // Add implied technologies
@@ -893,28 +1047,29 @@ pub async fn get_technology_category(tech_name: &str) -> Option<String> {
 }
 
 /// Checks if a technology matches based on its patterns
-fn matches_technology(
+async fn matches_technology(
     tech: &Technology,
     headers: &HashMap<String, String>,
     cookies: &HashMap<String, String>,
     meta_tags: &HashMap<String, String>,
     script_sources: &[String],
-    js_search_text: &str, // Combined script content + HTML text for js field detection
+    all_script_content: &str, // Combined inline + external scripts for JS execution
     html_text: &str,
     url: &str,
+    script_tag_ids: &HashSet<String>, // Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
 ) -> bool {
-    // Match headers
+    // Match headers (header_name is already normalized to lowercase in ruleset)
     for (header_name, pattern) in &tech.headers {
-        if let Some(header_value) = headers.get(&header_name.to_lowercase()) {
+        if let Some(header_value) = headers.get(header_name) {
             if matches_pattern(pattern, header_value) {
                 return true;
             }
         }
     }
 
-    // Match cookies
+    // Match cookies (cookie_name is already normalized to lowercase in ruleset)
     for (cookie_name, pattern) in &tech.cookies {
-        if let Some(cookie_value) = cookies.get(&cookie_name.to_lowercase()) {
+        if let Some(cookie_value) = cookies.get(cookie_name) {
             if pattern.is_empty() || matches_pattern(pattern, cookie_value) {
                 return true;
             }
@@ -926,42 +1081,55 @@ fn matches_technology(
     // - Simple name: "generator" -> matches meta name="generator"
     // - Prefixed: "property:og:title" -> matches meta property="og:title"
     // - Prefixed: "http-equiv:content-type" -> matches meta http-equiv="content-type"
-    for (meta_key, pattern) in &tech.meta {
+    // Note: meta values are now Vec<String> to handle both string and array formats (from enthec source)
+    for (meta_key, patterns) in &tech.meta {
         let meta_key_lower = meta_key.to_lowercase();
         
         // Check if key already has a prefix (property: or http-equiv:)
         if meta_key_lower.starts_with("property:") {
             let key_without_prefix = meta_key_lower.strip_prefix("property:").unwrap_or(&meta_key_lower);
             if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
-                if matches_pattern(pattern, meta_value) {
-                    return true;
+                // Check all patterns (meta can have multiple patterns)
+                for pattern in patterns {
+                    if matches_pattern(pattern, meta_value) {
+                        return true;
+                    }
                 }
             }
         } else if meta_key_lower.starts_with("http-equiv:") {
             let key_without_prefix = meta_key_lower.strip_prefix("http-equiv:").unwrap_or(&meta_key_lower);
             if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
-                if matches_pattern(pattern, meta_value) {
-                    return true;
+                // Check all patterns
+                for pattern in patterns {
+                    if matches_pattern(pattern, meta_value) {
+                        return true;
+                    }
                 }
             }
         } else {
             // Simple key (like "generator") - try all three attribute types
             // Try name: prefix (most common)
             if let Some(meta_value) = meta_tags.get(&format!("name:{}", meta_key_lower)) {
-                if matches_pattern(pattern, meta_value) {
-                    return true;
+                for pattern in patterns {
+                    if matches_pattern(pattern, meta_value) {
+                        return true;
+                    }
                 }
             }
             // Try property: prefix (Open Graph, etc.)
             if let Some(meta_value) = meta_tags.get(&format!("property:{}", meta_key_lower)) {
-                if matches_pattern(pattern, meta_value) {
-                    return true;
+                for pattern in patterns {
+                    if matches_pattern(pattern, meta_value) {
+                        return true;
+                    }
                 }
             }
             // Try http-equiv: prefix
             if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", meta_key_lower)) {
-                if matches_pattern(pattern, meta_value) {
-                    return true;
+                for pattern in patterns {
+                    if matches_pattern(pattern, meta_value) {
+                        return true;
+                    }
                 }
             }
         }
@@ -983,45 +1151,560 @@ fn matches_technology(
         }
     }
 
-    // Match URL
-    if !tech.url.is_empty() && matches_pattern(&tech.url, url) {
-        return true;
+    // Match URL patterns (can be multiple patterns)
+    for url_pattern in &tech.url {
+        if matches_pattern(url_pattern, url) {
+            return true;
+        }
     }
 
     // Match JavaScript object properties (js field)
-    // Wappalyzer js patterns are like "jQuery", "window.React", "ufe.funnelData"
-    // We search in script content and HTML text for these patterns
+    // Execute JavaScript to check for properties, matching Golang Wappalyzer behavior
+    if !tech.js.is_empty() {
+        log::debug!(
+            "Checking {} JS properties for technology ({} bytes of script content)",
+            tech.js.len(),
+            all_script_content.len()
+        );
+    }
     for (js_property, pattern) in &tech.js {
-        // Check if the property exists in the JavaScript/search text
-        // Patterns like "jQuery" should match "window.jQuery", "jQuery", etc.
-        // Patterns like "ufe.funnelData" should match exactly or as part of a larger expression
+        // Special case: Properties that match script tag IDs (like __NEXT_DATA__)
+        // The Golang Wappalyzer checks for script tag IDs when the js property matches
+        // This is how Next.js detection works - it looks for <script id="__NEXT_DATA__">
+        if script_tag_ids.contains(js_property) {
+            log::info!("Technology matched via script tag ID '{}'", js_property);
+            return true;
+        }
         
-        // If pattern is empty, just check for property existence
-        if pattern.is_empty() {
-            // For properties with dots (like ".__NEXT_DATA__.nextExport"), match the full path
-            if js_property.contains('.') {
-                // Match the full property path (e.g., ".__NEXT_DATA__.nextExport")
-                // Use word boundary-like matching to avoid false positives
-                // Look for the property followed by whitespace, =, :, or end of line
-                let escaped = regex::escape(js_property);
-                let regex_pattern = format!(r"(?m)\b{}\b", escaped);
-                if let Ok(re) = regex::Regex::new(&regex_pattern) {
-                    if re.is_match(js_search_text) {
-                        return true;
+        // Try JavaScript execution for window properties
+        // Following WappalyzerGo's approach: execute scripts and check for global variables
+        if !all_script_content.trim().is_empty() {
+            // Log for debugging New Relic specifically
+            if js_property == "NREUM" || js_property == "newrelic" {
+                log::debug!("Checking for New Relic property '{}' with {} bytes of script content", js_property, all_script_content.len());
+            }
+            if check_js_property_async(all_script_content, js_property, pattern).await {
+                log::info!("Technology matched via JS property '{}'", js_property);
+                return true;
+            } else {
+                // Log when property check fails for debugging
+                if js_property == "NREUM" || js_property == "newrelic" {
+                    log::debug!("New Relic property '{}' not found after JavaScript execution", js_property);
+                }
+            }
+        } else {
+            log::debug!(
+                "Skipping JS property check for '{}' - no script content available",
+                js_property
+            );
+        }
+    }
+
+    false
+}
+
+/// Fetches external JavaScript files and combines them with inline scripts.
+/// 
+/// This function fetches up to MAX_EXTERNAL_SCRIPTS external scripts and combines
+/// them with inline script content for JavaScript execution.
+/// 
+/// # Arguments
+/// 
+/// * `script_sources` - Vector of script src URLs
+/// * `inline_script_content` - Inline script content from HTML
+/// * `base_url` - Base URL for resolving relative script URLs
+/// 
+/// # Returns
+/// 
+/// Combined script content (inline + external scripts)
+async fn fetch_and_combine_scripts(
+    script_sources: &[String],
+    inline_script_content: &str,
+    base_url: &str,
+) -> String {
+    let mut all_scripts = String::from(inline_script_content);
+    
+    // Limit the number of external scripts to prevent excessive fetching
+    let scripts_to_fetch = script_sources
+        .iter()
+        .take(crate::config::MAX_EXTERNAL_SCRIPTS)
+        .collect::<Vec<_>>();
+    
+    if scripts_to_fetch.is_empty() {
+        return all_scripts;
+    }
+    
+    // Create HTTP client with shorter timeout to prevent blocking
+    // Reduced from 5s to 2s to prevent timeouts when fetching multiple scripts
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .user_agent(crate::config::DEFAULT_USER_AGENT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    
+    // Fetch external scripts in parallel
+    let mut tasks = Vec::new();
+    for script_src in scripts_to_fetch {
+        let client = client.clone();
+        let base_url = base_url.to_string();
+        let script_src = script_src.clone();
+        
+        tasks.push(tokio::spawn(async move {
+            // Resolve relative URLs
+            let script_url = if script_src.starts_with("http://") || script_src.starts_with("https://") {
+                script_src
+            } else if script_src.starts_with("//") {
+                format!("https:{}", script_src)
+            } else {
+                // Relative URL - resolve against base URL
+                url::Url::parse(&base_url)
+                    .ok()
+                    .and_then(|base| base.join(&script_src).ok())
+                    .map(|url| url.to_string())
+                    .unwrap_or_else(|| script_src)
+            };
+            
+            match client.get(&script_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.text().await {
+                        Ok(text) => {
+                            // Limit script size
+                            let limited_text: String = text
+                                .chars()
+                                .take(crate::config::MAX_SCRIPT_CONTENT_SIZE)
+                                .collect();
+                            Some(limited_text)
+                        }
+                        Err(e) => {
+                            log::debug!("Failed to read script {}: {}", script_url, e);
+                            None
+                        }
+                    }
+                }
+                Ok(_) => {
+                    log::debug!("Failed to fetch script {}: non-success status", script_url);
+                    None
+                }
+                Err(e) => {
+                    log::debug!("Failed to fetch script {}: {}", script_url, e);
+                    None
+                }
+            }
+        }));
+    }
+    
+    // Collect results and append to all_scripts
+    let mut fetched_count = 0;
+    for task in tasks {
+        if let Ok(Some(script_content)) = task.await {
+            fetched_count += 1;
+            // Check total size limit
+            if all_scripts.len() + script_content.len() > crate::config::MAX_TOTAL_SCRIPT_CONTENT_SIZE {
+                log::debug!("Total script content size limit reached, skipping remaining scripts");
+                break;
+            }
+            all_scripts.push_str("\n");
+            all_scripts.push_str(&script_content);
+        }
+    }
+    
+    if fetched_count > 0 {
+        log::debug!(
+            "Fetched {} external scripts ({} bytes total) for {}",
+            fetched_count,
+            all_scripts.len(),
+            base_url
+        );
+    }
+    
+    all_scripts
+}
+
+/// Checks if a JavaScript property exists by executing JavaScript code (async version).
+/// 
+/// This function executes JavaScript code and checks if properties exist on the window object,
+/// matching the behavior of the Golang Wappalyzer tool.
+/// 
+/// **Security:** This function enforces strict limits on script size and execution time
+/// to prevent DoS attacks. Scripts are limited to 100KB per script and 500KB total,
+/// and execution is limited to 1 second with a 10MB memory limit.
+/// 
+/// # Arguments
+/// 
+/// * `script_content` - The JavaScript code to execute (inline + external scripts)
+/// * `js_property` - The property path to check (e.g., "jQuery" or "window.React")
+/// * `pattern` - Optional pattern to match against the property value
+/// 
+/// # Returns
+/// 
+/// `true` if the property exists (and matches the pattern if provided), `false` otherwise
+async fn check_js_property_async(script_content: &str, js_property: &str, pattern: &str) -> bool {
+    // Skip if script content is empty
+    if script_content.trim().is_empty() {
+        return false;
+    }
+
+    // Security: Enforce size limits to prevent DoS attacks
+    if script_content.len() > crate::config::MAX_TOTAL_SCRIPT_CONTENT_SIZE {
+        log::debug!(
+            "Script content too large ({} bytes), skipping JavaScript execution",
+            script_content.len()
+        );
+        return false;
+    }
+
+    // Try to execute JavaScript using QuickJS (via rquickjs) with timeout protection
+    match execute_js_property_check_with_timeout(script_content, js_property, pattern).await {
+        Ok(result) => {
+            if result {
+                log::info!("JavaScript execution found property '{}'", js_property);
+            }
+            result
+        },
+        Err(e) => {
+            log::debug!(
+                "JavaScript execution failed or timed out for '{}': {e}",
+                js_property
+            );
+            false
+        }
+    }
+}
+
+/// Executes JavaScript code and checks if a property exists with timeout protection.
+/// 
+/// Uses QuickJS to execute the script and check property existence on the window object.
+/// Enforces strict security limits: memory limit, execution timeout, and size limits.
+/// 
+/// **Security measures:**
+/// - Memory limit: 10MB per context
+/// - Execution timeout: 1 second (via Tokio timeout)
+/// - Size limits enforced by caller
+async fn execute_js_property_check_with_timeout(
+    script_content: &str,
+    js_property: &str,
+    pattern: &str,
+) -> Result<bool> {
+    // Use Tokio timeout to prevent infinite loops and CPU exhaustion
+    // Note: QuickJS execution is blocking, so we run it in spawn_blocking
+    let timeout_duration = std::time::Duration::from_millis(
+        crate::config::MAX_JS_EXECUTION_TIME_MS
+    );
+    
+    let script_content = script_content.to_string();
+    let js_property = js_property.to_string();
+    let pattern = pattern.to_string();
+    
+    // Use spawn_blocking to run QuickJS in a blocking thread pool
+    // This prevents blocking the async runtime
+    let handle = tokio::task::spawn_blocking(move || {
+        execute_js_property_check(&script_content, &js_property, &pattern)
+    });
+    
+    // Apply timeout to the spawned task
+    tokio::time::timeout(timeout_duration, handle)
+        .await
+        .map_err(|_| anyhow::anyhow!("JavaScript execution timed out after {}ms", 
+            crate::config::MAX_JS_EXECUTION_TIME_MS))?
+        .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
+}
+
+/// Executes JavaScript code and checks if a property exists.
+/// 
+/// Uses QuickJS (via rquickjs) to execute the script and check property existence on the window object.
+/// 
+/// **Security:** This function enforces a memory limit but does NOT enforce execution timeout.
+/// Callers should use `execute_js_property_check_with_timeout` instead.
+fn execute_js_property_check(script_content: &str, js_property: &str, pattern: &str) -> Result<bool> {
+    // Create a QuickJS runtime with memory limit to prevent memory exhaustion attacks
+    let runtime = Runtime::new().map_err(|e| anyhow::anyhow!("Failed to create QuickJS runtime: {e}"))?;
+    
+    // Set memory limit
+    runtime.set_memory_limit(crate::config::MAX_JS_MEMORY_LIMIT);
+    
+    // Create a context within the runtime
+    let context = Context::full(&runtime)
+        .map_err(|e| anyhow::anyhow!("Failed to create QuickJS context: {e}"))?;
+
+    // Create window object and stub browser APIs in global scope before executing scripts
+    // rquickjs doesn't have a global 'window' object by default, so we need to create it
+    // Following WappalyzerGo's approach: create window, document, and other browser APIs as stubs
+    // This allows scripts to initialize without errors, even if they can't fully function
+    context.with(|ctx| {
+        // Create window object and browser API stubs in global scope
+        // Using globalThis ensures it's truly global (not just a local var)
+        let init_code = r#"
+            // Create window object in global scope
+            globalThis.window = {};
+            globalThis.global = globalThis.window;
+            globalThis.self = globalThis.window;
+            
+            // Stub document object to prevent errors when scripts try to use it
+            globalThis.document = {
+                createElement: function() { return {}; },
+                body: {},
+                location: {},
+                getElementById: function() { return null; },
+                getElementsByTagName: function() { return []; },
+                getElementsByClassName: function() { return []; },
+                querySelector: function() { return null; },
+                querySelectorAll: function() { return []; }
+            };
+            
+            // Stub navigator
+            globalThis.navigator = {
+                userAgent: 'Mozilla/5.0',
+                platform: 'Linux x86_64'
+            };
+            
+            // Stub localStorage (empty object, no-op methods)
+            globalThis.localStorage = {
+                getItem: function() { return null; },
+                setItem: function() {},
+                removeItem: function() {},
+                clear: function() {}
+            };
+            
+            // Stub console to prevent errors
+            globalThis.console = {
+                log: function() {},
+                error: function() {},
+                warn: function() {},
+                info: function() {}
+            };
+        "#;
+        if let Err(e) = ctx.eval::<rquickjs::Value, _>(init_code) {
+            log::debug!("Failed to initialize browser stubs for property '{}': {e}", js_property);
+        }
+    });
+
+    // Execute the script content to populate the window object
+    // Wrap in try-catch to handle errors gracefully
+    // Scripts may fail partially but still set global variables we need
+    let setup_code = format!(
+        r#"
+        try {{
+            {}
+        }} catch (e) {{
+            // Ignore errors during script execution - scripts may fail but still set globals
+        }}
+        "#,
+        script_content
+    );
+
+    // Execute the script (ignore errors - some scripts may fail but still set properties)
+    context.with(|ctx| {
+        if let Err(e) = ctx.eval::<rquickjs::Value, _>(setup_code.as_str()) {
+            log::debug!("Script execution error (non-fatal) for property '{}': {e}", js_property);
+        }
+    });
+
+    // Build the property access expression
+    // Handle both simple properties (e.g., "jQuery") and property paths (e.g., "window.React" or ".__NEXT_DATA__.nextExport")
+    let property_expr = if js_property.starts_with('.') {
+        // Property path starting with dot (e.g., ".__NEXT_DATA__.nextExport")
+        // Access from window
+        format!("window{}", js_property)
+    } else if js_property.contains('.') {
+        // Property path with dots (e.g., "window.React" or "ufe.funnelData")
+        // Use as-is if it starts with window/global/self, otherwise prepend window
+        if js_property.starts_with("window.") 
+            || js_property.starts_with("global.") 
+            || js_property.starts_with("self.") {
+            js_property.to_string()
+        } else {
+            format!("window.{}", js_property)
+        }
+    } else {
+        // Simple property name (e.g., "jQuery" or "NREUM")
+        // Check both window.NREUM and global NREUM (some scripts set it globally, not on window)
+        format!("window.{}", js_property)
+    };
+    
+    // Also check global scope for properties that might not be on window
+    // Some scripts (like New Relic) set properties globally: NREUM={} not window.NREUM={}
+    let global_property_expr = if js_property.contains('.') {
+        // For nested properties, check global scope too
+        js_property.to_string()
+    } else {
+        // For simple properties, check global scope
+        js_property.to_string()
+    };
+
+    // Build pattern check code first (to avoid nested format! issues)
+    let pattern_check = if pattern.is_empty() {
+        "return true;".to_string()
+    } else if pattern == "true" {
+        "return value === true || value === 'true' || (typeof value === 'object' && value !== null);".to_string()
+    } else if pattern == "false" {
+        "return value === false || value === 'false';".to_string()
+    } else {
+        // For other patterns, convert to string and check
+        // Escape single quotes and backslashes in pattern for JavaScript string
+        let escaped_pattern = pattern.replace('\\', "\\\\").replace('\'', "\\'");
+        format!("return String(value).indexOf('{}') !== -1;", escaped_pattern)
+    };
+    
+    // Check if property exists by trying to access it
+    // Following WappalyzerGo's approach: check typeof and then access the property
+    // window should exist from initialization in global scope
+    // For simple properties, also check global scope (some scripts set NREUM={} not window.NREUM={})
+    let check_code = if !js_property.contains('.') && !js_property.starts_with("window.") && !js_property.starts_with("global.") && !js_property.starts_with("self.") {
+        // Simple property name - check both window.property and global property
+        // This handles cases like New Relic where NREUM={} sets it globally, not window.NREUM={}
+        format!(
+            r#"
+            (function() {{
+                try {{
+                    // Check window property first
+                    var value;
+                    if (typeof {} !== 'undefined') {{
+                        value = {};
+                    }} else if (typeof {} !== 'undefined') {{
+                        // Fallback to global scope (for scripts that set NREUM={{}} not window.NREUM={{}})
+                        value = {};
+                    }} else {{
+                        return false;
+                    }}
+                    
+                    if (value === undefined || value === null) {{
+                        return false;
+                    }}
+                    
+                    {}
+                }} catch (e) {{
+                    return false;
+                }}
+            }})()
+            "#,
+            property_expr, // typeof window.NREUM !== 'undefined'
+            property_expr, // window.NREUM
+            global_property_expr, // typeof NREUM !== 'undefined'
+            global_property_expr, // NREUM
+            pattern_check
+        )
+    } else {
+        // Complex property path - only check window
+        format!(
+            r#"
+            (function() {{
+                try {{
+                    // Check if the property path exists (e.g., window.NREUM or window.jQuery.fn.jquery)
+                    // Use typeof to safely check existence before accessing
+                    var value;
+                    if (typeof {} !== 'undefined') {{
+                        value = {};
+                    }} else {{
+                        return false;
+                    }}
+                    
+                    if (value === undefined || value === null) {{
+                        return false;
+                    }}
+                    
+                    {}
+                }} catch (e) {{
+                    return false;
+                }}
+            }})()
+            "#,
+            property_expr, // First check: typeof window.NREUM !== 'undefined'
+            property_expr, // Second access: window.NREUM (to get the value)
+            pattern_check
+        )
+    };
+
+    // Execute the property check code and convert result to bool
+    // All operations must be within the same `with` closure due to lifetime constraints
+    context.with(|ctx| {
+        let result = match ctx.eval::<rquickjs::Value, _>(check_code.as_str()) {
+            Ok(val) => val,
+            Err(e) => {
+                log::debug!("JavaScript eval error for property '{}': {e}", js_property);
+                return Err(anyhow::anyhow!("Failed to execute property check: {e}"));
+            },
+        };
+        
+        // Result should be a boolean - rquickjs returns Value which we need to convert
+        // Check if it's a boolean value
+        if let Some(bool_val) = result.as_bool() {
+            Ok(bool_val)
+        } else {
+            // If not a boolean, check if it's truthy (not null/undefined)
+            Ok(!result.is_null() && !result.is_undefined())
+        }
+    })
+}
+
+/// Checks if a JavaScript property exists using regex-based pattern matching (fallback).
+/// 
+/// **Note:** This function is currently unused. We rely solely on JavaScript execution
+/// for property detection to avoid false positives. This function is kept for potential
+/// future use or debugging.
+/// 
+/// # Arguments
+/// 
+/// * `js_search_text` - The JavaScript code to search (with comments/strings stripped)
+/// * `js_property` - The property path to check (e.g., "jQuery" or "window.React")
+/// * `pattern` - Optional pattern to match against the property value
+/// 
+/// # Returns
+/// 
+/// `true` if the property is found (and matches the pattern if provided), `false` otherwise
+#[allow(dead_code)]
+fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &str) -> bool {
+    // If pattern is empty, just check for property existence
+    if pattern.is_empty() {
+        // For properties with dots (like ".__NEXT_DATA__.nextExport"), match the full path
+        if js_property.contains('.') {
+            // Match the full property path (e.g., ".__NEXT_DATA__.nextExport")
+            // Escape dots in the property path for regex
+            let escaped = regex::escape(js_property);
+            // Match as complete property path, not as substring
+            // Look for the property path followed by non-word char or end
+            let regex_pattern = format!(r"(?m)(?<![a-zA-Z0-9_$]){}\b(?![a-zA-Z0-9_$])", escaped);
+            if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                if re.is_match(js_search_text) {
+                    return true;
+                }
+            }
+        } else {
+            // Simple property name - match EXACT property name in JavaScript contexts
+            // CRITICAL: Property must be complete identifier, not substring
+            // e.g., "Fundiin" should NOT match in "websiteMaximumSuggestFundiinWithPrediction"
+            let escaped = regex::escape(js_property);
+            
+            // For properties starting with $ or __, they're likely globals
+            if js_property.starts_with('$') || js_property.starts_with("__") {
+                // Match as global: window.Property (most reliable)
+                // Or as standalone at start of line/expression
+                let patterns = vec![
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])^\s*{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                ];
+                for regex_pattern in patterns {
+                    if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                        if re.is_match(js_search_text) {
+                            return true;
+                        }
                     }
                 }
             } else {
-                // Simple property name - look for common JavaScript patterns
-                // Use word boundaries to avoid matching in strings/comments
-                let escaped = regex::escape(js_property);
+                // Regular properties: require EXACT match in JavaScript contexts
+                // Match only if property is complete identifier, not substring
+                // Wappalyzer executes JS - we approximate with strict regex matching
                 let patterns = vec![
-                    format!(r"\bwindow\.{}\b", escaped),
-                    format!(r"\bglobal\.{}\b", escaped),
-                    format!(r"\bthis\.{}\b", escaped),
-                    format!(r"\bvar\s+{}\b", escaped),
-                    format!(r"\blet\s+{}\b", escaped),
-                    format!(r"\bconst\s+{}\b", escaped),
-                    format!(r"\b{}\b", escaped),
+                    // Global object access - most reliable (window, global, self)
+                    // Negative lookbehind/lookahead ensures it's not part of longer name
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bself\.{}\b(?![a-zA-Z0-9_$])", escaped),
+                    // Variable declarations - must be followed by = or ; and be complete identifier
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bvar\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\blet\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])", escaped),
+                    format!(r"(?m)(?<![a-zA-Z0-9_$])\bconst\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])", escaped),
                 ];
                 
                 for regex_pattern in patterns {
@@ -1032,52 +1715,165 @@ fn matches_technology(
                     }
                 }
             }
-        } else {
-            // Pattern specified - use it for matching
-            // For properties with dots, we need to check if the property path exists
-            // and then match the pattern against its value
-            if js_property.contains('.') {
-                // Property path like ".__NEXT_DATA__.nextExport" with pattern "true"
-                // We need to find the property and check if its value matches the pattern
-                // This is complex without executing JS, so we'll look for the property
-                // followed by the pattern value
+        }
+    } else {
+        // Pattern specified - use it for matching
+        // For properties with dots, we need to check if the property path exists
+        // and then match the pattern against its value
+        if js_property.contains('.') {
+            // Property path like ".__NEXT_DATA__.nextExport" with pattern "true"
+            // We need to find the property and check if its value matches the pattern
+            // This is complex without executing JS, so we'll look for the property
+            // followed by the pattern value
+            let escaped_prop = regex::escape(js_property);
+            let value_pattern = if pattern == "true" {
+                r"true"
+            } else if pattern == "false" {
+                r"false"
+            } else {
+                pattern
+            };
+            
+            // Look for property path followed by = or : and then the pattern
+            let regex_pattern = format!(r"(?m)\b{}\s*[=:]\s*{}", escaped_prop, regex::escape(value_pattern));
+            if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                if re.is_match(js_search_text) {
+                    return true;
+                }
+            }
+            
+            // Also try matching the pattern in the context of the property
+            if matches_pattern(pattern, js_search_text) {
+                // Additional check: ensure the property path exists nearby
                 let escaped_prop = regex::escape(js_property);
-                let value_pattern = if pattern == "true" {
-                    r"true"
-                } else if pattern == "false" {
-                    r"false"
-                } else {
-                    pattern
-                };
-                
-                // Look for property path followed by = or : and then the pattern
-                let regex_pattern = format!(r"(?m)\b{}\s*[=:]\s*{}", escaped_prop, regex::escape(value_pattern));
-                if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                if let Ok(re) = regex::Regex::new(&format!(r"(?m)\b{}\b", escaped_prop)) {
                     if re.is_match(js_search_text) {
                         return true;
                     }
                 }
-                
-                // Also try matching the pattern in the context of the property
-                if matches_pattern(pattern, js_search_text) {
-                    // Additional check: ensure the property path exists nearby
-                    let escaped_prop = regex::escape(js_property);
-                    if let Ok(re) = regex::Regex::new(&format!(r"(?m)\b{}\b", escaped_prop)) {
-                        if re.is_match(js_search_text) {
-                            return true;
-                        }
-                    }
-                }
-            } else {
-                // Simple property with pattern - match pattern in context
-                if matches_pattern(pattern, js_search_text) {
-                    return true;
-                }
+            }
+        } else {
+            // Simple property with pattern - match pattern in context
+            if matches_pattern(pattern, js_search_text) {
+                return true;
             }
         }
     }
 
     false
+}
+
+/// Strips JavaScript comments and string literals from code to avoid false positives.
+/// 
+/// **Note:** This function is currently unused in production code. We rely solely on
+/// JavaScript execution for property detection, which naturally ignores comments and strings.
+/// This function is kept for tests and potential future use.
+/// 
+/// Handles:
+/// - Single-line comments (// ...)
+/// - Multi-line comments (/* ... */)
+/// - Single-quoted strings ('...')
+/// - Double-quoted strings ("...")
+/// - Template literals (`...`)
+#[allow(dead_code)]
+fn strip_js_comments_and_strings(code: &str) -> String {
+    let mut result = String::with_capacity(code.len());
+    let mut chars = code.chars().peekable();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_template_literal = false;
+    let mut in_single_line_comment = false;
+    let mut in_multi_line_comment = false;
+    let mut prev_char = '\0';
+    
+    while let Some(ch) = chars.next() {
+        let next_char = chars.peek().copied().unwrap_or('\0');
+        
+        // Handle escaping in strings
+        if (in_single_quote || in_double_quote || in_template_literal) && ch == '\\' {
+            // Skip escaped character
+            result.push(ch);
+            if let Some(escaped) = chars.next() {
+                result.push(escaped);
+            }
+            prev_char = ch;
+            continue;
+        }
+        
+        // Check for string/template literal start/end
+        if !in_single_line_comment && !in_multi_line_comment {
+            if ch == '\'' && !in_double_quote && !in_template_literal {
+                in_single_quote = !in_single_quote;
+                result.push(' '); // Replace with space to preserve positions
+                prev_char = ch;
+                continue;
+            }
+            if ch == '"' && !in_single_quote && !in_template_literal {
+                in_double_quote = !in_double_quote;
+                result.push(' ');
+                prev_char = ch;
+                continue;
+            }
+            if ch == '`' && !in_single_quote && !in_double_quote {
+                in_template_literal = !in_template_literal;
+                result.push(' ');
+                prev_char = ch;
+                continue;
+            }
+        }
+        
+        // If we're in a string, skip it
+        if in_single_quote || in_double_quote || in_template_literal {
+            result.push(' ');
+            prev_char = ch;
+            continue;
+        }
+        
+        // Check for comment start
+        if !in_single_line_comment && !in_multi_line_comment {
+            if ch == '/' && next_char == '/' {
+                in_single_line_comment = true;
+                result.push(' ');
+                chars.next(); // Skip the second '/'
+                prev_char = ch;
+                continue;
+            }
+            if ch == '/' && next_char == '*' {
+                in_multi_line_comment = true;
+                result.push(' ');
+                chars.next(); // Skip the '*'
+                prev_char = ch;
+                continue;
+            }
+        }
+        
+        // Check for comment end
+        if in_multi_line_comment && prev_char == '*' && ch == '/' {
+            in_multi_line_comment = false;
+            result.push(' ');
+            prev_char = ch;
+            continue;
+        }
+        if in_single_line_comment && ch == '\n' {
+            in_single_line_comment = false;
+            result.push('\n');
+            prev_char = ch;
+            continue;
+        }
+        
+        // If we're in a comment, skip it
+        if in_single_line_comment || in_multi_line_comment {
+            result.push(' ');
+            prev_char = ch;
+            continue;
+        }
+        
+        // Regular code character
+        result.push(ch);
+        prev_char = ch;
+    }
+    
+    result
 }
 
 /// Pattern matching supporting Wappalyzer pattern syntax
@@ -1153,6 +1949,30 @@ mod tests {
         assert!(matches_pattern("nginx", "nginx/1.18.0"));
         assert!(matches_pattern("", "anything"));
         assert!(!matches_pattern("apache", "nginx/1.18.0"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings() {
+        // Test comment stripping
+        let code = r#"var x = 1; // websiteMaximumSuggestFundiinWithPrediction
+        var y = 2; /* lz_chat_execute */"#;
+        let stripped = strip_js_comments_and_strings(code);
+        assert!(!stripped.contains("websiteMaximumSuggestFundiinWithPrediction"));
+        assert!(!stripped.contains("lz_chat_execute"));
+        
+        // Test string stripping
+        let code2 = r#"var x = "websiteMaximumSuggestFundiinWithPrediction";
+        var y = 'lz_chat_execute';"#;
+        let stripped2 = strip_js_comments_and_strings(code2);
+        assert!(!stripped2.contains("websiteMaximumSuggestFundiinWithPrediction"));
+        assert!(!stripped2.contains("lz_chat_execute"));
+        
+        // Test that actual code is preserved
+        let code3 = r#"window.websiteMaximumSuggestFundiinWithPrediction = true;
+        var lz_chat_execute = function() {};"#;
+        let stripped3 = strip_js_comments_and_strings(code3);
+        assert!(stripped3.contains("websiteMaximumSuggestFundiinWithPrediction"));
+        assert!(stripped3.contains("lz_chat_execute"));
     }
 
     #[tokio::test]
