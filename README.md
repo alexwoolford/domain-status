@@ -12,7 +12,7 @@
 * **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (City and ASN). Downloads and caches databases automatically when license key is provided.
 * **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
 * **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
-* **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and detailed error categorization
+* **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and comprehensive processing statistics (errors, warnings, and informational metrics)
 * **Rate Limiting**: Optional token-bucket rate limiting to control request rates and prevent overwhelming target servers
 * **Robust Data Storage**: SQLite database with WAL mode, UPSERT semantics, and unique constraints for idempotent processing
 * **Flexible Configuration**: Extensive CLI options for logging, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
@@ -717,12 +717,16 @@ The tool provides detailed logging with progress updates and error summaries:
 ✔️ domain_status [INFO] Processed 1506 lines in 5.33 seconds (~282.29 lines/sec)
 ✔️ domain_status [INFO] Processed 1851 lines in 10.32 seconds (~179.39 lines/sec)
 ✔️ domain_status [INFO] Processed 1856 lines in 15.23 seconds (~121.87 lines/sec)
-✔️ domain_status [INFO] Error Counts:
+✔️ domain_status [INFO] Error Counts (893 total):
 ✔️ domain_status [INFO]    HTTP request redirect error: 2
 ✔️ domain_status [INFO]    HTTP request timeout error: 154
 ✔️ domain_status [INFO]    HTTP request other error: 544
-✔️ domain_status [INFO]    Title extract error: 49
 ✔️ domain_status [INFO]    Process URL timeout: 144
+✔️ domain_status [INFO]    DNS NS lookup error: 49
+✔️ domain_status [INFO] Warning Counts (1234 total):
+✔️ domain_status [INFO]    Missing meta keywords: 456
+✔️ domain_status [INFO]    Missing meta description: 678
+✔️ domain_status [INFO]    Missing title: 100
 ```
 
 **JSON format (`--log-format json`):**
@@ -742,8 +746,12 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
   - Initial delay: 1 second
   - Backoff factor: 2x per retry
   - Maximum delay: 20 seconds
+  - Maximum attempts: 3 (prevents infinite retries)
 - **Error Rate Limiting**: Monitors error rate and automatically throttles when threshold is exceeded
-- **Error Categorization**: Tracks 15+ different error types (timeouts, DNS failures, HTTP errors, parsing errors, etc.)
+- **Processing Statistics**: Comprehensive tracking with three categories:
+  - **Errors**: Actual failures (network timeouts, DNS failures, HTTP errors, TLS errors, etc.) - 15+ error types
+  - **Warnings**: Missing optional data (meta keywords, meta descriptions, titles) - tracked separately from errors
+  - **Info**: Informational metrics (redirects, bot detection, etc.) - reserved for future use
 - **Graceful Degradation**: Invalid URLs are skipped, non-HTML responses are filtered, oversized responses are truncated
 
 ## 🚀 Performance & Scalability

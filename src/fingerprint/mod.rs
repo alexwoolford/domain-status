@@ -218,7 +218,7 @@ static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
 
 /// Initializes the fingerprint ruleset from URL or local path.
 ///
-/// Rules are cached locally and refreshed if older than 24 hours.
+/// Rules are cached locally and refreshed if older than 7 days.
 /// If `fingerprints_source` is None, uses the default HTTP Archive URL.
 pub async fn init_ruleset(
     fingerprints_source: Option<&str>,
@@ -382,7 +382,7 @@ async fn fetch_ruleset_from_multiple_sources(
     Ok(ruleset)
 }
 
-/// Fetches ruleset from a single URL and caches it locally (legacy function, kept for compatibility)
+/// Fetches ruleset from a single URL and caches it locally
 #[allow(dead_code)] // Kept for potential future use or external API
 async fn fetch_ruleset(source: &str, cache_dir: &Path) -> Result<FingerprintRuleset> {
     fetch_ruleset_from_multiple_sources(&[source.to_string()], cache_dir).await
@@ -860,7 +860,7 @@ async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRu
     let technologies_json = fs::read_to_string(&technologies_path).await?;
     let technologies: HashMap<String, Technology> = serde_json::from_str(&technologies_json)?;
 
-    // Load categories (optional - may not exist in old cache)
+    // Load categories (optional - may not exist in cache)
     let categories = if categories_path.exists() {
         match fs::read_to_string(&categories_path).await {
             Ok(categories_json) => {

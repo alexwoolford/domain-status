@@ -9,7 +9,7 @@ use publicsuffix::List;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use crate::error_handling::ErrorStats;
+use crate::error_handling::ProcessingStats;
 
 /// Context containing all shared resources needed for URL processing.
 ///
@@ -28,7 +28,7 @@ pub struct ProcessingContext {
     /// DNS resolver for hostname lookups
     pub resolver: Arc<TokioAsyncResolver>,
     /// Error statistics tracker
-    pub error_stats: Arc<ErrorStats>,
+    pub error_stats: Arc<ProcessingStats>,
     /// Unique identifier for this run (for time-series tracking)
     pub run_id: Option<String>,
 }
@@ -41,7 +41,7 @@ impl ProcessingContext {
         pool: Arc<SqlitePool>,
         extractor: Arc<List>,
         resolver: Arc<TokioAsyncResolver>,
-        error_stats: Arc<ErrorStats>,
+        error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
     ) -> Self {
         Self {

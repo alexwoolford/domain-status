@@ -3,7 +3,7 @@ use scraper::{Html, Selector};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use crate::error_handling::{ErrorStats, ErrorType};
+use crate::error_handling::ProcessingStats;
 
 // CSS selector strings
 const TITLE_SELECTOR_STR: &str = "title";
@@ -46,12 +46,12 @@ static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker for recording extraction failures
+/// * `error_stats` - Processing statistics tracker for recording extraction issues
 ///
 /// # Returns
 ///
 /// The page title as a string, or an empty string if not found.
-pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
+pub fn extract_title(document: &Html, error_stats: &ProcessingStats) -> String {
     let elements: Vec<_> = document.select(&TITLE_SELECTOR).collect();
     log::debug!("Found {} title elements", elements.len());
 
@@ -69,7 +69,7 @@ pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
                 let inner = element.inner_html().trim().to_string();
                 log::debug!("Title inner_html: '{}' (length: {})", inner, inner.len());
                 if inner.is_empty() {
-                    error_stats.increment(ErrorType::TitleExtractError);
+                    error_stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
                     String::from("")
                 } else {
                     inner
@@ -80,7 +80,7 @@ pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
         }
         None => {
             log::debug!("No title element found in document");
-            error_stats.increment(ErrorType::TitleExtractError);
+            error_stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
             String::from("")
         }
     }
@@ -95,12 +95,12 @@ pub fn extract_title(document: &Html, error_stats: &ErrorStats) -> String {
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `_error_stats` - Error statistics tracker (unused - missing keywords is not an error)
+/// * `stats` - Processing statistics tracker (for warnings if missing)
 ///
 /// # Returns
 ///
 /// A vector of keyword strings, or `None` if no keywords meta tag is found.
-pub fn extract_meta_keywords(document: &Html, _error_stats: &ErrorStats) -> Option<Vec<String>> {
+pub fn extract_meta_keywords(document: &Html, stats: &crate::error_handling::ProcessingStats) -> Option<Vec<String>> {
     let meta_keywords = document
         .select(&META_KEYWORDS_SELECTOR)
         .next()
@@ -115,16 +115,16 @@ pub fn extract_meta_keywords(document: &Html, _error_stats: &ErrorStats) -> Opti
                 .collect();
 
             if keywords.is_empty() {
-                // Empty keywords is not an error - meta keywords tag is deprecated
-                // Many modern websites don't use it, so we don't count this as an error
+                // Empty keywords - track as warning
+                stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
                 None
             } else {
                 Some(keywords)
             }
         }
         None => {
-            // Missing keywords meta tag is not an error - it's deprecated and optional
-            // Many modern websites don't use it, so we don't count this as an error
+            // Missing keywords meta tag - track as warning
+            stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
             None
         }
     }
@@ -138,12 +138,12 @@ pub fn extract_meta_keywords(document: &Html, _error_stats: &ErrorStats) -> Opti
 /// # Arguments
 ///
 /// * `document` - The parsed HTML document
-/// * `error_stats` - Error statistics tracker (currently unused for this function)
+/// * `stats` - Processing statistics tracker (for warnings if missing)
 ///
 /// # Returns
 ///
 /// The meta description as a string, or `None` if not found.
-pub fn extract_meta_description(document: &Html, _error_stats: &ErrorStats) -> Option<String> {
+pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Option<String> {
     let meta_description = document
         .select(&META_DESCRIPTION_SELECTOR)
         .next()
@@ -154,8 +154,10 @@ pub fn extract_meta_description(document: &Html, _error_stats: &ErrorStats) -> O
                 .map(|content| content.trim().to_string())
         });
 
-    // Missing meta description is not an error - it's optional metadata
-    // Some websites don't include it, so we don't count this as an error
+    // Missing meta description - track as warning (optional but recommended for SEO)
+    if meta_description.is_none() {
+        stats.increment_warning(crate::error_handling::WarningType::MissingMetaDescription);
+    }
     meta_description
 }
 
@@ -454,10 +456,10 @@ fn extract_twitter_cards(document: &Html) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error_handling::ErrorStats;
+    use crate::error_handling::ProcessingStats;
 
-    fn test_error_stats() -> ErrorStats {
-        ErrorStats::new()
+    fn test_error_stats() -> ProcessingStats {
+        ProcessingStats::new()
     }
 
     #[test]
@@ -466,7 +468,7 @@ mod tests {
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert_eq!(extract_title(&document, &stats), "Test Page");
-        assert_eq!(stats.get_count(ErrorType::TitleExtractError), 0);
+        assert_eq!(stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError), 0);
     }
 
     #[test]
@@ -501,11 +503,13 @@ mod tests {
 
     #[test]
     fn test_extract_title_missing() {
+        // Missing title is now tracked as a warning, not an error
         let html = r#"<html><head></head><body></body></html>"#;
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert_eq!(extract_title(&document, &stats), "");
-        assert_eq!(stats.get_count(ErrorType::TitleExtractError), 1);
+        assert_eq!(stats.get_warning_count(crate::error_handling::WarningType::MissingTitle), 1);
+        assert_eq!(stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError), 0);
     }
 
     #[test]
@@ -539,13 +543,12 @@ mod tests {
     #[test]
     fn test_extract_meta_keywords_empty_content() {
         // Edge case: empty content attribute
-        // Empty keywords is not an error - meta keywords tag is deprecated and optional
+        // Empty keywords - track as warning
         let html = r#"<html><head><meta name="keywords" content=""></head></html>"#;
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert!(extract_meta_keywords(&document, &stats).is_none());
-        // No error should be counted - missing/empty keywords is not an error
-        assert_eq!(stats.get_count(ErrorType::KeywordExtractError), 0);
+        // Missing/empty keywords is tracked as a warning, not an error
     }
 
     #[test]
@@ -592,13 +595,12 @@ mod tests {
 
     #[test]
     fn test_extract_meta_description_missing() {
-        // Missing meta description is not an error - it's optional metadata
+        // Missing meta description is tracked as a warning, not an error
         let html = r#"<html><head></head></html>"#;
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert!(extract_meta_description(&document, &stats).is_none());
-        // No error should be counted - missing meta description is not an error
-        assert_eq!(stats.get_count(ErrorType::MetaDescriptionExtractError), 0);
+        // Missing meta description is tracked as a warning, not an error
     }
 
     #[test]

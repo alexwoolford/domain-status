@@ -292,7 +292,7 @@ struct HtmlData {
 ///
 /// * `body` - The HTML body content
 /// * `final_domain` - The final domain (for logging)
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Processing statistics tracker
 ///
 /// # Returns
 ///
@@ -300,7 +300,7 @@ struct HtmlData {
 fn parse_html_content(
     body: &str,
     final_domain: &str,
-    error_stats: &crate::error_handling::ErrorStats,
+    error_stats: &crate::error_handling::ProcessingStats,
 ) -> HtmlData {
     let document = Html::parse_document(body);
 
@@ -453,7 +453,7 @@ struct TlsDnsData {
 /// * `host` - The hostname to resolve
 /// * `resolver` - DNS resolver
 /// * `final_domain` - The final domain (for logging)
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Processing statistics tracker
 ///
 /// # Errors
 ///
@@ -463,7 +463,7 @@ async fn fetch_tls_and_dns(
     host: &str,
     resolver: &hickory_resolver::TokioAsyncResolver,
     final_domain: &str,
-    error_stats: &crate::error_handling::ErrorStats,
+    error_stats: &crate::error_handling::ProcessingStats,
 ) -> Result<TlsDnsData, Error> {
     // Run TLS and DNS operations in parallel (they're independent)
     let (tls_result, dns_result) = tokio::join!(
@@ -512,7 +512,7 @@ async fn fetch_tls_and_dns(
             ),
             Err(e) => {
                 log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-                error_stats.increment(crate::error_handling::ErrorType::TlsCertificateError);
+                error_stats.increment_error(crate::error_handling::ErrorType::TlsCertificateError);
                 (None, None, None, None, None, None, None, None)
             }
         };
@@ -530,7 +530,7 @@ async fn fetch_tls_and_dns(
             log::warn!(
                 "Failed to resolve DNS for {final_domain}: {e} - continuing without IP address"
             );
-            error_stats.increment(crate::error_handling::ErrorType::DnsNsLookupError);
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
             (String::new(), None) // Use empty string for IP, None for reverse DNS
         }
     };
@@ -568,11 +568,11 @@ struct AdditionalDnsData {
 ///
 /// * `final_domain` - The final domain to query
 /// * `resolver` - DNS resolver
-/// * `error_stats` - Error statistics tracker
+/// * `error_stats` - Processing statistics tracker
 async fn fetch_additional_dns_records(
     final_domain: &str,
     resolver: &hickory_resolver::TokioAsyncResolver,
-    error_stats: &crate::error_handling::ErrorStats,
+    error_stats: &crate::error_handling::ProcessingStats,
 ) -> AdditionalDnsData {
     // Query additional DNS records (NS, TXT, MX) in parallel
     let (ns_result, txt_result, mx_result) = tokio::join!(
@@ -589,7 +589,7 @@ async fn fetch_additional_dns_records(
         Ok(_) => None,
         Err(e) => {
             log::warn!("Failed to lookup NS records for {final_domain}: {e}");
-            error_stats.increment(crate::error_handling::ErrorType::DnsNsLookupError);
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
             None
         }
     };
@@ -605,7 +605,7 @@ async fn fetch_additional_dns_records(
         Ok(_) => None,
         Err(e) => {
             log::warn!("Failed to lookup TXT records for {final_domain}: {e}");
-            error_stats.increment(crate::error_handling::ErrorType::DnsTxtLookupError);
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsTxtLookupError);
             None
         }
     };
@@ -641,7 +641,7 @@ async fn fetch_additional_dns_records(
         Ok(_) => None,
         Err(e) => {
             log::warn!("Failed to lookup MX records for {final_domain}: {e}");
-            error_stats.increment(crate::error_handling::ErrorType::DnsMxLookupError);
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsMxLookupError);
             None
         }
     };
@@ -741,7 +741,7 @@ pub async fn handle_response(
                 resp_data.final_domain
             );
             ctx.error_stats
-                .increment(crate::error_handling::ErrorType::TechnologyDetectionError);
+                .increment_error(crate::error_handling::ErrorType::TechnologyDetectionError);
             Vec::new()
         }
     };

@@ -40,10 +40,11 @@ pub enum DatabaseError {
 
 /// Types of errors that can occur during URL processing.
 ///
-/// This enum categorizes different error conditions for tracking and reporting purposes.
-/// Each variant represents a specific failure mode in the URL checking pipeline.
+/// This enum categorizes actual error conditions - failures that prevent successful
+/// processing or indicate system/network problems.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
 pub enum ErrorType {
+    // HTTP/Network errors
     HttpRequestBuilderError,
     HttpRequestRedirectError,
     HttpRequestStatusError,
@@ -54,9 +55,8 @@ pub enum ErrorType {
     HttpRequestDecodeError,
     HttpRequestOtherError,
     HttpRequestTooManyRequests,
-    TitleExtractError,
-    KeywordExtractError,
-    MetaDescriptionExtractError,
+    // Data extraction errors (only for required data)
+    TitleExtractError, // Missing title - could be an error if we expect one
     ProcessUrlTimeout,
     // DNS errors
     DnsNsLookupError,
@@ -66,6 +66,35 @@ pub enum ErrorType {
     TlsCertificateError,
     // Technology detection errors
     TechnologyDetectionError,
+}
+
+/// Types of warnings that can occur during URL processing.
+///
+/// Warnings indicate missing optional data that doesn't prevent successful
+/// processing but is worth tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
+#[allow(clippy::enum_variant_names)] // All variants start with "Missing" by design
+pub enum WarningType {
+    // Missing optional metadata
+    MissingMetaKeywords,      // Meta keywords tag is missing
+    MissingMetaDescription,   // Meta description tag is missing (optional but recommended for SEO)
+    MissingTitle,             // Title tag is missing (unusual but not necessarily an error)
+}
+
+/// Types of informational metrics that can occur during URL processing.
+///
+/// Info metrics track useful data points that aren't errors or warnings,
+/// such as redirects, bot detection, or other notable events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
+pub enum InfoType {
+    // HTTP redirects
+    HttpRedirect,             // HTTP redirect occurred (301, 302, etc.)
+    HttpsRedirect,            // HTTP to HTTPS redirect
+    // Bot detection
+    BotDetection403,          // Received 403 (likely bot detection)
+    BotDetectionDifferentContent, // Received different content (likely bot detection)
+    // Other notable events
+    MultipleRedirects,        // Multiple redirects in chain
 }
 
 impl ErrorType {
@@ -82,8 +111,6 @@ impl ErrorType {
             ErrorType::HttpRequestOtherError => "HTTP request other error",
             ErrorType::HttpRequestTooManyRequests => "Too many requests",
             ErrorType::TitleExtractError => "Title extract error",
-            ErrorType::KeywordExtractError => "Keyword extract error",
-            ErrorType::MetaDescriptionExtractError => "Meta description extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
             ErrorType::DnsTxtLookupError => "DNS TXT lookup error",
@@ -94,40 +121,135 @@ impl ErrorType {
     }
 }
 
-/// Thread-safe error statistics tracker.
+impl WarningType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WarningType::MissingMetaKeywords => "Missing meta keywords",
+            WarningType::MissingMetaDescription => "Missing meta description",
+            WarningType::MissingTitle => "Missing title",
+        }
+    }
+}
+
+impl InfoType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InfoType::HttpRedirect => "HTTP redirect",
+            InfoType::HttpsRedirect => "HTTP to HTTPS redirect",
+            InfoType::BotDetection403 => "Bot detection (403)",
+            InfoType::BotDetectionDifferentContent => "Bot detection (different content)",
+            InfoType::MultipleRedirects => "Multiple redirects",
+        }
+    }
+}
+
+/// Thread-safe processing statistics tracker.
 ///
-/// Tracks the count of each error type using atomic counters, allowing concurrent
-/// access from multiple tasks. All error types are initialized to zero on creation.
+/// Tracks errors, warnings, and informational metrics using atomic counters,
+/// allowing concurrent access from multiple tasks. All types are initialized
+/// to zero on creation.
+///
+/// # Categories
+///
+/// - **Errors**: Actual failures that prevent successful processing
+/// - **Warnings**: Missing optional data
+/// - **Info**: Notable events that aren't errors or warnings
 ///
 /// # Thread Safety
 ///
 /// This struct is thread-safe and can be shared across multiple tasks using `Arc`.
-pub struct ErrorStats {
+pub struct ProcessingStats {
     errors: HashMap<ErrorType, AtomicUsize>,
+    warnings: HashMap<WarningType, AtomicUsize>,
+    info: HashMap<InfoType, AtomicUsize>,
 }
 
-impl ErrorStats {
+impl ProcessingStats {
     pub fn new() -> Self {
         let mut errors = HashMap::new();
         for error in ErrorType::iter() {
             errors.insert(error, AtomicUsize::new(0));
         }
-        ErrorStats { errors }
+
+        let mut warnings = HashMap::new();
+        for warning in WarningType::iter() {
+            warnings.insert(warning, AtomicUsize::new(0));
+        }
+
+        let mut info = HashMap::new();
+        for info_type in InfoType::iter() {
+            info.insert(info_type, AtomicUsize::new(0));
+        }
+
+        ProcessingStats {
+            errors,
+            warnings,
+            info,
+        }
     }
 
-    pub fn increment(&self, error: ErrorType) {
-        // All ErrorType variants are initialized in new(), so unwrap() is safe
+    /// Increment an error counter.
+    pub fn increment_error(&self, error: ErrorType) {
         self.errors
             .get(&error)
             .unwrap()
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn get_count(&self, error: ErrorType) -> usize {
-        // All ErrorType variants are initialized in new(), so unwrap() is safe
+    /// Increment a warning counter.
+    pub fn increment_warning(&self, warning: WarningType) {
+        self.warnings
+            .get(&warning)
+            .unwrap()
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment an info counter.
+    #[allow(dead_code)] // Reserved for future use (redirects, bot detection, etc.)
+    pub fn increment_info(&self, info_type: InfoType) {
+        self.info
+            .get(&info_type)
+            .unwrap()
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the count for an error type.
+    pub fn get_error_count(&self, error: ErrorType) -> usize {
         self.errors.get(&error).unwrap().load(Ordering::SeqCst)
     }
+
+    /// Get the count for a warning type.
+    pub fn get_warning_count(&self, warning: WarningType) -> usize {
+        self.warnings.get(&warning).unwrap().load(Ordering::SeqCst)
+    }
+
+    /// Get the count for an info type.
+    pub fn get_info_count(&self, info_type: InfoType) -> usize {
+        self.info.get(&info_type).unwrap().load(Ordering::SeqCst)
+    }
+
+    /// Get total error count across all error types.
+    pub fn total_errors(&self) -> usize {
+        ErrorType::iter()
+            .map(|e| self.get_error_count(e))
+            .sum()
+    }
+
+    /// Get total warning count across all warning types.
+    pub fn total_warnings(&self) -> usize {
+        WarningType::iter()
+            .map(|w| self.get_warning_count(w))
+            .sum()
+    }
+
+    /// Get total info count across all info types.
+    pub fn total_info(&self) -> usize {
+        InfoType::iter()
+            .map(|i| self.get_info_count(i))
+            .sum()
+    }
 }
+
 
 /// Creates an exponential backoff retry strategy.
 ///
@@ -149,7 +271,7 @@ pub fn get_retry_strategy() -> impl Iterator<Item = Duration> {
         .take(crate::config::RETRY_MAX_ATTEMPTS) // Limit total attempts (initial + retries)
 }
 
-/// Updates error statistics based on a `reqwest::Error`.
+/// Updates processing statistics based on a `reqwest::Error`.
 ///
 /// Analyzes the error and increments the appropriate `ErrorType` counter.
 /// Handles both HTTP status errors (e.g., 429 Too Many Requests) and network-level
@@ -157,9 +279,9 @@ pub fn get_retry_strategy() -> impl Iterator<Item = Duration> {
 ///
 /// # Arguments
 ///
-/// * `error_stats` - The error statistics tracker to update
+/// * `stats` - The processing statistics tracker to update
 /// * `error` - The `reqwest::Error` to categorize and record
-pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error) {
+pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error) {
     let error_type = match error.status() {
         // When the error contains a status code, match on it
         Some(status) if status.is_client_error() => match status.as_u16() {
@@ -191,7 +313,7 @@ pub async fn update_error_stats(error_stats: &ErrorStats, error: &reqwest::Error
         }
     };
 
-    error_stats.increment(error_type);
+    stats.increment_error(error_type);
 }
 
 #[cfg(test)]
@@ -199,28 +321,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_error_stats_initialization() {
-        let stats = ErrorStats::new();
+    fn test_processing_stats_initialization() {
+        let stats = ProcessingStats::new();
         // All error types should be initialized to 0
         for error_type in ErrorType::iter() {
-            assert_eq!(stats.get_count(error_type), 0);
+            assert_eq!(stats.get_error_count(error_type), 0);
+        }
+        // All warning types should be initialized to 0
+        for warning_type in WarningType::iter() {
+            assert_eq!(stats.get_warning_count(warning_type), 0);
+        }
+        // All info types should be initialized to 0
+        for info_type in InfoType::iter() {
+            assert_eq!(stats.get_info_count(info_type), 0);
         }
     }
 
     #[test]
-    fn test_error_stats_increment() {
-        let stats = ErrorStats::new();
-        stats.increment(ErrorType::TitleExtractError);
-        assert_eq!(stats.get_count(ErrorType::TitleExtractError), 1);
-        assert_eq!(stats.get_count(ErrorType::KeywordExtractError), 0);
+    fn test_processing_stats_increment() {
+        let stats = ProcessingStats::new();
+        stats.increment_error(ErrorType::TitleExtractError);
+        assert_eq!(stats.get_error_count(ErrorType::TitleExtractError), 1);
+
+        stats.increment_warning(WarningType::MissingMetaDescription);
+        assert_eq!(stats.get_warning_count(WarningType::MissingMetaDescription), 1);
+
+        stats.increment_info(InfoType::HttpRedirect);
+        assert_eq!(stats.get_info_count(InfoType::HttpRedirect), 1);
     }
 
     #[test]
-    fn test_error_stats_multiple_increments() {
-        let stats = ErrorStats::new();
-        stats.increment(ErrorType::TitleExtractError);
-        stats.increment(ErrorType::TitleExtractError);
-        stats.increment(ErrorType::TitleExtractError);
-        assert_eq!(stats.get_count(ErrorType::TitleExtractError), 3);
+    fn test_processing_stats_multiple_increments() {
+        let stats = ProcessingStats::new();
+        stats.increment_error(ErrorType::TitleExtractError);
+        stats.increment_error(ErrorType::TitleExtractError);
+        stats.increment_error(ErrorType::TitleExtractError);
+        assert_eq!(stats.get_error_count(ErrorType::TitleExtractError), 3);
     }
+
+    #[test]
+    fn test_processing_stats_totals() {
+        let stats = ProcessingStats::new();
+        stats.increment_error(ErrorType::TitleExtractError);
+        stats.increment_error(ErrorType::HttpRequestTimeoutError);
+        stats.increment_warning(WarningType::MissingMetaDescription);
+        stats.increment_info(InfoType::HttpRedirect);
+
+        assert_eq!(stats.total_errors(), 2);
+        assert_eq!(stats.total_warnings(), 1);
+        assert_eq!(stats.total_info(), 1);
+    }
+
 }

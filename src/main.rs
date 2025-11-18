@@ -20,7 +20,7 @@ use initialization::*;
 use strum::IntoEnumIterator;
 use utils::*;
 
-use crate::error_handling::{ErrorStats, ErrorType};
+use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::fetch::ProcessingContext;
 
 mod adaptive_rate_limiter;
@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
     // Start time for measuring elapsed time during processing
     let start_time = std::time::Instant::now();
 
-    let error_stats = Arc::new(ErrorStats::new());
+    let error_stats = Arc::new(ProcessingStats::new());
 
     let completed_urls = Arc::new(AtomicUsize::new(0));
     let total_urls_attempted = Arc::new(AtomicUsize::new(0));
@@ -304,17 +304,17 @@ async fn main() -> Result<()> {
                     });
 
                     if is_429 {
-                        error_stats_clone.increment(ErrorType::HttpRequestTooManyRequests);
+                        error_stats_clone.increment_error(ErrorType::HttpRequestTooManyRequests);
                         if let Some(adaptive) = adaptive_limiter_for_task {
                             adaptive.record_rate_limited().await;
                         }
                     } else {
-                        error_stats_clone.increment(ErrorType::HttpRequestOtherError);
+                        error_stats_clone.increment_error(ErrorType::HttpRequestOtherError);
                     }
                 }
                 Err(_) => {
                     log::warn!("Timeout processing URL {url_for_logging}");
-                    error_stats_clone.increment(ErrorType::ProcessUrlTimeout);
+                    error_stats_clone.increment_error(ErrorType::ProcessUrlTimeout);
                     if let Some(adaptive) = adaptive_limiter_for_task {
                         adaptive.record_timeout().await;
                     }
@@ -376,15 +376,38 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to update run statistics")?;
 
-    // Print the error counts
-    info!("Error Counts:");
-    for error_type in ErrorType::iter() {
-        if error_stats.get_count(error_type) > 0 {
-            info!(
-                "   {}: {}",
-                error_type.as_str(),
-                error_stats.get_count(error_type)
-            );
+    // Print processing statistics
+    let total_errors = error_stats.total_errors();
+    let total_warnings = error_stats.total_warnings();
+    let total_info = error_stats.total_info();
+
+    if total_errors > 0 {
+        info!("Error Counts ({} total):", total_errors);
+        for error_type in ErrorType::iter() {
+            let count = error_stats.get_error_count(error_type);
+            if count > 0 {
+                info!("   {}: {}", error_type.as_str(), count);
+            }
+        }
+    }
+
+    if total_warnings > 0 {
+        info!("Warning Counts ({} total):", total_warnings);
+        for warning_type in WarningType::iter() {
+            let count = error_stats.get_warning_count(warning_type);
+            if count > 0 {
+                info!("   {}: {}", warning_type.as_str(), count);
+            }
+        }
+    }
+
+    if total_info > 0 {
+        info!("Info Counts ({} total):", total_info);
+        for info_type in InfoType::iter() {
+            let count = error_stats.get_info_count(info_type);
+            if count > 0 {
+                info!("   {}: {}", info_type.as_str(), count);
+            }
         }
     }
 
