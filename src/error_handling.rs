@@ -76,9 +76,9 @@ pub enum ErrorType {
 #[allow(clippy::enum_variant_names)] // All variants start with "Missing" by design
 pub enum WarningType {
     // Missing optional metadata
-    MissingMetaKeywords,      // Meta keywords tag is missing
-    MissingMetaDescription,   // Meta description tag is missing (optional but recommended for SEO)
-    MissingTitle,             // Title tag is missing (unusual but not necessarily an error)
+    MissingMetaKeywords,    // Meta keywords tag is missing
+    MissingMetaDescription, // Meta description tag is missing (optional but recommended for SEO)
+    MissingTitle,           // Title tag is missing (unusual but not necessarily an error)
 }
 
 /// Types of informational metrics that can occur during URL processing.
@@ -88,13 +88,13 @@ pub enum WarningType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
 pub enum InfoType {
     // HTTP redirects
-    HttpRedirect,             // HTTP redirect occurred (301, 302, etc.)
-    HttpsRedirect,            // HTTP to HTTPS redirect
+    HttpRedirect,  // HTTP redirect occurred (301, 302, etc.)
+    HttpsRedirect, // HTTP to HTTPS redirect
     // Bot detection
-    BotDetection403,          // Received 403 (likely bot detection)
+    BotDetection403,              // Received 403 (likely bot detection)
     BotDetectionDifferentContent, // Received different content (likely bot detection)
     // Other notable events
-    MultipleRedirects,        // Multiple redirects in chain
+    MultipleRedirects, // Multiple redirects in chain
 }
 
 impl ErrorType {
@@ -230,26 +230,19 @@ impl ProcessingStats {
 
     /// Get total error count across all error types.
     pub fn total_errors(&self) -> usize {
-        ErrorType::iter()
-            .map(|e| self.get_error_count(e))
-            .sum()
+        ErrorType::iter().map(|e| self.get_error_count(e)).sum()
     }
 
     /// Get total warning count across all warning types.
     pub fn total_warnings(&self) -> usize {
-        WarningType::iter()
-            .map(|w| self.get_warning_count(w))
-            .sum()
+        WarningType::iter().map(|w| self.get_warning_count(w)).sum()
     }
 
     /// Get total info count across all info types.
     pub fn total_info(&self) -> usize {
-        InfoType::iter()
-            .map(|i| self.get_info_count(i))
-            .sum()
+        InfoType::iter().map(|i| self.get_info_count(i)).sum()
     }
 }
-
 
 /// Creates an exponential backoff retry strategy.
 ///
@@ -344,7 +337,10 @@ mod tests {
         assert_eq!(stats.get_error_count(ErrorType::TitleExtractError), 1);
 
         stats.increment_warning(WarningType::MissingMetaDescription);
-        assert_eq!(stats.get_warning_count(WarningType::MissingMetaDescription), 1);
+        assert_eq!(
+            stats.get_warning_count(WarningType::MissingMetaDescription),
+            1
+        );
 
         stats.increment_info(InfoType::HttpRedirect);
         assert_eq!(stats.get_info_count(InfoType::HttpRedirect), 1);
@@ -371,5 +367,4 @@ mod tests {
         assert_eq!(stats.total_warnings(), 1);
         assert_eq!(stats.total_info(), 1);
     }
-
 }

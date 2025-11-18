@@ -100,7 +100,10 @@ pub fn extract_title(document: &Html, error_stats: &ProcessingStats) -> String {
 /// # Returns
 ///
 /// A vector of keyword strings, or `None` if no keywords meta tag is found.
-pub fn extract_meta_keywords(document: &Html, stats: &crate::error_handling::ProcessingStats) -> Option<Vec<String>> {
+pub fn extract_meta_keywords(
+    document: &Html,
+    stats: &crate::error_handling::ProcessingStats,
+) -> Option<Vec<String>> {
     let meta_keywords = document
         .select(&META_KEYWORDS_SELECTOR)
         .next()
@@ -468,7 +471,10 @@ mod tests {
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert_eq!(extract_title(&document, &stats), "Test Page");
-        assert_eq!(stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError), 0);
+        assert_eq!(
+            stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError),
+            0
+        );
     }
 
     #[test]
@@ -508,8 +514,14 @@ mod tests {
         let document = Html::parse_document(html);
         let stats = test_error_stats();
         assert_eq!(extract_title(&document, &stats), "");
-        assert_eq!(stats.get_warning_count(crate::error_handling::WarningType::MissingTitle), 1);
-        assert_eq!(stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError), 0);
+        assert_eq!(
+            stats.get_warning_count(crate::error_handling::WarningType::MissingTitle),
+            1
+        );
+        assert_eq!(
+            stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError),
+            0
+        );
     }
 
     #[test]
