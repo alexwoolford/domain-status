@@ -281,6 +281,7 @@ struct HtmlData {
     social_media_links: Vec<crate::parse::SocialMediaLink>,
     meta_tags: HashMap<String, String>,
     script_sources: Vec<String>,
+    script_content: String, // Inline script content for js field detection
     html_text: String,
 }
 
@@ -336,20 +337,43 @@ fn parse_html_content(
     let meta_selector = Selector::parse("meta")
         .expect("Failed to parse 'meta' selector - this is a programming error");
     for element in document.select(&meta_selector) {
+        // Check name attribute (standard meta tags)
         if let (Some(name), Some(content)) = (
             element.value().attr("name"),
             element.value().attr("content"),
         ) {
-            meta_tags.insert(name.to_string().to_lowercase(), content.to_string());
+            meta_tags.insert(format!("name:{}", name.to_lowercase()), content.to_string());
+        }
+        // Check property attribute (Open Graph, etc.)
+        if let (Some(property), Some(content)) = (
+            element.value().attr("property"),
+            element.value().attr("content"),
+        ) {
+            meta_tags.insert(format!("property:{}", property.to_lowercase()), content.to_string());
+        }
+        // Check http-equiv attribute
+        if let (Some(http_equiv), Some(content)) = (
+            element.value().attr("http-equiv"),
+            element.value().attr("content"),
+        ) {
+            meta_tags.insert(format!("http-equiv:{}", http_equiv.to_lowercase()), content.to_string());
         }
     }
 
     let mut script_sources = Vec::new();
+    let mut script_content = String::new();
     let script_selector = Selector::parse("script")
         .expect("Failed to parse 'script' selector - this is a programming error");
     for element in document.select(&script_selector) {
+        // Extract script src URLs
         if let Some(src) = element.value().attr("src") {
             script_sources.push(src.to_string());
+        }
+        // Extract inline script content (first 10KB per script for performance)
+        if element.value().attr("src").is_none() {
+            let text = element.text().collect::<String>();
+            script_content.push_str(&text.chars().take(10_000).collect::<String>());
+            script_content.push('\n'); // Separate scripts with newline
         }
     }
 
@@ -371,6 +395,7 @@ fn parse_html_content(
         social_media_links,
         meta_tags,
         script_sources,
+        script_content,
         html_text,
     }
 }
@@ -656,6 +681,7 @@ pub async fn handle_response(
     let technologies_vec: Vec<String> = match detect_technologies(
         &html_data.meta_tags,
         &html_data.script_sources,
+        &html_data.script_content,
         &html_data.html_text,
         &resp_data.headers,
         &resp_data.final_url,

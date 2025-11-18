@@ -767,22 +767,26 @@ async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result
 ///
 /// This is a simplified matcher that only uses single-request fields:
 /// - Headers
-/// - Cookies
-/// - Meta tags
+/// - Cookies (from SET_COOKIE and Cookie headers)
+/// - Meta tags (name, property, http-equiv)
 /// - Script sources
+/// - Script content (inline scripts for js field detection)
 /// - HTML text patterns
 /// - URL patterns
+/// - JavaScript object properties (js field)
 ///
 /// # Arguments
 ///
-/// * `meta_tags` - Map of meta tag name -> content
+/// * `meta_tags` - Map of meta tag name/property/http-equiv -> content
 /// * `script_sources` - Vector of script src URLs
+/// * `script_content` - Inline script content for js field detection
 /// * `html_text` - HTML text content (first 50KB)
 /// * `headers` - HTTP response headers
 /// * `url` - The URL being analyzed
 pub async fn detect_technologies(
     meta_tags: &HashMap<String, String>,
     script_sources: &[String],
+    script_content: &str,
     html_text: &str,
     headers: &HeaderMap,
     url: &str,
@@ -794,8 +798,8 @@ pub async fn detect_technologies(
 
     let mut detected = HashSet::new();
 
-    // Extract cookies from headers
-    let cookies: HashMap<String, String> = headers
+    // Extract cookies from SET_COOKIE headers (response cookies)
+    let mut cookies: HashMap<String, String> = headers
         .get_all(reqwest::header::SET_COOKIE)
         .iter()
         .filter_map(|hv| hv.to_str().ok())
@@ -811,6 +815,18 @@ pub async fn detect_technologies(
         })
         .collect();
 
+    // Also extract cookies from Cookie header (request cookies)
+    if let Some(cookie_header) = headers.get(reqwest::header::COOKIE) {
+        if let Ok(cookie_str) = cookie_header.to_str() {
+            for cookie_pair in cookie_str.split(';') {
+                let mut parts = cookie_pair.trim().splitn(2, '=');
+                if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+                    cookies.insert(name.to_lowercase(), value.to_string());
+                }
+            }
+        }
+    }
+
     // Convert headers to lowercase map for matching
     let header_map: HashMap<String, String> = headers
         .iter()
@@ -822,6 +838,10 @@ pub async fn detect_technologies(
         })
         .collect();
 
+    // Combine script content and HTML text for js field detection
+    // (JavaScript object properties can appear in either)
+    let js_search_text = format!("{}\n{}", script_content, html_text);
+
     // Match each technology
     for (tech_name, tech) in &ruleset.technologies {
         if matches_technology(
@@ -830,6 +850,7 @@ pub async fn detect_technologies(
             &cookies,
             meta_tags,
             script_sources,
+            &js_search_text,
             html_text,
             url,
         ) {
@@ -878,6 +899,7 @@ fn matches_technology(
     cookies: &HashMap<String, String>,
     meta_tags: &HashMap<String, String>,
     script_sources: &[String],
+    js_search_text: &str, // Combined script content + HTML text for js field detection
     html_text: &str,
     url: &str,
 ) -> bool {
@@ -900,10 +922,47 @@ fn matches_technology(
     }
 
     // Match meta tags
-    for (meta_name, pattern) in &tech.meta {
-        if let Some(meta_value) = meta_tags.get(&meta_name.to_lowercase()) {
-            if matches_pattern(pattern, meta_value) {
-                return true;
+    // Wappalyzer meta patterns can be:
+    // - Simple name: "generator" -> matches meta name="generator"
+    // - Prefixed: "property:og:title" -> matches meta property="og:title"
+    // - Prefixed: "http-equiv:content-type" -> matches meta http-equiv="content-type"
+    for (meta_key, pattern) in &tech.meta {
+        let meta_key_lower = meta_key.to_lowercase();
+        
+        // Check if key already has a prefix (property: or http-equiv:)
+        if meta_key_lower.starts_with("property:") {
+            let key_without_prefix = meta_key_lower.strip_prefix("property:").unwrap_or(&meta_key_lower);
+            if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
+                if matches_pattern(pattern, meta_value) {
+                    return true;
+                }
+            }
+        } else if meta_key_lower.starts_with("http-equiv:") {
+            let key_without_prefix = meta_key_lower.strip_prefix("http-equiv:").unwrap_or(&meta_key_lower);
+            if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
+                if matches_pattern(pattern, meta_value) {
+                    return true;
+                }
+            }
+        } else {
+            // Simple key (like "generator") - try all three attribute types
+            // Try name: prefix (most common)
+            if let Some(meta_value) = meta_tags.get(&format!("name:{}", meta_key_lower)) {
+                if matches_pattern(pattern, meta_value) {
+                    return true;
+                }
+            }
+            // Try property: prefix (Open Graph, etc.)
+            if let Some(meta_value) = meta_tags.get(&format!("property:{}", meta_key_lower)) {
+                if matches_pattern(pattern, meta_value) {
+                    return true;
+                }
+            }
+            // Try http-equiv: prefix
+            if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", meta_key_lower)) {
+                if matches_pattern(pattern, meta_value) {
+                    return true;
+                }
             }
         }
     }
@@ -927,6 +986,40 @@ fn matches_technology(
     // Match URL
     if !tech.url.is_empty() && matches_pattern(&tech.url, url) {
         return true;
+    }
+
+    // Match JavaScript object properties (js field)
+    // Wappalyzer js patterns are like "jQuery", "window.React", "ufe.funnelData"
+    // We search in script content and HTML text for these patterns
+    for (js_property, pattern) in &tech.js {
+        // Check if the property exists in the JavaScript/search text
+        // Patterns like "jQuery" should match "window.jQuery", "jQuery", etc.
+        // Patterns like "ufe.funnelData" should match exactly or as part of a larger expression
+        
+        // If pattern is empty, just check for property existence
+        if pattern.is_empty() {
+            // Look for common patterns: window.Property, Property, this.Property, etc.
+            let search_patterns = vec![
+                format!("window.{}", js_property),
+                format!("global.{}", js_property),
+                format!("this.{}", js_property),
+                format!("var {}", js_property),
+                format!("let {}", js_property),
+                format!("const {}", js_property),
+                js_property.clone(),
+            ];
+            
+            for search_pattern in search_patterns {
+                if js_search_text.contains(&search_pattern) {
+                    return true;
+                }
+            }
+        } else {
+            // Pattern specified - use it for matching
+            if matches_pattern(pattern, js_search_text) {
+                return true;
+            }
+        }
     }
 
     false
@@ -1013,13 +1106,21 @@ mod tests {
         // For now, just verify the function signature works
         let meta_tags = HashMap::new();
         let script_sources = Vec::new();
+        let script_content = "";
         let html_text = "";
         let headers = HeaderMap::new();
         let url = "https://example.com";
 
         // Without ruleset, this will fail - that's expected
-        let result =
-            detect_technologies(&meta_tags, &script_sources, html_text, &headers, url).await;
+        let result = detect_technologies(
+            &meta_tags,
+            &script_sources,
+            script_content,
+            html_text,
+            &headers,
+            url,
+        )
+        .await;
         assert!(result.is_err());
     }
 }
