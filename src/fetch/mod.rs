@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 use log::debug;
 use reqwest::Url;
 use scraper::{Html, Selector};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 mod context;
 pub use context::ProcessingContext;
@@ -282,6 +282,7 @@ struct HtmlData {
     meta_tags: HashMap<String, String>,
     script_sources: Vec<String>,
     script_content: String, // Inline script content for js field detection
+    script_tag_ids: HashSet<String>, // Script tag IDs (for __NEXT_DATA__ etc.)
     html_text: String,
 }
 
@@ -362,20 +363,37 @@ fn parse_html_content(
 
     let mut script_sources = Vec::new();
     let mut script_content = String::new();
+    let mut script_tag_ids = HashSet::new();
+    let mut inline_script_count = 0;
     let script_selector = Selector::parse("script")
         .expect("Failed to parse 'script' selector - this is a programming error");
     for element in document.select(&script_selector) {
+        // Extract script tag IDs (for __NEXT_DATA__ etc.)
+        if let Some(id) = element.value().attr("id") {
+            script_tag_ids.insert(id.to_string());
+        }
         // Extract script src URLs
         if let Some(src) = element.value().attr("src") {
             script_sources.push(src.to_string());
         }
-        // Extract inline script content (first 10KB per script for performance)
+        // Extract inline script content (limited to MAX_SCRIPT_CONTENT_SIZE per script for security)
+        // This prevents DoS attacks via large scripts
         if element.value().attr("src").is_none() {
             let text = element.text().collect::<String>();
-            script_content.push_str(&text.chars().take(10_000).collect::<String>());
-            script_content.push('\n'); // Separate scripts with newline
+            if !text.trim().is_empty() {
+                inline_script_count += 1;
+                script_content.push_str(&text.chars().take(crate::config::MAX_SCRIPT_CONTENT_SIZE).collect::<String>());
+                script_content.push('\n'); // Separate scripts with newline
+            }
         }
     }
+    log::debug!(
+        "Extracted {} inline scripts ({} bytes) and {} external script sources for {}",
+        inline_script_count,
+        script_content.len(),
+        script_sources.len(),
+        final_domain
+    );
 
     // Extract text content (first 50KB for performance)
     let html_text = document
@@ -396,6 +414,7 @@ fn parse_html_content(
         meta_tags,
         script_sources,
         script_content,
+        script_tag_ids,
         html_text,
     }
 }
@@ -685,6 +704,7 @@ pub async fn handle_response(
         &html_data.html_text,
         &resp_data.headers,
         &resp_data.final_url,
+        &html_data.script_tag_ids,
     )
     .await
     {
