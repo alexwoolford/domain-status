@@ -998,26 +998,81 @@ fn matches_technology(
         
         // If pattern is empty, just check for property existence
         if pattern.is_empty() {
-            // Look for common patterns: window.Property, Property, this.Property, etc.
-            let search_patterns = vec![
-                format!("window.{}", js_property),
-                format!("global.{}", js_property),
-                format!("this.{}", js_property),
-                format!("var {}", js_property),
-                format!("let {}", js_property),
-                format!("const {}", js_property),
-                js_property.clone(),
-            ];
-            
-            for search_pattern in search_patterns {
-                if js_search_text.contains(&search_pattern) {
-                    return true;
+            // For properties with dots (like ".__NEXT_DATA__.nextExport"), match the full path
+            if js_property.contains('.') {
+                // Match the full property path (e.g., ".__NEXT_DATA__.nextExport")
+                // Use word boundary-like matching to avoid false positives
+                // Look for the property followed by whitespace, =, :, or end of line
+                let escaped = regex::escape(js_property);
+                let regex_pattern = format!(r"(?m)\b{}\b", escaped);
+                if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                    if re.is_match(js_search_text) {
+                        return true;
+                    }
+                }
+            } else {
+                // Simple property name - look for common JavaScript patterns
+                // Use word boundaries to avoid matching in strings/comments
+                let escaped = regex::escape(js_property);
+                let patterns = vec![
+                    format!(r"\bwindow\.{}\b", escaped),
+                    format!(r"\bglobal\.{}\b", escaped),
+                    format!(r"\bthis\.{}\b", escaped),
+                    format!(r"\bvar\s+{}\b", escaped),
+                    format!(r"\blet\s+{}\b", escaped),
+                    format!(r"\bconst\s+{}\b", escaped),
+                    format!(r"\b{}\b", escaped),
+                ];
+                
+                for regex_pattern in patterns {
+                    if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                        if re.is_match(js_search_text) {
+                            return true;
+                        }
+                    }
                 }
             }
         } else {
             // Pattern specified - use it for matching
-            if matches_pattern(pattern, js_search_text) {
-                return true;
+            // For properties with dots, we need to check if the property path exists
+            // and then match the pattern against its value
+            if js_property.contains('.') {
+                // Property path like ".__NEXT_DATA__.nextExport" with pattern "true"
+                // We need to find the property and check if its value matches the pattern
+                // This is complex without executing JS, so we'll look for the property
+                // followed by the pattern value
+                let escaped_prop = regex::escape(js_property);
+                let value_pattern = if pattern == "true" {
+                    r"true"
+                } else if pattern == "false" {
+                    r"false"
+                } else {
+                    pattern
+                };
+                
+                // Look for property path followed by = or : and then the pattern
+                let regex_pattern = format!(r"(?m)\b{}\s*[=:]\s*{}", escaped_prop, regex::escape(value_pattern));
+                if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                    if re.is_match(js_search_text) {
+                        return true;
+                    }
+                }
+                
+                // Also try matching the pattern in the context of the property
+                if matches_pattern(pattern, js_search_text) {
+                    // Additional check: ensure the property path exists nearby
+                    let escaped_prop = regex::escape(js_property);
+                    if let Ok(re) = regex::Regex::new(&format!(r"(?m)\b{}\b", escaped_prop)) {
+                        if re.is_match(js_search_text) {
+                            return true;
+                        }
+                    }
+                }
+            } else {
+                // Simple property with pattern - match pattern in context
+                if matches_pattern(pattern, js_search_text) {
+                    return true;
+                }
             }
         }
     }
