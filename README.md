@@ -59,6 +59,34 @@ domain_status urls.txt \
 - `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
 - `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set. Otherwise, GeoIP lookup is disabled.
 - `--enable-whois`: Enable WHOIS/RDAP lookup for domain registration information. WHOIS data is cached for 7 days. Default: disabled.
+- `--status-port <PORT>`: Start HTTP status server on the specified port (optional, disabled by default). Provides two endpoints:
+  - `/metrics` - Prometheus-compatible metrics
+  - `/status` - JSON status endpoint with detailed progress information
+  - Useful for monitoring long-running jobs. Example: `--status-port 8080`
+  - When enabled, reduces console logging verbosity (progress logged every 30s instead of 5s)
+
+**Monitoring Long-Running Jobs:**
+
+For long-running jobs, you can monitor progress via an optional HTTP status server:
+
+```bash
+# Start with status server on port 8080
+domain_status urls.txt --status-port 8080
+
+# In another terminal, check progress:
+curl http://127.0.0.1:8080/status | jq
+
+# Or view Prometheus metrics:
+curl http://127.0.0.1:8080/metrics
+```
+
+The status server provides:
+- **Real-time progress**: Total URLs, completed, failed, percentage complete, processing rate
+- **Error breakdown**: Detailed counts by error type (timeouts, connection errors, DNS errors, etc.)
+- **Warning/info metrics**: Track missing metadata, redirects, bot detection events
+- **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping
+
+**Note:** When `--status-port` is enabled, console logging is reduced (progress logged every 30s instead of 5s) to reduce verbosity. The database can be safely queried concurrently while the job runs (SQLite WAL mode enabled).
 
 **URL Input:**
 - URLs can be provided with or without `http://` or `https://` prefix

@@ -37,6 +37,7 @@ mod initialization;
 mod models;
 mod parse;
 mod security;
+mod status_server;
 mod storage;
 mod tls;
 mod user_agent;
@@ -231,11 +232,27 @@ async fn main() -> Result<()> {
 
     // Start time for measuring elapsed time during processing
     let start_time = std::time::Instant::now();
+    let start_time_arc = Arc::new(start_time);
 
     let error_stats = Arc::new(ProcessingStats::new());
 
     let completed_urls = Arc::new(AtomicUsize::new(0));
     let total_urls_attempted = Arc::new(AtomicUsize::new(0));
+
+    // Start status server if requested
+    if let Some(port) = opt.status_port {
+        let status_state = status_server::StatusState {
+            total_urls: Arc::clone(&total_urls_attempted),
+            completed_urls: Arc::clone(&completed_urls),
+            start_time: Arc::clone(&start_time_arc),
+            error_stats: error_stats.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = status_server::start_status_server(port, status_state).await {
+                log::warn!("Status server error: {}", e);
+            }
+        });
+    }
 
     let url_regex = Regex::new(crate::config::URL_SCHEME_PATTERN)
         .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
@@ -363,27 +380,48 @@ async fn main() -> Result<()> {
     // Clone the Arc before the logging task
     let completed_urls_clone_for_logging = Arc::clone(&completed_urls);
 
-    let logging_task = tokio::task::spawn(async move {
-        let mut interval =
-            tokio::time::interval(std::time::Duration::from_secs(LOGGING_INTERVAL as u64));
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    log_progress(start_time, &completed_urls_clone_for_logging);
-                }
-                _ = cancel_logging.cancelled() => {
-                    break;
+    // Only log progress if status server is not enabled (to reduce verbosity)
+    let logging_task = if opt.status_port.is_none() {
+        Some(tokio::task::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(LOGGING_INTERVAL as u64));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        log_progress(start_time, &completed_urls_clone_for_logging);
+                    }
+                    _ = cancel_logging.cancelled() => {
+                        break;
+                    }
                 }
             }
-        }
-    });
+        }))
+    } else {
+        // If status server is enabled, log progress less frequently (every 30 seconds)
+        // to reduce verbosity while still providing occasional updates
+        Some(tokio::task::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        log_progress(start_time, &completed_urls_clone_for_logging);
+                    }
+                    _ = cancel_logging.cancelled() => {
+                        break;
+                    }
+                }
+            }
+        }))
+    };
 
     // Wait for all tasks to complete
     while (tasks.next().await).is_some() {}
 
     // Signal logging task to stop and await it
     cancel.cancel();
-    let _ = logging_task.await;
+    if let Some(logging_task) = logging_task {
+        let _ = logging_task.await;
+    }
 
     // Signal rate limiter to stop if it exists
     if let Some(shutdown) = rate_limiter_shutdown {

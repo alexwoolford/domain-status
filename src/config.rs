@@ -292,6 +292,17 @@ pub struct Opt {
     #[arg(long)]
     pub geoip: Option<String>,
 
+    /// HTTP status server port (optional, disabled by default)
+    ///
+    /// When set, starts a lightweight HTTP server that exposes:
+    /// - `/metrics` - Prometheus-compatible metrics
+    /// - `/status` - JSON status endpoint with progress information
+    ///
+    /// Useful for monitoring long-running jobs. The server runs in the background
+    /// and does not block URL processing. Example: `--status-port 8080`
+    #[arg(long)]
+    pub status_port: Option<u16>,
+
     /// Enable WHOIS/RDAP lookup for domain registration information
     ///
     /// When enabled, performs WHOIS/RDAP queries to fetch:
