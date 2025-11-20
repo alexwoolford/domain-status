@@ -86,6 +86,138 @@ The status server provides:
 - **Warning/info metrics**: Track missing metadata, redirects, bot detection events
 - **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping
 
+### Status Endpoint (`/status`)
+
+Returns detailed JSON status with real-time progress information:
+
+```bash
+curl http://127.0.0.1:8080/status | jq
+```
+
+**Response Format:**
+```json
+{
+    "total_urls": 40,
+    "completed_urls": 34,
+    "failed_urls": 6,
+    "percentage_complete": 85.0,
+    "elapsed_seconds": 61.31,
+    "rate_per_second": 0.55,
+    "errors": {
+        "total": 12,
+        "timeout": 2,
+        "connection_error": 0,
+        "http_error": 5,
+        "dns_error": 0,
+        "tls_error": 0,
+        "parse_error": 0,
+        "other_error": 5
+    },
+    "warnings": {
+        "total": 39,
+        "missing_meta_keywords": 28,
+        "missing_meta_description": 8,
+        "missing_title": 3
+    },
+    "info": {
+        "total": 0,
+        "http_redirect": 0,
+        "https_redirect": 0,
+        "bot_detection_403": 0,
+        "bot_detection_different_content": 0,
+        "multiple_redirects": 0
+    }
+}
+```
+
+**Fields:**
+- `total_urls`: Total number of URLs to process
+- `completed_urls`: Number of URLs successfully processed
+- `failed_urls`: Number of URLs that failed to process (`total_urls - completed_urls`)
+- `percentage_complete`: Percentage of URLs completed (0-100)
+- `elapsed_seconds`: Time elapsed since processing started
+- `rate_per_second`: Average processing rate (URLs/second)
+- `errors`: Detailed error counts by type
+  - `timeout`: Process or HTTP request timeouts
+  - `connection_error`: Network connection failures
+  - `http_error`: HTTP status errors (4xx, 5xx, 429)
+  - `dns_error`: DNS lookup failures (NS, TXT, MX)
+  - `tls_error`: TLS/SSL certificate errors
+  - `parse_error`: HTML/response parsing errors
+  - `other_error`: Other processing errors
+- `warnings`: Missing optional metadata counts
+  - `missing_meta_keywords`: Missing `<meta name="keywords">` tag
+  - `missing_meta_description`: Missing `<meta name="description">` tag
+  - `missing_title`: Missing `<title>` tag
+- `info`: Informational event counts
+  - `http_redirect`: HTTP redirects (301, 302, etc.)
+  - `https_redirect`: HTTP to HTTPS redirects
+  - `bot_detection_403`: 403 responses (likely bot detection)
+  - `bot_detection_different_content`: Different content received (likely bot detection)
+  - `multiple_redirects`: Redirect chains with multiple hops
+
+### Metrics Endpoint (`/metrics`)
+
+Returns Prometheus-compatible metrics in text format:
+
+```bash
+curl http://127.0.0.1:8080/metrics
+```
+
+**Response Format:**
+```
+# HELP domain_status_total_urls Total number of URLs to process
+# TYPE domain_status_total_urls gauge
+domain_status_total_urls 40
+
+# HELP domain_status_completed_urls Number of URLs successfully processed
+# TYPE domain_status_completed_urls gauge
+domain_status_completed_urls 34
+
+# HELP domain_status_failed_urls Number of URLs that failed to process
+# TYPE domain_status_failed_urls gauge
+domain_status_failed_urls 6
+
+# HELP domain_status_percentage_complete Percentage of URLs completed (0-100)
+# TYPE domain_status_percentage_complete gauge
+domain_status_percentage_complete 85.0
+
+# HELP domain_status_rate_per_second URLs processed per second
+# TYPE domain_status_rate_per_second gauge
+domain_status_rate_per_second 0.55
+
+# HELP domain_status_errors_total Total number of errors encountered
+# TYPE domain_status_errors_total counter
+domain_status_errors_total 12
+
+# HELP domain_status_warnings_total Total number of warnings encountered
+# TYPE domain_status_warnings_total counter
+domain_status_warnings_total 39
+
+# HELP domain_status_info_total Total number of info events
+# TYPE domain_status_info_total counter
+domain_status_info_total 0
+```
+
+**Metrics:**
+- `domain_status_total_urls` (gauge): Total URLs to process
+- `domain_status_completed_urls` (gauge): Successfully processed URLs
+- `domain_status_failed_urls` (gauge): Failed URLs
+- `domain_status_percentage_complete` (gauge): Completion percentage (0-100)
+- `domain_status_rate_per_second` (gauge): Processing rate (URLs/sec)
+- `domain_status_errors_total` (counter): Total error count
+- `domain_status_warnings_total` (counter): Total warning count
+- `domain_status_info_total` (counter): Total info event count
+
+**Prometheus Integration:**
+Add to your `prometheus.yml`:
+```yaml
+scrape_configs:
+  - job_name: 'domain_status'
+    static_configs:
+      - targets: ['localhost:8080']
+```
+
 **Note:** When `--status-port` is enabled, console logging is reduced (progress logged every 30s instead of 5s) to reduce verbosity. The database can be safely queried concurrently while the job runs (SQLite WAL mode enabled).
 
 **URL Input:**
