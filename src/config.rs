@@ -29,18 +29,24 @@ pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 5;
 
 /// Default User-Agent string for HTTP requests.
 ///
-/// Uses a generic Chrome-like string without a specific version number to avoid
-/// becoming outdated. The pattern mimics a modern Chrome browser on Windows.
+/// **Note:** This is a fallback value. The actual User-Agent is automatically
+/// fetched at startup from Chrome's release API and cached locally for 30 days.
+/// This ensures the User-Agent stays current over time without manual updates.
 ///
-/// **Note:** This should be updated periodically to match current browser patterns.
 /// Users can override this via the `--user-agent` CLI flag.
 ///
+/// The auto-update mechanism:
+/// - Fetches latest Chrome version from Chrome's release API at startup
+/// - Caches the version locally for 30 days (in `.user_agent_cache/`)
+/// - Falls back to this hardcoded value if fetch fails
+/// - Only updates if user didn't provide `--user-agent` flag
+///
 /// For better bot evasion, consider:
-/// - Using a more recent browser version pattern
+/// - Letting the auto-update mechanism keep it current (default behavior)
 /// - Rotating between different User-Agent strings
-/// - Customizing per target site
+/// - Customizing per target site via `--user-agent` flag
 pub const DEFAULT_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // URL validation
 pub const URL_SCHEME_PATTERN: &str = r"^https?://";

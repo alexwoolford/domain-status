@@ -39,6 +39,7 @@ mod parse;
 mod security;
 mod storage;
 mod tls;
+mod user_agent;
 mod utils;
 mod whois;
 
@@ -80,7 +81,16 @@ async fn main() -> Result<()> {
         }
     }
 
-    let opt = Opt::parse();
+    let mut opt = Opt::parse();
+
+    // Auto-update User-Agent if user didn't override it
+    // This ensures the User-Agent stays current over time
+    // Check if user provided --user-agent by comparing to default
+    if opt.user_agent == crate::config::DEFAULT_USER_AGENT {
+        let updated_ua = crate::user_agent::get_default_user_agent(None).await;
+        opt.user_agent = updated_ua;
+        log::debug!("Using auto-updated User-Agent: {}", opt.user_agent);
+    }
     let log_level = opt.log_level.clone();
     let log_format = opt.log_format.clone();
     init_logger_with(log_level.into(), log_format).context("Failed to initialize logger")?;

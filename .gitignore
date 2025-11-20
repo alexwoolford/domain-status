@@ -14,6 +14,10 @@ Cargo.lock
 .geoip_cache/*
 !.geoip_cache/.gitkeep
 
+# User-Agent cache files (runtime data, not source code)
+.user_agent_cache/*
+!.user_agent_cache/.gitkeep
+
 # WHOIS cache files (runtime data, not source code)
 .whois_cache/*
 !.whois_cache/.gitkeep
