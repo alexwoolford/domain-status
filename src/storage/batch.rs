@@ -13,6 +13,7 @@ use tokio::time::interval;
 use crate::error_handling::DatabaseError;
 use crate::geoip::GeoIpResult;
 use crate::parse::{SocialMediaLink, StructuredData};
+use crate::security::SecurityWarning;
 
 use super::insert;
 use super::models::UrlRecord;
@@ -45,6 +46,7 @@ pub struct BatchRecord {
     pub geoip: Option<(String, GeoIpResult)>, // (ip_address, geoip_result)
     pub structured_data: Option<StructuredData>,
     pub social_media_links: Vec<SocialMediaLink>,
+    pub security_warnings: Vec<SecurityWarning>,
 }
 
 /// Batch writer that collects records and writes them in batches
@@ -146,6 +148,23 @@ impl BatchWriter {
                 {
                     log::warn!(
                         "Failed to insert social media links for url_status_id {}: {}",
+                        url_status_id,
+                        e
+                    );
+                }
+            }
+
+            // Insert security warnings if available
+            if !record.security_warnings.is_empty() {
+                if let Err(e) = insert::insert_security_warnings(
+                    &self.pool,
+                    url_status_id,
+                    &record.security_warnings,
+                )
+                .await
+                {
+                    log::warn!(
+                        "Failed to insert security warnings for url_status_id {}: {}",
                         url_status_id,
                         e
                     );

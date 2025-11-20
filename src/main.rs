@@ -36,6 +36,7 @@ mod geoip;
 mod initialization;
 mod models;
 mod parse;
+mod security;
 mod storage;
 mod tls;
 mod utils;

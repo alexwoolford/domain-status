@@ -21,6 +21,7 @@ use crate::parse::{
     extract_meta_description, extract_meta_keywords, extract_social_media_links,
     extract_structured_data, extract_title, is_mobile_friendly,
 };
+use crate::security;
 use crate::storage::BatchRecord;
 use crate::tls::get_ssl_certificate_info;
 
@@ -799,6 +800,13 @@ pub async fn handle_response(
     let geoip_data =
         geoip::lookup_ip(&ip_address_clone).map(|result| (ip_address_clone.clone(), result));
 
+    // Perform security analysis
+    let security_warnings = security::analyze_security(
+        &resp_data.final_url,
+        &tls_dns_data.tls_version,
+        &resp_data.security_headers,
+    );
+
     // Create batch record with all data
     let batch_record = BatchRecord {
         url_record: record,
@@ -810,6 +818,7 @@ pub async fn handle_response(
         geoip: geoip_data,
         structured_data: Some(html_data.structured_data.clone()),
         social_media_links: html_data.social_media_links.clone(),
+        security_warnings,
     };
 
     // Send to batch writer queue
