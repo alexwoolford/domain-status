@@ -68,6 +68,22 @@ cargo audit
 - Prefer UPSERT semantics when idempotency matters (e.g., reprocessing the same URL at the same timestamp).
 - WAL is required for concurrent writes.
 
+### Datetime storage in SQLite
+- **SQLite has no native datetime type** - it only supports INTEGER, TEXT, REAL, BLOB, and NULL.
+- **Always use INTEGER for datetime fields** - store as milliseconds since Unix epoch (i64).
+- **Conversion pattern**: Use `DateTime<Utc>::timestamp_millis()` or `NaiveDateTime::and_utc().timestamp_millis()` to convert to `i64`.
+- **Consistent across the project**: All datetime fields use INTEGER (milliseconds):
+  - `url_status.timestamp` → INTEGER
+  - `url_status.ssl_cert_valid_from` → INTEGER
+  - `url_status.ssl_cert_valid_to` → INTEGER
+  - `runs.start_time` → INTEGER
+  - `runs.end_time` → INTEGER
+  - `url_whois.creation_date` → INTEGER
+  - `url_whois.expiration_date` → INTEGER
+  - `url_whois.updated_date` → INTEGER
+- **Never use TEXT for datetimes** - INTEGER is more efficient for queries, sorting, and indexing.
+- **Helper function**: `naive_datetime_to_millis()` in `src/storage/insert.rs` converts `Option<NaiveDateTime>` to `Option<i64>`.
+
 ### Testing policy
 Tiered tests:
 1) Unit tests: pure functions (HTML parsing, header extraction, domain extraction)

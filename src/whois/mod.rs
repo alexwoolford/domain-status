@@ -1,24 +1,18 @@
 // whois/mod.rs
-// WHOIS/RDAP domain lookup with conservative rate limiting
+// WHOIS/RDAP domain lookup using whois-service crate
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
-use std::time::{Duration, SystemTime};
-use tokio::sync::Semaphore;
-use tokio::time::{interval, sleep};
+use std::time::SystemTime;
+use whois_service::{WhoisClient, WhoisResponse};
 
 /// Default cache directory for WHOIS data
 const DEFAULT_CACHE_DIR: &str = ".whois_cache";
 
 /// Default cache TTL: 7 days (WHOIS data changes infrequently)
 const CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
-
-/// Default rate limit: 1 query per 2 seconds (very conservative)
-/// This is 0.5 queries/second, well below most registrar limits
-const DEFAULT_WHOIS_RATE_LIMIT_SECS: u64 = 2;
 
 /// WHOIS lookup result
 #[derive(Debug, Clone, Default)]
@@ -54,7 +48,7 @@ struct WhoisCacheEntry {
 /// Serializable version of WhoisResult for caching
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WhoisCacheResult {
-    creation_date: Option<i64>, // Milliseconds since Unix epoch
+    creation_date: Option<i64>,
     expiration_date: Option<i64>,
     updated_date: Option<i64>,
     registrar: Option<String>,
@@ -106,86 +100,141 @@ impl From<WhoisCacheResult> for WhoisResult {
     }
 }
 
-/// Global rate limiter for WHOIS queries
-/// Uses a semaphore with token replenishment to enforce rate limits
-static WHOIS_RATE_LIMITER: LazyLock<Arc<WhoisRateLimiter>> =
-    LazyLock::new(|| Arc::new(WhoisRateLimiter::new(DEFAULT_WHOIS_RATE_LIMIT_SECS)));
+/// Converts whois-service ParsedWhoisData to our WhoisResult
+fn convert_parsed_data(response: &WhoisResponse) -> WhoisResult {
+    let parsed = match &response.parsed_data {
+        Some(p) => p,
+        None => {
+            // No parsed data, return minimal result with raw text
+            return WhoisResult {
+                raw_text: Some(response.raw_data.clone()),
+                ..Default::default()
+            };
+        }
+    };
 
-/// Rate limiter for WHOIS queries
-/// Ensures we don't exceed registrar rate limits
-struct WhoisRateLimiter {
-    semaphore: Arc<Semaphore>,
-    #[allow(dead_code)]
-    interval_secs: u64, // Used in spawn closure, but compiler doesn't detect it
+    // Parse date strings to DateTime<Utc>
+    let creation_date = parsed.creation_date.as_ref().and_then(|s| {
+        parse_date_string(s).or_else(|| {
+            // Try ISO 8601 format
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        })
+    });
+
+    let expiration_date = parsed.expiration_date.as_ref().and_then(|s| {
+        parse_date_string(s).or_else(|| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        })
+    });
+
+    let updated_date = parsed.updated_date.as_ref().and_then(|s| {
+        parse_date_string(s).or_else(|| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        })
+    });
+
+    WhoisResult {
+        creation_date,
+        expiration_date,
+        updated_date,
+        registrar: parsed.registrar.clone(),
+        registrant_country: None, // whois-service doesn't provide this directly
+        registrant_org: parsed.registrant_name.clone(),
+        status: if parsed.status.is_empty() {
+            None
+        } else {
+            Some(parsed.status.clone())
+        },
+        nameservers: if parsed.name_servers.is_empty() {
+            None
+        } else {
+            Some(parsed.name_servers.clone())
+        },
+        raw_text: Some(response.raw_data.clone()),
+    }
 }
 
-impl WhoisRateLimiter {
-    fn new(interval_secs: u64) -> Self {
-        let semaphore = Arc::new(Semaphore::new(1));
-        let limiter = WhoisRateLimiter {
-            semaphore: semaphore.clone(),
-            interval_secs,
-        };
+/// Attempts to parse a date string in various formats
+fn parse_date_string(date_str: &str) -> Option<DateTime<Utc>> {
+    // Try common WHOIS date formats
+    let formats = [
+        "%Y-%m-%dT%H:%M:%S%.fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%d-%b-%Y",
+        "%d/%m/%Y",
+    ];
 
-        // Start background task to replenish permits
-        let mut interval_timer = interval(Duration::from_secs(interval_secs));
-        tokio::spawn(async move {
-            loop {
-                interval_timer.tick().await;
-                // Add a permit (up to max of 1 for conservative limiting)
-                if semaphore.available_permits() == 0 {
-                    semaphore.add_permits(1);
-                }
-            }
-        });
-
-        limiter
+    for format in &formats {
+        if let Ok(dt) = DateTime::parse_from_str(date_str, format) {
+            return Some(dt.with_timezone(&Utc));
+        }
+        if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(date_str, format) {
+            return Some(naive_dt.and_utc());
+        }
+        if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(date_str, format) {
+            return Some(naive_date.and_hms_opt(0, 0, 0)?.and_utc());
+        }
     }
 
-    /// Acquires a permit, waiting if necessary
-    async fn acquire(&self) {
-        let _permit = self.semaphore.acquire().await.unwrap();
-        // Permit is held until dropped, ensuring rate limit is respected
+    None
+}
+
+/// Loads a cached WHOIS result from disk
+fn load_from_cache(cache_path: &Path, domain: &str) -> Result<Option<WhoisCacheEntry>> {
+    let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
+
+    if !cache_file.exists() {
+        return Ok(None);
     }
+
+    let content = std::fs::read_to_string(&cache_file).context("Failed to read cache file")?;
+    let entry: WhoisCacheEntry =
+        serde_json::from_str(&content).context("Failed to parse cache file")?;
+
+    // Check if cache is still valid
+    let age = entry.cached_at.elapsed().unwrap_or_default();
+    if age.as_secs() > CACHE_TTL_SECS {
+        // Cache expired, delete it
+        let _ = std::fs::remove_file(&cache_file);
+        return Ok(None);
+    }
+
+    Ok(Some(entry))
 }
 
-/// RDAP response structure (simplified - we only extract what we need)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct RdapResponse {
-    #[serde(rename = "objectClassName")]
-    object_class_name: Option<String>,
-    handle: Option<String>,
-    #[serde(rename = "ldhName")]
-    ldh_name: Option<String>,
-    events: Option<Vec<RdapEvent>>,
-    entities: Option<Vec<RdapEntity>>,
-    status: Option<Vec<String>>,
-    nameservers: Option<Vec<RdapNameserver>>,
+/// Saves a WHOIS result to disk cache
+fn save_to_cache(cache_path: &Path, domain: &str, result: &WhoisResult) -> Result<()> {
+    std::fs::create_dir_all(cache_path).context("Failed to create cache directory")?;
+
+    let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
+    let entry = WhoisCacheEntry {
+        result: result.into(),
+        cached_at: SystemTime::now(),
+        domain: domain.to_string(),
+    };
+
+    let content =
+        serde_json::to_string_pretty(&entry).context("Failed to serialize cache entry")?;
+    std::fs::write(&cache_file, content).context("Failed to write cache file")?;
+
+    Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-struct RdapEvent {
-    #[serde(rename = "eventAction")]
-    event_action: Option<String>,
-    #[serde(rename = "eventDate")]
-    event_date: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RdapEntity {
-    roles: Option<Vec<String>>,
-    #[serde(rename = "vcardArray")]
-    vcard_array: Option<Vec<serde_json::Value>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RdapNameserver {
-    #[serde(rename = "ldhName")]
-    ldh_name: Option<String>,
-}
-
-/// Looks up WHOIS information for a domain using RDAP (preferred) or WHOIS (fallback)
+/// Performs a WHOIS lookup for a domain
+///
+/// This function uses the `whois-service` crate which:
+/// - Automatically tries RDAP first, then falls back to WHOIS
+/// - Handles IANA bootstrap for TLD discovery
+/// - Implements per-server rate limiting
+/// - Provides structured parsing
 ///
 /// # Arguments
 ///
@@ -195,12 +244,6 @@ struct RdapNameserver {
 /// # Returns
 ///
 /// Returns WHOIS information if available, or None if lookup fails
-///
-/// # Rate Limiting
-///
-/// This function respects a conservative rate limit (default: 1 query per 2 seconds)
-/// to avoid exceeding registrar limits. The rate limit is enforced globally across
-/// all WHOIS lookups.
 pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Option<WhoisResult>> {
     let cache_path = cache_dir
         .map(|p| p.to_path_buf())
@@ -208,472 +251,29 @@ pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Opti
 
     // Check cache first
     if let Some(cached) = load_from_cache(&cache_path, domain)? {
+        log::debug!("WHOIS cache hit for {}", domain);
         return Ok(Some(cached.result.into()));
     }
 
-    // Acquire rate limiter permit (waits if necessary)
-    WHOIS_RATE_LIMITER.acquire().await;
+    log::info!("Starting WHOIS lookup for domain: {}", domain);
 
-    // Try RDAP first (preferred method)
-    log::info!("Starting WHOIS/RDAP lookup for domain: {}", domain);
-    let result = match lookup_rdap(domain).await {
-        Ok(Some(rdap_result)) => {
-            log::info!("RDAP lookup successful for {}", domain);
-            Some(rdap_result)
-        }
-        Ok(None) => {
-            log::info!(
-                "RDAP lookup returned no data for {}, trying WHOIS fallback",
-                domain
-            );
-            // Fallback to WHOIS
-            match lookup_whois_text(domain).await {
-                Ok(Some(whois_result)) => {
-                    log::info!("WHOIS lookup successful for {}", domain);
-                    Some(whois_result)
-                }
-                Ok(None) => {
-                    log::info!("WHOIS lookup returned no data for {}", domain);
-                    None
-                }
-                Err(whois_err) => {
-                    log::warn!(
-                        "Both RDAP and WHOIS lookups failed for {}: WHOIS={}",
-                        domain,
-                        whois_err
-                    );
-                    None
-                }
-            }
+    // Use whois-service client (create new instance each time since it's lightweight)
+    let client = WhoisClient::new()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {}", e))?;
+    match client.lookup(domain).await {
+        Ok(response) => {
+            log::info!("WHOIS lookup successful for {}", domain);
+            let result = convert_parsed_data(&response);
+
+            // Cache the result
+            save_to_cache(&cache_path, domain, &result)?;
+
+            Ok(Some(result))
         }
         Err(e) => {
-            log::info!(
-                "RDAP lookup failed for {}: {}, trying WHOIS fallback",
-                domain,
-                e
-            );
-            // Fallback to WHOIS
-            match lookup_whois_text(domain).await {
-                Ok(Some(whois_result)) => {
-                    log::info!("WHOIS lookup successful for {}", domain);
-                    Some(whois_result)
-                }
-                Ok(None) => {
-                    log::info!("WHOIS lookup returned no data for {}", domain);
-                    None
-                }
-                Err(whois_err) => {
-                    log::warn!(
-                        "Both RDAP and WHOIS lookups failed for {}: RDAP={}, WHOIS={}",
-                        domain,
-                        e,
-                        whois_err
-                    );
-                    None
-                }
-            }
-        }
-    };
-
-    // Cache the result (even if None, to avoid repeated lookups)
-    if let Some(ref whois_result) = result {
-        save_to_cache(&cache_path, domain, whois_result)?;
-    }
-
-    Ok(result)
-}
-
-/// Looks up domain information using RDAP (Registration Data Access Protocol)
-///
-/// RDAP is preferred over WHOIS because:
-/// - Returns structured JSON data
-/// - Faster and more reliable
-/// - Better error handling
-/// - Standardized format
-async fn lookup_rdap(domain: &str) -> Result<Option<WhoisResult>> {
-    // Validate domain format
-    let parts: Vec<&str> = domain.split('.').collect();
-    if parts.len() < 2 {
-        anyhow::bail!("Invalid domain: {}", domain);
-    }
-
-    // Use IANA's RDAP bootstrap service to find the correct RDAP server
-    // First, try the domain directly via a public RDAP service
-    // rdap.org is a public RDAP service that handles many TLDs
-    let bootstrap_url = format!("https://rdap.org/domain/{}", domain);
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .context("Failed to create HTTP client for RDAP")?;
-
-    let response = client
-        .get(&bootstrap_url)
-        .header("Accept", "application/rdap+json")
-        .send()
-        .await
-        .context("RDAP request failed")?;
-
-    if !response.status().is_success() {
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            // Rate limited - wait and retry once
-            log::warn!("RDAP rate limited for {}, waiting 5 seconds", domain);
-            sleep(Duration::from_secs(5)).await;
-            let retry_response = client
-                .get(&bootstrap_url)
-                .header("Accept", "application/rdap+json")
-                .send()
-                .await
-                .context("RDAP retry request failed")?;
-            if !retry_response.status().is_success() {
-                return Ok(None);
-            }
-            return parse_rdap_response(retry_response).await;
-        }
-        return Ok(None);
-    }
-
-    parse_rdap_response(response).await
-}
-
-/// Parses an RDAP JSON response into a WhoisResult
-async fn parse_rdap_response(response: reqwest::Response) -> Result<Option<WhoisResult>> {
-    let text = response
-        .text()
-        .await
-        .context("Failed to read RDAP response body")?;
-    let rdap: RdapResponse =
-        serde_json::from_str(&text).context("Failed to parse RDAP JSON response")?;
-
-    let mut result = WhoisResult::default();
-
-    // Extract events (creation, expiration, updated dates)
-    if let Some(events) = rdap.events {
-        for event in events {
-            if let Some(action) = event.event_action {
-                if let Some(date_str) = event.event_date {
-                    if let Ok(date) = DateTime::parse_from_rfc3339(&date_str) {
-                        let date_utc = date.with_timezone(&Utc);
-                        match action.as_str() {
-                            "registration" => result.creation_date = Some(date_utc),
-                            "expiration" => result.expiration_date = Some(date_utc),
-                            "last changed" | "last update" => result.updated_date = Some(date_utc),
-                            _ => {}
-                        }
-                    }
-                }
-            }
+            log::warn!("WHOIS lookup failed for {}: {}", domain, e);
+            Ok(None)
         }
     }
-
-    // Extract registrar from entities
-    if let Some(entities) = rdap.entities {
-        for entity in entities {
-            if let Some(roles) = &entity.roles {
-                if roles.contains(&"registrar".to_string()) {
-                    // Try to extract registrar name from vcard
-                    if entity.vcard_array.is_some() {
-                        // vcard is a complex structure, for now we'll extract what we can
-                        // This is a simplified extraction
-                        result.registrar = Some("Unknown Registrar".to_string());
-                    }
-                }
-                if roles.contains(&"registrant".to_string()) {
-                    // Extract registrant info
-                    if entity.vcard_array.is_some() {
-                        // Simplified extraction
-                        result.registrant_org = Some("Unknown Organization".to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Extract status
-    result.status = rdap.status;
-
-    // Extract nameservers
-    if let Some(ns) = rdap.nameservers {
-        result.nameservers = Some(ns.into_iter().filter_map(|n| n.ldh_name).collect());
-    }
-
-    Ok(Some(result))
-}
-
-/// Looks up domain information using traditional WHOIS (text-based)
-///
-/// This is a fallback when RDAP is not available.
-/// WHOIS uses TCP port 43 and returns plain text.
-async fn lookup_whois_text(domain: &str) -> Result<Option<WhoisResult>> {
-    // Determine WHOIS server based on TLD
-    let whois_server = get_whois_server(domain)?;
-
-    // Connect to WHOIS server on port 43
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
-
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(10),
-        TcpStream::connect(format!("{}:43", whois_server)),
-    )
-    .await
-    .context("WHOIS connection timeout")?
-    .context("Failed to connect to WHOIS server")?;
-
-    // Send domain query
-    let query = format!("{}\r\n", domain);
-    stream
-        .write_all(query.as_bytes())
-        .await
-        .context("Failed to write WHOIS query")?;
-
-    // Read response
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .await
-        .context("Failed to read WHOIS response")?;
-
-    // Parse WHOIS text (simplified - WHOIS format varies by registrar)
-    let result = parse_whois_text(&response, domain)?;
-    Ok(result)
-}
-
-/// Determines the appropriate WHOIS server for a domain based on its TLD
-fn get_whois_server(domain: &str) -> Result<String> {
-    // Extract TLD
-    let parts: Vec<&str> = domain.split('.').collect();
-    if parts.is_empty() {
-        anyhow::bail!("Invalid domain: {}", domain);
-    }
-    let tld = parts.last().unwrap();
-
-    // Common WHOIS servers by TLD
-    // This is a simplified mapping - in production, you'd want a more comprehensive list
-    let server = match tld.to_lowercase().as_str() {
-        "com" | "net" | "org" => "whois.verisign-grs.com",
-        "edu" => "whois.educause.edu",
-        "gov" => "whois.nic.gov",
-        "uk" => "whois.nic.uk",
-        "de" => "whois.denic.de",
-        "fr" => "whois.afnic.fr",
-        "jp" => "whois.jprs.jp",
-        "au" => "whois.aunic.net",
-        "ca" => "whois.cira.ca",
-        _ => "whois.iana.org", // Default fallback
-    };
-
-    Ok(server.to_string())
-}
-
-/// Parses WHOIS text response into a WhoisResult
-///
-/// WHOIS format varies significantly by registrar, so this is a best-effort parser
-fn parse_whois_text(whois_text: &str, _domain: &str) -> Result<Option<WhoisResult>> {
-    let mut result = WhoisResult {
-        raw_text: Some(whois_text.to_string()),
-        ..Default::default()
-    };
-
-    let text_lower = whois_text.to_lowercase();
-
-    // Check for common error messages
-    if text_lower.contains("no match") || text_lower.contains("not found") {
-        return Ok(None);
-    }
-
-    // Try to extract common fields using regex patterns
-    // Creation date - try ISO 8601 format first (with time), then date-only
-    if let Some(cap) =
-        regex::Regex::new(r"(?i)creation date[:\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
-            .unwrap()
-            .captures(whois_text)
-    {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(&cap[1]) {
-            result.creation_date = Some(dt.with_timezone(&Utc));
-        }
-    } else if let Some(cap) = regex::Regex::new(r"(?i)creation date[:\s]+(\d{4}-\d{2}-\d{2})")
-        .unwrap()
-        .captures(whois_text)
-    {
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(&cap[1], "%Y-%m-%d") {
-            result.creation_date = Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
-        }
-    }
-
-    // Expiration date - try ISO 8601 format first (with time), then date-only
-    if let Some(cap) = regex::Regex::new(
-        r"(?i)registr(?:y\s+)?expir(?:y|ation)\s+date[:\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)",
-    )
-    .unwrap()
-    .captures(whois_text)
-    {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(&cap[1]) {
-            result.expiration_date = Some(dt.with_timezone(&Utc));
-        }
-    } else if let Some(cap) =
-        regex::Regex::new(r"(?i)registr(?:y\s+)?expir(?:y|ation)\s+date[:\s]+(\d{4}-\d{2}-\d{2})")
-            .unwrap()
-            .captures(whois_text)
-    {
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(&cap[1], "%Y-%m-%d") {
-            result.expiration_date = Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
-        }
-    }
-
-    // Updated date - try ISO 8601 format first (with time), then date-only
-    if let Some(cap) =
-        regex::Regex::new(r"(?i)updated\s+date[:\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
-            .unwrap()
-            .captures(whois_text)
-    {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(&cap[1]) {
-            result.updated_date = Some(dt.with_timezone(&Utc));
-        }
-    } else if let Some(cap) = regex::Regex::new(r"(?i)updated\s+date[:\s]+(\d{4}-\d{2}-\d{2})")
-        .unwrap()
-        .captures(whois_text)
-    {
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(&cap[1], "%Y-%m-%d") {
-            result.updated_date = Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
-        }
-    }
-
-    // Registrar - try multiple patterns (WHOIS format varies)
-    // Match "Registrar:" exactly (not "Registrar WHOIS Server:", "Registrar URL:", etc.)
-    // Use negative lookahead to exclude "Registrar" followed by other words before the colon
-
-    // Try exact "Registrar:" first (most common format)
-    if let Some(cap) = regex::Regex::new(r"(?im)^\s*registrar:\s*(.+?)$")
-        .unwrap()
-        .captures(whois_text)
-    {
-        result.registrar = Some(cap[1].trim().to_string());
-    }
-
-    // If no match, try "Registrar Name:" (more specific)
-    if result.registrar.is_none() {
-        if let Some(cap) = regex::Regex::new(r"(?im)^\s*registrar\s+name[:\s]+(.+?)$")
-            .unwrap()
-            .captures(whois_text)
-        {
-            result.registrar = Some(cap[1].trim().to_string());
-        }
-    }
-
-    // If still no match, try "Sponsoring Registrar:"
-    if result.registrar.is_none() {
-        if let Some(cap) = regex::Regex::new(r"(?im)^\s*sponsoring\s+registrar[:\s]+(.+?)$")
-            .unwrap()
-            .captures(whois_text)
-        {
-            result.registrar = Some(cap[1].trim().to_string());
-        }
-    }
-
-    // If no registrar found, try "Registrar Name:" (more specific)
-    if result.registrar.is_none() {
-        if let Some(cap) = regex::Regex::new(r"(?im)^\s*registrar\s+name[:\s]+(.+?)$")
-            .unwrap()
-            .captures(whois_text)
-        {
-            result.registrar = Some(cap[1].trim().to_string());
-        }
-    }
-
-    // If still no registrar, try "Sponsoring Registrar:"
-    if result.registrar.is_none() {
-        if let Some(cap) = regex::Regex::new(r"(?im)^\s*sponsoring\s+registrar[:\s]+(.+?)$")
-            .unwrap()
-            .captures(whois_text)
-        {
-            result.registrar = Some(cap[1].trim().to_string());
-        }
-    }
-
-    // Extract domain status (multiple lines possible)
-    let status_regex =
-        regex::Regex::new(r"(?im)^\s*domain\s+status[:\s]+(.+?)(?:\s+https://|$)").unwrap();
-    let mut statuses = Vec::new();
-    for cap in status_regex.captures_iter(whois_text) {
-        let status = cap[1].trim().to_string();
-        if !status.is_empty() {
-            statuses.push(status);
-        }
-    }
-    if !statuses.is_empty() {
-        result.status = Some(statuses);
-    }
-
-    // Extract nameservers (multiple lines possible)
-    let ns_regex = regex::Regex::new(r"(?im)^\s*name\s+server[:\s]+(.+?)$").unwrap();
-    let mut nameservers = Vec::new();
-    for cap in ns_regex.captures_iter(whois_text) {
-        let ns = cap[1].trim().to_string();
-        if !ns.is_empty() {
-            nameservers.push(ns);
-        }
-    }
-    if !nameservers.is_empty() {
-        result.nameservers = Some(nameservers);
-    }
-
-    // If we got at least one field, return the result
-    if result.creation_date.is_some()
-        || result.expiration_date.is_some()
-        || result.updated_date.is_some()
-        || result.registrar.is_some()
-        || result.status.is_some()
-        || result.nameservers.is_some()
-    {
-        Ok(Some(result))
-    } else {
-        // No parseable data found
-        Ok(None)
-    }
-}
-
-/// Loads WHOIS data from cache if available and not expired
-fn load_from_cache(cache_dir: &Path, domain: &str) -> Result<Option<WhoisCacheEntry>> {
-    let cache_file = cache_dir.join(format!("{}.json", domain.replace('.', "_")));
-
-    if !cache_file.exists() {
-        return Ok(None);
-    }
-
-    let metadata =
-        std::fs::read_to_string(&cache_file).context("Failed to read WHOIS cache file")?;
-    let entry: WhoisCacheEntry =
-        serde_json::from_str(&metadata).context("Failed to parse WHOIS cache file")?;
-
-    // Check if cache is expired
-    let age = entry.cached_at.elapsed().unwrap_or(Duration::MAX);
-    if age.as_secs() > CACHE_TTL_SECS {
-        // Cache expired, delete the file
-        let _ = std::fs::remove_file(&cache_file);
-        return Ok(None);
-    }
-
-    Ok(Some(entry))
-}
-
-/// Saves WHOIS data to cache
-fn save_to_cache(cache_dir: &Path, domain: &str, result: &WhoisResult) -> Result<()> {
-    std::fs::create_dir_all(cache_dir).context("Failed to create WHOIS cache directory")?;
-
-    let cache_file = cache_dir.join(format!("{}.json", domain.replace('.', "_")));
-    let entry = WhoisCacheEntry {
-        result: WhoisCacheResult::from(result),
-        cached_at: SystemTime::now(),
-        domain: domain.to_string(),
-    };
-
-    let json =
-        serde_json::to_string_pretty(&entry).context("Failed to serialize WHOIS cache entry")?;
-    std::fs::write(&cache_file, json).context("Failed to write WHOIS cache file")?;
-
-    Ok(())
 }
