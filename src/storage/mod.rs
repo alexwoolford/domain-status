@@ -1,14 +1,15 @@
 // storage/mod.rs
 // Database operations module
 
+pub mod batch;
 pub mod insert;
 pub mod migrations;
 pub mod models;
 pub mod pool;
 
 // Re-export commonly used items
+pub use batch::{start_batch_writer, BatchConfig, BatchRecord};
 pub use insert::insert_run_metadata;
-pub use insert::insert_url_record;
 pub use insert::update_run_stats;
 pub use migrations::run_migrations;
 pub use models::UrlRecord;

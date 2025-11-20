@@ -22,6 +22,7 @@ use utils::*;
 
 use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::fetch::ProcessingContext;
+use crate::storage::{start_batch_writer, BatchConfig};
 
 mod adaptive_rate_limiter;
 mod config;
@@ -198,6 +199,19 @@ async fn main() -> Result<()> {
     .await
     .context("Failed to insert run metadata")?;
 
+    // Start batch writer for efficient database writes
+    let batch_config = BatchConfig {
+        batch_size: BATCH_SIZE,
+        flush_interval_secs: BATCH_FLUSH_INTERVAL_SECS,
+    };
+    // Clone the pool for the batch writer (Arc<SqlitePool> -> SqlitePool via deref)
+    let pool_for_batch = (*pool).clone();
+    let (batch_sender, batch_writer_handle) = start_batch_writer(pool_for_batch, batch_config);
+    info!(
+        "Batch writer started (batch_size={}, flush_interval={}s)",
+        BATCH_SIZE, BATCH_FLUSH_INTERVAL_SECS
+    );
+
     // Start time for measuring elapsed time during processing
     let start_time = std::time::Instant::now();
 
@@ -261,6 +275,7 @@ async fn main() -> Result<()> {
             Arc::clone(&resolver),
             error_stats.clone(),
             Some(run_id.clone()),
+            Some(batch_sender.clone()),
         ));
 
         // Clone error_stats for use in the task (it's also in ctx, but we need it here for error reporting)
@@ -355,6 +370,15 @@ async fn main() -> Result<()> {
     // Signal rate limiter to stop if it exists
     if let Some(shutdown) = rate_limiter_shutdown {
         shutdown.cancel();
+    }
+
+    // Flush batch writer: close the channel and wait for remaining records to be written
+    info!("Flushing batch writer...");
+    drop(batch_sender); // Close the channel to signal shutdown
+    match batch_writer_handle.await {
+        Ok(Ok(())) => info!("Batch writer flushed successfully"),
+        Ok(Err(e)) => warn!("Error flushing batch writer: {}", e),
+        Err(e) => warn!("Batch writer task panicked: {}", e),
     }
 
     // Log one final time before printing the error summary

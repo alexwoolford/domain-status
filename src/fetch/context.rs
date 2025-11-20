@@ -8,8 +8,10 @@ use hickory_resolver::TokioAsyncResolver;
 use publicsuffix::List;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::error_handling::ProcessingStats;
+use crate::storage::BatchRecord;
 
 /// Context containing all shared resources needed for URL processing.
 ///
@@ -22,6 +24,8 @@ pub struct ProcessingContext {
     /// HTTP client for redirect resolution (with redirects disabled)
     pub redirect_client: Arc<reqwest::Client>,
     /// Database connection pool
+    /// Note: Currently unused due to batch writer, but kept for potential future use
+    #[allow(dead_code)]
     pub pool: Arc<SqlitePool>,
     /// Public Suffix List extractor for domain extraction
     pub extractor: Arc<List>,
@@ -31,10 +35,13 @@ pub struct ProcessingContext {
     pub error_stats: Arc<ProcessingStats>,
     /// Unique identifier for this run (for time-series tracking)
     pub run_id: Option<String>,
+    /// Batch writer sender for queuing records
+    pub batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
 }
 
 impl ProcessingContext {
     /// Creates a new `ProcessingContext` with the given resources.
+    #[allow(clippy::too_many_arguments)] // All arguments are necessary for context setup
     pub fn new(
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
@@ -43,6 +50,7 @@ impl ProcessingContext {
         resolver: Arc<TokioAsyncResolver>,
         error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
+        batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
     ) -> Self {
         Self {
             client,
@@ -52,6 +60,7 @@ impl ProcessingContext {
             resolver,
             error_stats,
             run_id,
+            batch_sender,
         }
     }
 }

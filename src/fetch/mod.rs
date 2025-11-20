@@ -8,7 +8,7 @@ mod context;
 pub use context::ProcessingContext;
 
 use crate::config::MAX_REDIRECT_HOPS;
-use crate::database::{insert_url_record, UrlRecord};
+use crate::database::UrlRecord;
 use crate::dns::{
     extract_dmarc_record, extract_spf_record, lookup_mx_records, lookup_ns_records,
     lookup_txt_records, resolve_host_to_ip, reverse_dns_lookup,
@@ -21,9 +21,7 @@ use crate::parse::{
     extract_meta_description, extract_meta_keywords, extract_social_media_links,
     extract_structured_data, extract_title, is_mobile_friendly,
 };
-use crate::storage::insert::{
-    insert_geoip_data, insert_social_media_links, insert_structured_data,
-};
+use crate::storage::BatchRecord;
 use crate::tls::get_ssl_certificate_info;
 
 /// Serializes a value to JSON string.
@@ -760,9 +758,8 @@ pub async fn handle_response(
         resp_data.initial_domain
     );
 
-    // Clone values needed for GeoIP lookup after record creation
+    // Clone value needed for GeoIP lookup after record creation
     let ip_address_clone = tls_dns_data.ip_address.clone();
-    let final_domain_clone = resp_data.final_domain.clone();
 
     let record = UrlRecord {
         initial_domain: resp_data.initial_domain.clone(),
@@ -798,75 +795,47 @@ pub async fn handle_response(
     // Extract redirect chain directly (no JSON parsing needed)
     let redirect_chain_vec: Vec<String> = redirect_chain.unwrap_or_default();
 
-    match insert_url_record(
-        &ctx.pool,
-        &record,
-        &resp_data.security_headers,
-        &resp_data.http_headers,
-        &oids_set,
-        &redirect_chain_vec,
-        &technologies_vec,
-    )
-    .await
-    {
-        Ok(url_status_id) => {
-            log::info!(
-                "Record successfully inserted for URL: {}",
-                resp_data.final_url
-            );
+    // Perform GeoIP lookup if enabled (before batching)
+    let geoip_data =
+        geoip::lookup_ip(&ip_address_clone).map(|result| (ip_address_clone.clone(), result));
 
-            // Perform GeoIP lookup and insert if enabled
-            if let Some(geoip_result) = geoip::lookup_ip(&ip_address_clone) {
-                if let Err(e) =
-                    insert_geoip_data(&ctx.pool, url_status_id, &ip_address_clone, &geoip_result)
-                        .await
-                {
-                    log::warn!(
-                        "Failed to insert GeoIP data for {}: {}",
-                        final_domain_clone,
-                        e
-                    );
-                } else {
-                    debug!("GeoIP data inserted for {}", final_domain_clone);
-                }
-            }
+    // Create batch record with all data
+    let batch_record = BatchRecord {
+        url_record: record,
+        security_headers: resp_data.security_headers.clone(),
+        http_headers: resp_data.http_headers.clone(),
+        oids: oids_set,
+        redirect_chain: redirect_chain_vec,
+        technologies: technologies_vec,
+        geoip: geoip_data,
+        structured_data: Some(html_data.structured_data.clone()),
+        social_media_links: html_data.social_media_links.clone(),
+    };
 
-            // Insert structured data
-            if let Err(e) =
-                insert_structured_data(&ctx.pool, url_status_id, &html_data.structured_data).await
-            {
-                log::warn!(
-                    "Failed to insert structured data for {}: {}",
-                    final_domain_clone,
-                    e
+    // Send to batch writer queue
+    if let Some(ref sender) = ctx.batch_sender {
+        match sender.send(batch_record) {
+            Ok(()) => {
+                log::info!(
+                    "Record queued for batch insert for URL: {}",
+                    resp_data.final_url
                 );
-            } else {
-                debug!("Structured data inserted for {}", final_domain_clone);
             }
-
-            // Insert social media links
-            if let Err(e) =
-                insert_social_media_links(&ctx.pool, url_status_id, &html_data.social_media_links)
-                    .await
-            {
-                log::warn!(
-                    "Failed to insert social media links for {}: {}",
-                    final_domain_clone,
-                    e
-                );
-            } else {
-                debug!(
-                    "Social media links inserted for {}: {} links",
-                    final_domain_clone,
-                    html_data.social_media_links.len()
+            Err(e) => {
+                log::error!(
+                    "Failed to queue record for URL {}: {e}",
+                    resp_data.final_url
                 );
             }
         }
-        Err(e) => log::error!(
-            "Failed to insert record for URL {}: {e}",
+    } else {
+        // Fallback: if batch writer is not available, log a warning
+        // This should not happen in normal operation
+        log::warn!(
+            "Batch writer not available, record for {} will not be saved",
             resp_data.final_url
-        ),
-    };
+        );
+    }
 
     Ok(())
 }

@@ -12,6 +12,12 @@ pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(45);
 pub const DB_PATH: &str = "./url_checker.db";
 
+// Batch writing configuration
+/// Maximum number of records to batch before flushing to database
+pub const BATCH_SIZE: usize = 100;
+/// Interval between automatic batch flushes (in seconds)
+pub const BATCH_FLUSH_INTERVAL_SECS: u64 = 5;
+
 // Network operation timeouts
 /// DNS query timeout in seconds
 /// Increased from 5s to 10s to reduce timeout errors on TXT/NS/MX lookups
