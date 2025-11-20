@@ -14,6 +14,10 @@ Cargo.lock
 .geoip_cache/*
 !.geoip_cache/.gitkeep
 
+# WHOIS cache files (runtime data, not source code)
+.whois_cache/*
+!.whois_cache/.gitkeep
+
 # Environment variables (contains secrets)
 .env
 
@@ -28,3 +32,5 @@ QUALITY_ASSESSMENT.md
 TECHNICAL_DEBT_REVIEW.md
 
 wappalyzergo/
+
+

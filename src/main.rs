@@ -40,6 +40,7 @@ mod security;
 mod storage;
 mod tls;
 mod utils;
+mod whois;
 
 /// Logs progress information about URL processing.
 ///
@@ -161,6 +162,11 @@ async fn main() -> Result<()> {
         .context("Failed to run database migrations")?;
 
     // Initialize technology fingerprint ruleset
+    // Log WHOIS status
+    if opt.enable_whois {
+        info!("WHOIS/RDAP lookup enabled (rate limit: 1 query per 2 seconds)");
+    }
+
     let ruleset = fingerprint::init_ruleset(opt.fingerprints.as_deref(), None)
         .await
         .context("Failed to initialize fingerprint ruleset")?;
@@ -277,6 +283,7 @@ async fn main() -> Result<()> {
             error_stats.clone(),
             Some(run_id.clone()),
             Some(batch_sender.clone()),
+            opt.enable_whois,
         ));
 
         // Clone error_stats for use in the task (it's also in ctx, but we need it here for error reporting)

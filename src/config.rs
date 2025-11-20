@@ -285,4 +285,23 @@ pub struct Opt {
     /// Otherwise, GeoIP lookup is disabled.
     #[arg(long)]
     pub geoip: Option<String>,
+
+    /// Enable WHOIS/RDAP lookup for domain registration information
+    ///
+    /// When enabled, performs WHOIS/RDAP queries to fetch:
+    /// - Domain creation date
+    /// - Domain expiration date
+    /// - Registrar information
+    /// - Registrant details
+    ///
+    /// **Rate Limiting**: WHOIS queries are rate-limited to 1 query per 2 seconds
+    /// (0.5 queries/second) by default to respect registrar limits. This is separate
+    /// from HTTP rate limiting and will slow down processing when enabled.
+    ///
+    /// **Caching**: WHOIS data is cached for 7 days to avoid redundant queries.
+    ///
+    /// **Default**: Disabled (off) to maintain fast processing speeds.
+    /// Enable only when domain age/registrar information is needed.
+    #[arg(long)]
+    pub enable_whois: bool,
 }

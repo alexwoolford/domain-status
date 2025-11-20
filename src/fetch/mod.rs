@@ -807,6 +807,34 @@ pub async fn handle_response(
         &resp_data.security_headers,
     );
 
+    // Perform WHOIS lookup if enabled (before batching)
+    // Extract domain from final URL for WHOIS lookup
+    let whois_data = if ctx.enable_whois {
+        let domain_for_whois = resp_data.final_domain.clone();
+        log::info!("Performing WHOIS lookup for domain: {}", domain_for_whois);
+        match crate::whois::lookup_whois(&domain_for_whois, None).await {
+            Ok(Some(whois_result)) => {
+                log::info!("WHOIS lookup successful for {}: registrar={:?}, creation={:?}, expiration={:?}",
+                    domain_for_whois,
+                    whois_result.registrar,
+                    whois_result.creation_date,
+                    whois_result.expiration_date
+                );
+                Some(whois_result)
+            }
+            Ok(None) => {
+                log::info!("WHOIS lookup returned no data for {}", domain_for_whois);
+                None
+            }
+            Err(e) => {
+                log::warn!("WHOIS lookup failed for {}: {}", domain_for_whois, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Create batch record with all data
     let batch_record = BatchRecord {
         url_record: record,
@@ -819,6 +847,7 @@ pub async fn handle_response(
         structured_data: Some(html_data.structured_data.clone()),
         social_media_links: html_data.social_media_links.clone(),
         security_warnings,
+        whois: whois_data,
     };
 
     // Send to batch writer queue

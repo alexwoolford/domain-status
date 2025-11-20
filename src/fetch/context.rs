@@ -37,6 +37,8 @@ pub struct ProcessingContext {
     pub run_id: Option<String>,
     /// Batch writer sender for queuing records
     pub batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
+    /// Whether WHOIS lookup is enabled
+    pub enable_whois: bool,
 }
 
 impl ProcessingContext {
@@ -51,6 +53,7 @@ impl ProcessingContext {
         error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
         batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
+        enable_whois: bool,
     ) -> Self {
         Self {
             client,
@@ -61,6 +64,7 @@ impl ProcessingContext {
             error_stats,
             run_id,
             batch_sender,
+            enable_whois,
         }
     }
 }

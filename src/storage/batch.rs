@@ -14,6 +14,7 @@ use crate::error_handling::DatabaseError;
 use crate::geoip::GeoIpResult;
 use crate::parse::{SocialMediaLink, StructuredData};
 use crate::security::SecurityWarning;
+use crate::whois::WhoisResult;
 
 use super::insert;
 use super::models::UrlRecord;
@@ -47,6 +48,7 @@ pub struct BatchRecord {
     pub structured_data: Option<StructuredData>,
     pub social_media_links: Vec<SocialMediaLink>,
     pub security_warnings: Vec<SecurityWarning>,
+    pub whois: Option<WhoisResult>,
 }
 
 /// Batch writer that collects records and writes them in batches
@@ -165,6 +167,19 @@ impl BatchWriter {
                 {
                     log::warn!(
                         "Failed to insert security warnings for url_status_id {}: {}",
+                        url_status_id,
+                        e
+                    );
+                }
+            }
+
+            // Insert WHOIS data if available
+            if let Some(ref whois_result) = record.whois {
+                if let Err(e) =
+                    insert::insert_whois_data(&self.pool, url_status_id, whois_result).await
+                {
+                    log::warn!(
+                        "Failed to insert WHOIS data for url_status_id {}: {}",
                         url_status_id,
                         e
                     );
