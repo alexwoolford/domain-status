@@ -944,10 +944,14 @@ pub async fn detect_technologies(
     url: &str,
     script_tag_ids: &HashSet<String>, // Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
 ) -> Result<HashSet<String>> {
-    let ruleset = RULESET.read().await;
-    let ruleset = ruleset
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() first"))?;
+    // Clone the Arc immediately to release the lock (ruleset is read-only after init)
+    let ruleset = {
+        let guard = RULESET.read().await;
+        guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() first"))?
+            .clone()
+    };
 
     let mut detected = HashSet::new();
 
@@ -1005,8 +1009,44 @@ pub async fn detect_technologies(
         all_script_content.len()
     );
 
+    // Pre-filter technologies for early exit optimization
+    // Skip technologies that can't possibly match based on available data
+    // This significantly reduces the number of technologies we need to check
+    let has_cookies = !cookies.is_empty();
+    let has_headers = !header_map.is_empty();
+    let has_meta = !meta_tags.is_empty();
+    let has_scripts = !script_sources.is_empty();
+    let has_script_content = !all_script_content.trim().is_empty();
+
     // Match each technology
     for (tech_name, tech) in &ruleset.technologies {
+        // Early exit: skip technologies that can't match
+        // If technology requires cookies but we have none, skip it
+        if !tech.cookies.is_empty() && !has_cookies {
+            continue;
+        }
+        // If technology requires headers but we have none, skip it
+        if !tech.headers.is_empty() && !has_headers {
+            continue;
+        }
+        // If technology requires meta tags but we have none, skip it
+        if !tech.meta.is_empty() && !has_meta {
+            continue;
+        }
+        // If technology requires script sources but we have none, skip it
+        if !tech.script.is_empty() && !has_scripts {
+            continue;
+        }
+        // If technology requires JS execution but we have no script content, skip it
+        // (unless it can match via script tag IDs)
+        if !tech.js.is_empty() && !has_script_content {
+            // Check if any JS property could match via script tag IDs
+            let can_match_via_tag_id = tech.js.keys().any(|prop| script_tag_ids.contains(prop));
+            if !can_match_via_tag_id {
+                continue;
+            }
+        }
+
         // Log when checking New Relic for debugging
         if tech_name == "New Relic" {
             log::debug!(
@@ -1057,8 +1097,11 @@ pub async fn detect_technologies(
 /// Returns the category name from the first category ID in the technology's `cats` array.
 /// Returns `None` if the technology is not found, has no categories, or the category ID is not in the ruleset.
 pub async fn get_technology_category(tech_name: &str) -> Option<String> {
-    let ruleset = RULESET.read().await;
-    let ruleset = ruleset.as_ref()?;
+    // Clone the Arc immediately to release the lock
+    let ruleset = {
+        let guard = RULESET.read().await;
+        guard.as_ref()?.clone()
+    };
 
     let tech = ruleset.technologies.get(tech_name)?;
     let first_cat_id = tech.cats.first()?;
@@ -1184,6 +1227,7 @@ async fn matches_technology(
 
     // Match JavaScript object properties (js field)
     // Execute JavaScript to check for properties, matching Golang Wappalyzer behavior
+    // Note: This is the slowest check, so it's done last (after all fast checks)
     if !tech.js.is_empty() {
         log::debug!(
             "Checking {} JS properties for technology ({} bytes of script content)",
@@ -2005,8 +2049,12 @@ fn matches_pattern(pattern: &str, text: &str) -> bool {
 /// Gets the current ruleset metadata (for storing in database)
 #[allow(dead_code)]
 pub async fn get_ruleset_metadata() -> Option<FingerprintMetadata> {
-    let ruleset = RULESET.read().await;
-    ruleset.as_ref().map(|r| r.metadata.clone())
+    // Clone the Arc immediately to release the lock
+    let ruleset = {
+        let guard = RULESET.read().await;
+        guard.as_ref()?.clone()
+    };
+    Some(ruleset.metadata.clone())
 }
 
 #[cfg(test)]

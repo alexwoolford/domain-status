@@ -7,8 +7,8 @@
 ## 🌟 Features
 
 * **High-Performance Concurrency**: Utilizes async/await with configurable concurrency limits (default: 20 concurrent requests, 10 RPS rate limit)
-* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, and complete redirect chains
-* **Technology Fingerprinting**: Detects web technologies (CMS, frameworks, analytics, etc.) using community-maintained rulesets (HTTP Archive Wappalyzer fork)
+* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, WHOIS registration data, structured data (JSON-LD, Open Graph, Twitter Cards), security warnings, and complete redirect chains
+* **Technology Fingerprinting**: Detects web technologies (CMS, frameworks, analytics, etc.) using community-maintained rulesets (HTTP Archive and Enthec Wappalyzer forks) with JavaScript execution for dynamic detection
 * **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (City and ASN). Downloads and caches databases automatically when license key is provided.
 * **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
 * **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
@@ -47,18 +47,18 @@ domain_status urls.txt \
 ```
 
 **Command-line Options:**
-- `--error-rate <RATE>`: Error rate threshold percentage for throttling (default: 60.0)
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
 - `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
 - `--db-path <PATH>`: SQLite database file path (default: `./url_checker.db`)
 - `--max-concurrency <N>`: Maximum concurrent requests (default: 20)
-- `--timeout-seconds <N>`: Per-request timeout in seconds (default: 10)
+- `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 45 seconds.
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
 - `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 10)
-  - Rate limiter automatically adjusts based on error rates
+  - Rate limiter automatically adjusts based on error rates (default threshold: 20%)
   - Set to 0 to disable rate limiting (not recommended)
 - `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
 - `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set. Otherwise, GeoIP lookup is disabled.
+- `--enable-whois`: Enable WHOIS/RDAP lookup for domain registration information. WHOIS data is cached for 7 days. Default: disabled.
 
 **URL Input:**
 - URLs can be provided with or without `http://` or `https://` prefix
@@ -106,6 +106,8 @@ The tool captures comprehensive information for each URL. The database uses a **
 ```mermaid
 erDiagram
     runs ||--o{ url_status : "has"
+    url_status ||--o| url_geoip : "has"
+    url_status ||--o| url_whois : "has"
     url_status ||--o{ url_technologies : "has"
     url_status ||--o{ url_nameservers : "has"
     url_status ||--o{ url_txt_records : "has"
@@ -115,6 +117,8 @@ erDiagram
     url_status ||--o{ url_oids : "has"
     url_status ||--o{ url_redirect_chain : "has"
     url_status ||--o{ url_social_media_links : "has"
+    url_status ||--o{ url_structured_data : "has"
+    url_status ||--o{ url_security_warnings : "has"
 
     runs {
         TEXT run_id PK
@@ -213,6 +217,51 @@ erDiagram
         TEXT platform
         TEXT url
         TEXT identifier
+    }
+
+    url_geoip {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT ip_address
+        TEXT country_code
+        TEXT country_name
+        TEXT region
+        TEXT city
+        REAL latitude
+        REAL longitude
+        TEXT postal_code
+        TEXT timezone
+        INTEGER asn
+        TEXT asn_org
+    }
+
+    url_structured_data {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT data_type
+        TEXT property_name
+        TEXT property_value
+    }
+
+    url_security_warnings {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT warning_code
+        TEXT warning_description
+    }
+
+    url_whois {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        INTEGER creation_date
+        INTEGER expiration_date
+        INTEGER updated_date
+        TEXT registrar
+        TEXT registrant_country
+        TEXT registrant_org
+        TEXT status
+        TEXT nameservers
+        TEXT raw_text
     }
 ```
 
@@ -631,6 +680,129 @@ GROUP BY us.domain
 ORDER BY platform_count DESC;
 ```
 
+#### `url_structured_data` (Junction Table)
+Stores structured data extracted from HTML (JSON-LD, Open Graph, Twitter Cards, Schema.org types).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `data_type` | TEXT | Type of structured data: `json_ld`, `open_graph`, `twitter_card`, or `schema_type` |
+| `property_name` | TEXT | Property name (e.g., `og:title`, `twitter:card`, Schema.org `@type`). Empty for JSON-LD (full JSON in `property_value`) |
+| `property_value` | TEXT | Property value (Open Graph/Twitter content, full JSON-LD object as string, or empty for Schema types) |
+
+**Constraints:**
+- Foreign key with `ON DELETE CASCADE`
+- No UNIQUE constraint (multiple properties per type are allowed)
+
+**Indexes:**
+- `idx_url_structured_data_type` on `data_type`
+- `idx_url_structured_data_property` on `property_name`
+- `idx_url_structured_data_status_id` on `url_status_id`
+- `idx_url_structured_data_type_property` on `(data_type, property_name)` (composite index)
+
+**Query Examples:**
+```sql
+-- Find all sites with Open Graph titles
+SELECT DISTINCT us.domain, usd.property_value
+FROM url_status us
+JOIN url_structured_data usd ON us.id = usd.url_status_id
+WHERE usd.data_type = 'open_graph' AND usd.property_name = 'og:title';
+
+-- Find all sites with JSON-LD structured data
+SELECT DISTINCT us.domain
+FROM url_status us
+JOIN url_structured_data usd ON us.id = usd.url_status_id
+WHERE usd.data_type = 'json_ld';
+```
+
+#### `url_security_warnings` (Junction Table)
+Stores security analysis warnings for each URL (one row per warning per URL).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `warning_code` | TEXT | Warning code identifier (e.g., `MISSING_HSTS`, `WEAK_CIPHER`) |
+| `warning_description` | TEXT | Human-readable warning description |
+
+**Constraints:**
+- `UNIQUE (url_status_id, warning_code)` - One warning per code per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_security_warnings_code` on `warning_code` (for queries like "find all sites with missing HSTS")
+- `idx_url_security_warnings_status_id` on `url_status_id`
+
+**Query Examples:**
+```sql
+-- Find all sites with security warnings
+SELECT DISTINCT us.domain, usw.warning_code, usw.warning_description
+FROM url_status us
+JOIN url_security_warnings usw ON us.id = usw.url_status_id;
+
+-- Count warnings by type
+SELECT warning_code, COUNT(*) as count
+FROM url_security_warnings
+GROUP BY warning_code
+ORDER BY count DESC;
+```
+
+#### `url_whois` (One-to-One Table)
+Stores domain registration information from WHOIS/RDAP lookups (one-to-one relationship with `url_status`).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` (one-to-one) |
+| `creation_date` | INTEGER | Domain creation date (milliseconds since Unix epoch) |
+| `expiration_date` | INTEGER | Domain expiration date (milliseconds since Unix epoch) |
+| `updated_date` | INTEGER | Domain last updated date (milliseconds since Unix epoch) |
+| `registrar` | TEXT | Registrar name (e.g., "GoDaddy", "Namecheap") |
+| `registrant_country` | TEXT | ISO 3166-1 alpha-2 country code (e.g., "US", "GB") |
+| `registrant_org` | TEXT | Registrant organization name |
+| `status` | TEXT | Domain status codes (JSON array, e.g., `["clientTransferProhibited"]`) |
+| `nameservers` | TEXT | Nameservers from WHOIS (JSON array) |
+| `raw_text` | TEXT | Raw WHOIS text (for debugging/fallback) |
+
+**Constraints:**
+- `UNIQUE (url_status_id)` - One-to-one relationship with `url_status`
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_whois_registrar` on `registrar` (for queries like "find all domains registered with GoDaddy")
+- `idx_url_whois_country` on `registrant_country` (for geographic analysis)
+- `idx_url_whois_status_id` on `url_status_id`
+
+**Notes:**
+- WHOIS lookup requires `--enable-whois` flag to be enabled
+- WHOIS queries are rate-limited to 1 query per 2 seconds (0.5 queries/second)
+- WHOIS data is cached for 7 days in `.whois_cache/` directory
+- If WHOIS is disabled or lookup fails, this table will have no rows for those URLs
+
+**Query Examples:**
+```sql
+-- Find all domains registered with a specific registrar
+SELECT DISTINCT us.domain, uw.registrar, uw.creation_date
+FROM url_status us
+JOIN url_whois uw ON us.id = uw.url_status_id
+WHERE uw.registrar LIKE '%GoDaddy%';
+
+-- Find domains expiring soon (within 30 days)
+SELECT DISTINCT us.domain, uw.expiration_date
+FROM url_status us
+JOIN url_whois uw ON us.id = uw.url_status_id
+WHERE uw.expiration_date IS NOT NULL
+  AND uw.expiration_date < (strftime('%s', 'now') * 1000 + 30 * 24 * 60 * 60 * 1000);
+
+-- Find domains by registrant country
+SELECT uw.registrant_country, COUNT(*) as domain_count
+FROM url_whois uw
+WHERE uw.registrant_country IS NOT NULL
+GROUP BY uw.registrant_country
+ORDER BY domain_count DESC;
+```
+
 ### Schema Design Principles
 
 The database uses a **star schema** design pattern:
@@ -647,6 +819,11 @@ The database uses a **star schema** design pattern:
    - `url_oids` - Certificate OIDs
    - `url_redirect_chain` - Redirect chain URLs
    - `url_social_media_links` - Social media platform links
+   - `url_structured_data` - Structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
+   - `url_security_warnings` - Security analysis warnings
+4. **One-to-One Tables**: Store single records per URL:
+   - `url_geoip` - Geographic and network information (one-to-one with `url_status`)
+   - `url_whois` - Domain registration information (one-to-one with `url_status`)
 
 **Benefits:**
 - **No Data Duplication**: Each piece of data stored once
@@ -699,9 +876,10 @@ GROUP BY ut1.technology_name;
 - TLS/SSL fields (`tls_version`, `cipher_suite`, `key_algorithm`, etc.) are `NULL` for HTTP (non-HTTPS) URLs
 - DNS records (NS, TXT, MX) are queried for the final domain after redirects
 - SPF and DMARC records are automatically extracted from TXT records; DMARC is also checked at `_dmarc.<domain>`
-- Technology fingerprints are detected using community-maintained rulesets (default: HTTP Archive Wappalyzer fork)
+- Technology fingerprints are detected using community-maintained rulesets (HTTP Archive and Enthec Wappalyzer forks) with JavaScript execution for dynamic detection
 - Fingerprint rulesets are cached locally in `.fingerprints_cache/` for 7 days to reduce network requests
 - **GeoIP lookup**: Requires MaxMind GeoLite2 databases (City and ASN). If `MAXMIND_LICENSE_KEY` environment variable is set, databases are automatically downloaded and cached in `.geoip_cache/` for 7 days. If license key is not set or GeoIP initialization fails, the application continues without GeoIP data (no error).
+- **WHOIS lookup**: Requires `--enable-whois` flag. WHOIS data is cached in `.whois_cache/` for 7 days. WHOIS queries are rate-limited to 0.5 queries/second to respect registrar limits.
 - The database uses UPSERT semantics: duplicate `(final_domain, timestamp)` pairs update existing records
 - Response body size is capped at 2MB to prevent memory exhaustion
 - Only HTML content-types are processed (others are skipped)
@@ -734,11 +912,8 @@ The tool provides detailed logging with progress updates and error summaries:
 {"ts":1704067200000,"level":"INFO","target":"domain_status","msg":"Processed 1506 lines in 5.33 seconds (~282.29 lines/sec)"}
 ```
 
-**Error Rate Throttling:**
-When the error rate exceeds the threshold (default 60%), the tool automatically throttles requests:
-```plaintext
-⚠️ domain_status [WARN] Throttled; error rate of 65.23% has exceeded the set threshold. There were 1234 errors out of 1892 operations. Backoff time is 13.05 seconds.
-```
+**Adaptive Rate Limiting:**
+The rate limiter automatically adjusts RPS based on error rates (429 errors and timeouts). When error rate exceeds the threshold (default 20%), RPS is reduced by 50%. When error rate is below threshold, RPS gradually increases by 10%.
 
 ## 🔄 Retry & Error Handling
 
@@ -772,7 +947,7 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
 - **Resource Efficiency**: Shared HTTP clients, DNS resolver, and HTML parser instances
 - **Database Optimization**: SQLite WAL mode for concurrent writes, indexed queries
 - **Memory Safety**: Response body size capped at 2MB, redirect chains limited to 10 hops
-- **Timeout Protection**: Per-URL processing timeout (default 10 seconds) prevents hung requests
+- **Timeout Protection**: Per-URL processing timeout (45 seconds) prevents hung requests. HTTP client timeout is configurable via `--timeout-seconds` (default: 10 seconds).
 
 **Rate Limiting & Bot Detection:**
 - Default settings (20 concurrency, 10 RPS) are designed to avoid triggering bot detection on Cloudflare and similar services
@@ -801,7 +976,9 @@ When the error rate exceeds the threshold (default 60%), the tool automatically 
 - **Domain Extraction**: `publicsuffix` for accurate domain parsing
 - **HTML Parsing**: `scraper` (CSS selector-based extraction)
 - **TLS/Certificates**: `tokio-rustls` and `x509-parser` for certificate analysis (cipher suite, key algorithm)
-- **Technology Detection**: Custom implementation using community-maintained Wappalyzer rulesets
+- **Technology Detection**: Custom implementation using community-maintained Wappalyzer rulesets (HTTP Archive and Enthec forks). JavaScript execution via `rquickjs` for dynamic detection.
+- **WHOIS/RDAP**: `whois-service` crate for domain registration lookups
+- **GeoIP**: `maxminddb` for geographic and network information
 - **Database**: `sqlx` with SQLite (WAL mode enabled)
 - **Async Runtime**: Tokio
 
