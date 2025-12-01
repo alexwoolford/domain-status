@@ -3,13 +3,13 @@
 
 use chrono::NaiveDateTime;
 use log;
-use sqlx::{SqlitePool, Row};
+use sqlx::{Row, SqlitePool};
 
 use crate::error_handling::DatabaseError;
 use crate::fingerprint;
 use crate::parse::SocialMediaLink;
 
-use super::models::{UrlRecord, UrlFailureRecord};
+use super::models::{UrlFailureRecord, UrlRecord};
 
 /// Converts a NaiveDateTime to milliseconds since Unix epoch.
 fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {

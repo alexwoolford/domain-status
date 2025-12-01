@@ -57,15 +57,15 @@ pub enum ErrorType {
     HttpRequestTooManyRequests,
     HttpRequestBotDetectionError, // 403 Forbidden - typically bot detection
     // Specific HTTP status code errors
-    HttpRequestBadRequest,        // 400 Bad Request
-    HttpRequestUnauthorized,       // 401 Unauthorized
-    HttpRequestNotFound,           // 404 Not Found
-    HttpRequestNotAcceptable,     // 406 Not Acceptable
+    HttpRequestBadRequest,          // 400 Bad Request
+    HttpRequestUnauthorized,        // 401 Unauthorized
+    HttpRequestNotFound,            // 404 Not Found
+    HttpRequestNotAcceptable,       // 406 Not Acceptable
     HttpRequestInternalServerError, // 500 Internal Server Error
-    HttpRequestBadGateway,         // 502 Bad Gateway
-    HttpRequestServiceUnavailable, // 503 Service Unavailable
-    HttpRequestGatewayTimeout,     // 504 Gateway Timeout
-    HttpRequestCloudflareError,    // 521 Cloudflare Web Server Down
+    HttpRequestBadGateway,          // 502 Bad Gateway
+    HttpRequestServiceUnavailable,  // 503 Service Unavailable
+    HttpRequestGatewayTimeout,      // 504 Gateway Timeout
+    HttpRequestCloudflareError,     // 521 Cloudflare Web Server Down
     // Data extraction errors (only for required data)
     TitleExtractError, // Missing title - could be an error if we expect one
     ProcessUrlTimeout,

@@ -71,7 +71,7 @@ fn extract_error_type(error: &Error) -> ErrorType {
     if msg.contains("timeout") {
         return ErrorType::ProcessUrlTimeout;
     }
-    
+
     // Check for DNS errors in error message
     if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
         // Try to determine which DNS lookup failed
@@ -85,9 +85,13 @@ fn extract_error_type(error: &Error) -> ErrorType {
         // Generic DNS error - default to NS lookup error
         return ErrorType::DnsNsLookupError;
     }
-    
+
     // Check for TLS errors in error message
-    if msg.contains("tls") || msg.contains("ssl") || msg.contains("certificate") || msg.contains("handshake") {
+    if msg.contains("tls")
+        || msg.contains("ssl")
+        || msg.contains("certificate")
+        || msg.contains("handshake")
+    {
         return ErrorType::TlsCertificateError;
     }
 
@@ -108,7 +112,7 @@ fn extract_http_status(error: &Error) -> Option<u16> {
 }
 
 /// Extracts response headers from error context.
-/// 
+///
 /// Response headers are captured when we receive an HTTP response with an error status (4xx/5xx).
 /// For connection errors, timeouts, etc., there is no response, so headers will be empty.
 fn extract_response_headers(error: &Error) -> Vec<(String, String)> {
@@ -137,7 +141,9 @@ fn extract_response_headers(error: &Error) -> Vec<(String, String)> {
                     }
                 }
                 if let Some(end) = end_pos {
-                    if let Ok(headers) = serde_json::from_str::<Vec<(String, String)>>(&headers_str[..end]) {
+                    if let Ok(headers) =
+                        serde_json::from_str::<Vec<(String, String)>>(&headers_str[..end])
+                    {
                         return headers;
                     }
                 }
@@ -266,12 +272,12 @@ pub async fn record_url_failure(
     // Extract failure context from error
     let final_url = extract_final_url(error);
     let redirect_chain = extract_redirect_chain(error);
-    
+
     // Extract domain information
-    let domain = extract_domain(extractor, url)
-        .unwrap_or_else(|_| "unknown".to_string());
-    
-    let final_domain = final_url.as_ref()
+    let domain = extract_domain(extractor, url).unwrap_or_else(|_| "unknown".to_string());
+
+    let final_domain = final_url
+        .as_ref()
         .and_then(|u| extract_domain(extractor, u).ok());
 
     // Extract error information
@@ -306,4 +312,3 @@ pub async fn record_url_failure(
 
     Ok(())
 }
-

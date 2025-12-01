@@ -31,15 +31,15 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
     let host = parsed
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("Failed to extract host from {url}"))?;
-    
+
     // Get what domain() returns (may be just a partial suffix for multi-part TLDs)
     let domain_result = list
         .domain(host.as_bytes())
         .ok_or_else(|| anyhow::anyhow!("Failed to extract domain from {url}"))?;
     let domain_str = String::from_utf8_lossy(domain_result.as_bytes()).to_string();
-    
+
     let host_lower = host.to_lowercase();
-    
+
     // Check if domain() returned a valid registrable domain
     // For "www.example.co.uk", domain() incorrectly returns "co.uk" instead of "example.co.uk"
     // The publicsuffix crate's domain() method has a bug: for multi-part TLDs, it returns
@@ -65,7 +65,7 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
     // in the hostname (as a complete registrable domain), then domain_str is likely just a suffix.
     //
     // Example: "www.example.co.uk" with domain_str="co.uk"
-    //   - Extract: "example.co.uk" 
+    //   - Extract: "example.co.uk"
     //   - Check: does "www.example.co.uk" end with ".example.co.uk"? Yes!
     //   - So extract "example.co.uk"
     //
@@ -83,7 +83,7 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
     // How to detect: if domain_str contains a dot, try extraction. The extracted domain is valid
     // if it's the shortest domain in the hostname that contains domain_str as a suffix.
     // For "www.example.co.uk" with domain_str="co.uk": "example.co.uk" is valid (shortest)
-    // For "a.b.c.example.com" with domain_str="example.com": "example.com" is already valid, 
+    // For "a.b.c.example.com" with domain_str="example.com": "example.com" is already valid,
     //   "c.example.com" is NOT valid (not the shortest)
     let needs_extraction = if domain_str.contains('.') {
         // Try to extract the registrable domain
@@ -97,7 +97,7 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
                         if !label.is_empty() {
                             let extracted = format!("{}.{}", label, domain_str);
                             // Check if extracted domain is the registrable domain by verifying it appears in hostname
-                            // For "www.example.co.uk" with domain_str="co.uk": 
+                            // For "www.example.co.uk" with domain_str="co.uk":
                             //   extracted="example.co.uk", hostname ends with ".example.co.uk" ✓
                             // For "a.b.c.example.com" with domain_str="example.com":
                             //   extracted="c.example.com", hostname does NOT end with ".c.example.com" ✗
@@ -109,9 +109,11 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
                             // For "example.com", it IS a valid registrable domain (has a label before the TLD)
                             // Simple heuristic: if domain_str has no label before the last dot, it's likely just a suffix
                             let domain_parts: Vec<&str> = domain_str.split('.').collect();
-                            let is_likely_suffix = domain_parts.len() >= 2 && domain_parts[0].len() <= 3;
+                            let is_likely_suffix =
+                                domain_parts.len() >= 2 && domain_parts[0].len() <= 3;
                             // Common multi-part TLD patterns: co.uk, com.br, co.jp, etc. (first part is short, 2-3 chars)
-                            (host_lower.ends_with(&extracted_with_dot) || host_lower == extracted) && is_likely_suffix
+                            (host_lower.ends_with(&extracted_with_dot) || host_lower == extracted)
+                                && is_likely_suffix
                         } else {
                             false
                         }
@@ -131,7 +133,7 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
         // For simple TLDs like "com", domain() works correctly
         !(host_lower == domain_str || host_lower.ends_with(&format!(".{}", domain_str)))
     };
-    
+
     // If we need to extract the registrable domain, do it now
     if needs_extraction {
         // For multi-part TLDs, domain() returns something like "co.uk" instead of "example.co.uk"
@@ -150,7 +152,9 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
                         let extracted = format!("{}.{}", registrable_label, domain_str);
                         // Double-check: only return extracted if it's actually in the hostname as a complete domain
                         // This prevents returning "c.example.com" for "a.b.c.example.com"
-                        if host_lower.ends_with(&format!(".{}", extracted)) || host_lower == extracted {
+                        if host_lower.ends_with(&format!(".{}", extracted))
+                            || host_lower == extracted
+                        {
                             return Ok(extracted);
                         }
                     }
@@ -161,7 +165,7 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
         // This shouldn't happen, but better than panicking
         return Ok(domain_str);
     }
-    
+
     // For simple TLDs like "com", domain() works correctly
     Ok(domain_str)
 }
