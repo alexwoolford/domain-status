@@ -204,7 +204,37 @@ async fn status_handler(State(state): State<StatusState>) -> Response {
                 .get_error_count(ErrorType::HttpRequestStatusError)
                 + state
                     .error_stats
-                    .get_error_count(ErrorType::HttpRequestTooManyRequests),
+                    .get_error_count(ErrorType::HttpRequestTooManyRequests)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestBadRequest)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestUnauthorized)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestNotFound)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestNotAcceptable)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestInternalServerError)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestBadGateway)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestServiceUnavailable)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestGatewayTimeout)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestCloudflareError)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::HttpRequestBotDetectionError),
             dns_error: state
                 .error_stats
                 .get_error_count(ErrorType::DnsNsLookupError)

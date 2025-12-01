@@ -423,6 +423,47 @@ erDiagram
         TEXT nameservers
         TEXT raw_text
     }
+
+    url_failures ||--o{ url_failure_redirect_chain : "has"
+    url_failures ||--o{ url_failure_response_headers : "has"
+    url_failures ||--o{ url_failure_request_headers : "has"
+    runs ||--o{ url_failures : "has"
+
+    url_failures {
+        INTEGER id PK
+        TEXT run_id FK
+        TEXT url
+        TEXT final_url
+        TEXT domain
+        TEXT final_domain
+        TEXT error_type
+        TEXT error_message
+        INTEGER http_status
+        INTEGER retry_count
+        NUMERIC elapsed_time_seconds
+        INTEGER timestamp
+    }
+
+    url_failure_redirect_chain {
+        INTEGER id PK
+        INTEGER url_failure_id FK
+        INTEGER redirect_order
+        TEXT redirect_url
+    }
+
+    url_failure_response_headers {
+        INTEGER id PK
+        INTEGER url_failure_id FK
+        TEXT header_name
+        TEXT header_value
+    }
+
+    url_failure_request_headers {
+        INTEGER id PK
+        INTEGER url_failure_id FK
+        TEXT header_name
+        TEXT header_value
+    }
 ```
 
 ### Table Descriptions
@@ -940,6 +981,86 @@ Stores domain registration information from WHOIS/RDAP lookups (one-to-one relat
 - WHOIS data is cached for 7 days in `.whois_cache/` directory
 - If WHOIS is disabled or lookup fails, this table will have no rows for those URLs
 
+#### `url_failures` (Fact Table)
+Stores detailed information about URL processing failures. This table is separate from `url_status` because failures represent "bad data" (errors) rather than successful processing results. This allows for analysis of failure patterns to improve the tool.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `run_id` | TEXT (FK) | Foreign key to `runs.run_id` |
+| `url` | TEXT | Original URL that failed |
+| `final_url` | TEXT | Final URL after redirects (if any redirects occurred before failure) |
+| `domain` | TEXT | Initial domain extracted from original URL |
+| `final_domain` | TEXT | Final domain after redirects (if any) |
+| `error_type` | TEXT | Categorized error type (e.g., "Not Found (404)", "Bot detection (403 Forbidden)", "Process URL timeout") |
+| `error_message` | TEXT | Full error message for debugging |
+| `http_status` | INTEGER | HTTP status code if available (e.g., 403, 404, 500, 503) |
+| `retry_count` | INTEGER | Number of retry attempts made before giving up |
+| `elapsed_time_seconds` | NUMERIC(10,2) | Time spent processing before failure |
+| `timestamp` | INTEGER | When the failure occurred (milliseconds since Unix epoch) |
+
+**Indexes:**
+- `idx_url_failures_domain` on `domain`
+- `idx_url_failures_final_domain` on `final_domain`
+- `idx_url_failures_error_type` on `error_type`
+- `idx_url_failures_http_status` on `http_status`
+- `idx_url_failures_timestamp` on `timestamp`
+- `idx_url_failures_run_id_timestamp` on `run_id, timestamp`
+- `idx_url_failures_url` on `url`
+
+**Notes:**
+- Failures are recorded for all errors: HTTP errors (4xx/5xx), timeouts, connection errors, DNS errors, TLS errors, etc.
+- Response headers are only captured for HTTP error responses (4xx/5xx). For connection errors, timeouts, etc., there is no HTTP response, so `url_failure_response_headers` will be empty for those failures.
+- Request headers are always captured (they show what we sent, useful for debugging bot detection).
+
+#### `url_failure_redirect_chain` (Junction Table)
+Stores the redirect chain that occurred before a failure. Useful for understanding bot detection patterns (e.g., redirects to a challenge page before 403).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_failure_id` | INTEGER (FK) | Foreign key to `url_failures.id` |
+| `redirect_order` | INTEGER | Order in the redirect chain (0 = first redirect) |
+| `redirect_url` | TEXT | URL redirected to at this step |
+
+**Indexes:**
+- `idx_url_failure_redirect_chain_failure_id` on `url_failure_id`
+
+#### `url_failure_response_headers` (Junction Table)
+Stores HTTP response headers received before a failure. Only populated for HTTP error responses (4xx/5xx). Empty for connection errors, timeouts, DNS errors, etc. (no HTTP response received).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_failure_id` | INTEGER (FK) | Foreign key to `url_failures.id` |
+| `header_name` | TEXT | HTTP header name (e.g., "Server", "X-RateLimit-Remaining") |
+| `header_value` | TEXT | HTTP header value |
+
+**Indexes:**
+- `idx_url_failure_response_headers_failure_id` on `url_failure_id`
+
+**Notes:**
+- Only populated when an HTTP response was received (even if it's an error status like 403, 404, 500)
+- Empty for connection errors, timeouts, DNS failures, etc. (no HTTP response = no headers)
+- Useful for analyzing bot detection patterns (e.g., Cloudflare challenge headers, rate limit headers)
+
+#### `url_failure_request_headers` (Junction Table)
+Stores HTTP request headers that were sent. Always populated (we always know what we sent). Useful for debugging bot detection (understanding what headers might have triggered blocking).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_failure_id` | INTEGER (FK) | Foreign key to `url_failures.id` |
+| `header_name` | TEXT | HTTP header name (e.g., "Accept", "User-Agent") |
+| `header_value` | TEXT | HTTP header value |
+
+**Indexes:**
+- `idx_url_failure_request_headers_failure_id` on `url_failure_id`
+
+**Notes:**
+- Always populated (we always know what headers we sent)
+- Useful for understanding what might have triggered bot detection or rate limiting
+
 **Query Examples:**
 ```sql
 -- Find all domains registered with a specific registrar
@@ -984,6 +1105,11 @@ The database uses a **star schema** design pattern:
 4. **One-to-One Tables**: Store single records per URL:
    - `url_geoip` - Geographic and network information (one-to-one with `url_status`)
    - `url_whois` - Domain registration information (one-to-one with `url_status`)
+5. **Failure Tracking Tables**: Store detailed failure information separately from successful data:
+   - `url_failures` - Main failure fact table (one failure record per failed URL)
+   - `url_failure_redirect_chain` - Redirect chain before failure
+   - `url_failure_response_headers` - HTTP response headers (only for HTTP error responses)
+   - `url_failure_request_headers` - HTTP request headers sent (always populated)
 
 **Benefits:**
 - **No Data Duplication**: Each piece of data stored once
@@ -1030,6 +1156,34 @@ LEFT JOIN url_status us2 ON us1.final_domain = us2.final_domain
 LEFT JOIN url_technologies ut2 ON us2.id = ut2.url_status_id AND ut1.technology_name = ut2.technology_name
 WHERE us1.run_id = 'run_123' AND us2.run_id = 'run_456'
 GROUP BY ut1.technology_name;
+
+-- Analyze failure patterns by error type
+SELECT error_type, COUNT(*) as count, 
+       AVG(elapsed_time_seconds) as avg_time,
+       AVG(retry_count) as avg_retries
+FROM url_failures
+WHERE run_id = 'run_123'
+GROUP BY error_type
+ORDER BY count DESC;
+
+-- Find all 403 Forbidden failures with their response headers (bot detection analysis)
+SELECT uf.domain, uf.url, uf.final_url,
+       ufrh.header_name, ufrh.header_value
+FROM url_failures uf
+LEFT JOIN url_failure_response_headers ufrh ON uf.id = ufrh.url_failure_id
+WHERE uf.error_type = 'Bot detection (403 Forbidden)'
+  AND uf.run_id = 'run_123'
+ORDER BY uf.domain, ufrh.header_name;
+
+-- Find failures with redirect chains (useful for understanding bot detection flows)
+SELECT uf.domain, uf.error_type, uf.http_status,
+       GROUP_CONCAT(ufrc.redirect_url, ' -> ') as redirect_chain
+FROM url_failures uf
+LEFT JOIN url_failure_redirect_chain ufrc ON uf.id = ufrc.url_failure_id
+WHERE uf.run_id = 'run_123'
+  AND ufrc.redirect_url IS NOT NULL
+GROUP BY uf.id
+ORDER BY uf.domain;
 ```
 
 **Notes:**

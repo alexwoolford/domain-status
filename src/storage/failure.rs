@@ -20,14 +20,28 @@ fn extract_error_type(error: &Error) -> ErrorType {
     for cause in error.chain() {
         if let Some(reqwest_err) = cause.downcast_ref::<ReqwestError>() {
             if let Some(status) = reqwest_err.status() {
-                if status.is_client_error() {
-                    match status.as_u16() {
-                        403 => return ErrorType::HttpRequestBotDetectionError,
-                        429 => return ErrorType::HttpRequestTooManyRequests,
-                        _ => return ErrorType::HttpRequestOtherError,
+                // Map specific HTTP status codes to specific error types
+                match status.as_u16() {
+                    // Client errors (4xx)
+                    400 => return ErrorType::HttpRequestBadRequest,
+                    401 => return ErrorType::HttpRequestUnauthorized,
+                    403 => return ErrorType::HttpRequestBotDetectionError,
+                    404 => return ErrorType::HttpRequestNotFound,
+                    406 => return ErrorType::HttpRequestNotAcceptable,
+                    429 => return ErrorType::HttpRequestTooManyRequests,
+                    // Server errors (5xx)
+                    500 => return ErrorType::HttpRequestInternalServerError,
+                    502 => return ErrorType::HttpRequestBadGateway,
+                    503 => return ErrorType::HttpRequestServiceUnavailable,
+                    504 => return ErrorType::HttpRequestGatewayTimeout,
+                    521 => return ErrorType::HttpRequestCloudflareError,
+                    // Other client errors (4xx)
+                    _ if status.is_client_error() => return ErrorType::HttpRequestOtherError,
+                    // Other server errors (5xx)
+                    _ if status.is_server_error() => return ErrorType::HttpRequestOtherError,
+                    _ => {
+                        // Non-standard status codes - fall through to check reqwest error type
                     }
-                } else if status.is_server_error() {
-                    return ErrorType::HttpRequestOtherError;
                 }
             }
 
@@ -52,10 +66,29 @@ fn extract_error_type(error: &Error) -> ErrorType {
         }
     }
 
-    // Check for timeout errors
+    // Check error message for specific patterns (for errors without reqwest::Error)
     let msg = error.to_string().to_lowercase();
     if msg.contains("timeout") {
         return ErrorType::ProcessUrlTimeout;
+    }
+    
+    // Check for DNS errors in error message
+    if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
+        // Try to determine which DNS lookup failed
+        if msg.contains("ns") || msg.contains("nameserver") {
+            return ErrorType::DnsNsLookupError;
+        } else if msg.contains("txt") {
+            return ErrorType::DnsTxtLookupError;
+        } else if msg.contains("mx") || msg.contains("mail") {
+            return ErrorType::DnsMxLookupError;
+        }
+        // Generic DNS error - default to NS lookup error
+        return ErrorType::DnsNsLookupError;
+    }
+    
+    // Check for TLS errors in error message
+    if msg.contains("tls") || msg.contains("ssl") || msg.contains("certificate") || msg.contains("handshake") {
+        return ErrorType::TlsCertificateError;
     }
 
     // Default to other error
@@ -74,12 +107,44 @@ fn extract_http_status(error: &Error) -> Option<u16> {
     None
 }
 
-/// Extracts response headers from a reqwest error if available.
-fn extract_response_headers(_error: &Error) -> Vec<(String, String)> {
-    // Note: reqwest::Error doesn't expose response() method directly
-    // Response headers are typically not available in error context
-    // This is a limitation - we could enhance this by capturing headers
-    // before the error occurs, but for now we return empty
+/// Extracts response headers from error context.
+/// 
+/// Response headers are captured when we receive an HTTP response with an error status (4xx/5xx).
+/// For connection errors, timeouts, etc., there is no response, so headers will be empty.
+fn extract_response_headers(error: &Error) -> Vec<(String, String)> {
+    for cause in error.chain() {
+        let msg = cause.to_string();
+        // Look for RESPONSE_HEADERS: prefix (may be at start or embedded)
+        if let Some(headers_pos) = msg.find("RESPONSE_HEADERS:") {
+            let headers_str = &msg[headers_pos + "RESPONSE_HEADERS:".len()..];
+            // Try to find JSON array - look for opening bracket
+            if let Some(bracket_start) = headers_str.find('[') {
+                let headers_str = &headers_str[bracket_start..];
+                // Find matching closing bracket
+                let mut bracket_count = 0;
+                let mut end_pos = None;
+                for (i, ch) in headers_str.char_indices() {
+                    match ch {
+                        '[' => bracket_count += 1,
+                        ']' => {
+                            bracket_count -= 1;
+                            if bracket_count == 0 {
+                                end_pos = Some(i + 1);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(end) = end_pos {
+                    if let Ok(headers) = serde_json::from_str::<Vec<(String, String)>>(&headers_str[..end]) {
+                        return headers;
+                    }
+                }
+            }
+        }
+    }
+    // No response headers found - this is expected for connection errors, timeouts, etc.
     Vec::new()
 }
 

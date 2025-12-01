@@ -56,6 +56,16 @@ pub enum ErrorType {
     HttpRequestOtherError,
     HttpRequestTooManyRequests,
     HttpRequestBotDetectionError, // 403 Forbidden - typically bot detection
+    // Specific HTTP status code errors
+    HttpRequestBadRequest,        // 400 Bad Request
+    HttpRequestUnauthorized,       // 401 Unauthorized
+    HttpRequestNotFound,           // 404 Not Found
+    HttpRequestNotAcceptable,     // 406 Not Acceptable
+    HttpRequestInternalServerError, // 500 Internal Server Error
+    HttpRequestBadGateway,         // 502 Bad Gateway
+    HttpRequestServiceUnavailable, // 503 Service Unavailable
+    HttpRequestGatewayTimeout,     // 504 Gateway Timeout
+    HttpRequestCloudflareError,    // 521 Cloudflare Web Server Down
     // Data extraction errors (only for required data)
     TitleExtractError, // Missing title - could be an error if we expect one
     ProcessUrlTimeout,
@@ -112,6 +122,15 @@ impl ErrorType {
             ErrorType::HttpRequestOtherError => "HTTP request other error",
             ErrorType::HttpRequestTooManyRequests => "Too many requests",
             ErrorType::HttpRequestBotDetectionError => "Bot detection (403 Forbidden)",
+            ErrorType::HttpRequestBadRequest => "Bad Request (400)",
+            ErrorType::HttpRequestUnauthorized => "Unauthorized (401)",
+            ErrorType::HttpRequestNotFound => "Not Found (404)",
+            ErrorType::HttpRequestNotAcceptable => "Not Acceptable (406)",
+            ErrorType::HttpRequestInternalServerError => "Internal Server Error (500)",
+            ErrorType::HttpRequestBadGateway => "Bad Gateway (502)",
+            ErrorType::HttpRequestServiceUnavailable => "Service Unavailable (503)",
+            ErrorType::HttpRequestGatewayTimeout => "Gateway Timeout (504)",
+            ErrorType::HttpRequestCloudflareError => "Cloudflare Error (521)",
             ErrorType::TitleExtractError => "Title extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
@@ -280,11 +299,22 @@ pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error)
     let error_type = match error.status() {
         // When the error contains a status code, match on it
         Some(status) if status.is_client_error() => match status.as_u16() {
+            400 => ErrorType::HttpRequestBadRequest,
+            401 => ErrorType::HttpRequestUnauthorized,
             403 => ErrorType::HttpRequestBotDetectionError,
+            404 => ErrorType::HttpRequestNotFound,
+            406 => ErrorType::HttpRequestNotAcceptable,
             429 => ErrorType::HttpRequestTooManyRequests,
             _ => ErrorType::HttpRequestOtherError,
         },
-        Some(status) if status.is_server_error() => ErrorType::HttpRequestOtherError,
+        Some(status) if status.is_server_error() => match status.as_u16() {
+            500 => ErrorType::HttpRequestInternalServerError,
+            502 => ErrorType::HttpRequestBadGateway,
+            503 => ErrorType::HttpRequestServiceUnavailable,
+            504 => ErrorType::HttpRequestGatewayTimeout,
+            521 => ErrorType::HttpRequestCloudflareError,
+            _ => ErrorType::HttpRequestOtherError,
+        },
         _ => {
             // For non-status errors, check the error type
             if error.is_builder() {

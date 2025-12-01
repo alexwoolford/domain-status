@@ -97,6 +97,21 @@ async fn main() -> Result<()> {
     init_logger_with(log_level.into(), log_format).context("Failed to initialize logger")?;
     init_crypto_provider();
 
+    // Count total lines in file for accurate progress tracking
+    let total_lines = {
+        let file_for_counting = tokio::fs::File::open(&opt.file)
+            .await
+            .context("Failed to open input file for line counting")?;
+        let reader = BufReader::new(file_for_counting);
+        let mut count = 0usize;
+        let mut lines = reader.lines();
+        while let Ok(Some(_)) = lines.next_line().await {
+            count += 1;
+        }
+        count
+    };
+    info!("Total URLs in file: {}", total_lines);
+
     let file = tokio::fs::File::open(&opt.file)
         .await
         .context("Failed to open input file")?;
@@ -238,11 +253,12 @@ async fn main() -> Result<()> {
 
     let completed_urls = Arc::new(AtomicUsize::new(0));
     let total_urls_attempted = Arc::new(AtomicUsize::new(0));
+    let total_urls_in_file = Arc::new(AtomicUsize::new(total_lines));
 
     // Start status server if requested
     if let Some(port) = opt.status_port {
         let status_state = status_server::StatusState {
-            total_urls: Arc::clone(&total_urls_attempted),
+            total_urls: Arc::clone(&total_urls_in_file), // Use total lines in file, not URLs attempted so far
             completed_urls: Arc::clone(&completed_urls),
             start_time: Arc::clone(&start_time_arc),
             error_stats: error_stats.clone(),

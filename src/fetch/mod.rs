@@ -940,30 +940,47 @@ pub async fn handle_http_request(
         .await;
 
     match res {
-        Ok(response) => match response.error_for_status() {
-            Ok(response) => {
-                let elapsed = start_time.elapsed().as_secs_f64();
-                handle_response(
-                    response,
-                    url,
-                    &final_url_string,
-                    ctx,
-                    elapsed,
-                    Some(redirect_chain),
-                )
-                .await
-            }
-            Err(e) => {
-                update_error_stats(&ctx.error_stats, &e).await;
-                log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
-                    url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
-                // Attach failure context to error for later extraction
-                let error = Error::from(e);
-                let redirect_chain_str = serde_json::to_string(&redirect_chain)
-                    .unwrap_or_else(|_| "[]".to_string());
-                Err(error.context(format!("HTTP request failed for {url}"))
-                    .context(format!("FINAL_URL:{final_url_string}"))
-                    .context(format!("REDIRECT_CHAIN:{redirect_chain_str}")))
+        Ok(response) => {
+            // Extract headers BEFORE calling error_for_status() (which consumes response)
+            // This allows us to capture headers even for error responses (4xx/5xx)
+            let response_headers: Vec<(String, String)> = response.headers()
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.to_string(),
+                        value.to_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect();
+            let response_headers_str = serde_json::to_string(&response_headers)
+                .unwrap_or_else(|_| "[]".to_string());
+            
+            match response.error_for_status() {
+                Ok(response) => {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    handle_response(
+                        response,
+                        url,
+                        &final_url_string,
+                        ctx,
+                        elapsed,
+                        Some(redirect_chain),
+                    )
+                    .await
+                }
+                Err(e) => {
+                    update_error_stats(&ctx.error_stats, &e).await;
+                    log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
+                        url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+                    // Attach failure context to error for later extraction
+                    let error = Error::from(e);
+                    let redirect_chain_str = serde_json::to_string(&redirect_chain)
+                        .unwrap_or_else(|_| "[]".to_string());
+                    Err(error.context(format!("HTTP request failed for {url}"))
+                        .context(format!("FINAL_URL:{final_url_string}"))
+                        .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
+                        .context(format!("RESPONSE_HEADERS:{response_headers_str}")))
+                }
             }
         },
         Err(e) => {
