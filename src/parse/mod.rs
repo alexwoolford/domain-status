@@ -24,17 +24,38 @@ const SNAPCHAT_URL_PATTERN: &str = r"https?://(?:www\.)?snapchat\.com/add/([^/?#
 const REDDIT_URL_PATTERN: &str = r"https?://(?:www\.)?reddit\.com/(?:r|u)/([^/?#]+)";
 
 static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(TITLE_SELECTOR_STR).expect("Failed to parse title selector - this is a bug")
+    Selector::parse(TITLE_SELECTOR_STR).unwrap_or_else(|e| {
+        log::error!(
+            "Failed to parse title selector '{}': {}",
+            TITLE_SELECTOR_STR,
+            e
+        );
+        // Return a safe default selector that matches nothing
+        // This prevents panics while still allowing the code to run
+        Selector::parse("__invalid_selector__").expect("Failed to parse fallback selector")
+    })
 });
 
 static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(META_KEYWORDS_SELECTOR_STR)
-        .expect("Failed to parse meta keywords selector - this is a bug")
+    Selector::parse(META_KEYWORDS_SELECTOR_STR).unwrap_or_else(|e| {
+        log::error!(
+            "Failed to parse meta keywords selector '{}': {}",
+            META_KEYWORDS_SELECTOR_STR,
+            e
+        );
+        Selector::parse("__invalid_selector__").expect("Failed to parse fallback selector")
+    })
 });
 
 static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(META_DESCRIPTION_SELECTOR_STR)
-        .expect("Failed to parse meta description selector - this is a bug")
+    Selector::parse(META_DESCRIPTION_SELECTOR_STR).unwrap_or_else(|e| {
+        log::error!(
+            "Failed to parse meta description selector '{}': {}",
+            META_DESCRIPTION_SELECTOR_STR,
+            e
+        );
+        Selector::parse("__invalid_selector__").expect("Failed to parse fallback selector")
+    })
 });
 
 /// Extracts the page title from an HTML document.

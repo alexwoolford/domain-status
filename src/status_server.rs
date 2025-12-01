@@ -150,7 +150,7 @@ domain_status_info_total {}
         completed,
         failed,
         if total > 0 {
-            (completed as f64 / total as f64) * 100.0
+            ((completed + failed) as f64 / total as f64) * 100.0
         } else {
             0.0
         },
@@ -175,10 +175,11 @@ async fn status_handler(State(state): State<StatusState>) -> Response {
         0.0
     };
 
-    // Calculate percentage based on completed + failed (not total, since some URLs may not be attempted yet)
+    // Calculate percentage based on total URLs (completed + failed out of total)
+    // This shows progress through the entire job, not just attempted URLs
     let attempted = completed + failed;
-    let percentage = if attempted > 0 {
-        (completed as f64 / attempted as f64) * 100.0
+    let percentage = if total > 0 {
+        (attempted as f64 / total as f64) * 100.0
     } else {
         0.0
     };

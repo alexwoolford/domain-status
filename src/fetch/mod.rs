@@ -1021,19 +1021,46 @@ pub async fn handle_response(
     };
 
     // Send to batch writer queue
+    // Bounded channel provides backpressure: if channel is full, this will await
+    // This prevents memory exhaustion if database writes are slow
     if let Some(ref sender) = ctx.batch_sender {
-        match sender.send(batch_record) {
+        // Use try_send first to avoid blocking if channel is full during shutdown
+        // If try_send fails (channel full or closed), fall back to send().await
+        match sender.try_send(batch_record) {
             Ok(()) => {
-                log::info!(
+                log::debug!(
                     "Record queued for batch insert for URL: {}",
                     resp_data.final_url
                 );
             }
-            Err(e) => {
-                log::error!(
-                    "Failed to queue record for URL {}: {e}",
+            Err(tokio::sync::mpsc::error::TrySendError::Full(record)) => {
+                // Channel is full, use async send which will await
+                // This provides backpressure: if DB writes are slow, producers will wait
+                match sender.send(record).await {
+                    Ok(()) => {
+                        log::debug!(
+                            "Record queued for batch insert for URL: {}",
+                            resp_data.final_url
+                        );
+                    }
+                    Err(_) => {
+                        // Channel closed during send - batch writer is shutting down
+                        log::warn!(
+                            "Failed to queue record for URL {}: channel closed (batch writer shutting down)",
+                            resp_data.final_url
+                        );
+                        // Don't fail the entire URL processing - just log and continue
+                        // The record will be lost, but this is better than hanging
+                    }
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                // Channel already closed - batch writer is shutting down
+                log::warn!(
+                    "Failed to queue record for URL {}: channel closed (batch writer shutting down)",
                     resp_data.final_url
                 );
+                // Don't fail the entire URL processing - just log and continue
             }
         }
     } else {
@@ -1176,25 +1203,24 @@ pub async fn handle_http_request(
                         response_headers: response_headers.clone(),
                         request_headers: request_headers.clone(),
                     };
-                    let context_error = crate::storage::failure::FailureContextError {
-                        context: failure_context,
-                    };
-
+                    // Attach structured failure context using helper function
                     // Also attach string context for backward compatibility
-                    let error = Error::from(e);
                     let redirect_chain_str =
                         serde_json::to_string(&redirect_chain).unwrap_or_else(|_| "[]".to_string());
-                    Err(error
-                        .context(format!("HTTP request failed for {url}"))
-                        .context(format!("FINAL_URL:{final_url_string}"))
-                        .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
-                        .context(format!("RESPONSE_HEADERS:{response_headers_str}"))
-                        .context(format!(
-                            "REQUEST_HEADERS:{}",
-                            serde_json::to_string(&request_headers)
-                                .unwrap_or_else(|_| "[]".to_string())
-                        ))
-                        .context(Error::from(context_error))) // Attach structured context
+                    let error = Error::from(e);
+                    Err(crate::storage::failure::attach_failure_context(
+                        error
+                            .context(format!("HTTP request failed for {url}"))
+                            .context(format!("FINAL_URL:{final_url_string}"))
+                            .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
+                            .context(format!("RESPONSE_HEADERS:{response_headers_str}"))
+                            .context(format!(
+                                "REQUEST_HEADERS:{}",
+                                serde_json::to_string(&request_headers)
+                                    .unwrap_or_else(|_| "[]".to_string())
+                            )),
+                        failure_context,
+                    ))
                 }
             }
         }

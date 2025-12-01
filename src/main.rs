@@ -45,6 +45,35 @@ mod user_agent;
 mod utils;
 mod whois;
 
+/// Validates and normalizes a URL.
+///
+/// Checks if the URL is syntactically valid and uses http/https scheme.
+/// Logs a warning and returns false if the URL is invalid or uses an unsupported scheme.
+///
+/// # Arguments
+///
+/// * `url` - The URL string to validate
+/// * `url_regex` - Compiled regex pattern for URL scheme detection
+///
+/// # Returns
+///
+/// `true` if the URL is valid and should be processed, `false` otherwise.
+fn validate_and_normalize_url(url: &str, _url_regex: &Regex) -> bool {
+    match url::Url::parse(url) {
+        Ok(parsed) => match parsed.scheme() {
+            "http" | "https" => true,
+            _ => {
+                warn!("Skipping unsupported scheme for URL: {url}");
+                false
+            }
+        },
+        Err(_) => {
+            warn!("Skipping invalid URL: {url}");
+            false
+        }
+    }
+}
+
 /// Logs progress information about URL processing.
 ///
 /// # Arguments
@@ -281,6 +310,20 @@ async fn main() -> Result<()> {
     let url_regex = Regex::new(crate::config::URL_SCHEME_PATTERN)
         .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
 
+    // Create shared processing context once (reused for all tasks)
+    // This avoids creating a new context for each URL, simplifying the hot path
+    let shared_ctx = Arc::new(ProcessingContext::new(
+        Arc::clone(&client),
+        Arc::clone(&redirect_client),
+        Arc::clone(&extractor),
+        Arc::clone(&resolver),
+        error_stats.clone(),
+        Some(run_id.clone()),
+        Some(batch_sender.clone()),
+        opt.enable_whois,
+        Arc::clone(&db_circuit_breaker),
+    ));
+
     loop {
         let line_result = lines.next_line().await;
         let url = match line_result {
@@ -298,19 +341,9 @@ async fn main() -> Result<()> {
             }
         };
 
-        // Validate URL: only allow http/https and syntactically valid
-        match url::Url::parse(&url) {
-            Ok(parsed) => match parsed.scheme() {
-                "http" | "https" => {}
-                _ => {
-                    warn!("Skipping unsupported scheme for URL: {url}");
-                    continue;
-                }
-            },
-            Err(_) => {
-                warn!("Skipping invalid URL: {url}");
-                continue;
-            }
+        // Validate and normalize URL: only allow http/https and syntactically valid
+        if !validate_and_normalize_url(&url, &url_regex) {
+            continue;
         }
 
         // Increment total URLs counter for every URL that passes validation
@@ -324,44 +357,36 @@ async fn main() -> Result<()> {
             }
         };
 
-        // Create processing context for this task
-        let ctx = Arc::new(ProcessingContext::new(
-            Arc::clone(&client),
-            Arc::clone(&redirect_client),
-            Arc::clone(&pool),
-            Arc::clone(&extractor),
-            Arc::clone(&resolver),
-            error_stats.clone(),
-            Some(run_id.clone()),
-            Some(batch_sender.clone()),
-            opt.enable_whois,
-            Arc::clone(&db_circuit_breaker),
-        ));
+        // Clone shared context (cheap - just Arc pointer increment)
+        // Context is created once before the loop and reused for all tasks
+        let ctx = Arc::clone(&shared_ctx);
 
         // Clone error_stats for use in the task (it's also in ctx, but we need it here for error reporting)
         let error_stats_clone = error_stats.clone();
         let completed_urls_clone = Arc::clone(&completed_urls);
         let failed_urls_clone = Arc::clone(&failed_urls);
 
-        // Wrap URL in Arc to avoid cloning on retries
-        let url_arc = Arc::new(url);
+        // Clone URL string for the task (cheap for typical URLs < 200 bytes)
+        // No need for Arc wrapping - String cloning is fast and simpler
+        let url_for_task = url.clone();
+        let url_for_logging = url.clone();
 
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         let adaptive_limiter_for_task = adaptive_limiter.as_ref().map(Arc::clone);
+        let pool_clone = Arc::clone(&pool);
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
+            let pool = pool_clone;
 
             if let Some(ref limiter) = request_limiter_clone {
                 limiter.acquire().await;
             }
 
-            // Clone Arc for error messages (cheap - just pointer increment)
-            let url_for_logging = Arc::clone(&url_arc);
             let process_start = std::time::Instant::now();
 
             let result = tokio::time::timeout(
                 URL_PROCESSING_TIMEOUT,
-                process_url(url_arc.clone(), ctx.clone()),
+                process_url(Arc::new(url_for_task), ctx.clone()),
             )
             .await;
 
@@ -386,7 +411,7 @@ async fn main() -> Result<()> {
                     // Extract context from error (uses structured context if available, falls back to string parsing)
                     let context = crate::storage::failure::extract_failure_context(&e);
                     if let Err(record_err) = record_url_failure(
-                        &ctx.pool,
+                        &pool,
                         &ctx.extractor,
                         &url_for_logging,
                         &e,
@@ -446,7 +471,7 @@ async fn main() -> Result<()> {
                         request_headers: Vec::new(),
                     };
                     if let Err(record_err) = record_url_failure(
-                        &ctx.pool,
+                        &pool,
                         &ctx.extractor,
                         &url_for_logging,
                         &timeout_error,
@@ -530,12 +555,30 @@ async fn main() -> Result<()> {
     }
 
     // Flush batch writer: close the channel and wait for remaining records to be written
+    // IMPORTANT: Drop the sender BEFORE waiting for the handle to ensure all pending sends complete
+    // With a bounded channel, dropping the sender will cause pending sends to fail gracefully
     info!("Flushing batch writer...");
-    drop(batch_sender); // Close the channel to signal shutdown
-    match batch_writer_handle.await {
-        Ok(Ok(())) => info!("Batch writer flushed successfully"),
-        Ok(Err(e)) => warn!("Error flushing batch writer: {}", e),
-        Err(e) => warn!("Batch writer task panicked: {}", e),
+    drop(batch_sender); // Close the channel to signal shutdown (this unblocks any waiting sends)
+
+    // Give a brief moment for any in-flight sends to complete or fail
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Now wait for the batch writer to finish processing remaining records
+    // Add timeout to prevent hanging if batch writer gets stuck
+    let batch_writer_result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), batch_writer_handle).await;
+
+    match batch_writer_result {
+        Ok(Ok(Ok(()))) => info!("Batch writer flushed successfully"),
+        Ok(Ok(Err(e))) => warn!("Error flushing batch writer: {}", e),
+        Ok(Err(e)) => warn!("Batch writer task panicked: {}", e),
+        Err(_) => {
+            warn!(
+                "Batch writer flush timed out after 30 seconds - this may indicate database issues"
+            );
+            // Note: We can't abort here because the handle was moved into the timeout
+            // The task will continue running but we won't wait for it
+        }
     }
 
     // Log one final time before printing the error summary

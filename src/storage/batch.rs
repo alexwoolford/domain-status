@@ -36,6 +36,20 @@ impl Default for BatchConfig {
     }
 }
 
+/// Result of a batch flush operation.
+///
+/// Provides visibility into how many records were successfully inserted
+/// and how many failed, enabling better observability and monitoring.
+#[derive(Debug, Clone)]
+pub struct FlushResult {
+    /// Total number of records in the batch
+    pub total: usize,
+    /// Number of records successfully inserted
+    pub successful: usize,
+    /// Number of records that failed to insert
+    pub failed: usize,
+}
+
 /// A complete record ready for batched insertion
 pub struct BatchRecord {
     pub url_record: UrlRecord,
@@ -76,23 +90,44 @@ impl BatchWriter {
 
         // Flush if buffer is full
         if self.buffer.len() >= self.config.batch_size {
-            self.flush().await?;
+            let _flush_result = self.flush().await?;
+            // Note: We don't fail on flush errors here to prevent blocking the pipeline.
+            // Failed records are logged and tracked in FlushResult for observability.
         }
 
         Ok(())
     }
 
     /// Flushes all buffered records to the database
-    pub async fn flush(&mut self) -> Result<(), DatabaseError> {
+    ///
+    /// Note: Each insert_url_record call starts its own transaction internally.
+    /// We process records one-by-one, and if any record fails, we log and continue.
+    /// This prevents one bad record from blocking the entire batch.
+    /// TODO: Consider refactoring to use a single transaction for the entire batch
+    /// for better atomicity, but this would require refactoring insert functions
+    /// to accept a transaction instead of a pool.
+    ///
+    /// Returns a summary of successful and failed inserts for observability.
+    pub async fn flush(&mut self) -> Result<FlushResult, DatabaseError> {
         if self.buffer.is_empty() {
-            return Ok(());
+            return Ok(FlushResult {
+                total: 0,
+                successful: 0,
+                failed: 0,
+            });
         }
 
         let count = self.buffer.len();
         log::debug!("Flushing batch of {} records to database", count);
 
-        // Process all records in the buffer
-        for record in self.buffer.drain(..) {
+        // Collect all records to process
+        let records: Vec<BatchRecord> = self.buffer.drain(..).collect();
+
+        let mut successful = 0;
+        let mut failed = 0;
+
+        // Process all records
+        for record in records {
             // Insert main URL record
             let url_status_id = match insert::insert_url_record(
                 &self.pool,
@@ -112,9 +147,12 @@ impl BatchWriter {
                         record.url_record.initial_domain,
                         e
                     );
+                    failed += 1;
                     continue;
                 }
             };
+
+            successful += 1;
 
             // Insert partial failures (DNS/TLS errors that didn't prevent processing)
             for mut partial_failure in record.partial_failures {
@@ -203,8 +241,29 @@ impl BatchWriter {
         }
 
         self.last_flush = std::time::Instant::now();
-        log::debug!("Successfully flushed {} records", count);
-        Ok(())
+
+        let result = FlushResult {
+            total: count,
+            successful,
+            failed,
+        };
+
+        if failed > 0 {
+            log::warn!(
+                "Flush completed: {} successful, {} failed out of {} total",
+                result.successful,
+                result.failed,
+                result.total
+            );
+        } else {
+            log::debug!(
+                "Successfully flushed {} records ({} total)",
+                result.successful,
+                result.total
+            );
+        }
+
+        Ok(result)
     }
 
     /// Checks if it's time to flush based on interval
@@ -217,14 +276,21 @@ impl BatchWriter {
 ///
 /// Returns a sender that can be used to send records for batching,
 /// and a handle that can be used to flush and shutdown the writer.
+///
+/// Uses a bounded channel to prevent memory exhaustion if the writer
+/// can't keep up with producers. The channel size is configurable.
 pub fn start_batch_writer(
     pool: SqlitePool,
     config: BatchConfig,
 ) -> (
-    mpsc::UnboundedSender<BatchRecord>,
+    mpsc::Sender<BatchRecord>,
     tokio::task::JoinHandle<Result<(), DatabaseError>>,
 ) {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    // Use bounded channel to prevent unbounded memory growth
+    // Buffer size: 10x batch_size to allow reasonable buffering
+    // This provides backpressure: if channel is full, send() will await
+    let channel_size = config.batch_size * crate::config::CHANNEL_SIZE_MULTIPLIER;
+    let (tx, mut rx) = mpsc::channel(channel_size);
     let mut writer = BatchWriter::new(pool, config);
     let flush_interval = Duration::from_secs(writer.config.flush_interval_secs);
 
@@ -256,8 +322,19 @@ pub fn start_batch_writer(
                 // Periodic flush based on time interval
                 _ = interval_timer.tick() => {
                     if writer.should_flush_by_time() && !writer.buffer.is_empty() {
-                        if let Err(e) = writer.flush().await {
-                            log::error!("Error during periodic flush: {}", e);
+                        match writer.flush().await {
+                            Ok(result) => {
+                                if result.failed > 0 {
+                                    log::warn!(
+                                        "Periodic flush: {} successful, {} failed",
+                                        result.successful,
+                                        result.failed
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Error during periodic flush: {}", e);
+                            }
                         }
                     }
                 }

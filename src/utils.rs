@@ -1,7 +1,6 @@
 pub mod sanitize;
 
 use anyhow::{Error, Result};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::error_handling::get_retry_strategy;
@@ -120,38 +119,34 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Proce
     let retry_strategy = get_retry_strategy();
     let start_time = std::time::Instant::now();
 
-    // Track retry attempts manually since tokio_retry doesn't expose this
-    let attempt_count = Arc::new(AtomicU32::new(0));
+    // Track retry attempts using Arc<AtomicU32> (needed for async closures)
+    // This is simpler than manual tracking and works correctly with tokio_retry
+    let attempt_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let attempt_count_clone = Arc::clone(&attempt_count);
 
-    // Clone url for use in closure and later logging
-    let url_for_logging = Arc::clone(&url);
-
-    let result = tokio_retry::Retry::spawn(retry_strategy, move || {
-        attempt_count_clone.fetch_add(1, Ordering::SeqCst);
-        // Clone only what's necessary for the async block
-        // Arc clones are cheap (just incrementing reference count)
-        let url = Arc::clone(&url); // Arc clone is cheap (pointer increment, not string copy)
+    let result = tokio_retry::Retry::spawn(retry_strategy, {
+        let url = Arc::clone(&url);
         let ctx = Arc::clone(&ctx);
+        let attempt_count = Arc::clone(&attempt_count_clone);
+        move || {
+            attempt_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let url = Arc::clone(&url);
+            let ctx = Arc::clone(&ctx);
 
-        async move {
-            let result = handle_http_request(
-                &ctx,
-                url.as_str(), // Use as_str() to get &str from Arc<String>
-                start_time,
-            )
-            .await;
+            async move {
+                let result = handle_http_request(&ctx, url.as_str(), start_time).await;
 
-            // Only retry if error is retriable
-            match result {
-                Ok(_) => result,
-                Err(e) => {
-                    if is_retriable_error(&e) {
-                        Err(e) // Preserve error chain (including FailureContextError)
-                    } else {
-                        // Non-retriable error - stop retrying
-                        // Use .context() to preserve the original error chain (including HTTP status and FailureContextError)
-                        Err(e.context("Non-retriable error"))
+                // Only retry if error is retriable
+                match result {
+                    Ok(_) => result,
+                    Err(e) => {
+                        if is_retriable_error(&e) {
+                            Err(e) // Preserve error chain (including FailureContextError)
+                        } else {
+                            // Non-retriable error - stop retrying
+                            // Use .context() to preserve the original error chain
+                            Err(e.context("Non-retriable error"))
+                        }
                     }
                 }
             }
@@ -159,10 +154,10 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Proce
     })
     .await;
 
-    // Calculate actual retry count (attempts - 1, since first attempt isn't a retry)
-    let total_attempts = attempt_count.load(Ordering::SeqCst);
+    // Calculate retry count (attempts - 1, since first attempt isn't a retry)
+    let total_attempts = attempt_count.load(std::sync::atomic::Ordering::SeqCst);
     let retry_count = if total_attempts > 0 {
-        total_attempts - 1
+        total_attempts.saturating_sub(1)
     } else {
         0
     };
@@ -170,7 +165,7 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Proce
     let final_result = match result {
         Ok(()) => Ok(()),
         Err(e) => {
-            log::error!("Error processing URL {url_for_logging} after retries: {e}");
+            log::error!("Error processing URL {url} after retries: {e}");
             Err(e)
         }
     };

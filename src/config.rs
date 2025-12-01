@@ -17,6 +17,10 @@ pub const DB_PATH: &str = "./url_checker.db";
 pub const BATCH_SIZE: usize = 100;
 /// Interval between automatic batch flushes (in seconds)
 pub const BATCH_FLUSH_INTERVAL_SECS: u64 = 5;
+/// Channel size multiplier for batch writer
+/// The channel size is calculated as `batch_size * CHANNEL_SIZE_MULTIPLIER`
+/// This provides a buffer to handle bursts while maintaining backpressure
+pub const CHANNEL_SIZE_MULTIPLIER: usize = 10;
 
 // Network operation timeouts
 /// DNS query timeout in seconds

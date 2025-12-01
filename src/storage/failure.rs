@@ -5,7 +5,6 @@
 
 use anyhow::Error;
 use reqwest::Error as ReqwestError;
-use serde_json;
 use std::error::Error as StdError;
 
 use crate::domain::extract_domain;
@@ -113,169 +112,18 @@ fn extract_http_status(error: &Error) -> Option<u16> {
     None
 }
 
-/// Extracts response headers from error context.
-///
-/// Response headers are captured when we receive an HTTP response with an error status (4xx/5xx).
-/// For connection errors, timeouts, etc., there is no response, so headers will be empty.
-fn extract_response_headers(error: &Error) -> Vec<(String, String)> {
-    for cause in error.chain() {
-        let msg = cause.to_string();
-        // Look for RESPONSE_HEADERS: prefix (may be at start or embedded)
-        if let Some(headers_pos) = msg.find("RESPONSE_HEADERS:") {
-            let headers_str = &msg[headers_pos + "RESPONSE_HEADERS:".len()..];
-            // Try to find JSON array - look for opening bracket
-            if let Some(bracket_start) = headers_str.find('[') {
-                let headers_str = &headers_str[bracket_start..];
-                // Find matching closing bracket
-                let mut bracket_count = 0;
-                let mut end_pos = None;
-                for (i, ch) in headers_str.char_indices() {
-                    match ch {
-                        '[' => bracket_count += 1,
-                        ']' => {
-                            bracket_count -= 1;
-                            if bracket_count == 0 {
-                                end_pos = Some(i + 1);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(end) = end_pos {
-                    if let Ok(headers) =
-                        serde_json::from_str::<Vec<(String, String)>>(&headers_str[..end])
-                    {
-                        return headers;
-                    }
-                }
-            }
-        }
-    }
-    // No response headers found - this is expected for connection errors, timeouts, etc.
-    Vec::new()
-}
-
-/// Extracts request headers from error context.
-///
-/// Request headers are captured when making the HTTP request.
-/// This extracts them from the error context string.
-fn extract_request_headers(error: &Error) -> Vec<(String, String)> {
-    for cause in error.chain() {
-        let msg = cause.to_string();
-        // Look for REQUEST_HEADERS: prefix (may be at start or embedded)
-        if let Some(headers_pos) = msg.find("REQUEST_HEADERS:") {
-            let headers_str = &msg[headers_pos + "REQUEST_HEADERS:".len()..];
-            // Try to find JSON array - look for opening bracket
-            if let Some(bracket_start) = headers_str.find('[') {
-                let headers_str = &headers_str[bracket_start..];
-                // Find matching closing bracket
-                let mut bracket_count = 0;
-                let mut end_pos = None;
-                for (i, ch) in headers_str.char_indices() {
-                    match ch {
-                        '[' => bracket_count += 1,
-                        ']' => {
-                            bracket_count -= 1;
-                            if bracket_count == 0 {
-                                end_pos = Some(i + 1);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(end) = end_pos {
-                    if let Ok(headers) =
-                        serde_json::from_str::<Vec<(String, String)>>(&headers_str[..end])
-                    {
-                        return headers;
-                    }
-                }
-            }
-        }
-    }
-    // No request headers found - return empty (connection errors, etc.)
-    Vec::new()
-}
-
-/// Extracts redirect chain from error context.
-fn extract_redirect_chain(error: &Error) -> Vec<String> {
-    for cause in error.chain() {
-        let msg = cause.to_string();
-        // Look for REDIRECT_CHAIN: prefix (may be at start or embedded)
-        if let Some(chain_str) = msg.find("REDIRECT_CHAIN:") {
-            let chain_str = &msg[chain_str + "REDIRECT_CHAIN:".len()..];
-            // Try to find JSON array - look for opening bracket
-            if let Some(bracket_start) = chain_str.find('[') {
-                let chain_str = &chain_str[bracket_start..];
-                // Find matching closing bracket
-                let mut bracket_count = 0;
-                let mut end_pos = None;
-                for (i, ch) in chain_str.char_indices() {
-                    match ch {
-                        '[' => bracket_count += 1,
-                        ']' => {
-                            bracket_count -= 1;
-                            if bracket_count == 0 {
-                                end_pos = Some(i + 1);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(end) = end_pos {
-                    if let Ok(chain) = serde_json::from_str::<Vec<String>>(&chain_str[..end]) {
-                        return chain;
-                    }
-                }
-            }
-        }
-    }
-    Vec::new()
-}
-
-/// Extracts final URL from error context.
-fn extract_final_url(error: &Error) -> Option<String> {
-    for cause in error.chain() {
-        let msg = cause.to_string();
-        // Look for FINAL_URL: prefix (may be at start or embedded)
-        if let Some(url_pos) = msg.find("FINAL_URL:") {
-            let url_str = &msg[url_pos + "FINAL_URL:".len()..];
-            // Extract URL - it may be followed by whitespace, newline, or another context
-            // Stop at whitespace, newline, or REDIRECT_CHAIN marker
-            let url = url_str
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .split('\n')
-                .next()
-                .unwrap_or("")
-                .trim();
-            // Also check if it contains REDIRECT_CHAIN and stop there
-            let url = if let Some(chain_pos) = url.find("REDIRECT_CHAIN") {
-                &url[..chain_pos]
-            } else {
-                url
-            };
-            let url = url.trim();
-            if !url.is_empty() && url.starts_with("http") {
-                return Some(url.to_string());
-            }
-        }
-    }
-    // Fallback: if we have a redirect chain, use the last URL as final_url
-    let redirect_chain = extract_redirect_chain(error);
-    if !redirect_chain.is_empty() {
-        return Some(redirect_chain.last().unwrap().clone());
-    }
-    None
-}
+// Removed unused string parsing functions:
+// - extract_response_headers
+// - extract_request_headers
+// - extract_redirect_chain
+// - extract_final_url
+//
+// These functions were removed because they are no longer used.
+// The system now relies solely on structured `FailureContextError` for error context,
+// which is more robust and eliminates fragile string parsing.
 
 /// Failure context passed directly to avoid fragile string parsing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FailureContext {
     pub final_url: Option<String>,
     pub redirect_chain: Vec<String>,
@@ -294,36 +142,51 @@ pub struct FailureContextError {
 
 impl std::fmt::Display for FailureContextError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Failure context: final_url={:?}, redirect_chain_len={}",
-            self.context.final_url,
-            self.context.redirect_chain.len()
-        )
+        // Provide more useful error message with context details
+        if let Some(ref final_url) = self.context.final_url {
+            if !self.context.redirect_chain.is_empty() {
+                write!(
+                    f,
+                    "Request failed for {} (redirected from {} via {} hop(s))",
+                    final_url,
+                    self.context.redirect_chain.first().unwrap_or(final_url),
+                    self.context.redirect_chain.len().saturating_sub(1)
+                )
+            } else {
+                write!(f, "Request failed for {}", final_url)
+            }
+        } else {
+            write!(f, "Request failed (no final URL available)")
+        }
     }
 }
 
 impl std::error::Error for FailureContextError {}
 
+/// Helper function to attach failure context to an error.
+///
+/// This provides a consistent way to attach structured failure context
+/// to errors throughout the codebase, reducing duplication.
+pub fn attach_failure_context(error: anyhow::Error, context: FailureContext) -> anyhow::Error {
+    error.context(FailureContextError { context })
+}
+
 /// Extracts failure context from an error chain.
 ///
 /// Looks for a `FailureContextError` in the error chain and extracts its context.
-/// Falls back to string parsing if no structured context is found.
+/// Returns empty context if no structured context is found (simpler and more robust).
 pub fn extract_failure_context(error: &Error) -> FailureContext {
-    // First, try to find structured context in error chain
+    // Look for structured context in error chain
     for cause in error.chain() {
         if let Some(context_err) = cause.downcast_ref::<FailureContextError>() {
             return context_err.context.clone();
         }
     }
 
-    // Fallback to string parsing (for backward compatibility)
-    FailureContext {
-        final_url: extract_final_url(error),
-        redirect_chain: extract_redirect_chain(error),
-        response_headers: extract_response_headers(error),
-        request_headers: extract_request_headers(error),
-    }
+    // No structured context found - return empty context
+    // This is simpler and more robust than fragile string parsing
+    // All error paths should attach structured context using attach_failure_context()
+    FailureContext::default()
 }
 
 /// Records a URL failure in the database.

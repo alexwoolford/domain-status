@@ -6,7 +6,6 @@
 
 use hickory_resolver::TokioAsyncResolver;
 use publicsuffix::List;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -24,10 +23,6 @@ pub struct ProcessingContext {
     pub client: Arc<reqwest::Client>,
     /// HTTP client for redirect resolution (with redirects disabled)
     pub redirect_client: Arc<reqwest::Client>,
-    /// Database connection pool
-    /// Note: Currently unused due to batch writer, but kept for potential future use
-    #[allow(dead_code)]
-    pub pool: Arc<SqlitePool>,
     /// Public Suffix List extractor for domain extraction
     pub extractor: Arc<List>,
     /// DNS resolver for hostname lookups
@@ -37,7 +32,7 @@ pub struct ProcessingContext {
     /// Unique identifier for this run (for time-series tracking)
     pub run_id: Option<String>,
     /// Batch writer sender for queuing records
-    pub batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
+    pub batch_sender: Option<mpsc::Sender<BatchRecord>>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
     /// Circuit breaker for database write operations
@@ -50,19 +45,17 @@ impl ProcessingContext {
     pub fn new(
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
-        pool: Arc<SqlitePool>,
         extractor: Arc<List>,
         resolver: Arc<TokioAsyncResolver>,
         error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
-        batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
+        batch_sender: Option<mpsc::Sender<BatchRecord>>,
         enable_whois: bool,
         db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
     ) -> Self {
         Self {
             client,
             redirect_client,
-            pool,
             extractor,
             resolver,
             error_stats,
