@@ -277,7 +277,12 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
             // Extract Subject Alternative Names (SANs)
             let sans = extract_certificate_sans(&cert).unwrap_or_else(|_| Vec::new());
             if !sans.is_empty() {
-                log::debug!("Found {} SAN(s) for domain {}: {:?}", sans.len(), domain, sans);
+                log::debug!(
+                    "Found {} SAN(s) for domain {}: {:?}",
+                    sans.len(),
+                    domain,
+                    sans
+                );
             }
 
             log::info!("Extracting validity period for domain: {domain}");
@@ -307,11 +312,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 oids: Some(unique_oids),
                 cipher_suite,
                 key_algorithm: Some(key_algorithm),
-                subject_alternative_names: if sans.is_empty() {
-                    None
-                } else {
-                    Some(sans)
-                },
+                subject_alternative_names: if sans.is_empty() { None } else { Some(sans) },
             });
         }
     }

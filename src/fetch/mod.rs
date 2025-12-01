@@ -372,12 +372,14 @@ fn parse_html_content(
 
     // Extract data needed for technology detection (to avoid double-parsing)
     let mut meta_tags = HashMap::new();
-    let meta_selector = Selector::parse("meta")
-        .unwrap_or_else(|e| {
-            log::error!("Failed to parse 'meta' selector: {}. This is a programming error.", e);
-            // Fallback to a selector that won't match anything
-            Selector::parse("nonexistent").expect("Fallback selector should always parse")
-        });
+    let meta_selector = Selector::parse("meta").unwrap_or_else(|e| {
+        log::error!(
+            "Failed to parse 'meta' selector: {}. This is a programming error.",
+            e
+        );
+        // Fallback to a selector that won't match anything
+        Selector::parse("nonexistent").expect("Fallback selector should always parse")
+    });
     for element in document.select(&meta_selector) {
         // Check name attribute (standard meta tags)
         if let (Some(name), Some(content)) = (
@@ -412,12 +414,14 @@ fn parse_html_content(
     let mut script_content = String::new();
     let mut script_tag_ids = HashSet::new();
     let mut inline_script_count = 0;
-    let script_selector = Selector::parse("script")
-        .unwrap_or_else(|e| {
-            log::error!("Failed to parse 'script' selector: {}. This is a programming error.", e);
-            // Fallback to a selector that won't match anything
-            Selector::parse("nonexistent").expect("Fallback selector should always parse")
-        });
+    let script_selector = Selector::parse("script").unwrap_or_else(|e| {
+        log::error!(
+            "Failed to parse 'script' selector: {}. This is a programming error.",
+            e
+        );
+        // Fallback to a selector that won't match anything
+        Selector::parse("nonexistent").expect("Fallback selector should always parse")
+    });
     for element in document.select(&script_selector) {
         // Extract script tag IDs (for __NEXT_DATA__ etc.)
         if let Some(id) = element.value().attr("id") {
@@ -556,44 +560,51 @@ async fn fetch_tls_and_dns(
 
     // Extract TLS info and record partial failures
     let mut partial_failures = Vec::new();
-    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm, subject_alternative_names) =
-        match tls_result {
-            Ok(cert_info) => (
-                cert_info.tls_version,
-                cert_info.subject,
-                cert_info.issuer,
-                cert_info.valid_from,
-                cert_info.valid_to,
-                cert_info.oids,
-                cert_info.cipher_suite,
-                cert_info.key_algorithm,
-                cert_info.subject_alternative_names,
-            ),
-            Err(e) => {
-                log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
-                error_stats.increment_error(crate::error_handling::ErrorType::TlsCertificateError);
-                // Record as partial failure using ErrorType enum
-                // Sanitize and truncate error message to prevent database bloat
-                let error_msg =
-                    format!("Failed to get SSL certificate info for {final_domain}: {e}");
-                let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
-                let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH
-                {
-                    format!(
-                        "{}... (truncated, original length: {} chars)",
-                        &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
-                        sanitized_msg.len()
-                    )
-                } else {
-                    sanitized_msg
-                };
-                partial_failures.push((
-                    crate::error_handling::ErrorType::TlsCertificateError,
-                    truncated_msg,
-                ));
-                (None, None, None, None, None, None, None, None, None)
-            }
-        };
+    let (
+        tls_version,
+        subject,
+        issuer,
+        valid_from,
+        valid_to,
+        oids,
+        cipher_suite,
+        key_algorithm,
+        subject_alternative_names,
+    ) = match tls_result {
+        Ok(cert_info) => (
+            cert_info.tls_version,
+            cert_info.subject,
+            cert_info.issuer,
+            cert_info.valid_from,
+            cert_info.valid_to,
+            cert_info.oids,
+            cert_info.cipher_suite,
+            cert_info.key_algorithm,
+            cert_info.subject_alternative_names,
+        ),
+        Err(e) => {
+            log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
+            error_stats.increment_error(crate::error_handling::ErrorType::TlsCertificateError);
+            // Record as partial failure using ErrorType enum
+            // Sanitize and truncate error message to prevent database bloat
+            let error_msg = format!("Failed to get SSL certificate info for {final_domain}: {e}");
+            let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
+            let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+                format!(
+                    "{}... (truncated, original length: {} chars)",
+                    &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+                    sanitized_msg.len()
+                )
+            } else {
+                sanitized_msg
+            };
+            partial_failures.push((
+                crate::error_handling::ErrorType::TlsCertificateError,
+                truncated_msg,
+            ));
+            (None, None, None, None, None, None, None, None, None)
+        }
+    };
 
     debug!(
         "Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}"
