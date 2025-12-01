@@ -445,7 +445,9 @@ async fn main() -> Result<()> {
                             if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
                                 reqwest_err
                                     .status()
-                                    .map(|s| s.as_u16() == crate::config::HTTP_STATUS_TOO_MANY_REQUESTS)
+                                    .map(|s| {
+                                        s.as_u16() == crate::config::HTTP_STATUS_TOO_MANY_REQUESTS
+                                    })
                                     .unwrap_or(false)
                             } else {
                                 false
