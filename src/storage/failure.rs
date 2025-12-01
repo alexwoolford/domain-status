@@ -452,18 +452,19 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_failure_context_fallback_to_string_parsing() {
-        // Create an error with string context (fallback scenario)
+    fn test_extract_failure_context_no_structured_context() {
+        // Create an error without structured context (no FailureContextError)
+        // The system now only uses structured context, so this should return empty context
         let error = anyhow::anyhow!("HTTP request failed")
             .context("FINAL_URL:https://example.com")
             .context("REDIRECT_CHAIN:[\"https://example.org\"]");
 
         let extracted = extract_failure_context(&error);
-        assert_eq!(extracted.final_url, Some("https://example.com".to_string()));
-        assert_eq!(
-            extracted.redirect_chain,
-            vec!["https://example.org".to_string()]
-        );
+        // Without structured context, we return empty context (no string parsing fallback)
+        assert_eq!(extracted.final_url, None);
+        assert_eq!(extracted.redirect_chain, Vec::<String>::new());
+        assert_eq!(extracted.response_headers, Vec::<(String, String)>::new());
+        assert_eq!(extracted.request_headers, Vec::<(String, String)>::new());
     }
 
     #[test]
