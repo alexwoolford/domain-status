@@ -1,4 +1,7 @@
+pub mod sanitize;
+
 use anyhow::{Error, Result};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::error_handling::get_retry_strategy;
@@ -84,6 +87,13 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
     true
 }
 
+/// Result of processing a URL, including retry count.
+#[derive(Debug)]
+pub struct ProcessUrlResult {
+    pub result: Result<(), Error>,
+    pub retry_count: u32,
+}
+
 /// Processes a single URL with selective retry logic.
 ///
 /// Only retries network-related errors (timeouts, connection failures, 5xx errors).
@@ -94,16 +104,31 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
 /// * `url` - The URL to process (wrapped in Arc to avoid cloning on retries)
 /// * `ctx` - Processing context containing all shared resources
 ///
-/// # Errors
+/// # Returns
 ///
-/// Returns an error if all retry attempts fail or if a non-retriable error occurs.
-pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Result<(), Error> {
+/// A `ProcessUrlResult` containing the result and the actual number of retry attempts made.
+///
+/// # Retry Count Accuracy
+///
+/// The `retry_count` field represents the number of retry attempts made (not including the initial attempt).
+/// This is tracked manually using an atomic counter, and may not be 100% accurate in all edge cases
+/// (e.g., if retries are aborted early or if the retry strategy changes). For most practical purposes,
+/// this provides a good approximation of retry attempts.
+pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> ProcessUrlResult {
     log::debug!("Starting process for URL: {url}");
 
     let retry_strategy = get_retry_strategy();
     let start_time = std::time::Instant::now();
 
-    let result = tokio_retry::Retry::spawn(retry_strategy, || {
+    // Track retry attempts manually since tokio_retry doesn't expose this
+    let attempt_count = Arc::new(AtomicU32::new(0));
+    let attempt_count_clone = Arc::clone(&attempt_count);
+
+    // Clone url for use in closure and later logging
+    let url_for_logging = Arc::clone(&url);
+
+    let result = tokio_retry::Retry::spawn(retry_strategy, move || {
+        attempt_count_clone.fetch_add(1, Ordering::SeqCst);
         // Clone only what's necessary for the async block
         // Arc clones are cheap (just incrementing reference count)
         let url = Arc::clone(&url); // Arc clone is cheap (pointer increment, not string copy)
@@ -122,10 +147,10 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Resul
                 Ok(_) => result,
                 Err(e) => {
                     if is_retriable_error(&e) {
-                        Err(e)
+                        Err(e) // Preserve error chain (including FailureContextError)
                     } else {
                         // Non-retriable error - stop retrying
-                        // Use .context() to preserve the original error chain (including HTTP status)
+                        // Use .context() to preserve the original error chain (including HTTP status and FailureContextError)
                         Err(e.context("Non-retriable error"))
                     }
                 }
@@ -134,11 +159,24 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Resul
     })
     .await;
 
-    match result {
+    // Calculate actual retry count (attempts - 1, since first attempt isn't a retry)
+    let total_attempts = attempt_count.load(Ordering::SeqCst);
+    let retry_count = if total_attempts > 0 {
+        total_attempts - 1
+    } else {
+        0
+    };
+
+    let final_result = match result {
         Ok(()) => Ok(()),
         Err(e) => {
-            log::error!("Error processing URL {url} after retries: {e}");
+            log::error!("Error processing URL {url_for_logging} after retries: {e}");
             Err(e)
         }
+    };
+
+    ProcessUrlResult {
+        result: final_result,
+        retry_count,
     }
 }

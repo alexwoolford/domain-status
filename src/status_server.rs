@@ -25,6 +25,7 @@ use crate::error_handling::ProcessingStats;
 pub struct StatusState {
     pub total_urls: Arc<AtomicUsize>,
     pub completed_urls: Arc<AtomicUsize>,
+    pub failed_urls: Arc<AtomicUsize>,
     pub start_time: Arc<Instant>,
     pub error_stats: Arc<ProcessingStats>,
 }
@@ -35,6 +36,8 @@ pub struct StatusResponse {
     pub total_urls: usize,
     pub completed_urls: usize,
     pub failed_urls: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_urls: Option<usize>,
     pub percentage_complete: f64,
     pub elapsed_seconds: f64,
     pub rate_per_second: f64,
@@ -69,7 +72,6 @@ pub struct InfoCounts {
     pub http_redirect: usize,
     pub https_redirect: usize,
     pub bot_detection_403: usize,
-    pub bot_detection_different_content: usize,
     pub multiple_redirects: usize,
 }
 
@@ -99,7 +101,7 @@ pub async fn start_status_server(port: u16, state: StatusState) -> Result<(), an
 async fn metrics_handler(State(state): State<StatusState>) -> Response {
     let total = state.total_urls.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
-    let failed = total.saturating_sub(completed);
+    let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
     let rate = if elapsed > 0.0 {
         completed as f64 / elapsed
@@ -165,7 +167,7 @@ domain_status_info_total {}
 async fn status_handler(State(state): State<StatusState>) -> Response {
     let total = state.total_urls.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
-    let failed = total.saturating_sub(completed);
+    let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
     let rate = if elapsed > 0.0 {
         completed as f64 / elapsed
@@ -173,18 +175,23 @@ async fn status_handler(State(state): State<StatusState>) -> Response {
         0.0
     };
 
-    let percentage = if total > 0 {
-        (completed as f64 / total as f64) * 100.0
+    // Calculate percentage based on completed + failed (not total, since some URLs may not be attempted yet)
+    let attempted = completed + failed;
+    let percentage = if attempted > 0 {
+        (completed as f64 / attempted as f64) * 100.0
     } else {
         0.0
     };
 
     use crate::error_handling::{ErrorType, InfoType, WarningType};
 
+    let pending_urls = total.saturating_sub(completed).saturating_sub(failed);
+
     let response = StatusResponse {
         total_urls: total,
         completed_urls: completed,
         failed_urls: failed,
+        pending_urls: Some(pending_urls),
         percentage_complete: percentage,
         elapsed_seconds: elapsed,
         rate_per_second: rate,
@@ -289,9 +296,6 @@ async fn status_handler(State(state): State<StatusState>) -> Response {
             http_redirect: state.error_stats.get_info_count(InfoType::HttpRedirect),
             https_redirect: state.error_stats.get_info_count(InfoType::HttpsRedirect),
             bot_detection_403: state.error_stats.get_info_count(InfoType::BotDetection403),
-            bot_detection_different_content: state
-                .error_stats
-                .get_info_count(InfoType::BotDetectionDifferentContent),
             multiple_redirects: state
                 .error_stats
                 .get_info_count(InfoType::MultipleRedirects),

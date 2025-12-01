@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::error_handling::ProcessingStats;
+use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::BatchRecord;
 
 /// Context containing all shared resources needed for URL processing.
@@ -39,6 +40,8 @@ pub struct ProcessingContext {
     pub batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
+    /// Circuit breaker for database write operations
+    pub db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
 }
 
 impl ProcessingContext {
@@ -54,6 +57,7 @@ impl ProcessingContext {
         run_id: Option<String>,
         batch_sender: Option<mpsc::UnboundedSender<BatchRecord>>,
         enable_whois: bool,
+        db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
     ) -> Self {
         Self {
             client,
@@ -65,6 +69,7 @@ impl ProcessingContext {
             run_id,
             batch_sender,
             enable_whois,
+            db_circuit_breaker,
         }
     }
 }

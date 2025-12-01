@@ -135,6 +135,16 @@ pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
 /// Maximum total script content size in bytes (500KB total across all scripts)
 /// Limits the total amount of JavaScript we execute to prevent DoS attacks
 pub const MAX_TOTAL_SCRIPT_CONTENT_SIZE: usize = 500 * 1024; // 500KB total across all scripts
+
+// Error message and header size limits
+/// Maximum error message length in characters (2000 chars)
+/// Prevents database bloat from unbounded error messages
+/// Error messages longer than this are truncated with a note about the original length
+pub const MAX_ERROR_MESSAGE_LENGTH: usize = 2000;
+/// Maximum HTTP header value length in characters (1000 chars)
+/// Prevents database bloat from very long header values (e.g., accept-ch headers)
+/// Header values longer than this are truncated
+pub const MAX_HEADER_VALUE_LENGTH: usize = 1000;
 /// Maximum JavaScript execution time in milliseconds (1 second)
 /// Prevents infinite loops and CPU exhaustion attacks
 pub const MAX_JS_EXECUTION_TIME_MS: u64 = 1000;

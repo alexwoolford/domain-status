@@ -2,6 +2,7 @@
 // Database operations module
 
 pub mod batch;
+pub mod circuit_breaker;
 pub mod failure;
 pub mod insert;
 pub mod migrations;

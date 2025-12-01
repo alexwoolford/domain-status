@@ -279,6 +279,7 @@ erDiagram
     url_status ||--o{ url_social_media_links : "has"
     url_status ||--o{ url_structured_data : "has"
     url_status ||--o{ url_security_warnings : "has"
+    url_status ||--o{ url_partial_failures : "has"
 
     runs {
         TEXT run_id PK
@@ -463,6 +464,15 @@ erDiagram
         INTEGER url_failure_id FK
         TEXT header_name
         TEXT header_value
+    }
+
+    url_partial_failures {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT error_type
+        TEXT error_message
+        INTEGER timestamp
+        TEXT run_id FK
     }
 ```
 
@@ -1061,6 +1071,64 @@ Stores HTTP request headers that were sent. Always populated (we always know wha
 - Always populated (we always know what headers we sent)
 - Useful for understanding what might have triggered bot detection or rate limiting
 
+#### `url_partial_failures` (Junction Table)
+Stores partial failures (DNS/TLS errors that didn't prevent URL processing). These are errors that occurred during supplementary data collection (DNS lookups, TLS certificate retrieval) but didn't prevent the URL from being successfully processed. The URL was processed and stored in `url_status`, but some optional data is missing.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `error_type` | TEXT | Error type (e.g., "DNS NS lookup error", "DNS TXT lookup error", "DNS MX lookup error", "TLS certificate error") |
+| `error_message` | TEXT | Full error message for debugging |
+| `timestamp` | INTEGER | When the partial failure occurred (milliseconds since Unix epoch) |
+| `run_id` | TEXT (FK) | Foreign key to `runs.run_id` |
+
+**Constraints:**
+- Foreign key with `ON DELETE CASCADE`
+- Multiple partial failures per URL are allowed (e.g., both NS and TXT lookups could fail)
+
+**Indexes:**
+- `idx_url_partial_failures_url_status_id` on `url_status_id`
+- `idx_url_partial_failures_error_type` on `error_type` (for queries like "find all DNS timeout errors")
+- `idx_url_partial_failures_run_id` on `run_id`
+
+**Notes:**
+- Partial failures are different from complete failures (`url_failures`):
+  - **Complete failures**: The URL processing failed entirely (timeout, connection error, HTTP 4xx/5xx, etc.). No data is stored in `url_status`.
+  - **Partial failures**: The URL was successfully processed and stored in `url_status`, but some optional data collection failed (DNS lookups, TLS certificate info).
+- "No records found" DNS responses are NOT recorded as partial failures (this is expected behavior).
+- Only actual DNS/TLS errors (timeouts, network errors, certificate parsing failures) are recorded.
+- Useful for analyzing DNS/TLS reliability patterns and identifying domains with problematic DNS configurations.
+
+**Query Examples:**
+```sql
+-- Find all URLs with DNS lookup failures
+SELECT DISTINCT us.domain, upf.error_type, upf.error_message
+FROM url_status us
+JOIN url_partial_failures upf ON us.id = upf.url_status_id
+WHERE upf.error_type LIKE 'DNS%';
+
+-- Count partial failures by type
+SELECT error_type, COUNT(*) as count
+FROM url_partial_failures
+GROUP BY error_type
+ORDER BY count DESC;
+
+-- Find URLs with multiple partial failures
+SELECT us.domain, COUNT(*) as failure_count, GROUP_CONCAT(upf.error_type) as error_types
+FROM url_status us
+JOIN url_partial_failures upf ON us.id = upf.url_status_id
+GROUP BY us.id
+HAVING failure_count > 1
+ORDER BY failure_count DESC;
+
+-- Find URLs that succeeded but had TLS certificate errors
+SELECT DISTINCT us.domain, us.final_domain, upf.error_message
+FROM url_status us
+JOIN url_partial_failures upf ON us.id = upf.url_status_id
+WHERE upf.error_type = 'TLS certificate error';
+```
+
 **Query Examples:**
 ```sql
 -- Find all domains registered with a specific registrar
@@ -1110,6 +1178,7 @@ The database uses a **star schema** design pattern:
    - `url_failure_redirect_chain` - Redirect chain before failure
    - `url_failure_response_headers` - HTTP response headers (only for HTTP error responses)
    - `url_failure_request_headers` - HTTP request headers sent (always populated)
+   - `url_partial_failures` - Partial failures (DNS/TLS errors that didn't prevent URL processing)
 
 **Benefits:**
 - **No Data Duplication**: Each piece of data stored once

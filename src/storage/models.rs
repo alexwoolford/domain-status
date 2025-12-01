@@ -69,3 +69,21 @@ pub struct UrlFailureRecord {
     pub response_headers: Vec<(String, String)>, // Response headers received (if any)
     pub request_headers: Vec<(String, String)>, // Request headers sent (for debugging)
 }
+
+/// Represents a partial failure (DNS/TLS error that didn't prevent URL processing).
+///
+/// These are errors that occurred during supplementary data collection (DNS, TLS)
+/// but didn't prevent the URL from being successfully processed. The URL was
+/// processed, but some optional data is missing.
+///
+/// # Database Schema
+///
+/// This struct maps to the `url_partial_failures` table. The `timestamp` field
+/// is stored as milliseconds since Unix epoch.
+pub struct UrlPartialFailureRecord {
+    pub url_status_id: i64,     // Foreign key to url_status.id
+    pub error_type: String,     // ErrorType enum value (DNS/TLS errors)
+    pub error_message: String,  // Full error message
+    pub timestamp: i64,         // When the failure occurred
+    pub run_id: Option<String>, // Foreign key to runs.run_id
+}

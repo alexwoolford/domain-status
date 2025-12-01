@@ -460,7 +460,7 @@ fn parse_html_content(
 
 /// TLS and DNS resolution results.
 #[derive(Debug)]
-struct TlsDnsData {
+pub(crate) struct TlsDnsData {
     tls_version: Option<String>,
     subject: Option<String>,
     issuer: Option<String>,
@@ -473,6 +473,12 @@ struct TlsDnsData {
     reverse_dns_name: Option<String>,
 }
 
+/// Result of fetching TLS and DNS data, including any partial failures.
+pub struct TlsDnsResult {
+    pub data: TlsDnsData,
+    pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>, // (error_type, error_message)
+}
+
 /// Fetches TLS certificate information and DNS resolution in parallel.
 ///
 /// # Arguments
@@ -482,17 +488,20 @@ struct TlsDnsData {
 /// * `resolver` - DNS resolver
 /// * `final_domain` - The final domain (for logging)
 /// * `error_stats` - Processing statistics tracker
+/// * `run_id` - Run identifier for partial failure tracking
 ///
-/// # Errors
+/// # Returns
 ///
-/// Returns an error if DNS resolution fails.
+/// Returns TLS/DNS data and any partial failures (errors that didn't prevent processing).
+/// DNS/TLS failures are recorded as partial failures, not as errors that stop processing.
 async fn fetch_tls_and_dns(
     final_url: &str,
     host: &str,
     resolver: &hickory_resolver::TokioAsyncResolver,
     final_domain: &str,
     error_stats: &crate::error_handling::ProcessingStats,
-) -> Result<TlsDnsData, Error> {
+    _run_id: Option<&str>, // Reserved for future use (partial failure tracking)
+) -> Result<TlsDnsResult, Error> {
     // Run TLS and DNS operations in parallel (they're independent)
     let (tls_result, dns_result) = tokio::join!(
         // TLS certificate extraction (only for HTTPS)
@@ -525,7 +534,8 @@ async fn fetch_tls_and_dns(
         }
     );
 
-    // Extract TLS info
+    // Extract TLS info and record partial failures
+    let mut partial_failures = Vec::new();
     let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
         match tls_result {
             Ok(cert_info) => (
@@ -541,6 +551,25 @@ async fn fetch_tls_and_dns(
             Err(e) => {
                 log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
                 error_stats.increment_error(crate::error_handling::ErrorType::TlsCertificateError);
+                // Record as partial failure using ErrorType enum
+                // Sanitize and truncate error message to prevent database bloat
+                let error_msg =
+                    format!("Failed to get SSL certificate info for {final_domain}: {e}");
+                let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
+                let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH
+                {
+                    format!(
+                        "{}... (truncated, original length: {} chars)",
+                        &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+                        sanitized_msg.len()
+                    )
+                } else {
+                    sanitized_msg
+                };
+                partial_failures.push((
+                    crate::error_handling::ErrorType::TlsCertificateError,
+                    truncated_msg,
+                ));
                 (None, None, None, None, None, None, None, None)
             }
         };
@@ -549,7 +578,7 @@ async fn fetch_tls_and_dns(
         "Extracted SSL info for {final_domain}: {tls_version:?}, {subject:?}, {issuer:?}, {valid_from:?}, {valid_to:?}"
     );
 
-    // Extract DNS info
+    // Extract DNS info and record partial failures
     // If DNS resolution fails, continue with None values rather than failing the entire request
     // This makes the system more resilient to DNS issues
     let (ip_address, reverse_dns_name) = match dns_result {
@@ -559,6 +588,23 @@ async fn fetch_tls_and_dns(
                 "Failed to resolve DNS for {final_domain}: {e} - continuing without IP address"
             );
             error_stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
+            // Record as partial failure using ErrorType enum
+            // Sanitize and truncate error message to prevent database bloat
+            let error_msg = format!("Failed to resolve DNS for {final_domain}: {e}");
+            let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
+            let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+                format!(
+                    "{}... (truncated, original length: {} chars)",
+                    &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+                    sanitized_msg.len()
+                )
+            } else {
+                sanitized_msg
+            };
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsNsLookupError,
+                truncated_msg,
+            ));
             (String::new(), None) // Use empty string for IP, None for reverse DNS
         }
     };
@@ -566,17 +612,20 @@ async fn fetch_tls_and_dns(
     debug!("Resolved IP address: {ip_address}");
     debug!("Resolved reverse DNS name: {reverse_dns_name:?}");
 
-    Ok(TlsDnsData {
-        tls_version,
-        subject,
-        issuer,
-        valid_from,
-        valid_to,
-        oids,
-        cipher_suite,
-        key_algorithm,
-        ip_address,
-        reverse_dns_name,
+    Ok(TlsDnsResult {
+        data: TlsDnsData {
+            tls_version,
+            subject,
+            issuer,
+            valid_from,
+            valid_to,
+            oids,
+            cipher_suite,
+            key_algorithm,
+            ip_address,
+            reverse_dns_name,
+        },
+        partial_failures,
     })
 }
 
@@ -590,6 +639,13 @@ struct AdditionalDnsData {
     dmarc_record: Option<String>,
 }
 
+/// Result of fetching additional DNS records, including any partial failures.
+#[derive(Debug)]
+struct AdditionalDnsResult {
+    pub data: AdditionalDnsData,
+    pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>, // (error_type, error_message)
+}
+
 /// Fetches additional DNS records (NS, TXT, MX) in parallel.
 ///
 /// # Arguments
@@ -597,17 +653,23 @@ struct AdditionalDnsData {
 /// * `final_domain` - The final domain to query
 /// * `resolver` - DNS resolver
 /// * `error_stats` - Processing statistics tracker
+///
+/// # Returns
+///
+/// Returns DNS data and any partial failures (errors that didn't prevent processing).
 async fn fetch_additional_dns_records(
     final_domain: &str,
     resolver: &hickory_resolver::TokioAsyncResolver,
     error_stats: &crate::error_handling::ProcessingStats,
-) -> AdditionalDnsData {
+) -> AdditionalDnsResult {
     // Query additional DNS records (NS, TXT, MX) in parallel
     let (ns_result, txt_result, mx_result) = tokio::join!(
         lookup_ns_records(final_domain, resolver),
         lookup_txt_records(final_domain, resolver),
         lookup_mx_records(final_domain, resolver)
     );
+
+    let mut partial_failures = Vec::new();
 
     let nameservers = match ns_result {
         Ok(ns) if !ns.is_empty() => {
@@ -618,6 +680,22 @@ async fn fetch_additional_dns_records(
         Err(e) => {
             log::warn!("Failed to lookup NS records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
+            // Sanitize and truncate error message to prevent database bloat
+            let error_msg = format!("Failed to lookup NS records for {final_domain}: {e}");
+            let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
+            let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+                format!(
+                    "{}... (truncated, original length: {} chars)",
+                    &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+                    sanitized_msg.len()
+                )
+            } else {
+                sanitized_msg
+            };
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsNsLookupError,
+                truncated_msg,
+            ));
             None
         }
     };
@@ -634,6 +712,22 @@ async fn fetch_additional_dns_records(
         Err(e) => {
             log::warn!("Failed to lookup TXT records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsTxtLookupError);
+            // Sanitize and truncate error message to prevent database bloat
+            let error_msg = format!("Failed to lookup TXT records for {final_domain}: {e}");
+            let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
+            let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+                format!(
+                    "{}... (truncated, original length: {} chars)",
+                    &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+                    sanitized_msg.len()
+                )
+            } else {
+                sanitized_msg
+            };
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsTxtLookupError,
+                truncated_msg,
+            ));
             None
         }
     };
@@ -670,16 +764,35 @@ async fn fetch_additional_dns_records(
         Err(e) => {
             log::warn!("Failed to lookup MX records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsMxLookupError);
+            // Sanitize and truncate error message to prevent database bloat
+            let error_msg = format!("Failed to lookup MX records for {final_domain}: {e}");
+            let sanitized_msg = crate::utils::sanitize::sanitize_error_message(&error_msg);
+            let truncated_msg = if sanitized_msg.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+                format!(
+                    "{}... (truncated, original length: {} chars)",
+                    &sanitized_msg[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+                    sanitized_msg.len()
+                )
+            } else {
+                sanitized_msg
+            };
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsMxLookupError,
+                truncated_msg,
+            ));
             None
         }
     };
 
-    AdditionalDnsData {
-        nameservers,
-        txt_records,
-        mx_records,
-        spf_record,
-        dmarc_record,
+    AdditionalDnsResult {
+        data: AdditionalDnsData {
+            nameservers,
+            txt_records,
+            mx_records,
+            spf_record,
+            dmarc_record,
+        },
+        partial_failures,
     }
 }
 
@@ -727,19 +840,24 @@ pub async fn handle_response(
     let html_data = parse_html_content(&resp_data.body, &resp_data.final_domain, &ctx.error_stats);
 
     // Fetch TLS and DNS data in parallel
-    let tls_dns_data = fetch_tls_and_dns(
+    let tls_dns_result = fetch_tls_and_dns(
         &resp_data.final_url,
         &resp_data.host,
         &ctx.resolver,
         &resp_data.final_domain,
         &ctx.error_stats,
+        ctx.run_id.as_deref(),
     )
     .await?;
+    let tls_dns_data = tls_dns_result.data;
+    let mut partial_failures = tls_dns_result.partial_failures;
 
     // Fetch additional DNS records in parallel
-    let additional_dns =
+    let additional_dns_result =
         fetch_additional_dns_records(&resp_data.final_domain, &ctx.resolver, &ctx.error_stats)
             .await;
+    let additional_dns = additional_dns_result.data;
+    partial_failures.extend(additional_dns_result.partial_failures);
 
     // Detect technologies using community-maintained fingerprint rulesets
     let technologies_vec: Vec<String> = match detect_technologies(
@@ -828,6 +946,22 @@ pub async fn handle_response(
     // Extract OIDs directly (no JSON parsing needed)
     let oids_set: std::collections::HashSet<String> = tls_dns_data.oids.clone().unwrap_or_default();
 
+    // Convert partial failures to UrlPartialFailureRecord format
+    // Note: url_status_id will be set when the record is inserted
+    let partial_failure_records: Vec<crate::storage::models::UrlPartialFailureRecord> =
+        partial_failures
+            .into_iter()
+            .map(|(error_type, error_message)| {
+                crate::storage::models::UrlPartialFailureRecord {
+                    url_status_id: 0,                            // Will be set when record is inserted
+                    error_type: error_type.as_str().to_string(), // Convert ErrorType enum to string
+                    error_message,
+                    timestamp,
+                    run_id: ctx.run_id.clone(),
+                }
+            })
+            .collect();
+
     // Extract redirect chain directly (no JSON parsing needed)
     let redirect_chain_vec: Vec<String> = redirect_chain.unwrap_or_default();
 
@@ -883,6 +1017,7 @@ pub async fn handle_response(
         social_media_links: html_data.social_media_links.clone(),
         security_warnings,
         whois: whois_data,
+        partial_failures: partial_failure_records,
     };
 
     // Send to batch writer queue
@@ -934,12 +1069,38 @@ pub async fn handle_http_request(
     let (final_url_string, redirect_chain) =
         resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.redirect_client).await?;
 
+    // Track redirect info metrics
+    // redirect_chain includes the original URL, so:
+    // - len == 1: No redirects (original URL only)
+    // - len == 2: Single redirect (original + final)
+    // - len > 2: Multiple redirects (original + intermediate + final)
+    if redirect_chain.len() > 1 {
+        // Any redirect occurred (single or multiple)
+        ctx.error_stats
+            .increment_info(crate::error_handling::InfoType::HttpRedirect);
+
+        // Check for HTTP to HTTPS redirect
+        let original_scheme = url.split("://").next().unwrap_or("");
+        let final_scheme = final_url_string.split("://").next().unwrap_or("");
+        if original_scheme == "http" && final_scheme == "https" {
+            ctx.error_stats
+                .increment_info(crate::error_handling::InfoType::HttpsRedirect);
+        }
+
+        // Multiple redirects (more than one redirect hop)
+        if redirect_chain.len() > 2 {
+            ctx.error_stats
+                .increment_info(crate::error_handling::InfoType::MultipleRedirects);
+        }
+    }
+
     debug!("Sending request to final URL {final_url_string}");
 
     // Add realistic browser headers to reduce bot detection
     // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
     // help with other detection methods (header analysis, behavioral patterns)
-    let res = ctx.client
+    // Capture actual request headers for failure tracking
+    let request_builder = ctx.client
         .get(&final_url_string)
         .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
         .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
@@ -950,9 +1111,24 @@ pub async fn handle_http_request(
         .header(reqwest::header::HeaderName::from_static("sec-fetch-site"), "none")
         .header(reqwest::header::HeaderName::from_static("sec-fetch-user"), "?1")
         .header(reqwest::header::UPGRADE_INSECURE_REQUESTS, "1")
-        .header(reqwest::header::CACHE_CONTROL, "max-age=0")
-        .send()
-        .await;
+        .header(reqwest::header::CACHE_CONTROL, "max-age=0");
+
+    // Extract actual request headers (reqwest doesn't expose this easily, so we build it manually)
+    // This matches what we're actually sending
+    let request_headers: Vec<(String, String)> = vec![
+        ("accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_string()),
+        ("accept-language".to_string(), "en-US,en;q=0.9".to_string()),
+        ("accept-encoding".to_string(), "gzip, deflate, br".to_string()),
+        ("referer".to_string(), "https://www.google.com/".to_string()),
+        ("sec-fetch-dest".to_string(), "document".to_string()),
+        ("sec-fetch-mode".to_string(), "navigate".to_string()),
+        ("sec-fetch-site".to_string(), "none".to_string()),
+        ("sec-fetch-user".to_string(), "?1".to_string()),
+        ("upgrade-insecure-requests".to_string(), "1".to_string()),
+        ("cache-control".to_string(), "max-age=0".to_string()),
+    ];
+
+    let res = request_builder.send().await;
 
     match res {
         Ok(response) => {
@@ -981,9 +1157,30 @@ pub async fn handle_http_request(
                 }
                 Err(e) => {
                     update_error_stats(&ctx.error_stats, &e).await;
+
+                    // Track bot detection (403) as info metric
+                    if let Some(status) = e.status() {
+                        if status.as_u16() == 403 {
+                            ctx.error_stats
+                                .increment_info(crate::error_handling::InfoType::BotDetection403);
+                        }
+                    }
+
                     log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
                         url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
-                    // Attach failure context to error for later extraction
+
+                    // Attach structured failure context to error
+                    let failure_context = crate::storage::failure::FailureContext {
+                        final_url: Some(final_url_string.clone()),
+                        redirect_chain: redirect_chain.clone(),
+                        response_headers: response_headers.clone(),
+                        request_headers: request_headers.clone(),
+                    };
+                    let context_error = crate::storage::failure::FailureContextError {
+                        context: failure_context,
+                    };
+
+                    // Also attach string context for backward compatibility
                     let error = Error::from(e);
                     let redirect_chain_str =
                         serde_json::to_string(&redirect_chain).unwrap_or_else(|_| "[]".to_string());
@@ -991,7 +1188,13 @@ pub async fn handle_http_request(
                         .context(format!("HTTP request failed for {url}"))
                         .context(format!("FINAL_URL:{final_url_string}"))
                         .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
-                        .context(format!("RESPONSE_HEADERS:{response_headers_str}")))
+                        .context(format!("RESPONSE_HEADERS:{response_headers_str}"))
+                        .context(format!(
+                            "REQUEST_HEADERS:{}",
+                            serde_json::to_string(&request_headers)
+                                .unwrap_or_else(|_| "[]".to_string())
+                        ))
+                        .context(Error::from(context_error))) // Attach structured context
                 }
             }
         }
@@ -999,14 +1202,32 @@ pub async fn handle_http_request(
             update_error_stats(&ctx.error_stats, &e).await;
             log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
                 url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
-            // Attach failure context to error for later extraction
+
+            // Attach structured failure context to error
+            // For connection errors, there are no response headers
+            let failure_context = crate::storage::failure::FailureContext {
+                final_url: Some(final_url_string.clone()),
+                redirect_chain: redirect_chain.clone(),
+                response_headers: Vec::new(), // No response for connection errors
+                request_headers: request_headers.clone(),
+            };
+            let context_error = crate::storage::failure::FailureContextError {
+                context: failure_context,
+            };
+
+            // Also attach string context for backward compatibility
             let error = Error::from(e);
             let redirect_chain_str =
                 serde_json::to_string(&redirect_chain).unwrap_or_else(|_| "[]".to_string());
             Err(error
                 .context(format!("HTTP request failed for {url}"))
                 .context(format!("FINAL_URL:{final_url_string}"))
-                .context(format!("REDIRECT_CHAIN:{redirect_chain_str}")))
+                .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
+                .context(format!(
+                    "REQUEST_HEADERS:{}",
+                    serde_json::to_string(&request_headers).unwrap_or_else(|_| "[]".to_string())
+                ))
+                .context(Error::from(context_error))) // Attach structured context
         }
     }
 }

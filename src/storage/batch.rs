@@ -17,7 +17,7 @@ use crate::security::SecurityWarning;
 use crate::whois::WhoisResult;
 
 use super::insert;
-use super::models::UrlRecord;
+use super::models::{UrlPartialFailureRecord, UrlRecord};
 
 /// Configuration for batch writing
 pub struct BatchConfig {
@@ -49,6 +49,7 @@ pub struct BatchRecord {
     pub social_media_links: Vec<SocialMediaLink>,
     pub security_warnings: Vec<SecurityWarning>,
     pub whois: Option<WhoisResult>,
+    pub partial_failures: Vec<UrlPartialFailureRecord>, // DNS/TLS errors that didn't prevent processing
 }
 
 /// Batch writer that collects records and writes them in batches
@@ -114,6 +115,20 @@ impl BatchWriter {
                     continue;
                 }
             };
+
+            // Insert partial failures (DNS/TLS errors that didn't prevent processing)
+            for mut partial_failure in record.partial_failures {
+                partial_failure.url_status_id = url_status_id;
+                if let Err(e) =
+                    insert::insert_url_partial_failure(&self.pool, &partial_failure).await
+                {
+                    log::warn!(
+                        "Failed to insert partial failure for url_status_id {}: {}",
+                        url_status_id,
+                        e
+                    );
+                }
+            }
 
             // Insert GeoIP data if available
             if let Some((ip_address, geoip_result)) = record.geoip {

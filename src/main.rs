@@ -23,6 +23,7 @@ use utils::*;
 use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::fetch::ProcessingContext;
 use crate::storage::{record_url_failure, start_batch_writer, BatchConfig};
+use crate::utils::ProcessUrlResult;
 
 mod adaptive_rate_limiter;
 mod config;
@@ -251,7 +252,13 @@ async fn main() -> Result<()> {
 
     let error_stats = Arc::new(ProcessingStats::new());
 
+    // Initialize circuit breaker for database write failures
+    let db_circuit_breaker =
+        Arc::new(crate::storage::circuit_breaker::DbWriteCircuitBreaker::new());
+    info!("Database write circuit breaker initialized (threshold: 5 failures, cooldown: 60s)");
+
     let completed_urls = Arc::new(AtomicUsize::new(0));
+    let failed_urls = Arc::new(AtomicUsize::new(0));
     let total_urls_attempted = Arc::new(AtomicUsize::new(0));
     let total_urls_in_file = Arc::new(AtomicUsize::new(total_lines));
 
@@ -260,6 +267,7 @@ async fn main() -> Result<()> {
         let status_state = status_server::StatusState {
             total_urls: Arc::clone(&total_urls_in_file), // Use total lines in file, not URLs attempted so far
             completed_urls: Arc::clone(&completed_urls),
+            failed_urls: Arc::clone(&failed_urls),
             start_time: Arc::clone(&start_time_arc),
             error_stats: error_stats.clone(),
         };
@@ -327,11 +335,13 @@ async fn main() -> Result<()> {
             Some(run_id.clone()),
             Some(batch_sender.clone()),
             opt.enable_whois,
+            Arc::clone(&db_circuit_breaker),
         ));
 
         // Clone error_stats for use in the task (it's also in ctx, but we need it here for error reporting)
         let error_stats_clone = error_stats.clone();
         let completed_urls_clone = Arc::clone(&completed_urls);
+        let failed_urls_clone = Arc::clone(&failed_urls);
 
         // Wrap URL in Arc to avoid cloning on retries
         let url_arc = Arc::new(url);
@@ -356,33 +366,35 @@ async fn main() -> Result<()> {
             .await;
 
             match result {
-                Ok(Ok(())) => {
+                Ok(ProcessUrlResult { result: Ok(()), .. }) => {
                     completed_urls_clone.fetch_add(1, Ordering::SeqCst);
                     if let Some(adaptive) = adaptive_limiter_for_task {
                         adaptive.record_success().await;
                     }
                 }
-                Ok(Err(e)) => {
+                Ok(ProcessUrlResult {
+                    result: Err(e),
+                    retry_count,
+                }) => {
+                    // Increment failed URLs counter
+                    failed_urls_clone.fetch_add(1, Ordering::SeqCst);
+
                     log::warn!("Failed to process URL {url_for_logging}: {e}");
 
-                    // Record failure in database
+                    // Record failure in database with accurate retry count
                     let elapsed = process_start.elapsed().as_secs_f64();
-                    // Estimate retry count: if error is retriable, it was retried (default 3 retries)
-                    // For non-retriable errors, retry_count is 0
-                    let retry_count = if e.to_string().contains("Non-retriable") {
-                        0
-                    } else {
-                        3 // Default retry count from tokio_retry
-                    };
-
+                    // Extract context from error (uses structured context if available, falls back to string parsing)
+                    let context = crate::storage::failure::extract_failure_context(&e);
                     if let Err(record_err) = record_url_failure(
                         &ctx.pool,
                         &ctx.extractor,
                         &url_for_logging,
                         &e,
-                        retry_count,
+                        context,
+                        retry_count, // Use actual retry count from process_url
                         elapsed,
                         ctx.run_id.as_deref(),
+                        Arc::clone(&ctx.db_circuit_breaker),
                     )
                     .await
                     {
@@ -393,51 +405,56 @@ async fn main() -> Result<()> {
                         );
                     }
 
-                    // Check for specific HTTP status errors
-                    let is_403 = e.chain().any(|cause| {
-                        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-                            reqwest_err.status() == Some(reqwest::StatusCode::FORBIDDEN)
-                        } else {
-                            false
-                        }
-                    });
-
-                    let is_429 = e.chain().any(|cause| {
-                        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-                            reqwest_err.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)
-                        } else {
-                            false
-                        }
-                    });
-
-                    if is_403 {
-                        error_stats_clone.increment_error(ErrorType::HttpRequestBotDetectionError);
-                    } else if is_429 {
-                        error_stats_clone.increment_error(ErrorType::HttpRequestTooManyRequests);
-                        if let Some(adaptive) = adaptive_limiter_for_task {
+                    // Note: Error stats are already updated in handle_http_request via update_error_stats
+                    // No need to duplicate here - this was causing double counting
+                    // Only handle adaptive limiter for rate limiting
+                    if let Some(adaptive) = adaptive_limiter_for_task {
+                        let is_429 = e.chain().any(|cause| {
+                            if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+                                reqwest_err.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)
+                            } else {
+                                false
+                            }
+                        });
+                        if is_429 {
                             adaptive.record_rate_limited().await;
                         }
-                    } else {
-                        error_stats_clone.increment_error(ErrorType::HttpRequestOtherError);
                     }
                 }
                 Err(_) => {
+                    // Increment failed URLs counter for timeout
+                    failed_urls_clone.fetch_add(1, Ordering::SeqCst);
+
                     log::warn!("Timeout processing URL {url_for_logging}");
 
                     // Record timeout failure in database
+                    // For timeout at process_url level, we don't have the inner error context
+                    // (the timeout occurred before process_url completed)
+                    // But we can still record the timeout with the URL context
                     let elapsed = process_start.elapsed().as_secs_f64();
                     let timeout_error = anyhow::anyhow!(
-                        "Process URL timeout after {} seconds",
-                        URL_PROCESSING_TIMEOUT.as_secs()
+                        "Process URL timeout after {} seconds for {}",
+                        URL_PROCESSING_TIMEOUT.as_secs(),
+                        url_for_logging
                     );
+
+                    // Create minimal context (no response/redirect info available for timeout)
+                    let context = crate::storage::failure::FailureContext {
+                        final_url: None,
+                        redirect_chain: Vec::new(),
+                        response_headers: Vec::new(),
+                        request_headers: Vec::new(),
+                    };
                     if let Err(record_err) = record_url_failure(
                         &ctx.pool,
                         &ctx.extractor,
                         &url_for_logging,
                         &timeout_error,
-                        3, // Estimated retry count
+                        context,
+                        crate::config::RETRY_MAX_ATTEMPTS as u32 - 1, // Max retries attempted
                         elapsed,
                         ctx.run_id.as_deref(),
+                        Arc::clone(&ctx.db_circuit_breaker),
                     )
                     .await
                     {
