@@ -311,6 +311,159 @@ pub fn is_mobile_friendly(html: &str) -> bool {
     html.contains("viewport")
 }
 
+/// Analytics/Tracking ID extracted from HTML/JavaScript.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AnalyticsId {
+    /// Analytics provider (e.g., "Google Analytics", "Facebook Pixel", "Google Tag Manager", "AdSense")
+    pub provider: String,
+    /// The tracking ID (e.g., "UA-123456-1", "G-XXXXXXXXXX", "1234567890", "GTM-XXXXX")
+    pub id: String,
+}
+
+/// Extracts analytics and tracking IDs from HTML content and JavaScript.
+///
+/// Searches for:
+/// - Google Analytics: `ga('create', 'UA-XXXXX-Y')`, `gtag('config', 'G-XXXXXXXXXX')`
+/// - Facebook Pixel: `fbq('init', 'XXXXX')`
+/// - Google Tag Manager: `GTM-XXXXX` in script src or dataLayer
+/// - Google AdSense: Publisher IDs in script src or data attributes
+///
+/// # Arguments
+///
+/// * `html` - The raw HTML content (including script tags)
+///
+/// # Returns
+///
+/// A vector of `AnalyticsId` structs containing provider and ID pairs.
+pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
+    let mut analytics_ids = Vec::new();
+    let mut seen_ids = std::collections::HashSet::<(String, String)>::new();
+
+    // Google Analytics (Universal Analytics): ga('create', 'UA-XXXXX-Y')
+    // Pattern: ga('create', 'UA-XXXXX-Y') or ga("create", "UA-XXXXX-Y")
+    static GA_UA_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#)
+            .expect("Failed to compile GA UA regex pattern")
+    });
+    for cap in GA_UA_PATTERN.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = id.as_str().to_string();
+            let key = ("Google Analytics".to_string(), id_str.clone());
+            if seen_ids.insert(key) {
+                analytics_ids.push(AnalyticsId {
+                    provider: "Google Analytics".to_string(),
+                    id: id_str,
+                });
+            }
+        }
+    }
+
+    // Google Analytics 4 (GA4): gtag('config', 'G-XXXXXXXXXX')
+    // Pattern: gtag('config', 'G-XXXXXXXXXX') or gtag("config", "G-XXXXXXXXXX")
+    static GA4_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#)
+            .expect("Failed to compile GA4 regex pattern")
+    });
+    for cap in GA4_PATTERN.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = id.as_str().to_string();
+            let key = ("Google Analytics 4".to_string(), id_str.clone());
+            if seen_ids.insert(key) {
+                analytics_ids.push(AnalyticsId {
+                    provider: "Google Analytics 4".to_string(),
+                    id: id_str,
+                });
+            }
+        }
+    }
+
+    // Facebook Pixel: fbq('init', 'XXXXX')
+    // Pattern: fbq('init', 'XXXXX') or fbq("init", "XXXXX")
+    static FB_PIXEL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#)
+            .expect("Failed to compile Facebook Pixel regex pattern")
+    });
+    for cap in FB_PIXEL_PATTERN.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = id.as_str().to_string();
+            let key = ("Facebook Pixel".to_string(), id_str.clone());
+            if seen_ids.insert(key) {
+                analytics_ids.push(AnalyticsId {
+                    provider: "Facebook Pixel".to_string(),
+                    id: id_str,
+                });
+            }
+        }
+    }
+
+    // Google Tag Manager: GTM-XXXXX in various formats
+    // Patterns:
+    //   - 'dataLayer','GTM-XXXXX' (function call parameter)
+    //   - ns.html?id=GTM-XXXXX (iframe src)
+    //   - gtm.js?id=GTM-XXXXX (script src)
+    //   - "tagIds":["GTM-XXXXX"] (JSON)
+    //   - gtag('config', 'GTM-XXXXX') (gtag call)
+    // We match GTM- followed by alphanumeric, appearing after common GTM-related keywords or in URL parameters
+    static GTM_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]+)"#)
+            .expect("Failed to compile GTM regex pattern")
+    });
+    for cap in GTM_PATTERN.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = id.as_str().to_string();
+            let key = ("Google Tag Manager".to_string(), id_str.clone());
+            if seen_ids.insert(key) {
+                analytics_ids.push(AnalyticsId {
+                    provider: "Google Tag Manager".to_string(),
+                    id: id_str,
+                });
+            }
+        }
+    }
+    
+    // Also check for standalone GTM-XXXXX patterns (fallback for edge cases)
+    // This catches GTM IDs that appear without the keywords above
+    static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)\b(GTM-[A-Z0-9]{6,})\b"#)
+            .expect("Failed to compile GTM standalone regex pattern")
+    });
+    for cap in GTM_STANDALONE_PATTERN.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = id.as_str().to_string();
+            let key = ("Google Tag Manager".to_string(), id_str.clone());
+            if seen_ids.insert(key) {
+                analytics_ids.push(AnalyticsId {
+                    provider: "Google Tag Manager".to_string(),
+                    id: id_str,
+                });
+            }
+        }
+    }
+
+    // Google AdSense: Publisher ID in script src
+    // Pattern: ca-pub-XXXXXXXXXX or pub-XXXXXXXXXX
+    // AdSense publisher IDs are typically 16 digits (e.g., pub-1234567890123456)
+    // We require at least 10 digits to avoid false positives like "pub-1"
+    static ADSENSE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)(?:ca-)?pub-(\d{10,})"#)
+            .expect("Failed to compile AdSense regex pattern")
+    });
+    for cap in ADSENSE_PATTERN.captures_iter(html) {
+        if let Some(id) = cap.get(1) {
+            let id_str = format!("pub-{}", id.as_str());
+            let key = ("Google AdSense".to_string(), id_str.clone());
+            if seen_ids.insert(key) {
+                analytics_ids.push(AnalyticsId {
+                    provider: "Google AdSense".to_string(),
+                    id: id_str,
+                });
+            }
+        }
+    }
+
+    analytics_ids
+}
+
 /// Structured data extracted from HTML
 #[derive(Debug, Clone, Default)]
 pub struct StructuredData {
@@ -667,5 +820,61 @@ mod tests {
         // Current implementation would return true (false positive)
         // This test documents this behavior
         assert!(is_mobile_friendly(html));
+    }
+
+    // Analytics ID extraction tests
+    #[test]
+    fn test_extract_analytics_ids_gtm_data_layer_format() {
+        // Test GTM in dataLayer format (like Chevron.com)
+        let html = r#"
+            <script>
+                (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+                new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+                j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+                'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+                })(window, document, 'script', 'dataLayer','GTM-MMCQ2RJB');
+            </script>
+        "#;
+        let ids = crate::parse::extract_analytics_ids(html);
+        assert!(ids.len() >= 1, "Should find GTM ID in dataLayer format");
+        let gtm_ids: Vec<&str> = ids.iter()
+            .filter(|id| id.provider == "Google Tag Manager")
+            .map(|id| id.id.as_str())
+            .collect();
+        assert!(gtm_ids.contains(&"GTM-MMCQ2RJB"), 
+                "Should find GTM-MMCQ2RJB: {:?}", gtm_ids);
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_gtm_json_format() {
+        // Test GTM in JSON format (like Fannie Mae)
+        let html = r#"
+            <script type="application/json">{"gtm":{"tagIds":["GTM-T7L6LT"]}}</script>
+        "#;
+        let ids = crate::parse::extract_analytics_ids(html);
+        assert!(ids.len() >= 1, "Should find GTM ID in JSON format");
+        let gtm_ids: Vec<&str> = ids.iter()
+            .filter(|id| id.provider == "Google Tag Manager")
+            .map(|id| id.id.as_str())
+            .collect();
+        assert!(gtm_ids.contains(&"GTM-T7L6LT"), 
+                "Should find GTM-T7L6LT: {:?}", gtm_ids);
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_gtm_url_format() {
+        // Test GTM in URL format (iframe/script src)
+        let html = r#"
+            <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-XXXXX"></iframe>
+            <script src="https://www.googletagmanager.com/gtm.js?id=GTM-YYYYY"></script>
+        "#;
+        let ids = crate::parse::extract_analytics_ids(html);
+        assert!(ids.len() >= 1, "Should find GTM IDs in URL format");
+        let gtm_ids: Vec<&str> = ids.iter()
+            .filter(|id| id.provider == "Google Tag Manager")
+            .map(|id| id.id.as_str())
+            .collect();
+        assert!(gtm_ids.contains(&"GTM-XXXXX") || gtm_ids.contains(&"GTM-YYYYY"), 
+                "Should find at least one GTM ID: {:?}", gtm_ids);
     }
 }

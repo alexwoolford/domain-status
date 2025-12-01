@@ -307,6 +307,7 @@ struct HtmlData {
     is_mobile_friendly: bool,
     structured_data: crate::parse::StructuredData,
     social_media_links: Vec<crate::parse::SocialMediaLink>,
+    analytics_ids: Vec<crate::parse::AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
     meta_tags: HashMap<String, String>,
     script_sources: Vec<String>,
     script_content: String, // Inline script content for js field detection
@@ -361,10 +362,22 @@ fn parse_html_content(
         social_media_links.len()
     );
 
+    // Extract analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
+    let analytics_ids = crate::parse::extract_analytics_ids(body);
+    debug!(
+        "Extracted {} analytics IDs for {final_domain}: {:?}",
+        analytics_ids.len(),
+        analytics_ids
+    );
+
     // Extract data needed for technology detection (to avoid double-parsing)
     let mut meta_tags = HashMap::new();
     let meta_selector = Selector::parse("meta")
-        .expect("Failed to parse 'meta' selector - this is a programming error");
+        .unwrap_or_else(|e| {
+            log::error!("Failed to parse 'meta' selector: {}. This is a programming error.", e);
+            // Fallback to a selector that won't match anything
+            Selector::parse("nonexistent").expect("Fallback selector should always parse")
+        });
     for element in document.select(&meta_selector) {
         // Check name attribute (standard meta tags)
         if let (Some(name), Some(content)) = (
@@ -400,7 +413,11 @@ fn parse_html_content(
     let mut script_tag_ids = HashSet::new();
     let mut inline_script_count = 0;
     let script_selector = Selector::parse("script")
-        .expect("Failed to parse 'script' selector - this is a programming error");
+        .unwrap_or_else(|e| {
+            log::error!("Failed to parse 'script' selector: {}. This is a programming error.", e);
+            // Fallback to a selector that won't match anything
+            Selector::parse("nonexistent").expect("Fallback selector should always parse")
+        });
     for element in document.select(&script_selector) {
         // Extract script tag IDs (for __NEXT_DATA__ etc.)
         if let Some(id) = element.value().attr("id") {
@@ -450,6 +467,7 @@ fn parse_html_content(
         is_mobile_friendly,
         structured_data,
         social_media_links,
+        analytics_ids,
         meta_tags,
         script_sources,
         script_content,
@@ -469,6 +487,7 @@ pub(crate) struct TlsDnsData {
     oids: Option<std::collections::HashSet<String>>,
     cipher_suite: Option<String>,
     key_algorithm: Option<String>,
+    subject_alternative_names: Option<Vec<String>>,
     ip_address: String,
     reverse_dns_name: Option<String>,
 }
@@ -519,6 +538,7 @@ async fn fetch_tls_and_dns(
                     oids: None,
                     cipher_suite: None,
                     key_algorithm: None,
+                    subject_alternative_names: None,
                 })
             }
         },
@@ -536,7 +556,7 @@ async fn fetch_tls_and_dns(
 
     // Extract TLS info and record partial failures
     let mut partial_failures = Vec::new();
-    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm) =
+    let (tls_version, subject, issuer, valid_from, valid_to, oids, cipher_suite, key_algorithm, subject_alternative_names) =
         match tls_result {
             Ok(cert_info) => (
                 cert_info.tls_version,
@@ -547,6 +567,7 @@ async fn fetch_tls_and_dns(
                 cert_info.oids,
                 cert_info.cipher_suite,
                 cert_info.key_algorithm,
+                cert_info.subject_alternative_names,
             ),
             Err(e) => {
                 log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
@@ -570,7 +591,7 @@ async fn fetch_tls_and_dns(
                     crate::error_handling::ErrorType::TlsCertificateError,
                     truncated_msg,
                 ));
-                (None, None, None, None, None, None, None, None)
+                (None, None, None, None, None, None, None, None, None)
             }
         };
 
@@ -622,6 +643,7 @@ async fn fetch_tls_and_dns(
             oids,
             cipher_suite,
             key_algorithm,
+            subject_alternative_names,
             ip_address,
             reverse_dns_name,
         },
@@ -1005,6 +1027,12 @@ pub async fn handle_response(
     };
 
     // Create batch record with all data
+    // Extract Subject Alternative Names (SANs) from certificate
+    let sans_vec: Vec<String> = tls_dns_data
+        .subject_alternative_names
+        .clone()
+        .unwrap_or_default();
+
     let batch_record = BatchRecord {
         url_record: record,
         security_headers: resp_data.security_headers.clone(),
@@ -1012,6 +1040,8 @@ pub async fn handle_response(
         oids: oids_set,
         redirect_chain: redirect_chain_vec,
         technologies: technologies_vec,
+        subject_alternative_names: sans_vec,
+        analytics_ids: html_data.analytics_ids.clone(),
         geoip: geoip_data,
         structured_data: Some(html_data.structured_data.clone()),
         social_media_links: html_data.social_media_links.clone(),

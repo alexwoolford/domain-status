@@ -113,28 +113,28 @@ pub struct ProcessUrlResult {
 /// This is tracked manually using an atomic counter, and may not be 100% accurate in all edge cases
 /// (e.g., if retries are aborted early or if the retry strategy changes). For most practical purposes,
 /// this provides a good approximation of retry attempts.
-pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> ProcessUrlResult {
+pub async fn process_url(url: String, ctx: Arc<ProcessingContext>) -> ProcessUrlResult {
     log::debug!("Starting process for URL: {url}");
 
     let retry_strategy = get_retry_strategy();
     let start_time = std::time::Instant::now();
 
-    // Track retry attempts using Arc<AtomicU32> (needed for async closures)
-    // This is simpler than manual tracking and works correctly with tokio_retry
+    // Track retry attempts using Arc<AtomicU32> (needed for async closures with move semantics)
+    // The counter is incremented each time the closure is called (once per attempt)
     let attempt_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let attempt_count_clone = Arc::clone(&attempt_count);
 
     let result = tokio_retry::Retry::spawn(retry_strategy, {
-        let url = Arc::clone(&url);
+        let url = url.clone(); // String clone is cheap for typical URLs (< 200 bytes)
         let ctx = Arc::clone(&ctx);
-        let attempt_count = Arc::clone(&attempt_count_clone);
+        let attempt_count = Arc::clone(&attempt_count);
         move || {
+            // Increment attempt counter (includes initial attempt + retries)
             attempt_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let url = Arc::clone(&url);
+            let url = url.clone(); // Clone again for each retry attempt
             let ctx = Arc::clone(&ctx);
 
             async move {
-                let result = handle_http_request(&ctx, url.as_str(), start_time).await;
+                let result = handle_http_request(&ctx, &url, start_time).await;
 
                 // Only retry if error is retriable
                 match result {
@@ -155,12 +155,9 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Proce
     .await;
 
     // Calculate retry count (attempts - 1, since first attempt isn't a retry)
+    // This is an approximation: exact count may vary if retries are aborted early
     let total_attempts = attempt_count.load(std::sync::atomic::Ordering::SeqCst);
-    let retry_count = if total_attempts > 0 {
-        total_attempts.saturating_sub(1)
-    } else {
-        0
-    };
+    let retry_count = total_attempts.saturating_sub(1);
 
     let final_result = match result {
         Ok(()) => Ok(()),

@@ -53,7 +53,7 @@ pub const DEFAULT_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // URL validation
-pub const URL_SCHEME_PATTERN: &str = r"^https?://";
+// URL_SCHEME_PATTERN removed - URL normalization now handled in validate_and_normalize_url()
 
 // Security header names
 // These headers are stored in the url_security_headers table
