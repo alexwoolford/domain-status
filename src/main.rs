@@ -1,4 +1,8 @@
-// main.rs
+//! Main application entry point.
+//!
+//! Orchestrates URL processing, logging, initialization, and graceful shutdown.
+//! This module coordinates the main event loop, task spawning, and resource management.
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::sync::atomic::AtomicUsize;
@@ -376,9 +380,8 @@ async fn main() -> Result<()> {
         let failed_urls_clone = Arc::clone(&failed_urls);
 
         // Clone URL string for the task (cheap for typical URLs < 200 bytes)
-        // Clone once and reuse for both task and logging
+        // We need a clone because url is moved into the async task
         let url_for_task = url.clone();
-        let url_for_logging = url_for_task.clone(); // Clone for logging before move
 
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         let adaptive_limiter_for_task = adaptive_limiter.as_ref().map(Arc::clone);
@@ -390,6 +393,9 @@ async fn main() -> Result<()> {
             }
 
             let process_start = std::time::Instant::now();
+
+            // Clone URL for logging (url_for_task will be moved into process_url)
+            let url_for_logging = url_for_task.clone();
 
             let result = tokio::time::timeout(
                 URL_PROCESSING_TIMEOUT,

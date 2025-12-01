@@ -46,6 +46,34 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Builds realistic browser request headers to reduce bot detection.
+///
+/// Returns both a vector of header tuples (for failure tracking) and applies
+/// headers to a request builder. These headers mimic a modern Chrome browser
+/// to help avoid detection by header analysis.
+///
+/// # Returns
+///
+/// A vector of (header_name, header_value) tuples that can be used for
+/// both request building and failure tracking.
+fn build_request_headers() -> Vec<(String, String)> {
+    vec![
+        (
+            "accept".to_string(),
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_string(),
+        ),
+        ("accept-language".to_string(), "en-US,en;q=0.9".to_string()),
+        ("accept-encoding".to_string(), "gzip, deflate, br".to_string()),
+        ("referer".to_string(), "https://www.google.com/".to_string()),
+        ("sec-fetch-dest".to_string(), "document".to_string()),
+        ("sec-fetch-mode".to_string(), "navigate".to_string()),
+        ("sec-fetch-site".to_string(), "none".to_string()),
+        ("sec-fetch-user".to_string(), "?1".to_string()),
+        ("upgrade-insecure-requests".to_string(), "1".to_string()),
+        ("cache-control".to_string(), "max-age=0".to_string()),
+    ]
+}
+
 /// Extracts security-related HTTP headers from a response.
 ///
 /// Uses the `SECURITY_HEADERS` list from `config.rs` to determine which headers to capture.
@@ -1242,33 +1270,63 @@ pub async fn handle_http_request(
     // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
     // help with other detection methods (header analysis, behavioral patterns)
     // Capture actual request headers for failure tracking
-    let request_builder = ctx.client
-        .get(&final_url_string)
-        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-        .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
-        .header(reqwest::header::REFERER, "https://www.google.com/")
-        .header(reqwest::header::HeaderName::from_static("sec-fetch-dest"), "document")
-        .header(reqwest::header::HeaderName::from_static("sec-fetch-mode"), "navigate")
-        .header(reqwest::header::HeaderName::from_static("sec-fetch-site"), "none")
-        .header(reqwest::header::HeaderName::from_static("sec-fetch-user"), "?1")
-        .header(reqwest::header::UPGRADE_INSECURE_REQUESTS, "1")
-        .header(reqwest::header::CACHE_CONTROL, "max-age=0");
+    let request_headers = build_request_headers();
 
-    // Extract actual request headers (reqwest doesn't expose this easily, so we build it manually)
-    // This matches what we're actually sending
-    let request_headers: Vec<(String, String)> = vec![
-        ("accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_string()),
-        ("accept-language".to_string(), "en-US,en;q=0.9".to_string()),
-        ("accept-encoding".to_string(), "gzip, deflate, br".to_string()),
-        ("referer".to_string(), "https://www.google.com/".to_string()),
-        ("sec-fetch-dest".to_string(), "document".to_string()),
-        ("sec-fetch-mode".to_string(), "navigate".to_string()),
-        ("sec-fetch-site".to_string(), "none".to_string()),
-        ("sec-fetch-user".to_string(), "?1".to_string()),
-        ("upgrade-insecure-requests".to_string(), "1".to_string()),
-        ("cache-control".to_string(), "max-age=0".to_string()),
-    ];
+    // Build request with headers
+    let mut request_builder = ctx.client.get(&final_url_string);
+    for (name, value) in &request_headers {
+        // Convert string header names to reqwest HeaderName
+        // Standard headers use constants, custom headers use from_static
+        match name.as_str() {
+            "accept" => {
+                request_builder = request_builder.header(reqwest::header::ACCEPT, value);
+            }
+            "accept-language" => {
+                request_builder = request_builder.header(reqwest::header::ACCEPT_LANGUAGE, value);
+            }
+            "accept-encoding" => {
+                request_builder = request_builder.header(reqwest::header::ACCEPT_ENCODING, value);
+            }
+            "referer" => {
+                request_builder = request_builder.header(reqwest::header::REFERER, value);
+            }
+            "upgrade-insecure-requests" => {
+                request_builder =
+                    request_builder.header(reqwest::header::UPGRADE_INSECURE_REQUESTS, value);
+            }
+            "cache-control" => {
+                request_builder = request_builder.header(reqwest::header::CACHE_CONTROL, value);
+            }
+            "sec-fetch-dest" => {
+                request_builder = request_builder.header(
+                    reqwest::header::HeaderName::from_static("sec-fetch-dest"),
+                    value,
+                );
+            }
+            "sec-fetch-mode" => {
+                request_builder = request_builder.header(
+                    reqwest::header::HeaderName::from_static("sec-fetch-mode"),
+                    value,
+                );
+            }
+            "sec-fetch-site" => {
+                request_builder = request_builder.header(
+                    reqwest::header::HeaderName::from_static("sec-fetch-site"),
+                    value,
+                );
+            }
+            "sec-fetch-user" => {
+                request_builder = request_builder.header(
+                    reqwest::header::HeaderName::from_static("sec-fetch-user"),
+                    value,
+                );
+            }
+            _ => {
+                // Unknown header - skip (shouldn't happen with our header set)
+                log::warn!("Unknown header in build_request_headers: {}", name);
+            }
+        }
+    }
 
     let res = request_builder.send().await;
 

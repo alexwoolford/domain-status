@@ -1146,59 +1146,8 @@ async fn matches_technology(
     // - Prefixed: "http-equiv:content-type" -> matches meta http-equiv="content-type"
     // Note: meta values are now Vec<String> to handle both string and array formats (from enthec source)
     for (meta_key, patterns) in &tech.meta {
-        let meta_key_lower = meta_key.to_lowercase();
-
-        // Check if key already has a prefix (property: or http-equiv:)
-        if meta_key_lower.starts_with("property:") {
-            let key_without_prefix = meta_key_lower
-                .strip_prefix("property:")
-                .unwrap_or(&meta_key_lower);
-            if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
-                // Check all patterns (meta can have multiple patterns)
-                for pattern in patterns {
-                    if matches_pattern(pattern, meta_value) {
-                        return true;
-                    }
-                }
-            }
-        } else if meta_key_lower.starts_with("http-equiv:") {
-            let key_without_prefix = meta_key_lower
-                .strip_prefix("http-equiv:")
-                .unwrap_or(&meta_key_lower);
-            if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
-                // Check all patterns
-                for pattern in patterns {
-                    if matches_pattern(pattern, meta_value) {
-                        return true;
-                    }
-                }
-            }
-        } else {
-            // Simple key (like "generator") - try all three attribute types
-            // Try name: prefix (most common)
-            if let Some(meta_value) = meta_tags.get(&format!("name:{}", meta_key_lower)) {
-                for pattern in patterns {
-                    if matches_pattern(pattern, meta_value) {
-                        return true;
-                    }
-                }
-            }
-            // Try property: prefix (Open Graph, etc.)
-            if let Some(meta_value) = meta_tags.get(&format!("property:{}", meta_key_lower)) {
-                for pattern in patterns {
-                    if matches_pattern(pattern, meta_value) {
-                        return true;
-                    }
-                }
-            }
-            // Try http-equiv: prefix
-            if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", meta_key_lower)) {
-                for pattern in patterns {
-                    if matches_pattern(pattern, meta_value) {
-                        return true;
-                    }
-                }
-            }
+        if check_meta_patterns(meta_key, patterns, meta_tags) {
+            return true;
         }
     }
 
@@ -1846,6 +1795,78 @@ fn strip_js_comments_and_strings(code: &str) -> String {
     }
 
     result
+}
+
+/// Checks if meta tag patterns match any meta tag values.
+///
+/// Wappalyzer meta patterns can be:
+/// - Simple name: "generator" -> matches meta name="generator"
+/// - Prefixed: "property:og:title" -> matches meta property="og:title"
+/// - Prefixed: "http-equiv:content-type" -> matches meta http-equiv="content-type"
+///
+/// For simple keys (without prefix), tries all three attribute types (name, property, http-equiv).
+///
+/// # Arguments
+///
+/// * `meta_key` - The meta key from the technology ruleset
+/// * `patterns` - Vector of patterns to match against meta values
+/// * `meta_tags` - HashMap of extracted meta tags (key format: "prefix:name")
+///
+/// # Returns
+///
+/// `true` if any pattern matches any meta tag value, `false` otherwise.
+fn check_meta_patterns(
+    meta_key: &str,
+    patterns: &[String],
+    meta_tags: &HashMap<String, String>,
+) -> bool {
+    let meta_key_lower = meta_key.to_lowercase();
+
+    // Helper to check patterns against a meta value
+    let check_patterns = |meta_value: &str| -> bool {
+        patterns
+            .iter()
+            .any(|pattern| matches_pattern(pattern, meta_value))
+    };
+
+    // Check if key already has a prefix (property: or http-equiv:)
+    if meta_key_lower.starts_with("property:") {
+        let key_without_prefix = meta_key_lower
+            .strip_prefix("property:")
+            .unwrap_or(&meta_key_lower);
+        if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
+            return check_patterns(meta_value);
+        }
+    } else if meta_key_lower.starts_with("http-equiv:") {
+        let key_without_prefix = meta_key_lower
+            .strip_prefix("http-equiv:")
+            .unwrap_or(&meta_key_lower);
+        if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
+            return check_patterns(meta_value);
+        }
+    } else {
+        // Simple key (like "generator") - try all three attribute types
+        // Try name: prefix (most common)
+        if let Some(meta_value) = meta_tags.get(&format!("name:{}", meta_key_lower)) {
+            if check_patterns(meta_value) {
+                return true;
+            }
+        }
+        // Try property: prefix (Open Graph, etc.)
+        if let Some(meta_value) = meta_tags.get(&format!("property:{}", meta_key_lower)) {
+            if check_patterns(meta_value) {
+                return true;
+            }
+        }
+        // Try http-equiv: prefix
+        if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", meta_key_lower)) {
+            if check_patterns(meta_value) {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// Pattern matching supporting Wappalyzer pattern syntax
