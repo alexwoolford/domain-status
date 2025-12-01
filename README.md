@@ -97,47 +97,53 @@ curl http://127.0.0.1:8080/status | jq
 **Response Format:**
 ```json
 {
-    "total_urls": 40,
-    "completed_urls": 34,
-    "failed_urls": 6,
-    "percentage_complete": 85.0,
-    "elapsed_seconds": 61.31,
-    "rate_per_second": 0.55,
-    "errors": {
-        "total": 12,
-        "timeout": 2,
-        "connection_error": 0,
-        "http_error": 5,
-        "dns_error": 0,
-        "tls_error": 0,
-        "parse_error": 0,
-        "other_error": 5
-    },
-    "warnings": {
-        "total": 39,
-        "missing_meta_keywords": 28,
-        "missing_meta_description": 8,
-        "missing_title": 3
-    },
-    "info": {
-        "total": 0,
-        "http_redirect": 0,
-        "https_redirect": 0,
-        "bot_detection_403": 0,
-        "bot_detection_different_content": 0,
-        "multiple_redirects": 0
-    }
+  "total_urls": 100,
+  "completed_urls": 85,
+  "failed_urls": 2,
+  "pending_urls": 13,
+  "percentage_complete": 87.0,
+  "elapsed_seconds": 55.877246875,
+  "rate_per_second": 1.521191625459804,
+  "errors": {
+    "total": 17,
+    "timeout": 0,
+    "connection_error": 0,
+    "http_error": 3,
+    "dns_error": 14,
+    "tls_error": 0,
+    "parse_error": 0,
+    "other_error": 0
+  },
+  "warnings": {
+    "total": 104,
+    "missing_meta_keywords": 77,
+    "missing_meta_description": 25,
+    "missing_title": 2
+  },
+  "info": {
+    "total": 64,
+    "http_redirect": 55,
+    "https_redirect": 0,
+    "bot_detection_403": 3,
+    "multiple_redirects": 6
+  },
+  "batch_writes": {
+    "total_successful": 83,
+    "total_failed": 0
+  }
 }
 ```
 
 **Fields:**
 - `total_urls`: Total number of URLs to process
 - `completed_urls`: Number of URLs successfully processed
-- `failed_urls`: Number of URLs that failed to process (`total_urls - completed_urls`)
-- `percentage_complete`: Percentage of URLs completed (0-100)
+- `failed_urls`: Number of URLs that failed to process
+- `pending_urls`: Number of URLs not yet attempted (only present if `total_urls > 0`)
+- `percentage_complete`: Percentage of URLs completed (0-100), calculated as `(completed + failed) / total * 100`
 - `elapsed_seconds`: Time elapsed since processing started
 - `rate_per_second`: Average processing rate (URLs/second)
 - `errors`: Detailed error counts by type
+  - `total`: Total error count
   - `timeout`: Process or HTTP request timeouts
   - `connection_error`: Network connection failures
   - `http_error`: HTTP status errors (4xx, 5xx, 429)
@@ -146,15 +152,19 @@ curl http://127.0.0.1:8080/status | jq
   - `parse_error`: HTML/response parsing errors
   - `other_error`: Other processing errors
 - `warnings`: Missing optional metadata counts
+  - `total`: Total warning count
   - `missing_meta_keywords`: Missing `<meta name="keywords">` tag
   - `missing_meta_description`: Missing `<meta name="description">` tag
   - `missing_title`: Missing `<title>` tag
 - `info`: Informational event counts
+  - `total`: Total info event count
   - `http_redirect`: HTTP redirects (301, 302, etc.)
   - `https_redirect`: HTTP to HTTPS redirects
   - `bot_detection_403`: 403 responses (likely bot detection)
-  - `bot_detection_different_content`: Different content received (likely bot detection)
   - `multiple_redirects`: Redirect chains with multiple hops
+- `batch_writes`: Batch database write statistics
+  - `total_successful`: Total number of records successfully written to database
+  - `total_failed`: Total number of records that failed to write to database
 
 ### Metrics Endpoint (`/metrics`)
 
@@ -279,6 +289,8 @@ erDiagram
     url_status ||--o{ url_social_media_links : "has"
     url_status ||--o{ url_structured_data : "has"
     url_status ||--o{ url_security_warnings : "has"
+    url_status ||--o{ url_certificate_sans : "has"
+    url_status ||--o{ url_analytics_ids : "has"
     url_status ||--o{ url_partial_failures : "has"
 
     runs {
@@ -1071,6 +1083,107 @@ Stores HTTP request headers that were sent. Always populated (we always know wha
 - Always populated (we always know what headers we sent)
 - Useful for understanding what might have triggered bot detection or rate limiting
 
+#### `url_certificate_sans` (Junction Table)
+Stores DNS names from the Subject Alternative Name (SAN) extension of SSL/TLS certificates. SANs enable graph analysis by linking domains that share the same certificate (indicating common ownership or infrastructure).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `domain_name` | TEXT | DNS name from certificate SAN extension (e.g., "www.example.com", "*.example.com") |
+
+**Constraints:**
+- `UNIQUE (url_status_id, domain_name)` - Prevents duplicate SAN entries per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_certificate_sans_domain_name` on `domain_name` (for queries like "find all URLs sharing a certificate with example.com")
+- `idx_url_certificate_sans_url_status_id` on `url_status_id`
+
+**Notes:**
+- Only DNS names are extracted (IP addresses, email addresses, etc. are ignored)
+- Wildcard domains (e.g., `*.example.com`) are stored as-is
+- Certificates often have multiple SANs (e.g., a certificate for `example.com` might also cover `www.example.com`, `api.example.com`, etc.)
+- If a certificate has no SAN extension, this table will have no rows for that URL
+
+**Query Examples:**
+```sql
+-- Find all domains sharing a certificate with example.com
+SELECT DISTINCT us1.final_domain, us2.final_domain
+FROM url_status us1
+JOIN url_certificate_sans san1 ON us1.id = san1.url_status_id
+JOIN url_certificate_sans san2 ON san1.domain_name = san2.domain_name
+JOIN url_status us2 ON san2.url_status_id = us2.id
+WHERE us1.final_domain = 'example.com' AND us1.id != us2.id;
+
+-- Count SANs per certificate
+SELECT us.final_domain, COUNT(san.id) as san_count
+FROM url_status us
+LEFT JOIN url_certificate_sans san ON us.id = san.url_status_id
+WHERE us.tls_version IS NOT NULL
+GROUP BY us.id, us.final_domain
+ORDER BY san_count DESC;
+
+-- Find all wildcard SANs
+SELECT DISTINCT san.domain_name
+FROM url_certificate_sans san
+WHERE san.domain_name LIKE '*%';
+```
+
+#### `url_analytics_ids` (Junction Table)
+Stores analytics and tracking IDs extracted from HTML/JavaScript. These IDs enable graph analysis by linking domains that share the same tracking IDs (indicating common ownership or management).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `provider` | TEXT | Analytics provider (e.g., "Google Analytics", "Google Analytics 4", "Facebook Pixel", "Google Tag Manager", "Google AdSense") |
+| `tracking_id` | TEXT | The tracking ID (e.g., "UA-123456-1", "G-XXXXXXXXXX", "1234567890", "GTM-XXXXX", "pub-XXXXXXXXXX") |
+
+**Constraints:**
+- `UNIQUE (url_status_id, provider, tracking_id)` - Prevents duplicate entries per URL
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_analytics_ids_provider` on `provider` (for queries like "find all URLs using Google Analytics")
+- `idx_url_analytics_ids_tracking_id` on `tracking_id` (for queries like "find all URLs sharing a tracking ID" - key for graph analysis)
+- `idx_url_analytics_ids_url_status_id` on `url_status_id`
+
+**Notes:**
+- Analytics IDs are extracted from HTML content and JavaScript code
+- Multiple providers per URL are allowed (e.g., a site might use both Google Analytics and Facebook Pixel)
+- Tracking IDs are extracted using regex patterns:
+  - **Google Analytics (Universal)**: `ga('create', 'UA-XXXXX-Y')`
+  - **Google Analytics 4**: `gtag('config', 'G-XXXXXXXXXX')`
+  - **Facebook Pixel**: `fbq('init', 'XXXXX')`
+  - **Google Tag Manager**: `GTM-XXXXX` in script src or dataLayer
+  - **Google AdSense**: `pub-XXXXXXXXXX` (requires at least 10 digits to avoid false positives)
+- If no analytics IDs are found, this table will have no rows for that URL
+
+**Query Examples:**
+```sql
+-- Find all domains sharing a Google Analytics tracking ID
+SELECT DISTINCT us1.final_domain, us2.final_domain, analytics.tracking_id
+FROM url_status us1
+JOIN url_analytics_ids analytics ON us1.id = analytics.url_status_id
+JOIN url_analytics_ids analytics2 ON analytics.tracking_id = analytics2.tracking_id
+JOIN url_status us2 ON analytics2.url_status_id = us2.id
+WHERE analytics.provider = 'Google Analytics' AND us1.id != us2.id;
+
+-- Count analytics providers per site
+SELECT us.final_domain, COUNT(DISTINCT analytics.provider) as provider_count
+FROM url_status us
+LEFT JOIN url_analytics_ids analytics ON us.id = analytics.url_status_id
+GROUP BY us.id, us.final_domain
+ORDER BY provider_count DESC;
+
+-- Find all sites using Google Analytics 4
+SELECT DISTINCT us.final_domain, analytics.tracking_id
+FROM url_status us
+JOIN url_analytics_ids analytics ON us.id = analytics.url_status_id
+WHERE analytics.provider = 'Google Analytics 4';
+```
+
 #### `url_partial_failures` (Junction Table)
 Stores partial failures (DNS/TLS errors that didn't prevent URL processing). These are errors that occurred during supplementary data collection (DNS lookups, TLS certificate retrieval) but didn't prevent the URL from being successfully processed. The URL was processed and stored in `url_status`, but some optional data is missing.
 
@@ -1170,6 +1283,8 @@ The database uses a **star schema** design pattern:
    - `url_social_media_links` - Social media platform links
    - `url_structured_data` - Structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
    - `url_security_warnings` - Security analysis warnings
+   - `url_certificate_sans` - Certificate Subject Alternative Names (SANs) for linking domains sharing certificates
+   - `url_analytics_ids` - Analytics/tracking IDs (Google Analytics, Facebook Pixel, GTM, AdSense) for linking domains sharing tracking IDs
 4. **One-to-One Tables**: Store single records per URL:
    - `url_geoip` - Geographic and network information (one-to-one with `url_status`)
    - `url_whois` - Domain registration information (one-to-one with `url_status`)

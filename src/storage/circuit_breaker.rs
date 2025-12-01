@@ -112,9 +112,14 @@ impl DbWriteCircuitBreaker {
         self.failure_count.load(Ordering::SeqCst)
     }
 
-    /// Gets whether the circuit is currently open (for monitoring).
+    /// Gets whether the circuit is currently open (for monitoring/testing only).
+    ///
+    /// # Note
+    /// This method is synchronous and does not check cooldown expiration.
+    /// For production code, use `is_circuit_open()` which properly handles cooldown.
+    /// This method is primarily for testing and monitoring.
     #[allow(dead_code)] // Reserved for future monitoring/metrics
-    pub fn is_open(&self) -> bool {
+    pub fn is_open_sync(&self) -> bool {
         self.is_open.load(Ordering::SeqCst)
     }
 }

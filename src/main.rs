@@ -10,7 +10,6 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::info;
 use log::warn;
-use regex::Regex;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
@@ -47,29 +46,37 @@ mod whois;
 
 /// Validates and normalizes a URL.
 ///
-/// Checks if the URL is syntactically valid and uses http/https scheme.
-/// Logs a warning and returns false if the URL is invalid or uses an unsupported scheme.
+/// Adds https:// prefix if missing, then validates that the URL is syntactically
+/// valid and uses http/https scheme. Logs a warning and returns None if the URL
+/// is invalid or uses an unsupported scheme.
 ///
 /// # Arguments
 ///
-/// * `url` - The URL string to validate
-/// * `url_regex` - Compiled regex pattern for URL scheme detection
+/// * `url` - The URL string to validate and normalize
 ///
 /// # Returns
 ///
-/// `true` if the URL is valid and should be processed, `false` otherwise.
-fn validate_and_normalize_url(url: &str, _url_regex: &Regex) -> bool {
-    match url::Url::parse(url) {
+/// `Some(normalized_url)` if the URL is valid and should be processed, `None` otherwise.
+fn validate_and_normalize_url(url: &str) -> Option<String> {
+    // Normalize: add https:// prefix if missing
+    let normalized = if !url.starts_with("http://") && !url.starts_with("https://") {
+        format!("https://{url}")
+    } else {
+        url.to_string()
+    };
+
+    // Validate: check syntax and scheme
+    match url::Url::parse(&normalized) {
         Ok(parsed) => match parsed.scheme() {
-            "http" | "https" => true,
+            "http" | "https" => Some(normalized),
             _ => {
                 warn!("Skipping unsupported scheme for URL: {url}");
-                false
+                None
             }
         },
         Err(_) => {
             warn!("Skipping invalid URL: {url}");
-            false
+            None
         }
     }
 }
@@ -267,9 +274,18 @@ async fn main() -> Result<()> {
         batch_size: BATCH_SIZE,
         flush_interval_secs: BATCH_FLUSH_INTERVAL_SECS,
     };
+    // Initialize batch write counters for status server
+    let batch_write_successes = Arc::new(AtomicUsize::new(0));
+    let batch_write_failures = Arc::new(AtomicUsize::new(0));
+
     // Clone the pool for the batch writer (Arc<SqlitePool> -> SqlitePool via deref)
     let pool_for_batch = (*pool).clone();
-    let (batch_sender, batch_writer_handle) = start_batch_writer(pool_for_batch, batch_config);
+    let (batch_sender, batch_writer_handle) = start_batch_writer(
+        pool_for_batch,
+        batch_config,
+        Some(Arc::clone(&batch_write_successes)),
+        Some(Arc::clone(&batch_write_failures)),
+    );
     info!(
         "Batch writer started (batch_size={}, flush_interval={}s)",
         BATCH_SIZE, BATCH_FLUSH_INTERVAL_SECS
@@ -299,6 +315,8 @@ async fn main() -> Result<()> {
             failed_urls: Arc::clone(&failed_urls),
             start_time: Arc::clone(&start_time_arc),
             error_stats: error_stats.clone(),
+            batch_write_successes: Arc::clone(&batch_write_successes),
+            batch_write_failures: Arc::clone(&batch_write_failures),
         };
         tokio::spawn(async move {
             if let Err(e) = status_server::start_status_server(port, status_state).await {
@@ -306,9 +324,6 @@ async fn main() -> Result<()> {
             }
         });
     }
-
-    let url_regex = Regex::new(crate::config::URL_SCHEME_PATTERN)
-        .map_err(|e| anyhow::anyhow!("Failed to compile URL regex pattern: {}", e))?;
 
     // Create shared processing context once (reused for all tasks)
     // This avoids creating a new context for each URL, simplifying the hot path
@@ -326,14 +341,8 @@ async fn main() -> Result<()> {
 
     loop {
         let line_result = lines.next_line().await;
-        let url = match line_result {
-            Ok(Some(line)) => {
-                if !url_regex.is_match(&line) {
-                    format!("https://{line}")
-                } else {
-                    line
-                }
-            }
+        let line = match line_result {
+            Ok(Some(line)) => line,
             Ok(None) => break, // EOF reached
             Err(e) => {
                 warn!("Failed to read line from input file: {e}");
@@ -342,9 +351,9 @@ async fn main() -> Result<()> {
         };
 
         // Validate and normalize URL: only allow http/https and syntactically valid
-        if !validate_and_normalize_url(&url, &url_regex) {
+        let Some(url) = validate_and_normalize_url(&line) else {
             continue;
-        }
+        };
 
         // Increment total URLs counter for every URL that passes validation
         total_urls_attempted.fetch_add(1, Ordering::SeqCst);
@@ -386,7 +395,7 @@ async fn main() -> Result<()> {
 
             let result = tokio::time::timeout(
                 URL_PROCESSING_TIMEOUT,
-                process_url(Arc::new(url_for_task), ctx.clone()),
+                process_url(url_for_task, ctx.clone()),
             )
             .await;
 

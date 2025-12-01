@@ -3,6 +3,9 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use log;
@@ -58,6 +61,8 @@ pub struct BatchRecord {
     pub oids: HashSet<String>,
     pub redirect_chain: Vec<String>,
     pub technologies: Vec<String>,
+    pub subject_alternative_names: Vec<String>, // Certificate SANs (for linking domains sharing certificates)
+    pub analytics_ids: Vec<crate::parse::AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
     pub geoip: Option<(String, GeoIpResult)>, // (ip_address, geoip_result)
     pub structured_data: Option<StructuredData>,
     pub social_media_links: Vec<SocialMediaLink>,
@@ -137,6 +142,7 @@ impl BatchWriter {
                 &record.oids,
                 &record.redirect_chain,
                 &record.technologies,
+                &record.subject_alternative_names,
             )
             .await
             {
@@ -238,6 +244,23 @@ impl BatchWriter {
                     );
                 }
             }
+
+            // Insert analytics IDs if available
+            if !record.analytics_ids.is_empty() {
+                if let Err(e) = insert::insert_analytics_ids(
+                    &self.pool,
+                    url_status_id,
+                    &record.analytics_ids,
+                )
+                .await
+                {
+                    log::warn!(
+                        "Failed to insert analytics IDs for url_status_id {}: {}",
+                        url_status_id,
+                        e
+                    );
+                }
+            }
         }
 
         self.last_flush = std::time::Instant::now();
@@ -279,9 +302,18 @@ impl BatchWriter {
 ///
 /// Uses a bounded channel to prevent memory exhaustion if the writer
 /// can't keep up with producers. The channel size is configurable.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `config` - Batch writer configuration
+/// * `batch_write_successes` - Optional counter for successful batch writes (for monitoring)
+/// * `batch_write_failures` - Optional counter for failed batch writes (for monitoring)
 pub fn start_batch_writer(
     pool: SqlitePool,
     config: BatchConfig,
+    batch_write_successes: Option<Arc<AtomicUsize>>,
+    batch_write_failures: Option<Arc<AtomicUsize>>,
 ) -> (
     mpsc::Sender<BatchRecord>,
     tokio::task::JoinHandle<Result<(), DatabaseError>>,
@@ -305,14 +337,35 @@ pub fn start_batch_writer(
                         Some(record) => {
                             if let Err(e) = writer.add_record(record).await {
                                 log::error!("Error adding record to batch: {}", e);
+                                // Note: add_record errors are channel/configuration errors,
+                                // not individual record insertion failures. Individual failures
+                                // are tracked in flush() results.
                             }
                         }
                         None => {
                             // Channel closed, flush remaining records and exit
                             log::info!("Batch writer channel closed, flushing remaining records...");
-                            if let Err(e) = writer.flush().await {
-                                log::error!("Error flushing final batch: {}", e);
-                                return Err(e);
+                            match writer.flush().await {
+                                Ok(result) => {
+                                    // Update batch write counters if provided
+                                    if let Some(ref successes) = batch_write_successes {
+                                        successes.fetch_add(result.successful, Ordering::SeqCst);
+                                    }
+                                    if let Some(ref failures) = batch_write_failures {
+                                        failures.fetch_add(result.failed, Ordering::SeqCst);
+                                    }
+                                    if result.failed > 0 {
+                                        log::warn!(
+                                            "Final flush: {} successful, {} failed",
+                                            result.successful,
+                                            result.failed
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Error flushing final batch: {}", e);
+                                    return Err(e);
+                                }
                             }
                             log::info!("Batch writer shutdown complete");
                             return Ok(());
@@ -324,6 +377,13 @@ pub fn start_batch_writer(
                     if writer.should_flush_by_time() && !writer.buffer.is_empty() {
                         match writer.flush().await {
                             Ok(result) => {
+                                // Update batch write counters if provided
+                                if let Some(ref successes) = batch_write_successes {
+                                    successes.fetch_add(result.successful, Ordering::SeqCst);
+                                }
+                                if let Some(ref failures) = batch_write_failures {
+                                    failures.fetch_add(result.failed, Ordering::SeqCst);
+                                }
                                 if result.failed > 0 {
                                     log::warn!(
                                         "Periodic flush: {} successful, {} failed",

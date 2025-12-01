@@ -17,6 +17,7 @@ use chrono::NaiveDateTime;
 /// * `oids` - Set of certificate OIDs (includes policy OIDs, extended key usage OIDs, and extension OIDs)
 /// * `cipher_suite` - Negotiated cipher suite (e.g., "TLS13_AES_256_GCM_SHA384")
 /// * `key_algorithm` - Public key algorithm (e.g., "RSA", "ECDSA", "Ed25519")
+/// * `subject_alternative_names` - DNS names from the Subject Alternative Name extension (for linking domains sharing certificates)
 pub struct CertificateInfo {
     pub tls_version: Option<String>,
     pub subject: Option<String>,
@@ -26,4 +27,5 @@ pub struct CertificateInfo {
     pub oids: Option<std::collections::HashSet<String>>,
     pub cipher_suite: Option<String>,
     pub key_algorithm: Option<String>,
+    pub subject_alternative_names: Option<Vec<String>>,
 }

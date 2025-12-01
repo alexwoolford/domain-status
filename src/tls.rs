@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
-use x509_parser::extensions::ParsedExtension;
+use x509_parser::extensions::{GeneralName, ParsedExtension};
 
 use crate::models::CertificateInfo;
 
@@ -78,6 +78,7 @@ fn extract_certificate_oids(
 
             // Subject Alternative Name (OID: 2.5.29.17)
             // Contains names, not OIDs, but we've already captured the extension OID above
+            // Note: SANs are extracted separately in extract_certificate_sans()
 
             // Authority Key Identifier (OID: 2.5.29.35)
             // Contains key identifiers, not OIDs, but we've already captured the extension OID above
@@ -93,6 +94,43 @@ fn extract_certificate_oids(
     }
 
     Ok(oids)
+}
+
+/// Extracts Subject Alternative Names (SANs) from an X.509 certificate.
+///
+/// This function extracts DNS names from the Subject Alternative Name extension.
+/// Only DNS names are extracted (not IP addresses, email addresses, etc.) as they
+/// are the most useful for linking domains in graph analysis.
+///
+/// # Arguments
+///
+/// * `cert` - The parsed X.509 certificate
+///
+/// # Returns
+///
+/// A vector of DNS domain names found in the SAN extension.
+fn extract_certificate_sans(
+    cert: &x509_parser::certificate::X509Certificate<'_>,
+) -> Result<Vec<String>> {
+    let mut sans = Vec::new();
+
+    for ext in cert.extensions() {
+        if let ParsedExtension::SubjectAlternativeName(ref san) = ext.parsed_extension() {
+            for general_name in &san.general_names {
+                match general_name {
+                    GeneralName::DNSName(dns_name) => {
+                        // DNSName is already a &str in x509-parser
+                        sans.push(dns_name.to_string());
+                    }
+                    // We only extract DNS names for graph analysis
+                    // Other types (IPAddress, RFC822Name, etc.) are ignored
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(sans)
 }
 
 /// Retrieves SSL/TLS certificate information for a domain.
@@ -236,6 +274,12 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
             let oids = extract_certificate_oids(&cert).unwrap_or_else(|_| Vec::new());
             let unique_oids: HashSet<String> = oids.into_iter().collect();
 
+            // Extract Subject Alternative Names (SANs)
+            let sans = extract_certificate_sans(&cert).unwrap_or_else(|_| Vec::new());
+            if !sans.is_empty() {
+                log::debug!("Found {} SAN(s) for domain {}: {:?}", sans.len(), domain, sans);
+            }
+
             log::info!("Extracting validity period for domain: {domain}");
             let valid_from_str =
                 tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
@@ -263,6 +307,11 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 oids: Some(unique_oids),
                 cipher_suite,
                 key_algorithm: Some(key_algorithm),
+                subject_alternative_names: if sans.is_empty() {
+                    None
+                } else {
+                    Some(sans)
+                },
             });
         }
     }
