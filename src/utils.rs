@@ -18,34 +18,31 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
     for cause in error.chain() {
         // Check for reqwest errors (HTTP client errors)
         if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-            // Check HTTP status codes
+            // Check HTTP status codes first
             if let Some(status) = reqwest_err.status() {
-                match status.as_u16() {
-                    // Permanent client errors - don't retry
-                    400..=499 => {
-                        // 429 (Too Many Requests) might be retriable with backoff,
-                        // but for now we treat it as non-retriable to avoid hammering
-                        if status.as_u16() == 429 {
-                            return true; // Rate limiting - retry with backoff
-                        }
-                        return false;
-                    }
-                    // Server errors - retry (temporary)
-                    500..=599 => return true,
-                    _ => {}
+                let status_code = status.as_u16();
+
+                // 429 (Too Many Requests) is retriable with backoff
+                if status_code == crate::config::HTTP_STATUS_TOO_MANY_REQUESTS {
+                    return true;
+                }
+
+                // Permanent client errors (4xx except 429) - don't retry
+                if (400..500).contains(&status_code) {
+                    return false;
+                }
+
+                // Server errors (5xx) - retry (temporary)
+                if (500..600).contains(&status_code) {
+                    return true;
                 }
             }
 
-            // Check reqwest error types
-            if reqwest_err.is_timeout() {
-                return true; // Timeouts are retriable
+            // Check reqwest error types (network-related errors are retriable)
+            if reqwest_err.is_timeout() || reqwest_err.is_connect() || reqwest_err.is_request() {
+                return true;
             }
-            if reqwest_err.is_connect() {
-                return true; // Connection errors are retriable
-            }
-            if reqwest_err.is_request() {
-                return true; // Request errors (network issues) are retriable
-            }
+
             // Redirect errors, decode errors, etc. are not retriable
             if reqwest_err.is_redirect() || reqwest_err.is_decode() {
                 return false;
@@ -57,17 +54,16 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
             return false;
         }
 
-        // Check for DNS errors (retriable - network issue)
-        // Note: hickory_resolver errors are wrapped in anyhow, so we check the message
-        // DNS errors are typically network-related and should be retried
-        let msg = cause.to_string().to_lowercase();
-        if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
-            return true;
-        }
-
         // Check for database errors (not retriable)
         if cause.downcast_ref::<sqlx::Error>().is_some() {
             return false;
+        }
+
+        // Check for DNS errors (retriable - network issue)
+        // Note: hickory_resolver errors are wrapped in anyhow, so we check the message
+        let msg = cause.to_string().to_lowercase();
+        if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
+            return true;
         }
 
         // Check error message for specific patterns (fallback for unknown error types)

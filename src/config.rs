@@ -177,6 +177,19 @@ pub const RETRY_MAX_DELAY_SECS: u64 = 20;
 /// This prevents infinite retries and ensures we don't exceed URL_PROCESSING_TIMEOUT
 pub const RETRY_MAX_ATTEMPTS: usize = 3;
 
+// Status server and batch writer timing
+/// Status server logging interval in seconds (when status server is enabled)
+pub const STATUS_SERVER_LOGGING_INTERVAL_SECS: u64 = 30;
+/// Batch writer shutdown sleep duration in milliseconds
+/// Brief pause to allow in-flight sends to complete before awaiting batch writer
+pub const BATCH_WRITER_SHUTDOWN_SLEEP_MS: u64 = 100;
+/// Batch writer shutdown timeout in seconds
+/// Maximum time to wait for batch writer to finish before aborting
+pub const BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
+
+// HTTP status codes (for clarity and consistency)
+pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;
+
 /// Logging level for the application.
 ///
 /// Controls the verbosity of log output, from most restrictive (Error) to most
