@@ -1,5 +1,11 @@
-// storage/insert.rs
-// Database insert operations
+//! Database insert operations.
+//!
+//! This module provides functions to insert various types of records into the database:
+//! - URL status records and related satellite tables
+//! - Run metadata and statistics
+//! - GeoIP data
+//!
+//! All inserts use parameterized queries to prevent SQL injection.
 
 use chrono::NaiveDateTime;
 use log;
@@ -135,6 +141,7 @@ fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32, String)>> 
 /// # Returns
 ///
 /// Returns the `id` of the inserted (or updated) `url_status` record, or an error if insertion fails.
+#[allow(clippy::too_many_arguments)] // URL record insertion requires many data sources
 pub async fn insert_url_record(
     pool: &SqlitePool,
     record: &UrlRecord,

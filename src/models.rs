@@ -1,3 +1,11 @@
+//! Application-level data models.
+//!
+//! This module defines data structures used throughout the application:
+//! - `TlsCertificateInfo` - TLS certificate details extracted from connections
+//!
+//! These models are separate from database models (in `storage::models`) to
+//! maintain a clear separation between application logic and persistence.
+
 use chrono::NaiveDateTime;
 
 /// TLS/SSL certificate information extracted from an HTTPS connection.

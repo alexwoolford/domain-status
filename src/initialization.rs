@@ -1,3 +1,13 @@
+//! Application initialization and resource setup.
+//!
+//! This module provides functions to initialize all shared resources:
+//! - HTTP clients (with rate limiting and timeouts)
+//! - DNS resolver
+//! - Database connection pool
+//! - Processing context
+//!
+//! All initialization functions return proper error types for error handling.
+
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;

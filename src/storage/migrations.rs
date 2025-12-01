@@ -1,5 +1,7 @@
-// storage/migrations.rs
-// Database migration management
+//! Database migration management.
+//!
+//! This module handles SQLx migrations located in the `migrations/` directory.
+//! Migrations are run automatically on database initialization.
 
 use sqlx::{Pool, Sqlite};
 

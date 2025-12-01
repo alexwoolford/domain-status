@@ -1,3 +1,12 @@
+//! Domain extraction and normalization utilities.
+//!
+//! This module provides functions to extract and normalize domain names from URLs
+//! using the Public Suffix List (PSL) to correctly identify registrable domains.
+//!
+//! Key functions:
+//! - `extract_domain()` - Extracts the registrable domain from a URL
+//! - `normalize_domain()` - Normalizes domain names (lowercase, removes www)
+
 use anyhow::Result;
 use publicsuffix::{List, Psl};
 use reqwest::Url;

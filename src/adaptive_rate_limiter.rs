@@ -1,3 +1,14 @@
+//! Adaptive rate limiting with error-based throttling.
+//!
+//! This module implements a token-bucket rate limiter that automatically adjusts
+//! request rate based on error rates:
+//! - Monitors 429 (Too Many Requests) and timeout errors
+//! - Reduces rate when error rate exceeds threshold (default 20%)
+//! - Increases rate when error rate drops below threshold/2 (default 10%)
+//! - Adjusts every 5 seconds with minimum 10 requests in window
+//!
+//! This prevents overwhelming servers while maximizing throughput when healthy.
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;

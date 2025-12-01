@@ -1,5 +1,13 @@
-// storage/mod.rs
-// Database operations module
+//! Database operations and storage management.
+//!
+//! This module provides:
+//! - Database connection pool management
+//! - Batch writing for efficient inserts
+//! - Failure tracking and recording
+//! - Database migrations
+//! - Circuit breaker for write operations
+//!
+//! All database operations use SQLite with WAL mode enabled for concurrent access.
 
 pub mod batch;
 pub mod circuit_breaker;
