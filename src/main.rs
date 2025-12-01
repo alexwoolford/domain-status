@@ -337,6 +337,7 @@ async fn main() -> Result<()> {
         Some(batch_sender.clone()),
         opt.enable_whois,
         Arc::clone(&db_circuit_breaker),
+        Arc::clone(&pool),
     ));
 
     loop {
@@ -370,22 +371,19 @@ async fn main() -> Result<()> {
         // Context is created once before the loop and reused for all tasks
         let ctx = Arc::clone(&shared_ctx);
 
-        // Clone error_stats for use in the task (it's also in ctx, but we need it here for error reporting)
-        let error_stats_clone = error_stats.clone();
+        // Clone counters for use in the task
         let completed_urls_clone = Arc::clone(&completed_urls);
         let failed_urls_clone = Arc::clone(&failed_urls);
 
         // Clone URL string for the task (cheap for typical URLs < 200 bytes)
-        // No need for Arc wrapping - String cloning is fast and simpler
+        // Clone once and reuse for both task and logging
         let url_for_task = url.clone();
-        let url_for_logging = url.clone();
+        let url_for_logging = url_for_task.clone(); // Clone for logging before move
 
         let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
         let adaptive_limiter_for_task = adaptive_limiter.as_ref().map(Arc::clone);
-        let pool_clone = Arc::clone(&pool);
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
-            let pool = pool_clone;
 
             if let Some(ref limiter) = request_limiter_clone {
                 limiter.acquire().await;
@@ -420,7 +418,7 @@ async fn main() -> Result<()> {
                     // Extract context from error (uses structured context if available, falls back to string parsing)
                     let context = crate::storage::failure::extract_failure_context(&e);
                     if let Err(record_err) = record_url_failure(
-                        &pool,
+                        &ctx.pool,
                         &ctx.extractor,
                         &url_for_logging,
                         &e,
@@ -445,7 +443,10 @@ async fn main() -> Result<()> {
                     if let Some(adaptive) = adaptive_limiter_for_task {
                         let is_429 = e.chain().any(|cause| {
                             if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-                                reqwest_err.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)
+                                reqwest_err
+                                    .status()
+                                    .map(|s| s.as_u16() == crate::config::HTTP_STATUS_TOO_MANY_REQUESTS)
+                                    .unwrap_or(false)
                             } else {
                                 false
                             }
@@ -480,7 +481,7 @@ async fn main() -> Result<()> {
                         request_headers: Vec::new(),
                     };
                     if let Err(record_err) = record_url_failure(
-                        &pool,
+                        &ctx.pool,
                         &ctx.extractor,
                         &url_for_logging,
                         &timeout_error,
@@ -499,7 +500,8 @@ async fn main() -> Result<()> {
                         );
                     }
 
-                    error_stats_clone.increment_error(ErrorType::ProcessUrlTimeout);
+                    ctx.error_stats
+                        .increment_error(ErrorType::ProcessUrlTimeout);
                     if let Some(adaptive) = adaptive_limiter_for_task {
                         adaptive.record_timeout().await;
                     }
@@ -535,7 +537,9 @@ async fn main() -> Result<()> {
         // If status server is enabled, log progress less frequently (every 30 seconds)
         // to reduce verbosity while still providing occasional updates
         Some(tokio::task::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                crate::config::STATUS_SERVER_LOGGING_INTERVAL_SECS,
+            ));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -570,12 +574,18 @@ async fn main() -> Result<()> {
     drop(batch_sender); // Close the channel to signal shutdown (this unblocks any waiting sends)
 
     // Give a brief moment for any in-flight sends to complete or fail
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(
+        crate::config::BATCH_WRITER_SHUTDOWN_SLEEP_MS,
+    ))
+    .await;
 
     // Now wait for the batch writer to finish processing remaining records
     // Add timeout to prevent hanging if batch writer gets stuck
-    let batch_writer_result =
-        tokio::time::timeout(std::time::Duration::from_secs(30), batch_writer_handle).await;
+    let batch_writer_result = tokio::time::timeout(
+        std::time::Duration::from_secs(crate::config::BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS),
+        batch_writer_handle,
+    )
+    .await;
 
     match batch_writer_result {
         Ok(Ok(Ok(()))) => info!("Batch writer flushed successfully"),
