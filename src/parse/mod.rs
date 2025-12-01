@@ -420,7 +420,7 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
             }
         }
     }
-    
+
     // Also check for standalone GTM-XXXXX patterns (fallback for edge cases)
     // This catches GTM IDs that appear without the keywords above
     static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -445,8 +445,7 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // AdSense publisher IDs are typically 16 digits (e.g., pub-1234567890123456)
     // We require at least 10 digits to avoid false positives like "pub-1"
     static ADSENSE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)(?:ca-)?pub-(\d{10,})"#)
-            .expect("Failed to compile AdSense regex pattern")
+        Regex::new(r#"(?i)(?:ca-)?pub-(\d{10,})"#).expect("Failed to compile AdSense regex pattern")
     });
     for cap in ADSENSE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -837,12 +836,16 @@ mod tests {
         "#;
         let ids = crate::parse::extract_analytics_ids(html);
         assert!(ids.len() >= 1, "Should find GTM ID in dataLayer format");
-        let gtm_ids: Vec<&str> = ids.iter()
+        let gtm_ids: Vec<&str> = ids
+            .iter()
             .filter(|id| id.provider == "Google Tag Manager")
             .map(|id| id.id.as_str())
             .collect();
-        assert!(gtm_ids.contains(&"GTM-MMCQ2RJB"), 
-                "Should find GTM-MMCQ2RJB: {:?}", gtm_ids);
+        assert!(
+            gtm_ids.contains(&"GTM-MMCQ2RJB"),
+            "Should find GTM-MMCQ2RJB: {:?}",
+            gtm_ids
+        );
     }
 
     #[test]
@@ -853,12 +856,16 @@ mod tests {
         "#;
         let ids = crate::parse::extract_analytics_ids(html);
         assert!(ids.len() >= 1, "Should find GTM ID in JSON format");
-        let gtm_ids: Vec<&str> = ids.iter()
+        let gtm_ids: Vec<&str> = ids
+            .iter()
             .filter(|id| id.provider == "Google Tag Manager")
             .map(|id| id.id.as_str())
             .collect();
-        assert!(gtm_ids.contains(&"GTM-T7L6LT"), 
-                "Should find GTM-T7L6LT: {:?}", gtm_ids);
+        assert!(
+            gtm_ids.contains(&"GTM-T7L6LT"),
+            "Should find GTM-T7L6LT: {:?}",
+            gtm_ids
+        );
     }
 
     #[test]
@@ -870,11 +877,15 @@ mod tests {
         "#;
         let ids = crate::parse::extract_analytics_ids(html);
         assert!(ids.len() >= 1, "Should find GTM IDs in URL format");
-        let gtm_ids: Vec<&str> = ids.iter()
+        let gtm_ids: Vec<&str> = ids
+            .iter()
             .filter(|id| id.provider == "Google Tag Manager")
             .map(|id| id.id.as_str())
             .collect();
-        assert!(gtm_ids.contains(&"GTM-XXXXX") || gtm_ids.contains(&"GTM-YYYYY"), 
-                "Should find at least one GTM ID: {:?}", gtm_ids);
+        assert!(
+            gtm_ids.contains(&"GTM-XXXXX") || gtm_ids.contains(&"GTM-YYYYY"),
+            "Should find at least one GTM ID: {:?}",
+            gtm_ids
+        );
     }
 }

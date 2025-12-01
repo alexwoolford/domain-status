@@ -63,7 +63,7 @@ pub struct BatchRecord {
     pub technologies: Vec<String>,
     pub subject_alternative_names: Vec<String>, // Certificate SANs (for linking domains sharing certificates)
     pub analytics_ids: Vec<crate::parse::AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
-    pub geoip: Option<(String, GeoIpResult)>, // (ip_address, geoip_result)
+    pub geoip: Option<(String, GeoIpResult)>,          // (ip_address, geoip_result)
     pub structured_data: Option<StructuredData>,
     pub social_media_links: Vec<SocialMediaLink>,
     pub security_warnings: Vec<SecurityWarning>,
@@ -247,12 +247,9 @@ impl BatchWriter {
 
             // Insert analytics IDs if available
             if !record.analytics_ids.is_empty() {
-                if let Err(e) = insert::insert_analytics_ids(
-                    &self.pool,
-                    url_status_id,
-                    &record.analytics_ids,
-                )
-                .await
+                if let Err(e) =
+                    insert::insert_analytics_ids(&self.pool, url_status_id, &record.analytics_ids)
+                        .await
                 {
                     log::warn!(
                         "Failed to insert analytics IDs for url_status_id {}: {}",
