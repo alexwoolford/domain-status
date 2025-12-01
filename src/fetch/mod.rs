@@ -1,3 +1,15 @@
+//! HTTP request handling and response processing.
+//!
+//! This module handles:
+//! - HTTP request construction with realistic browser headers
+//! - Redirect chain resolution
+//! - Response data extraction and validation
+//! - Error handling with structured failure context
+//!
+//! The main entry points are:
+//! - `handle_http_request()` - Orchestrates the full HTTP request flow
+//! - `handle_response()` - Processes successful HTTP responses
+
 use anyhow::{Error, Result};
 use log::debug;
 use reqwest::Url;
@@ -829,6 +841,192 @@ async fn fetch_additional_dns_records(
     }
 }
 
+/// Builds a UrlRecord from extracted response data.
+fn build_url_record(
+    resp_data: &ResponseData,
+    html_data: &HtmlData,
+    tls_dns_data: &TlsDnsData,
+    additional_dns: &AdditionalDnsData,
+    elapsed: f64,
+    timestamp: i64,
+    run_id: &Option<String>,
+) -> UrlRecord {
+    UrlRecord {
+        initial_domain: resp_data.initial_domain.clone(),
+        final_domain: resp_data.final_domain.clone(),
+        ip_address: tls_dns_data.ip_address.clone(),
+        reverse_dns_name: tls_dns_data.reverse_dns_name.clone(),
+        status: resp_data.status,
+        status_desc: resp_data.status_desc.clone(),
+        response_time: elapsed,
+        title: html_data.title.clone(),
+        keywords: html_data.keywords_str.clone(),
+        description: html_data.description.clone(),
+        tls_version: tls_dns_data.tls_version.clone(),
+        ssl_cert_subject: tls_dns_data.subject.clone(),
+        ssl_cert_issuer: tls_dns_data.issuer.clone(),
+        ssl_cert_valid_from: tls_dns_data.valid_from,
+        ssl_cert_valid_to: tls_dns_data.valid_to,
+        is_mobile_friendly: html_data.is_mobile_friendly,
+        timestamp,
+        nameservers: additional_dns.nameservers.clone(),
+        txt_records: additional_dns.txt_records.clone(),
+        mx_records: additional_dns.mx_records.clone(),
+        spf_record: additional_dns.spf_record.clone(),
+        dmarc_record: additional_dns.dmarc_record.clone(),
+        cipher_suite: tls_dns_data.cipher_suite.clone(),
+        key_algorithm: tls_dns_data.key_algorithm.clone(),
+        run_id: run_id.clone(),
+    }
+}
+
+/// Performs enrichment lookups (GeoIP, WHOIS, security analysis).
+async fn perform_enrichment_lookups(
+    ip_address: &str,
+    final_url: &str,
+    final_domain: &str,
+    tls_version: &Option<String>,
+    security_headers: &HashMap<String, String>,
+    enable_whois: bool,
+) -> (
+    Option<(String, geoip::GeoIpResult)>,
+    Vec<security::SecurityWarning>,
+    Option<crate::whois::WhoisResult>,
+) {
+    let geoip_data = geoip::lookup_ip(ip_address).map(|result| (ip_address.to_string(), result));
+
+    let security_warnings = security::analyze_security(final_url, tls_version, security_headers);
+
+    let whois_data = if enable_whois {
+        log::info!("Performing WHOIS lookup for domain: {}", final_domain);
+        match crate::whois::lookup_whois(final_domain, None).await {
+            Ok(Some(whois_result)) => {
+                log::info!(
+                    "WHOIS lookup successful for {}: registrar={:?}, creation={:?}, expiration={:?}",
+                    final_domain,
+                    whois_result.registrar,
+                    whois_result.creation_date,
+                    whois_result.expiration_date
+                );
+                Some(whois_result)
+            }
+            Ok(None) => {
+                log::info!("WHOIS lookup returned no data for {}", final_domain);
+                None
+            }
+            Err(e) => {
+                log::warn!("WHOIS lookup failed for {}: {}", final_domain, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    (geoip_data, security_warnings, whois_data)
+}
+
+/// Builds a BatchRecord from all extracted data.
+#[allow(clippy::too_many_arguments)] // Batch record requires many data sources
+fn build_batch_record(
+    record: UrlRecord,
+    resp_data: &ResponseData,
+    html_data: &HtmlData,
+    tls_dns_data: &TlsDnsData,
+    technologies_vec: Vec<String>,
+    redirect_chain: Vec<String>,
+    partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
+    geoip_data: Option<(String, geoip::GeoIpResult)>,
+    security_warnings: Vec<security::SecurityWarning>,
+    whois_data: Option<crate::whois::WhoisResult>,
+    timestamp: i64,
+    run_id: &Option<String>,
+) -> BatchRecord {
+    let oids_set: std::collections::HashSet<String> = tls_dns_data.oids.clone().unwrap_or_default();
+
+    let partial_failure_records: Vec<crate::storage::models::UrlPartialFailureRecord> =
+        partial_failures
+            .into_iter()
+            .map(|(error_type, error_message)| {
+                crate::storage::models::UrlPartialFailureRecord {
+                    url_status_id: 0, // Will be set when record is inserted
+                    error_type: error_type.as_str().to_string(),
+                    error_message,
+                    timestamp,
+                    run_id: run_id.clone(),
+                }
+            })
+            .collect();
+
+    let sans_vec: Vec<String> = tls_dns_data
+        .subject_alternative_names
+        .clone()
+        .unwrap_or_default();
+
+    BatchRecord {
+        url_record: record,
+        security_headers: resp_data.security_headers.clone(),
+        http_headers: resp_data.http_headers.clone(),
+        oids: oids_set,
+        redirect_chain,
+        technologies: technologies_vec,
+        subject_alternative_names: sans_vec,
+        analytics_ids: html_data.analytics_ids.clone(),
+        geoip: geoip_data,
+        structured_data: Some(html_data.structured_data.clone()),
+        social_media_links: html_data.social_media_links.clone(),
+        security_warnings,
+        whois: whois_data,
+        partial_failures: partial_failure_records,
+    }
+}
+
+/// Queues a batch record for database insertion.
+///
+/// Handles backpressure and graceful shutdown scenarios.
+async fn queue_batch_record(
+    batch_record: BatchRecord,
+    batch_sender: &Option<tokio::sync::mpsc::Sender<BatchRecord>>,
+    final_url: &str,
+) {
+    if let Some(ref sender) = batch_sender {
+        match sender.try_send(batch_record) {
+            Ok(()) => {
+                log::debug!("Record queued for batch insert for URL: {}", final_url);
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(record)) => {
+                // Channel is full, use async send which will await
+                // This provides backpressure: if DB writes are slow, producers will wait
+                match sender.send(record).await {
+                    Ok(()) => {
+                        log::debug!("Record queued for batch insert for URL: {}", final_url);
+                    }
+                    Err(_) => {
+                        // Channel closed during send - batch writer is shutting down
+                        log::warn!(
+                            "Failed to queue record for URL {}: channel closed (batch writer shutting down)",
+                            final_url
+                        );
+                        // Don't fail the entire URL processing - just log and continue
+                    }
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                // Channel already closed - batch writer is shutting down
+                log::warn!(
+                    "Failed to queue record for URL {}: channel closed (batch writer shutting down)",
+                    final_url
+                );
+            }
+        }
+    } else {
+        log::warn!(
+            "Batch writer not available, record for {} will not be saved",
+            final_url
+        );
+    }
+}
+
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
 ///
 /// This function orchestrates domain extraction, TLS certificate retrieval, DNS lookups,
@@ -945,173 +1143,49 @@ pub async fn handle_response(
         resp_data.initial_domain
     );
 
-    // Clone value needed for GeoIP lookup after record creation
-    let ip_address_clone = tls_dns_data.ip_address.clone();
-
-    let record = UrlRecord {
-        initial_domain: resp_data.initial_domain.clone(),
-        final_domain: resp_data.final_domain.clone(),
-        ip_address: tls_dns_data.ip_address.clone(),
-        reverse_dns_name: tls_dns_data.reverse_dns_name.clone(),
-        status: resp_data.status,
-        status_desc: resp_data.status_desc.clone(),
-        response_time: elapsed,
-        title: html_data.title.clone(),
-        keywords: html_data.keywords_str.clone(),
-        description: html_data.description.clone(),
-        tls_version: tls_dns_data.tls_version.clone(),
-        ssl_cert_subject: tls_dns_data.subject.clone(),
-        ssl_cert_issuer: tls_dns_data.issuer.clone(),
-        ssl_cert_valid_from: tls_dns_data.valid_from,
-        ssl_cert_valid_to: tls_dns_data.valid_to,
-        is_mobile_friendly: html_data.is_mobile_friendly,
+    // Build URL record
+    let record = build_url_record(
+        &resp_data,
+        &html_data,
+        &tls_dns_data,
+        &additional_dns,
+        elapsed,
         timestamp,
-        nameservers: additional_dns.nameservers.clone(),
-        txt_records: additional_dns.txt_records.clone(),
-        mx_records: additional_dns.mx_records.clone(),
-        spf_record: additional_dns.spf_record.clone(),
-        dmarc_record: additional_dns.dmarc_record.clone(),
-        cipher_suite: tls_dns_data.cipher_suite.clone(),
-        key_algorithm: tls_dns_data.key_algorithm.clone(),
-        run_id: ctx.run_id.clone(),
-    };
-
-    // Extract OIDs directly (no JSON parsing needed)
-    let oids_set: std::collections::HashSet<String> = tls_dns_data.oids.clone().unwrap_or_default();
-
-    // Convert partial failures to UrlPartialFailureRecord format
-    // Note: url_status_id will be set when the record is inserted
-    let partial_failure_records: Vec<crate::storage::models::UrlPartialFailureRecord> =
-        partial_failures
-            .into_iter()
-            .map(|(error_type, error_message)| {
-                crate::storage::models::UrlPartialFailureRecord {
-                    url_status_id: 0,                            // Will be set when record is inserted
-                    error_type: error_type.as_str().to_string(), // Convert ErrorType enum to string
-                    error_message,
-                    timestamp,
-                    run_id: ctx.run_id.clone(),
-                }
-            })
-            .collect();
-
-    // Extract redirect chain directly (no JSON parsing needed)
-    let redirect_chain_vec: Vec<String> = redirect_chain.unwrap_or_default();
-
-    // Perform GeoIP lookup if enabled (before batching)
-    let geoip_data =
-        geoip::lookup_ip(&ip_address_clone).map(|result| (ip_address_clone.clone(), result));
-
-    // Perform security analysis
-    let security_warnings = security::analyze_security(
-        &resp_data.final_url,
-        &tls_dns_data.tls_version,
-        &resp_data.security_headers,
+        &ctx.run_id,
     );
 
-    // Perform WHOIS lookup if enabled (before batching)
-    // Extract domain from final URL for WHOIS lookup
-    let whois_data = if ctx.enable_whois {
-        let domain_for_whois = resp_data.final_domain.clone();
-        log::info!("Performing WHOIS lookup for domain: {}", domain_for_whois);
-        match crate::whois::lookup_whois(&domain_for_whois, None).await {
-            Ok(Some(whois_result)) => {
-                log::info!("WHOIS lookup successful for {}: registrar={:?}, creation={:?}, expiration={:?}",
-                    domain_for_whois,
-                    whois_result.registrar,
-                    whois_result.creation_date,
-                    whois_result.expiration_date
-                );
-                Some(whois_result)
-            }
-            Ok(None) => {
-                log::info!("WHOIS lookup returned no data for {}", domain_for_whois);
-                None
-            }
-            Err(e) => {
-                log::warn!("WHOIS lookup failed for {}: {}", domain_for_whois, e);
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // Extract redirect chain
+    let redirect_chain_vec: Vec<String> = redirect_chain.unwrap_or_default();
 
-    // Create batch record with all data
-    // Extract Subject Alternative Names (SANs) from certificate
-    let sans_vec: Vec<String> = tls_dns_data
-        .subject_alternative_names
-        .clone()
-        .unwrap_or_default();
+    // Perform enrichment lookups (GeoIP, WHOIS, security analysis)
+    let (geoip_data, security_warnings, whois_data) = perform_enrichment_lookups(
+        &tls_dns_data.ip_address,
+        &resp_data.final_url,
+        &resp_data.final_domain,
+        &tls_dns_data.tls_version,
+        &resp_data.security_headers,
+        ctx.enable_whois,
+    )
+    .await;
 
-    let batch_record = BatchRecord {
-        url_record: record,
-        security_headers: resp_data.security_headers.clone(),
-        http_headers: resp_data.http_headers.clone(),
-        oids: oids_set,
-        redirect_chain: redirect_chain_vec,
-        technologies: technologies_vec,
-        subject_alternative_names: sans_vec,
-        analytics_ids: html_data.analytics_ids.clone(),
-        geoip: geoip_data,
-        structured_data: Some(html_data.structured_data.clone()),
-        social_media_links: html_data.social_media_links.clone(),
+    // Build batch record
+    let batch_record = build_batch_record(
+        record,
+        &resp_data,
+        &html_data,
+        &tls_dns_data,
+        technologies_vec,
+        redirect_chain_vec,
+        partial_failures,
+        geoip_data,
         security_warnings,
-        whois: whois_data,
-        partial_failures: partial_failure_records,
-    };
+        whois_data,
+        timestamp,
+        &ctx.run_id,
+    );
 
-    // Send to batch writer queue
-    // Bounded channel provides backpressure: if channel is full, this will await
-    // This prevents memory exhaustion if database writes are slow
-    if let Some(ref sender) = ctx.batch_sender {
-        // Use try_send first to avoid blocking if channel is full during shutdown
-        // If try_send fails (channel full or closed), fall back to send().await
-        match sender.try_send(batch_record) {
-            Ok(()) => {
-                log::debug!(
-                    "Record queued for batch insert for URL: {}",
-                    resp_data.final_url
-                );
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Full(record)) => {
-                // Channel is full, use async send which will await
-                // This provides backpressure: if DB writes are slow, producers will wait
-                match sender.send(record).await {
-                    Ok(()) => {
-                        log::debug!(
-                            "Record queued for batch insert for URL: {}",
-                            resp_data.final_url
-                        );
-                    }
-                    Err(_) => {
-                        // Channel closed during send - batch writer is shutting down
-                        log::warn!(
-                            "Failed to queue record for URL {}: channel closed (batch writer shutting down)",
-                            resp_data.final_url
-                        );
-                        // Don't fail the entire URL processing - just log and continue
-                        // The record will be lost, but this is better than hanging
-                    }
-                }
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                // Channel already closed - batch writer is shutting down
-                log::warn!(
-                    "Failed to queue record for URL {}: channel closed (batch writer shutting down)",
-                    resp_data.final_url
-                );
-                // Don't fail the entire URL processing - just log and continue
-            }
-        }
-    } else {
-        // Fallback: if batch writer is not available, log a warning
-        // This should not happen in normal operation
-        log::warn!(
-            "Batch writer not available, record for {} will not be saved",
-            resp_data.final_url
-        );
-    }
+    // Queue for batch insertion
+    queue_batch_record(batch_record, &ctx.batch_sender, &resp_data.final_url).await;
 
     Ok(())
 }

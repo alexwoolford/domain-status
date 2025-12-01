@@ -1,3 +1,15 @@
+//! TLS/SSL certificate information extraction.
+//!
+//! This module connects to HTTPS endpoints and extracts certificate details:
+//! - Certificate subject and issuer
+//! - Validity period (not before/after dates)
+//! - Subject Alternative Names (SANs)
+//! - Certificate OIDs (policies, extended key usage, extensions)
+//! - Cipher suite and key algorithm
+//! - TLS version
+//!
+//! Uses `tokio-rustls` for async TLS connections and `x509-parser` for certificate parsing.
+
 use anyhow::Result;
 use chrono::NaiveDateTime;
 use log::{error, info};
@@ -117,14 +129,11 @@ fn extract_certificate_sans(
     for ext in cert.extensions() {
         if let ParsedExtension::SubjectAlternativeName(ref san) = ext.parsed_extension() {
             for general_name in &san.general_names {
-                match general_name {
-                    GeneralName::DNSName(dns_name) => {
-                        // DNSName is already a &str in x509-parser
-                        sans.push(dns_name.to_string());
-                    }
-                    // We only extract DNS names for graph analysis
-                    // Other types (IPAddress, RFC822Name, etc.) are ignored
-                    _ => {}
+                // We only extract DNS names for graph analysis
+                // Other types (IPAddress, RFC822Name, etc.) are ignored
+                if let GeneralName::DNSName(dns_name) = general_name {
+                    // DNSName is already a &str in x509-parser
+                    sans.push(dns_name.to_string());
                 }
             }
         }

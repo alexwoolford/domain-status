@@ -1,3 +1,16 @@
+//! Error handling and processing statistics.
+//!
+//! This module provides:
+//! - Error type definitions and categorization
+//! - Processing statistics tracking (errors, warnings, info metrics)
+//! - Retry strategy configuration
+//! - Error type extraction from error chains
+//!
+//! Error types are categorized into:
+//! - **Errors**: Failures that prevent successful processing
+//! - **Warnings**: Missing optional data that doesn't prevent processing
+//! - **Info**: Informational metrics (redirects, bot detection, etc.)
+
 use log::SetLoggerError;
 use reqwest::Error as ReqwestError;
 use std::collections::HashMap;

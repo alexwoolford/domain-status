@@ -1,5 +1,12 @@
-// storage/batch.rs
-// Batched database write operations
+//! Batched database write operations.
+//!
+//! This module implements a high-performance batch writer that:
+//! - Collects records in memory batches
+//! - Writes batches to the database efficiently
+//! - Provides backpressure via bounded channels
+//! - Handles graceful shutdown
+//!
+//! The batch writer runs in a separate task and receives records via an MPSC channel.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -108,9 +115,11 @@ impl BatchWriter {
     /// Note: Each insert_url_record call starts its own transaction internally.
     /// We process records one-by-one, and if any record fails, we log and continue.
     /// This prevents one bad record from blocking the entire batch.
-    /// TODO: Consider refactoring to use a single transaction for the entire batch
-    /// for better atomicity, but this would require refactoring insert functions
-    /// to accept a transaction instead of a pool.
+    ///
+    /// **Future improvement**:** Use a single transaction for the entire batch
+    /// for better atomicity and performance. This would require refactoring insert
+    /// functions to accept either a pool or a transaction (e.g., using generics or
+    /// a trait). Current approach works correctly but is suboptimal for large batches.
     ///
     /// Returns a summary of successful and failed inserts for observability.
     pub async fn flush(&mut self) -> Result<FlushResult, DatabaseError> {

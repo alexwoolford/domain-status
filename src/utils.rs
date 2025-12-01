@@ -1,3 +1,10 @@
+//! Utility functions for URL processing.
+//!
+//! This module provides:
+//! - URL processing orchestration with retry logic
+//! - Error retriability determination
+//! - String sanitization utilities
+
 pub mod sanitize;
 
 use anyhow::{Error, Result};

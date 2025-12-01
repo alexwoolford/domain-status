@@ -1,5 +1,9 @@
-// storage/pool.rs
-// Database connection pool management
+//! Database connection pool management.
+//!
+//! This module initializes and configures the SQLite connection pool with:
+//! - WAL mode enabled for concurrent access
+//! - Connection limits and timeouts
+//! - Automatic database file creation
 
 use std::fs::OpenOptions;
 use std::io::ErrorKind;

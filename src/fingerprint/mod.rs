@@ -1736,166 +1736,10 @@ fn execute_js_property_check(
     })
 }
 
-/// Checks if a JavaScript property exists using regex-based pattern matching (fallback).
-///
-/// **Note:** This function is currently unused. We rely solely on JavaScript execution
-/// for property detection to avoid false positives. This function is kept for potential
-/// future use or debugging.
-///
-/// # Arguments
-///
-/// * `js_search_text` - The JavaScript code to search (with comments/strings stripped)
-/// * `js_property` - The property path to check (e.g., "jQuery" or "window.React")
-/// * `pattern` - Optional pattern to match against the property value
-///
-/// # Returns
-///
-/// `true` if the property is found (and matches the pattern if provided), `false` otherwise
-#[allow(dead_code)]
-fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &str) -> bool {
-    // If pattern is empty, just check for property existence
-    if pattern.is_empty() {
-        // For properties with dots (like ".__NEXT_DATA__.nextExport"), match the full path
-        if js_property.contains('.') {
-            // Match the full property path (e.g., ".__NEXT_DATA__.nextExport")
-            // Escape dots in the property path for regex
-            let escaped = regex::escape(js_property);
-            // Match as complete property path, not as substring
-            // Look for the property path followed by non-word char or end
-            let regex_pattern = format!(r"(?m)(?<![a-zA-Z0-9_$]){}\b(?![a-zA-Z0-9_$])", escaped);
-            if let Ok(re) = regex::Regex::new(&regex_pattern) {
-                if re.is_match(js_search_text) {
-                    return true;
-                }
-            }
-        } else {
-            // Simple property name - match EXACT property name in JavaScript contexts
-            // CRITICAL: Property must be complete identifier, not substring
-            // e.g., "Fundiin" should NOT match in "websiteMaximumSuggestFundiinWithPrediction"
-            let escaped = regex::escape(js_property);
-
-            // For properties starting with $ or __, they're likely globals
-            if js_property.starts_with('$') || js_property.starts_with("__") {
-                // Match as global: window.Property (most reliable)
-                // Or as standalone at start of line/expression
-                let patterns = vec![
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])",
-                        escaped
-                    ),
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])",
-                        escaped
-                    ),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])^\s*{}\b(?![a-zA-Z0-9_$])", escaped),
-                    format!(r"(?m)(?<![a-zA-Z0-9_$])\.{}\b(?![a-zA-Z0-9_$])", escaped),
-                ];
-                for regex_pattern in patterns {
-                    if let Ok(re) = regex::Regex::new(&regex_pattern) {
-                        if re.is_match(js_search_text) {
-                            return true;
-                        }
-                    }
-                }
-            } else {
-                // Regular properties: require EXACT match in JavaScript contexts
-                // Match only if property is complete identifier, not substring
-                // Wappalyzer executes JS - we approximate with strict regex matching
-                let patterns = vec![
-                    // Global object access - most reliable (window, global, self)
-                    // Negative lookbehind/lookahead ensures it's not part of longer name
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bwindow\.{}\b(?![a-zA-Z0-9_$])",
-                        escaped
-                    ),
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bglobal\.{}\b(?![a-zA-Z0-9_$])",
-                        escaped
-                    ),
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bself\.{}\b(?![a-zA-Z0-9_$])",
-                        escaped
-                    ),
-                    // Variable declarations - must be followed by = or ; and be complete identifier
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bvar\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])",
-                        escaped
-                    ),
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\blet\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])",
-                        escaped
-                    ),
-                    format!(
-                        r"(?m)(?<![a-zA-Z0-9_$])\bconst\s+{}\b(?![a-zA-Z0-9_$])(?=\s*[=;])",
-                        escaped
-                    ),
-                ];
-
-                for regex_pattern in patterns {
-                    if let Ok(re) = regex::Regex::new(&regex_pattern) {
-                        if re.is_match(js_search_text) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Pattern specified - use it for matching
-        // For properties with dots, we need to check if the property path exists
-        // and then match the pattern against its value
-        if js_property.contains('.') {
-            // Property path like ".__NEXT_DATA__.nextExport" with pattern "true"
-            // We need to find the property and check if its value matches the pattern
-            // This is complex without executing JS, so we'll look for the property
-            // followed by the pattern value
-            let escaped_prop = regex::escape(js_property);
-            let value_pattern = if pattern == "true" {
-                r"true"
-            } else if pattern == "false" {
-                r"false"
-            } else {
-                pattern
-            };
-
-            // Look for property path followed by = or : and then the pattern
-            let regex_pattern = format!(
-                r"(?m)\b{}\s*[=:]\s*{}",
-                escaped_prop,
-                regex::escape(value_pattern)
-            );
-            if let Ok(re) = regex::Regex::new(&regex_pattern) {
-                if re.is_match(js_search_text) {
-                    return true;
-                }
-            }
-
-            // Also try matching the pattern in the context of the property
-            if matches_pattern(pattern, js_search_text) {
-                // Additional check: ensure the property path exists nearby
-                let escaped_prop = regex::escape(js_property);
-                if let Ok(re) = regex::Regex::new(&format!(r"(?m)\b{}\b", escaped_prop)) {
-                    if re.is_match(js_search_text) {
-                        return true;
-                    }
-                }
-            }
-        } else {
-            // Simple property with pattern - match pattern in context
-            if matches_pattern(pattern, js_search_text) {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
 /// Strips JavaScript comments and string literals from code to avoid false positives.
 ///
-/// **Note:** This function is currently unused in production code. We rely solely on
+/// **Note:** This function is only used in tests. Production code relies solely on
 /// JavaScript execution for property detection, which naturally ignores comments and strings.
-/// This function is kept for tests and potential future use.
 ///
 /// Handles:
 /// - Single-line comments (// ...)
@@ -1903,7 +1747,7 @@ fn check_js_property_regex(js_search_text: &str, js_property: &str, pattern: &st
 /// - Single-quoted strings ('...')
 /// - Double-quoted strings ("...")
 /// - Template literals (`...`)
-#[allow(dead_code)]
+#[cfg(test)]
 fn strip_js_comments_and_strings(code: &str) -> String {
     let mut result = String::with_capacity(code.len());
     let mut chars = code.chars().peekable();

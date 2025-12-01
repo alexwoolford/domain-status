@@ -1,3 +1,13 @@
+//! DNS resolution and record querying.
+//!
+//! This module provides async DNS operations using `hickory-resolver`:
+//! - IP address resolution (A/AAAA records)
+//! - Nameserver queries (NS records)
+//! - Text record queries (TXT records) with SPF/DMARC extraction
+//! - Mail exchanger queries (MX records)
+//!
+//! All operations are async and respect system DNS configuration.
+
 use anyhow::{Error, Result};
 use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::TokioAsyncResolver;

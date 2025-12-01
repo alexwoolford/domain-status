@@ -1,5 +1,12 @@
-// security.rs
-// Security analysis and warning detection
+//! Security analysis and warning detection.
+//!
+//! This module analyzes HTTP responses and TLS configurations to identify
+//! security issues and best practice violations:
+//! - Missing HTTPS
+//! - Weak TLS versions
+//! - Missing security headers (HSTS, CSP, etc.)
+//!
+//! Warnings are stored in the database for later analysis.
 
 use std::collections::HashMap;
 

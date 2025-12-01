@@ -1,3 +1,14 @@
+//! HTML parsing and data extraction.
+//!
+//! This module extracts structured data from HTML content including:
+//! - Meta tags (keywords, description, Open Graph, Twitter Cards)
+//! - Structured data (JSON-LD, microdata)
+//! - Analytics IDs (Google Analytics, Facebook Pixel, GTM, AdSense)
+//! - Social media links
+//! - Mobile-friendliness indicators
+//!
+//! All parsing is done using CSS selectors via the `scraper` crate.
+
 use regex::Regex;
 use scraper::{Html, Selector};
 use std::collections::HashMap;
@@ -835,7 +846,7 @@ mod tests {
             </script>
         "#;
         let ids = crate::parse::extract_analytics_ids(html);
-        assert!(ids.len() >= 1, "Should find GTM ID in dataLayer format");
+        assert!(!ids.is_empty(), "Should find GTM ID in dataLayer format");
         let gtm_ids: Vec<&str> = ids
             .iter()
             .filter(|id| id.provider == "Google Tag Manager")
@@ -855,7 +866,7 @@ mod tests {
             <script type="application/json">{"gtm":{"tagIds":["GTM-T7L6LT"]}}</script>
         "#;
         let ids = crate::parse::extract_analytics_ids(html);
-        assert!(ids.len() >= 1, "Should find GTM ID in JSON format");
+        assert!(!ids.is_empty(), "Should find GTM ID in JSON format");
         let gtm_ids: Vec<&str> = ids
             .iter()
             .filter(|id| id.provider == "Google Tag Manager")
@@ -876,7 +887,7 @@ mod tests {
             <script src="https://www.googletagmanager.com/gtm.js?id=GTM-YYYYY"></script>
         "#;
         let ids = crate::parse::extract_analytics_ids(html);
-        assert!(ids.len() >= 1, "Should find GTM IDs in URL format");
+        assert!(!ids.is_empty(), "Should find GTM IDs in URL format");
         let gtm_ids: Vec<&str> = ids
             .iter()
             .filter(|id| id.provider == "Google Tag Manager")

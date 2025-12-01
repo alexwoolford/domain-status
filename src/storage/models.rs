@@ -1,5 +1,10 @@
-// storage/models.rs
-// Database models and types
+//! Database models and types.
+//!
+//! This module defines the data structures used for database operations:
+//! - `UrlRecord` - Main URL status record
+//! - `BatchRecord` - Complete record with all satellite data for batch insertion
+//!
+//! All models use `Option<T>` for nullable fields to match SQLite's type system.
 
 use chrono::NaiveDateTime;
 
