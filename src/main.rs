@@ -22,7 +22,7 @@ use utils::*;
 
 use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::fetch::ProcessingContext;
-use crate::storage::{start_batch_writer, BatchConfig};
+use crate::storage::{record_url_failure, start_batch_writer, BatchConfig};
 
 mod adaptive_rate_limiter;
 mod config;
@@ -331,9 +331,10 @@ async fn main() -> Result<()> {
 
             // Clone Arc for error messages (cheap - just pointer increment)
             let url_for_logging = Arc::clone(&url_arc);
+            let process_start = std::time::Instant::now();
 
             let result =
-                tokio::time::timeout(URL_PROCESSING_TIMEOUT, process_url(url_arc, ctx)).await;
+                tokio::time::timeout(URL_PROCESSING_TIMEOUT, process_url(url_arc.clone(), ctx.clone())).await;
 
             match result {
                 Ok(Ok(())) => {
@@ -344,7 +345,38 @@ async fn main() -> Result<()> {
                 }
                 Ok(Err(e)) => {
                     log::warn!("Failed to process URL {url_for_logging}: {e}");
-                    // Check if this is a 429 error
+                    
+                    // Record failure in database
+                    let elapsed = process_start.elapsed().as_secs_f64();
+                    // Estimate retry count: if error is retriable, it was retried (default 3 retries)
+                    // For non-retriable errors, retry_count is 0
+                    let retry_count = if e.to_string().contains("Non-retriable") {
+                        0
+                    } else {
+                        3 // Default retry count from tokio_retry
+                    };
+                    
+                    if let Err(record_err) = record_url_failure(
+                        &ctx.pool,
+                        &ctx.extractor,
+                        &url_for_logging,
+                        &e,
+                        retry_count,
+                        elapsed,
+                        ctx.run_id.as_deref(),
+                    ).await {
+                        log::warn!("Failed to record failure for {}: {}", url_for_logging, record_err);
+                    }
+                    
+                    // Check for specific HTTP status errors
+                    let is_403 = e.chain().any(|cause| {
+                        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+                            reqwest_err.status() == Some(reqwest::StatusCode::FORBIDDEN)
+                        } else {
+                            false
+                        }
+                    });
+                    
                     let is_429 = e.chain().any(|cause| {
                         if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
                             reqwest_err.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)
@@ -353,7 +385,9 @@ async fn main() -> Result<()> {
                         }
                     });
 
-                    if is_429 {
+                    if is_403 {
+                        error_stats_clone.increment_error(ErrorType::HttpRequestBotDetectionError);
+                    } else if is_429 {
                         error_stats_clone.increment_error(ErrorType::HttpRequestTooManyRequests);
                         if let Some(adaptive) = adaptive_limiter_for_task {
                             adaptive.record_rate_limited().await;
@@ -364,6 +398,22 @@ async fn main() -> Result<()> {
                 }
                 Err(_) => {
                     log::warn!("Timeout processing URL {url_for_logging}");
+                    
+                    // Record timeout failure in database
+                    let elapsed = process_start.elapsed().as_secs_f64();
+                    let timeout_error = anyhow::anyhow!("Process URL timeout after {} seconds", URL_PROCESSING_TIMEOUT.as_secs());
+                    if let Err(record_err) = record_url_failure(
+                        &ctx.pool,
+                        &ctx.extractor,
+                        &url_for_logging,
+                        &timeout_error,
+                        3, // Estimated retry count
+                        elapsed,
+                        ctx.run_id.as_deref(),
+                    ).await {
+                        log::warn!("Failed to record timeout failure for {}: {}", url_for_logging, record_err);
+                    }
+                    
                     error_stats_clone.increment_error(ErrorType::ProcessUrlTimeout);
                     if let Some(adaptive) = adaptive_limiter_for_task {
                         adaptive.record_timeout().await;

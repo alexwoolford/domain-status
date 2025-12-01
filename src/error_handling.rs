@@ -55,6 +55,7 @@ pub enum ErrorType {
     HttpRequestDecodeError,
     HttpRequestOtherError,
     HttpRequestTooManyRequests,
+    HttpRequestBotDetectionError, // 403 Forbidden - typically bot detection
     // Data extraction errors (only for required data)
     TitleExtractError, // Missing title - could be an error if we expect one
     ProcessUrlTimeout,
@@ -110,6 +111,7 @@ impl ErrorType {
             ErrorType::HttpRequestDecodeError => "HTTP request decode error",
             ErrorType::HttpRequestOtherError => "HTTP request other error",
             ErrorType::HttpRequestTooManyRequests => "Too many requests",
+            ErrorType::HttpRequestBotDetectionError => "Bot detection (403 Forbidden)",
             ErrorType::TitleExtractError => "Title extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
@@ -278,6 +280,7 @@ pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error)
     let error_type = match error.status() {
         // When the error contains a status code, match on it
         Some(status) if status.is_client_error() => match status.as_u16() {
+            403 => ErrorType::HttpRequestBotDetectionError,
             429 => ErrorType::HttpRequestTooManyRequests,
             _ => ErrorType::HttpRequestOtherError,
         },

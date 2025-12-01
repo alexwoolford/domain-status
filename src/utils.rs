@@ -118,14 +118,15 @@ pub async fn process_url(url: Arc<String>, ctx: Arc<ProcessingContext>) -> Resul
             .await;
 
             // Only retry if error is retriable
-            match &result {
+            match result {
                 Ok(_) => result,
                 Err(e) => {
-                    if is_retriable_error(e) {
-                        result
+                    if is_retriable_error(&e) {
+                        Err(e)
                     } else {
                         // Non-retriable error - stop retrying
-                        Err(anyhow::anyhow!("Non-retriable error: {}", e))
+                        // Use .context() to preserve the original error chain (including HTTP status)
+                        Err(e.context("Non-retriable error"))
                     }
                 }
             }

@@ -2,6 +2,7 @@
 // Database operations module
 
 pub mod batch;
+pub mod failure;
 pub mod insert;
 pub mod migrations;
 pub mod models;
@@ -9,6 +10,7 @@ pub mod pool;
 
 // Re-export commonly used items
 pub use batch::{start_batch_writer, BatchConfig, BatchRecord};
+pub use failure::record_url_failure;
 pub use insert::insert_run_metadata;
 pub use insert::update_run_stats;
 pub use migrations::run_migrations;

@@ -42,3 +42,30 @@ pub struct UrlRecord {
     pub key_algorithm: Option<String>,
     pub run_id: Option<String>,
 }
+
+/// Represents a failed URL processing attempt for database insertion.
+///
+/// Contains information about why a URL processing failed, including error type,
+/// error message, and any context that was available before the failure
+/// (e.g., redirect chain, response headers).
+///
+/// # Database Schema
+///
+/// This struct maps to the `url_failures` table. The `timestamp` field
+/// is stored as milliseconds since Unix epoch.
+pub struct UrlFailureRecord {
+    pub url: String,
+    pub final_url: Option<String>,  // URL after redirects (if any)
+    pub domain: String,  // Initial domain extracted from original URL
+    pub final_domain: Option<String>,  // Final domain after redirects (if any)
+    pub error_type: String,  // ErrorType enum value as string
+    pub error_message: String,  // Full error message
+    pub http_status: Option<u16>,  // HTTP status code if available (e.g., 403, 500)
+    pub retry_count: u32,  // Number of retry attempts made
+    pub elapsed_time_seconds: Option<f64>,  // Time spent before failure
+    pub timestamp: i64,  // When the failure occurred
+    pub run_id: Option<String>,  // Foreign key to runs.run_id
+    pub redirect_chain: Vec<String>,  // Redirect chain before failure (if any)
+    pub response_headers: Vec<(String, String)>,  // Response headers received (if any)
+    pub request_headers: Vec<(String, String)>,  // Request headers sent (for debugging)
+}

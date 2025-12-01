@@ -137,14 +137,27 @@ pub async fn resolve_redirect_chain(
             .header(reqwest::header::CACHE_CONTROL, "max-age=0")
             .send()
             .await?;
-        if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
-            let loc = loc.to_str().unwrap_or("").to_string();
-            let new_url = Url::parse(&loc)
-                .or_else(|_| Url::parse(&current).and_then(|base| base.join(&loc)))?;
-            current = new_url.to_string();
-            continue;
+        
+        // Only follow redirects if the status code indicates a redirect AND there's a Location header
+        let status = resp.status();
+        let status_code = status.as_u16();
+        // Check if status is a redirect (301, 302, 303, 307, 308)
+        if status_code == 301 || status_code == 302 || status_code == 303 || status_code == 307 || status_code == 308 {
+            if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
+                let loc = loc.to_str().unwrap_or("").to_string();
+                let new_url = Url::parse(&loc)
+                    .or_else(|_| Url::parse(&current).and_then(|base| base.join(&loc)))?;
+                current = new_url.to_string();
+                continue;
+            } else {
+                // Redirect status but no Location header - this is unusual, log and break
+                log::warn!("Redirect status {} for {} but no Location header", status_code, current);
+                break;
+            }
+        } else {
+            // Not a redirect, we've reached the final URL
+            break;
         }
-        break;
     }
     Ok((current, chain))
 }
@@ -208,12 +221,16 @@ async fn extract_response_data(
     let http_headers = extract_http_headers(&headers);
 
     // Enforce HTML content-type, else skip
+    // Note: If Content-Type header is missing, we continue processing (some servers don't send it)
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
         let ct = ct.to_str().unwrap_or("").to_lowercase();
         if !ct.starts_with("text/html") {
-            debug!("Skipping non-HTML content-type: {ct}");
+            log::info!("Skipping {} - non-HTML content-type: {}", final_domain, ct);
             return Ok(None);
         }
+    } else {
+        // No Content-Type header - log at debug level but continue processing
+        debug!("No Content-Type header for {}, continuing anyway", final_domain);
     }
 
     // Check Content-Encoding header for debugging
@@ -237,7 +254,7 @@ async fn extract_response_data(
     };
 
     if body.is_empty() {
-        log::warn!("Empty response body for {final_domain}, skipping HTML extraction");
+        log::info!("Skipping {} - empty response body", final_domain);
         return Ok(None);
     }
 
@@ -685,7 +702,10 @@ pub async fn handle_response(
     let Some(resp_data) =
         extract_response_data(response, original_url, final_url_str, &ctx.extractor).await?
     else {
-        return Ok(()); // Non-HTML or empty response, skip
+        // Non-HTML or empty response, skip silently
+        // This is logged at debug level in extract_response_data
+        debug!("Skipping URL {} (non-HTML content-type, empty body, or body too large)", final_url_str);
+        return Ok(());
     };
 
     // Parse HTML content
@@ -935,12 +955,28 @@ pub async fn handle_http_request(
             }
             Err(e) => {
                 update_error_stats(&ctx.error_stats, &e).await;
-                Err(Error::from(e).context(format!("HTTP request failed for {url}")))
+                log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
+                    url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+                // Attach failure context to error for later extraction
+                let error = Error::from(e);
+                let redirect_chain_str = serde_json::to_string(&redirect_chain)
+                    .unwrap_or_else(|_| "[]".to_string());
+                Err(error.context(format!("HTTP request failed for {url}"))
+                    .context(format!("FINAL_URL:{final_url_string}"))
+                    .context(format!("REDIRECT_CHAIN:{redirect_chain_str}")))
             }
         },
         Err(e) => {
             update_error_stats(&ctx.error_stats, &e).await;
-            Err(Error::from(e).context(format!("HTTP request failed for {url}")))
+            log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
+                url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+            // Attach failure context to error for later extraction
+            let error = Error::from(e);
+            let redirect_chain_str = serde_json::to_string(&redirect_chain)
+                .unwrap_or_else(|_| "[]".to_string());
+            Err(error.context(format!("HTTP request failed for {url}"))
+                .context(format!("FINAL_URL:{final_url_string}"))
+                .context(format!("REDIRECT_CHAIN:{redirect_chain_str}")))
         }
     }
 }

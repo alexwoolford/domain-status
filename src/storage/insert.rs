@@ -3,13 +3,13 @@
 
 use chrono::NaiveDateTime;
 use log;
-use sqlx::SqlitePool;
+use sqlx::{SqlitePool, Row};
 
 use crate::error_handling::DatabaseError;
 use crate::fingerprint;
 use crate::parse::SocialMediaLink;
 
-use super::models::UrlRecord;
+use super::models::{UrlRecord, UrlFailureRecord};
 
 /// Converts a NaiveDateTime to milliseconds since Unix epoch.
 fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {
@@ -715,4 +715,93 @@ pub async fn update_run_stats(
     .map_err(DatabaseError::SqlError)?;
 
     Ok(())
+}
+
+/// Inserts a URL failure record into the database.
+///
+/// This function inserts the main failure record and all associated satellite data
+/// (redirect chain, response headers, request headers) in a transaction.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `failure` - The failure record to insert
+///
+/// # Errors
+///
+/// Returns a `DatabaseError` if the database operation fails.
+pub async fn insert_url_failure(
+    pool: &SqlitePool,
+    failure: &UrlFailureRecord,
+) -> Result<i64, DatabaseError> {
+    // Insert main failure record
+    let failure_id = sqlx::query(
+        "INSERT INTO url_failures (
+            url, final_url, domain, final_domain, error_type, error_message,
+            http_status, retry_count, elapsed_time_seconds, timestamp, run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id",
+    )
+    .bind(&failure.url)
+    .bind(failure.final_url.as_ref())
+    .bind(&failure.domain)
+    .bind(failure.final_domain.as_ref())
+    .bind(&failure.error_type)
+    .bind(&failure.error_message)
+    .bind(failure.http_status.map(|s| s as i64))
+    .bind(failure.retry_count as i64)
+    .bind(failure.elapsed_time_seconds)
+    .bind(failure.timestamp)
+    .bind(failure.run_id.as_ref())
+    .fetch_one(pool)
+    .await
+    .map_err(DatabaseError::SqlError)?
+    .get::<i64, _>(0);
+
+    // Insert redirect chain
+    for (order, redirect_url) in failure.redirect_chain.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO url_failure_redirect_chain (url_failure_id, redirect_url, redirect_order)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_failure_id, redirect_order) DO NOTHING",
+        )
+        .bind(failure_id)
+        .bind(redirect_url)
+        .bind(order as i64)
+        .execute(pool)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    }
+
+    // Insert response headers
+    for (name, value) in &failure.response_headers {
+        sqlx::query(
+            "INSERT INTO url_failure_response_headers (url_failure_id, header_name, header_value)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
+        )
+        .bind(failure_id)
+        .bind(name)
+        .bind(value)
+        .execute(pool)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    }
+
+    // Insert request headers
+    for (name, value) in &failure.request_headers {
+        sqlx::query(
+            "INSERT INTO url_failure_request_headers (url_failure_id, header_name, header_value)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
+        )
+        .bind(failure_id)
+        .bind(name)
+        .bind(value)
+        .execute(pool)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    }
+
+    Ok(failure_id)
 }
