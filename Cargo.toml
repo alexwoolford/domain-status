@@ -7,53 +7,53 @@ description = "A Rust project that scrapes urls and captures status information 
 
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate"] }
-http = "1.0" # Updated for wappalyzer compatibility
-tokio = { version = "1.48", features = ["full"] }
-tokio-util = { version = "0.7" }
-tokio-retry = "0.3"
-futures = "0.3"
-rustls = "0.23"
-webpki-roots = "1.0"
-x509-parser = "0.18"
-tokio-rustls = "0.26"
-hickory-resolver = "0.24"
+reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate"] }
+http = "^1.0" # Updated for wappalyzer compatibility
+tokio = { version = "^1", features = ["full"] }
+tokio-util = "^0.7"
+tokio-retry = "^0.3"
+futures = "^0.3"
+rustls = "^0.23"
+webpki-roots = "^1.0"
+x509-parser = "^0.18"
+tokio-rustls = "^0.26"
+hickory-resolver = "^0.24"
 
 # Database related
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
+sqlx = { version = "^0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
 
 # Scraping and URL handling
-scraper = "0.24"
-url = "2.5"
-publicsuffix = "2.2"
-serde_json = "1.0"
+scraper = "^0.24"
+url = "^2.5"
+publicsuffix = "^2.2"
+serde_json = "^1.0"
 
 # CLI and error handling
-clap = { version = "4.5", features = ["derive"] }
-anyhow = "1.0"
-thiserror = "2.0"
+clap = { version = "^4.5", features = ["derive"] }
+anyhow = "^1.0"
+thiserror = "^2.0"
 
 # Logging
-log = "0.4"
-env_logger = "0.11"
-colored = "3.0"
+log = "^0.4"
+env_logger = "^0.11"
+colored = "^3.0"
 
 # Other
-chrono = "0.4"
-rand = "0.9"
-strum = "0.27"
-strum_macros = "0.27"
-serde = { version = "1.0", features = ["derive"] }
-regex = "1.11"
-tempfile = "3.21"
-maxminddb = "0.27"
-flate2 = "1.0"
-tar = "0.4"
-dotenvy = "0.15"
-rquickjs = "0.3"
-whois-service = { version = "0.1.1", default-features = false }
-axum = "0.7"
-tower = "0.5"
+chrono = "^0.4"
+rand = "^0.9"
+strum = "^0.27"
+strum_macros = "^0.27"
+serde = { version = "^1.0", features = ["derive"] }
+regex = "^1.11"
+tempfile = "^3.21"
+maxminddb = "^0.27"
+flate2 = "^1.0"
+tar = "^0.4"
+dotenvy = "^0.15"
+rquickjs = "^0.3"
+whois-service = { version = "^0.1.1", default-features = false }
+axum = "^0.7"
+tower = "^0.5"
 
 [dev-dependencies]
-httptest = "0.16"
+httptest = "^0.16"
