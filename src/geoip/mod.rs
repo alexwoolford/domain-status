@@ -478,56 +478,61 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     let mut geo_result = GeoIpResult::default();
 
     // Lookup in City database
-    let city_result: maxminddb::geoip2::City = match city_reader.lookup(ip_addr) {
+    // maxminddb 0.27 API: lookup() returns Result<LookupResult, MaxMindDbError>
+    // Use has_data() to check if data exists, then decode() to get the City struct
+    let city_lookup = match city_reader.lookup(ip_addr) {
+        Ok(result) => result,
+        Err(_) => return None,
+    };
+
+    if !city_lookup.has_data() {
+        return None;
+    }
+
+    let city_result: maxminddb::geoip2::City = match city_lookup.decode() {
         Ok(Some(city)) => city,
         Ok(None) => return None,
         Err(_) => return None,
     };
 
     // Extract country information
-    if let Some(country) = city_result.country {
-        geo_result.country_code = country.iso_code.map(|s| s.to_string());
-        if let Some(names) = country.names {
-            geo_result.country_name = names.get("en").map(|s| s.to_string());
-        }
-    }
+    // In maxminddb 0.27, fields are direct types (not Option), but inner fields may be Option
+    // Names struct has fields like english, german, etc. (not a get() method)
+    geo_result.country_code = city_result.country.iso_code.map(|s| s.to_string());
+    geo_result.country_name = city_result.country.names.english.map(|s| s.to_string());
 
     // Extract subdivision (region/state)
-    if let Some(subdivisions) = city_result.subdivisions {
-        if let Some(subdivision) = subdivisions.first() {
-            if let Some(names) = &subdivision.names {
-                geo_result.region = names.get("en").map(|s| s.to_string());
-            }
+    if !city_result.subdivisions.is_empty() {
+        if let Some(subdivision) = city_result.subdivisions.first() {
+            geo_result.region = subdivision.names.english.map(|s| s.to_string());
         }
     }
 
     // Extract city
-    if let Some(city) = city_result.city {
-        if let Some(names) = city.names {
-            geo_result.city = names.get("en").map(|s| s.to_string());
-        }
-    }
+    geo_result.city = city_result.city.names.english.map(|s| s.to_string());
 
     // Extract location (lat/lon)
-    if let Some(location) = city_result.location {
-        geo_result.latitude = location.latitude;
-        geo_result.longitude = location.longitude;
-        geo_result.timezone = location.time_zone.map(|s| s.to_string());
-    }
+    geo_result.latitude = city_result.location.latitude;
+    geo_result.longitude = city_result.location.longitude;
+    geo_result.timezone = city_result.location.time_zone.map(|s| s.to_string());
 
     // Extract postal code (from postal field, not location)
-    if let Some(postal) = city_result.postal {
-        geo_result.postal_code = postal.code.map(|s| s.to_string());
-    }
+    geo_result.postal_code = city_result.postal.code.map(|s| s.to_string());
 
     // Lookup ASN data if ASN database is available
+    // maxminddb 0.27 API: lookup() returns Result<LookupResult, MaxMindDbError>
+    // Use has_data() to check if data exists, then decode() to get the Asn struct
     let asn_reader = GEOIP_ASN_READER.read().ok()?;
     if let Some((asn_reader, _)) = asn_reader.as_ref() {
-        if let Ok(Some(asn_result)) = asn_reader.lookup::<maxminddb::geoip2::Asn>(ip_addr) {
-            geo_result.asn = asn_result.autonomous_system_number;
-            geo_result.asn_org = asn_result
-                .autonomous_system_organization
-                .map(|s| s.to_string());
+        if let Ok(asn_lookup) = asn_reader.lookup(ip_addr) {
+            if asn_lookup.has_data() {
+                if let Ok(Some(asn_result)) = asn_lookup.decode::<maxminddb::geoip2::Asn>() {
+                    geo_result.asn = asn_result.autonomous_system_number;
+                    geo_result.asn_org = asn_result
+                        .autonomous_system_organization
+                        .map(|s| s.to_string());
+                }
+            }
         }
     }
 
