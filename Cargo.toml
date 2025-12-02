@@ -54,3 +54,6 @@ rquickjs = "0.3"
 whois-service = { version = "0.1.1", default-features = false }
 axum = "0.7"
 tower = "0.5"
+
+[dev-dependencies]
+httptest = "0.16"

@@ -43,7 +43,8 @@ static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
         );
         // Return a safe default selector that matches nothing
         // This prevents panics while still allowing the code to run
-        Selector::parse("__invalid_selector__").expect("Failed to parse fallback selector")
+        // Use a known-valid selector that won't match anything: "*:not(*)"
+        parse_selector_unsafe("*:not(*)", "TITLE_SELECTOR fallback")
     })
 });
 
@@ -54,7 +55,7 @@ static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
             META_KEYWORDS_SELECTOR_STR,
             e
         );
-        Selector::parse("__invalid_selector__").expect("Failed to parse fallback selector")
+        parse_selector_unsafe("*:not(*)", "META_KEYWORDS_SELECTOR fallback")
     })
 });
 
@@ -65,7 +66,7 @@ static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
             META_DESCRIPTION_SELECTOR_STR,
             e
         );
-        Selector::parse("__invalid_selector__").expect("Failed to parse fallback selector")
+        parse_selector_unsafe("*:not(*)", "META_DESCRIPTION_SELECTOR fallback")
     })
 });
 
@@ -204,31 +205,52 @@ pub struct SocialMediaLink {
     pub identifier: Option<String>, // Username, handle, or ID extracted from URL
 }
 
+/// Helper function to safely compile a regex pattern, panicking with a detailed error message
+/// if compilation fails. Used for static regex patterns that are compile-time constants.
+fn compile_regex_unsafe(pattern: &str, context: &str) -> Regex {
+    Regex::new(pattern).unwrap_or_else(|e| {
+        panic!(
+            "Failed to compile regex pattern '{}' in {}: {}. This is a programming error.",
+            pattern, context, e
+        )
+    })
+}
+
+/// Helper function to safely parse a CSS selector, panicking with a detailed error message
+/// if parsing fails. Used for static selectors that are compile-time constants.
+fn parse_selector_unsafe(selector_str: &str, context: &str) -> Selector {
+    Selector::parse(selector_str).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse CSS selector '{}' in {}: {}. This is a programming error.",
+            selector_str, context, e
+        )
+    })
+}
+
 // Lazy static regex patterns for social media links
 static LINKEDIN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(LINKEDIN_URL_PATTERN).expect("Failed to compile LinkedIn regex"));
+    LazyLock::new(|| compile_regex_unsafe(LINKEDIN_URL_PATTERN, "LINKEDIN_RE"));
 static TWITTER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(TWITTER_URL_PATTERN).expect("Failed to compile Twitter regex"));
+    LazyLock::new(|| compile_regex_unsafe(TWITTER_URL_PATTERN, "TWITTER_RE"));
 static FACEBOOK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(FACEBOOK_URL_PATTERN).expect("Failed to compile Facebook regex"));
+    LazyLock::new(|| compile_regex_unsafe(FACEBOOK_URL_PATTERN, "FACEBOOK_RE"));
 static INSTAGRAM_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(INSTAGRAM_URL_PATTERN).expect("Failed to compile Instagram regex"));
+    LazyLock::new(|| compile_regex_unsafe(INSTAGRAM_URL_PATTERN, "INSTAGRAM_RE"));
 static YOUTUBE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(YOUTUBE_URL_PATTERN).expect("Failed to compile YouTube regex"));
+    LazyLock::new(|| compile_regex_unsafe(YOUTUBE_URL_PATTERN, "YOUTUBE_RE"));
 static GITHUB_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(GITHUB_URL_PATTERN).expect("Failed to compile GitHub regex"));
+    LazyLock::new(|| compile_regex_unsafe(GITHUB_URL_PATTERN, "GITHUB_RE"));
 static TIKTOK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(TIKTOK_URL_PATTERN).expect("Failed to compile TikTok regex"));
+    LazyLock::new(|| compile_regex_unsafe(TIKTOK_URL_PATTERN, "TIKTOK_RE"));
 static PINTEREST_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(PINTEREST_URL_PATTERN).expect("Failed to compile Pinterest regex"));
+    LazyLock::new(|| compile_regex_unsafe(PINTEREST_URL_PATTERN, "PINTEREST_RE"));
 static SNAPCHAT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(SNAPCHAT_URL_PATTERN).expect("Failed to compile Snapchat regex"));
+    LazyLock::new(|| compile_regex_unsafe(SNAPCHAT_URL_PATTERN, "SNAPCHAT_RE"));
 static REDDIT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(REDDIT_URL_PATTERN).expect("Failed to compile Reddit regex"));
+    LazyLock::new(|| compile_regex_unsafe(REDDIT_URL_PATTERN, "REDDIT_RE"));
 
-static ANCHOR_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(ANCHOR_SELECTOR_STR).expect("Failed to parse anchor selector - this is a bug")
-});
+static ANCHOR_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| parse_selector_unsafe(ANCHOR_SELECTOR_STR, "ANCHOR_SELECTOR"));
 
 /// Extracts social media links from an HTML document.
 ///
@@ -353,8 +375,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Google Analytics (Universal Analytics): ga('create', 'UA-XXXXX-Y')
     // Pattern: ga('create', 'UA-XXXXX-Y') or ga("create", "UA-XXXXX-Y")
     static GA_UA_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#)
-            .expect("Failed to compile GA UA regex pattern")
+        compile_regex_unsafe(
+            r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#,
+            "GA_UA_PATTERN",
+        )
     });
     for cap in GA_UA_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -372,8 +396,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Google Analytics 4 (GA4): gtag('config', 'G-XXXXXXXXXX')
     // Pattern: gtag('config', 'G-XXXXXXXXXX') or gtag("config", "G-XXXXXXXXXX")
     static GA4_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#)
-            .expect("Failed to compile GA4 regex pattern")
+        compile_regex_unsafe(
+            r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#,
+            "GA4_PATTERN",
+        )
     });
     for cap in GA4_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -391,8 +417,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Facebook Pixel: fbq('init', 'XXXXX')
     // Pattern: fbq('init', 'XXXXX') or fbq("init", "XXXXX")
     static FB_PIXEL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#)
-            .expect("Failed to compile Facebook Pixel regex pattern")
+        compile_regex_unsafe(
+            r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#,
+            "FB_PIXEL_PATTERN",
+        )
     });
     for cap in FB_PIXEL_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -416,8 +444,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     //   - gtag('config', 'GTM-XXXXX') (gtag call)
     // We match GTM- followed by alphanumeric, appearing after common GTM-related keywords or in URL parameters
     static GTM_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]+)"#)
-            .expect("Failed to compile GTM regex pattern")
+        compile_regex_unsafe(
+            r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]+)"#,
+            "GTM_PATTERN",
+        )
     });
     for cap in GTM_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -435,8 +465,7 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Also check for standalone GTM-XXXXX patterns (fallback for edge cases)
     // This catches GTM IDs that appear without the keywords above
     static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)\b(GTM-[A-Z0-9]{6,})\b"#)
-            .expect("Failed to compile GTM standalone regex pattern")
+        compile_regex_unsafe(r#"(?i)\b(GTM-[A-Z0-9]{6,})\b"#, "GTM_STANDALONE_PATTERN")
     });
     for cap in GTM_STANDALONE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -455,9 +484,8 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Pattern: ca-pub-XXXXXXXXXX or pub-XXXXXXXXXX
     // AdSense publisher IDs are typically 16 digits (e.g., pub-1234567890123456)
     // We require at least 10 digits to avoid false positives like "pub-1"
-    static ADSENSE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)(?:ca-)?pub-(\d{10,})"#).expect("Failed to compile AdSense regex pattern")
-    });
+    static ADSENSE_PATTERN: LazyLock<Regex> =
+        LazyLock::new(|| compile_regex_unsafe(r#"(?i)(?:ca-)?pub-(\d{10,})"#, "ADSENSE_PATTERN"));
     for cap in ADSENSE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = format!("pub-{}", id.as_str());

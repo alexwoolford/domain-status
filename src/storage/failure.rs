@@ -112,16 +112,6 @@ fn extract_http_status(error: &Error) -> Option<u16> {
     None
 }
 
-// Removed unused string parsing functions:
-// - extract_response_headers
-// - extract_request_headers
-// - extract_redirect_chain
-// - extract_final_url
-//
-// These functions were removed because they are no longer used.
-// The system now relies solely on structured `FailureContextError` for error context,
-// which is more robust and eliminates fragile string parsing.
-
 /// Failure context passed directly to avoid fragile string parsing.
 #[derive(Debug, Clone, Default)]
 pub struct FailureContext {
