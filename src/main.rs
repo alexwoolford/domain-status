@@ -20,15 +20,15 @@ use tokio_util::sync::CancellationToken;
 use config::*;
 use database::*;
 use initialization::*;
-use strum::IntoEnumIterator;
 use utils::*;
 
-use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
+use crate::error_handling::{ErrorType, ProcessingStats};
 use crate::fetch::ProcessingContext;
 use crate::storage::{record_url_failure, start_batch_writer, BatchConfig};
 use crate::utils::ProcessUrlResult;
 
 mod adaptive_rate_limiter;
+mod app;
 mod config;
 mod database;
 mod dns;
@@ -48,63 +48,7 @@ mod user_agent;
 mod utils;
 mod whois;
 
-/// Validates and normalizes a URL.
-///
-/// Adds https:// prefix if missing, then validates that the URL is syntactically
-/// valid and uses http/https scheme. Logs a warning and returns None if the URL
-/// is invalid or uses an unsupported scheme.
-///
-/// # Arguments
-///
-/// * `url` - The URL string to validate and normalize
-///
-/// # Returns
-///
-/// `Some(normalized_url)` if the URL is valid and should be processed, `None` otherwise.
-fn validate_and_normalize_url(url: &str) -> Option<String> {
-    // Normalize: add https:// prefix if missing
-    let normalized = if !url.starts_with("http://") && !url.starts_with("https://") {
-        format!("https://{url}")
-    } else {
-        url.to_string()
-    };
-
-    // Validate: check syntax and scheme
-    match url::Url::parse(&normalized) {
-        Ok(parsed) => match parsed.scheme() {
-            "http" | "https" => Some(normalized),
-            _ => {
-                warn!("Skipping unsupported scheme for URL: {url}");
-                None
-            }
-        },
-        Err(_) => {
-            warn!("Skipping invalid URL: {url}");
-            None
-        }
-    }
-}
-
-/// Logs progress information about URL processing.
-///
-/// # Arguments
-///
-/// * `start_time` - The start time of processing
-/// * `completed_urls` - Atomic counter of completed URLs
-fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicUsize>) {
-    let elapsed = start_time.elapsed();
-    let completed = completed_urls.load(Ordering::SeqCst);
-    let elapsed_secs = elapsed.as_secs_f64();
-    let rate = if elapsed_secs > 0.0 {
-        completed as f64 / elapsed_secs
-    } else {
-        0.0
-    };
-    info!(
-        "Processed {} lines in {:.2} seconds (~{:.2} lines/sec)",
-        completed, elapsed_secs, rate
-    );
-}
+use app::{log_progress, print_and_save_final_statistics, shutdown_gracefully, validate_and_normalize_url};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -562,163 +506,29 @@ async fn main() -> Result<()> {
     // Wait for all tasks to complete
     while (tasks.next().await).is_some() {}
 
-    // Signal logging task to stop and await it
-    cancel.cancel();
-    if let Some(logging_task) = logging_task {
-        let _ = logging_task.await;
-    }
-
-    // Signal rate limiter to stop if it exists
-    if let Some(shutdown) = rate_limiter_shutdown {
-        shutdown.cancel();
-    }
-
-    // Flush batch writer: close the channel and wait for remaining records to be written
-    // IMPORTANT: Drop the sender BEFORE waiting for the handle to ensure all pending sends complete
-    // With a bounded channel, dropping the sender will cause pending sends to fail gracefully
-    info!("Flushing batch writer...");
-    drop(batch_sender); // Close the channel to signal shutdown (this unblocks any waiting sends)
-
-    // Give a brief moment for any in-flight sends to complete or fail
-    tokio::time::sleep(tokio::time::Duration::from_millis(
-        crate::config::BATCH_WRITER_SHUTDOWN_SLEEP_MS,
-    ))
-    .await;
-
-    // Now wait for the batch writer to finish processing remaining records
-    // Add timeout to prevent hanging if batch writer gets stuck
-    // Note: With many records and satellite data, flushing can take time, so we use a reasonable timeout
-    let batch_writer_result = tokio::time::timeout(
-        std::time::Duration::from_secs(crate::config::BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS),
+    // Shutdown gracefully
+    shutdown_gracefully(
+        cancel,
+        logging_task,
+        rate_limiter_shutdown,
+        batch_sender,
         batch_writer_handle,
     )
     .await;
 
-    match batch_writer_result {
-        Ok(Ok(Ok(()))) => info!("Batch writer flushed successfully"),
-        Ok(Ok(Err(e))) => warn!("Error flushing batch writer: {}", e),
-        Ok(Err(e)) => warn!("Batch writer task panicked: {}", e),
-        Err(_) => {
-            // Timeout occurred - this is normal when there are many records with satellite data
-            // The batch writer continues processing in the background and will complete successfully
-            // All data will be written, we just don't wait for it to finish to avoid blocking shutdown
-            log::debug!(
-                "Batch writer flush taking longer than {} seconds (normal with many records) - continuing in background",
-                crate::config::BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS
-            );
-            // Note: The batch writer task continues running and will complete eventually
-            // All data will be written, we just don't wait for it to finish
-        }
-    }
-
     // Log one final time before printing the error summary
     log_progress(start_time, &completed_urls);
 
-    // Calculate run statistics
-    // All tasks have completed at this point, so counters should be final
-    let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
-    let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
-    let failed_urls = total_urls - successful_urls;
-
-    info!(
-        "Run statistics: total={}, successful={}, failed={}",
-        total_urls, successful_urls, failed_urls
-    );
-
-    // Update run statistics in database
-    database::update_run_stats(&pool, &run_id, total_urls, successful_urls, failed_urls)
-        .await
-        .context("Failed to update run statistics")?;
-
-    // Print processing statistics
-    let total_errors = error_stats.total_errors();
-    let total_warnings = error_stats.total_warnings();
-    let total_info = error_stats.total_info();
-
-    if total_errors > 0 {
-        info!("Error Counts ({} total):", total_errors);
-        for error_type in ErrorType::iter() {
-            let count = error_stats.get_error_count(error_type);
-            if count > 0 {
-                info!("   {}: {}", error_type.as_str(), count);
-            }
-        }
-    }
-
-    if total_warnings > 0 {
-        info!("Warning Counts ({} total):", total_warnings);
-        for warning_type in WarningType::iter() {
-            let count = error_stats.get_warning_count(warning_type);
-            if count > 0 {
-                info!("   {}: {}", warning_type.as_str(), count);
-            }
-        }
-    }
-
-    if total_info > 0 {
-        info!("Info Counts ({} total):", total_info);
-        for info_type in InfoType::iter() {
-            let count = error_stats.get_info_count(info_type);
-            if count > 0 {
-                info!("   {}: {}", info_type.as_str(), count);
-            }
-        }
-    }
+    // Print final statistics and update database
+    print_and_save_final_statistics(
+        &pool,
+        &run_id,
+        &total_urls_attempted,
+        &completed_urls,
+        &error_stats,
+    )
+    .await
+    .context("Failed to save final statistics")?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_and_normalize_url;
-
-    #[test]
-    fn test_validate_and_normalize_url_adds_https() {
-        let result = validate_and_normalize_url("example.com");
-        assert_eq!(result, Some("https://example.com".to_string()));
-    }
-
-    #[test]
-    fn test_validate_and_normalize_url_preserves_https() {
-        let result = validate_and_normalize_url("https://example.com");
-        assert_eq!(result, Some("https://example.com".to_string()));
-    }
-
-    #[test]
-    fn test_validate_and_normalize_url_preserves_http() {
-        let result = validate_and_normalize_url("http://example.com");
-        assert_eq!(result, Some("http://example.com".to_string()));
-    }
-
-    #[test]
-    fn test_validate_and_normalize_url_rejects_unsupported_scheme() {
-        // URLs with unsupported schemes: the function normalizes first (adds https:// if missing)
-        // So "ftp://example.com" becomes "https://ftp://example.com" which parses
-        // but has an invalid host. The URL parser may accept it, but it's not a valid URL.
-        // The current implementation may accept it if the parser does, so we test the actual behavior.
-        // What matters is that clearly invalid URLs are rejected
-        let result = validate_and_normalize_url("not a url at all!!!");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_validate_and_normalize_url_rejects_invalid_url() {
-        let result = validate_and_normalize_url("not a valid url!!!");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_validate_and_normalize_url_with_path() {
-        let result = validate_and_normalize_url("example.com/path?query=value");
-        assert_eq!(
-            result,
-            Some("https://example.com/path?query=value".to_string())
-        );
-    }
-
-    #[test]
-    fn test_validate_and_normalize_url_with_port() {
-        let result = validate_and_normalize_url("example.com:8080");
-        assert_eq!(result, Some("https://example.com:8080".to_string()));
-    }
 }

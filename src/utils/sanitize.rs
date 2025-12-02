@@ -2,6 +2,8 @@
 //!
 //! Removes control characters and potentially problematic content
 //! from error messages before storing them in the database.
+//!
+//! Also provides error message truncation to prevent database bloat.
 
 /// Sanitizes an error message by removing control characters.
 ///
@@ -30,6 +32,34 @@ pub fn sanitize_error_message(message: &str) -> String {
                 || code > 0x7F // Allow non-ASCII (UTF-8)
         })
         .collect()
+}
+
+/// Sanitizes and truncates an error message to a maximum length.
+///
+/// This function:
+/// 1. Sanitizes the message by removing control characters
+/// 2. Truncates to `MAX_ERROR_MESSAGE_LENGTH` if necessary
+/// 3. Appends truncation indicator if the message was truncated
+///
+/// # Arguments
+///
+/// * `message` - The error message to sanitize and truncate
+///
+/// # Returns
+///
+/// A sanitized and truncated version of the message.
+pub fn sanitize_and_truncate_error_message(message: &str) -> String {
+    let sanitized = sanitize_error_message(message);
+
+    if sanitized.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+        format!(
+            "{}... (truncated, original length: {} chars)",
+            &sanitized[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+            sanitized.len()
+        )
+    } else {
+        sanitized
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,129 @@
+//! Configuration constants.
+//!
+//! This module defines all configuration constants used throughout the application,
+//! including timeouts, size limits, and other operational parameters.
+
+use std::time::Duration;
+
+// constants (used as defaults)
+#[allow(dead_code)]
+pub const SEMAPHORE_LIMIT: usize = 20;
+pub const LOGGING_INTERVAL: usize = 5;
+/// Per-URL processing timeout in seconds
+/// Increased from 30s to 45s to account for DNS, TLS, and HTTP operations
+pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(45);
+pub const DB_PATH: &str = "./url_checker.db";
+
+// Batch writing configuration
+/// Maximum number of records to batch before flushing to database
+pub const BATCH_SIZE: usize = 100;
+/// Interval between automatic batch flushes (in seconds)
+pub const BATCH_FLUSH_INTERVAL_SECS: u64 = 5;
+/// Channel size multiplier for batch writer
+/// The channel size is calculated as `batch_size * CHANNEL_SIZE_MULTIPLIER`
+/// This provides a buffer to handle bursts while maintaining backpressure
+pub const CHANNEL_SIZE_MULTIPLIER: usize = 10;
+
+// Network operation timeouts
+/// DNS query timeout in seconds
+/// Increased from 5s to 10s to reduce timeout errors on TXT/NS/MX lookups
+pub const DNS_TIMEOUT_SECS: u64 = 10;
+/// TCP connection timeout in seconds
+pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
+/// TLS handshake timeout in seconds
+pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 5;
+
+/// Default User-Agent string for HTTP requests.
+///
+/// **Note:** This is a fallback value. The actual User-Agent is automatically
+/// fetched at startup from Chrome's release API and cached locally for 30 days.
+/// This ensures the User-Agent stays current over time without manual updates.
+///
+/// Users can override this via the `--user-agent` CLI flag.
+///
+/// The auto-update mechanism:
+/// - Fetches latest Chrome version from Chrome's release API at startup
+/// - Caches the version locally for 30 days (in `.user_agent_cache/`)
+/// - Falls back to this hardcoded value if fetch fails
+/// - Only updates if user didn't provide `--user-agent` flag
+///
+/// For better bot evasion, consider:
+/// - Letting the auto-update mechanism keep it current (default behavior)
+/// - Rotating between different User-Agent strings
+/// - Customizing per target site via `--user-agent` flag
+pub const DEFAULT_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+// Response and body size limits
+/// Maximum response body size in bytes (2MB)
+/// Responses larger than this are skipped to prevent memory exhaustion
+pub const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
+
+// Script content size limits
+/// Maximum script content size in bytes (100KB per script)
+/// Limits the amount of JavaScript we extract per script tag
+/// This is enforced in src/fetch/mod.rs when extracting script content
+pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
+/// Maximum total script content size in bytes (500KB total across all scripts)
+/// Limits the total amount of JavaScript we execute to prevent DoS attacks
+pub const MAX_TOTAL_SCRIPT_CONTENT_SIZE: usize = 500 * 1024; // 500KB total across all scripts
+
+// HTML text extraction limits
+/// Maximum HTML text content to extract in characters (50KB)
+/// Limits the amount of text we extract from HTML for performance
+/// This prevents excessive memory usage on very large pages
+pub const MAX_HTML_TEXT_EXTRACTION_CHARS: usize = 50_000;
+/// Maximum HTML preview length in characters for debugging (500 chars)
+/// Used when logging HTML previews for debugging purposes
+pub const MAX_HTML_PREVIEW_CHARS: usize = 500;
+
+// Error message and header size limits
+/// Maximum error message length in characters (2000 chars)
+/// Prevents database bloat from unbounded error messages
+/// Error messages longer than this are truncated with a note about the original length
+pub const MAX_ERROR_MESSAGE_LENGTH: usize = 2000;
+/// Maximum HTTP header value length in characters (1000 chars)
+/// Prevents database bloat from very long header values (e.g., accept-ch headers)
+/// Header values longer than this are truncated
+pub const MAX_HEADER_VALUE_LENGTH: usize = 1000;
+/// Maximum JavaScript execution time in milliseconds (1 second)
+/// Prevents infinite loops and CPU exhaustion attacks
+pub const MAX_JS_EXECUTION_TIME_MS: u64 = 1000;
+/// Maximum memory limit for QuickJS context in bytes (10MB)
+/// Prevents memory exhaustion attacks
+pub const MAX_JS_MEMORY_LIMIT: usize = 10 * 1024 * 1024;
+/// Maximum number of external scripts to fetch per page
+/// Set to 0 to disable external script fetching (faster, but may miss some technologies)
+/// External script fetching can cause timeouts on slow sites
+pub const MAX_EXTERNAL_SCRIPTS: usize = 0;
+
+// Redirect handling
+/// Maximum number of redirect hops to follow
+/// Prevents infinite redirect loops and excessive request chains
+pub const MAX_REDIRECT_HOPS: usize = 10;
+
+// Retry strategy
+/// Initial delay in milliseconds before first retry
+pub const RETRY_INITIAL_DELAY_MS: u64 = 1000;
+/// Factor by which retry delay is multiplied on each attempt
+pub const RETRY_FACTOR: u64 = 2;
+/// Maximum delay between retries in seconds
+pub const RETRY_MAX_DELAY_SECS: u64 = 20;
+/// Maximum number of retry attempts (including initial attempt)
+/// Set to 3 = initial attempt + 2 retries (total 3 attempts)
+/// This prevents infinite retries and ensures we don't exceed URL_PROCESSING_TIMEOUT
+pub const RETRY_MAX_ATTEMPTS: usize = 3;
+
+// Status server and batch writer timing
+/// Status server logging interval in seconds (when status server is enabled)
+pub const STATUS_SERVER_LOGGING_INTERVAL_SECS: u64 = 30;
+/// Batch writer shutdown sleep duration in milliseconds
+/// Brief pause to allow in-flight sends to complete before awaiting batch writer
+pub const BATCH_WRITER_SHUTDOWN_SLEEP_MS: u64 = 100;
+/// Batch writer shutdown timeout in seconds
+/// Maximum time to wait for batch writer to finish before aborting
+pub const BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
+
+// HTTP status codes (for clarity and consistency)
+pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;
+
