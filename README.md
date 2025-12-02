@@ -1390,24 +1390,34 @@ The tool provides detailed logging with progress updates and error summaries:
 **Plain format (default):**
 ```plaintext
 ✔️ domain_status::database [INFO] Database file created successfully.
-✔️ domain_status [INFO] Processed 1506 lines in 5.33 seconds (~282.29 lines/sec)
-✔️ domain_status [INFO] Processed 1851 lines in 10.32 seconds (~179.39 lines/sec)
-✔️ domain_status [INFO] Processed 1856 lines in 15.23 seconds (~121.87 lines/sec)
-✔️ domain_status [INFO] Error Counts (893 total):
-✔️ domain_status [INFO]    HTTP request redirect error: 2
-✔️ domain_status [INFO]    HTTP request timeout error: 154
-✔️ domain_status [INFO]    HTTP request other error: 544
-✔️ domain_status [INFO]    Process URL timeout: 144
-✔️ domain_status [INFO]    DNS NS lookup error: 49
-✔️ domain_status [INFO] Warning Counts (1234 total):
-✔️ domain_status [INFO]    Missing meta keywords: 456
-✔️ domain_status [INFO]    Missing meta description: 678
-✔️ domain_status [INFO]    Missing title: 100
+✔️ domain_status [INFO] Processed 88 lines in 128.61 seconds (~0.68 lines/sec)
+✔️ domain_status [INFO] Run statistics: total=100, successful=88, failed=12
+✔️ domain_status [INFO] Error Counts (21 total):
+✔️ domain_status [INFO]    Bot detection (403 Forbidden): 4
+✔️ domain_status [INFO]    Process URL timeout: 3
+✔️ domain_status [INFO]    DNS NS lookup error: 2
+✔️ domain_status [INFO]    DNS TXT lookup error: 4
+✔️ domain_status [INFO]    DNS MX lookup error: 8
+✔️ domain_status [INFO] Warning Counts (105 total):
+✔️ domain_status [INFO]    Missing meta keywords: 77
+✔️ domain_status [INFO]    Missing meta description: 26
+✔️ domain_status [INFO]    Missing title: 2
+✔️ domain_status [INFO] Info Counts (66 total):
+✔️ domain_status [INFO]    HTTP redirect: 56
+✔️ domain_status [INFO]    Bot detection (403): 4
+✔️ domain_status [INFO]    Multiple redirects: 6
 ```
+
+**Note:** Performance varies significantly based on:
+- **Rate limiting**: Default settings (20 concurrency, 10 RPS) prioritize reliability over speed to avoid bot detection
+- **Network conditions**: DNS lookups, TLS handshakes, and HTTP response times all affect throughput
+- **Target server behavior**: Some sites respond quickly, others may be slow or rate-limit requests
+- **Error handling**: Retries and backoff delays reduce effective throughput but improve success rates
+- **Typical performance**: Expect 0.5-2 lines/sec with default settings. Higher rates may trigger bot detection.
 
 **JSON format (`--log-format json`):**
 ```json
-{"ts":1704067200000,"level":"INFO","target":"domain_status","msg":"Processed 1506 lines in 5.33 seconds (~282.29 lines/sec)"}
+{"ts":1704067200000,"level":"INFO","target":"domain_status","msg":"Processed 88 lines in 128.61 seconds (~0.68 lines/sec)"}
 ```
 
 **Adaptive Rate Limiting:**
