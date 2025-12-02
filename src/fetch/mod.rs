@@ -46,6 +46,13 @@ fn serialize_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Serializes a value to JSON string with a custom default for errors.
+///
+/// Useful for arrays where we want "[]" instead of "{}" on serialization failure.
+fn serialize_json_with_default<T: serde::Serialize>(value: &T, default: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| default.to_string())
+}
+
 /// Builds realistic browser request headers to reduce bot detection.
 ///
 /// Returns both a vector of header tuples (for failure tracking) and applies
@@ -418,7 +425,10 @@ fn parse_html_content(
             e
         );
         // Fallback to a selector that won't match anything
-        Selector::parse("nonexistent").expect("Fallback selector should always parse")
+        // Use a known-valid selector that won't match: "*:not(*)"
+        Selector::parse("*:not(*)").expect(
+            "Fallback selector '*:not(*)' should always parse - this is a programming error",
+        )
     });
     for element in document.select(&meta_selector) {
         // Check name attribute (standard meta tags)
@@ -460,7 +470,10 @@ fn parse_html_content(
             e
         );
         // Fallback to a selector that won't match anything
-        Selector::parse("nonexistent").expect("Fallback selector should always parse")
+        // Use a known-valid selector that won't match: "*:not(*)"
+        Selector::parse("*:not(*)").expect(
+            "Fallback selector '*:not(*)' should always parse - this is a programming error",
+        )
     });
     for element in document.select(&script_selector) {
         // Extract script tag IDs (for __NEXT_DATA__ etc.)
@@ -1157,8 +1170,7 @@ pub async fn handle_response(
         }
     };
 
-    // Note: fingerprints_source and fingerprints_version are stored at run level
-    // in the runs table, not per-URL. They are no longer stored in url_status.
+    // Fingerprints metadata (source and version) are stored at run level in the runs table.
 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
@@ -1339,8 +1351,7 @@ pub async fn handle_http_request(
                 .iter()
                 .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
                 .collect();
-            let response_headers_str =
-                serde_json::to_string(&response_headers).unwrap_or_else(|_| "[]".to_string());
+            let response_headers_str = serialize_json_with_default(&response_headers, "[]");
 
             match response.error_for_status() {
                 Ok(response) => {
@@ -1378,8 +1389,7 @@ pub async fn handle_http_request(
                     };
                     // Attach structured failure context using helper function
                     // Also attach string context for backward compatibility
-                    let redirect_chain_str =
-                        serde_json::to_string(&redirect_chain).unwrap_or_else(|_| "[]".to_string());
+                    let redirect_chain_str = serialize_json_with_default(&redirect_chain, "[]");
                     let error = Error::from(e);
                     Err(crate::storage::failure::attach_failure_context(
                         error
@@ -1389,8 +1399,7 @@ pub async fn handle_http_request(
                             .context(format!("RESPONSE_HEADERS:{response_headers_str}"))
                             .context(format!(
                                 "REQUEST_HEADERS:{}",
-                                serde_json::to_string(&request_headers)
-                                    .unwrap_or_else(|_| "[]".to_string())
+                                serialize_json_with_default(&request_headers, "[]")
                             )),
                         failure_context,
                     ))
@@ -1416,15 +1425,14 @@ pub async fn handle_http_request(
 
             // Also attach string context for backward compatibility
             let error = Error::from(e);
-            let redirect_chain_str =
-                serde_json::to_string(&redirect_chain).unwrap_or_else(|_| "[]".to_string());
+            let redirect_chain_str = serialize_json_with_default(&redirect_chain, "[]");
             Err(error
                 .context(format!("HTTP request failed for {url}"))
                 .context(format!("FINAL_URL:{final_url_string}"))
                 .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
                 .context(format!(
                     "REQUEST_HEADERS:{}",
-                    serde_json::to_string(&request_headers).unwrap_or_else(|_| "[]".to_string())
+                    serialize_json_with_default(&request_headers, "[]")
                 ))
                 .context(Error::from(context_error))) // Attach structured context
         }

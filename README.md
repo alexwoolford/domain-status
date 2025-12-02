@@ -1480,9 +1480,116 @@ The rate limiter automatically adjusts RPS based on error rates (429 errors and 
 - **Database**: `sqlx` with SQLite (WAL mode enabled)
 - **Async Runtime**: Tokio
 
-**Architecture:**
-- Async/await throughout for non-blocking I/O
-- Shared resource instances (HTTP clients, DNS resolver) for efficiency
-- Token-bucket rate limiting for request throttling
-- Error rate monitoring with dynamic backoff
-- Graceful shutdown of background tasks
+## 🏗️ Architecture
+
+### High-Level Overview
+
+**domain_status** follows a pipeline architecture where URLs flow through several processing stages:
+
+```
+Input File → URL Validation → Concurrent Processing → Data Extraction → Batch Storage → SQLite Database
+                ↓                      ↓                      ↓              ↓
+            Normalization         HTTP Request          HTML Parsing    Error Tracking
+                                    ↓                      ↓              ↓
+                                Redirects            Technology      Failure Records
+                                 Resolution          Detection
+                                    ↓                      ↓
+                                TLS Analysis         DNS/WHOIS
+                                    ↓                      ↓
+                                GeoIP Lookup         Analytics IDs
+```
+
+### Core Components
+
+#### 1. **Main Orchestrator** (`src/main.rs`)
+- Reads URLs from input file line-by-line
+- Validates and normalizes URLs (adds `https://` if missing, validates scheme)
+- Manages concurrency with semaphore-based limiting
+- Spawns async tasks for each URL
+- Coordinates graceful shutdown of background tasks
+- Aggregates and reports processing statistics
+
+#### 2. **HTTP Request Handler** (`src/fetch/mod.rs`)
+- Constructs HTTP requests with realistic browser headers
+- Resolves redirect chains (follows up to `MAX_REDIRECT_HOPS` redirects)
+- Extracts response data (status, headers, body)
+- Handles errors with structured context (redirect chain, headers, etc.)
+- Orchestrates enrichment lookups (GeoIP, WHOIS, security analysis)
+
+#### 3. **Data Extraction** (`src/parse/mod.rs`, `src/fingerprint/mod.rs`)
+- **HTML Parsing**: Extracts meta tags, structured data (JSON-LD, Open Graph), analytics IDs, social media links
+- **Technology Detection**: Uses Wappalyzer rulesets with JavaScript execution for dynamic detection
+- **DNS Analysis**: Queries NS, TXT, MX records; extracts SPF/DMARC policies
+- **TLS Analysis**: Extracts certificate details, cipher suite, key algorithm
+- **GeoIP Lookup**: Geographic and network information via MaxMind databases
+- **WHOIS Lookup**: Domain registration data via WHOIS/RDAP
+
+#### 4. **Batch Writer** (`src/storage/batch.rs`)
+- Buffers records in memory (configurable batch size)
+- Flushes to database when buffer is full or on shutdown
+- Uses bounded MPSC channel for backpressure
+- Handles database write failures gracefully with circuit breaker
+- Processes records individually (each in its own transaction)
+
+#### 5. **Error Handling** (`src/error_handling.rs`, `src/storage/failure.rs`)
+- Categorizes errors by type (HTTP, DNS, TLS, etc.)
+- Tracks retriable vs non-retriable errors
+- Records failures with full context (headers, redirect chain, error chain)
+- Implements exponential backoff for retries
+- Circuit breaker for database writes (prevents cascade failures)
+
+#### 6. **Rate Limiting** (`src/adaptive_rate_limiter.rs`)
+- Token-bucket rate limiting (configurable RPS)
+- Adaptive rate adjustment based on error rates
+- Monitors 429 errors and timeouts in sliding window
+- Automatically reduces RPS when error rate > threshold
+- Gradually increases RPS when error rate drops
+
+### Concurrency Model
+
+- **Async Runtime**: Tokio with full feature set
+- **Concurrency Control**: Semaphore limits concurrent URL processing tasks
+- **Rate Limiting**: Token-bucket algorithm with adaptive adjustment
+- **Background Tasks**:
+  - Batch writer (runs continuously, flushes on interval or buffer full)
+  - Status server (optional, exposes metrics via HTTP)
+  - Adaptive rate limiter (adjusts RPS based on error rates)
+- **Graceful Shutdown**: All background tasks are cancellable via `CancellationToken`
+
+### Data Flow
+
+1. **URL Input**: Read from file, validate, normalize
+2. **Task Spawning**: Create async task for each URL (bounded by semaphore)
+3. **HTTP Request**: Fetch URL, follow redirects, extract response
+4. **Data Extraction**: Parse HTML, detect technologies, query DNS/TLS/GeoIP/WHOIS
+5. **Batch Writing**: Queue record for batch writer
+6. **Database Storage**: Batch writer flushes records to SQLite (WAL mode)
+7. **Error Tracking**: Failures recorded in `url_failures` table with full context
+
+### Error Recovery
+
+- **Retry Strategy**: Exponential backoff for retriable errors (network, 5xx, 429)
+- **Circuit Breaker**: Database write circuit breaker prevents cascade failures
+- **Partial Failures**: Records partial failures (e.g., DNS lookup fails but HTTP succeeds)
+- **Structured Context**: All errors include context (headers, redirect chain, error chain)
+
+### Database Schema
+
+- **Star Schema**: `url_status` is the fact table, with normalized dimension tables:
+  - `url_technologies` (many-to-one)
+  - `url_redirect_chain` (one-to-many)
+  - `url_failures` (one-to-many, with satellite tables for headers)
+  - `url_certificate_sans` (one-to-many)
+  - `url_analytics_ids` (one-to-many)
+  - And more...
+- **WAL Mode**: Enables concurrent reads and writes
+- **UPSERT Semantics**: `UNIQUE (final_domain, timestamp)` ensures idempotency
+- **Migrations**: All schema changes via `sqlx` migrations
+
+### Performance Characteristics
+
+- **Non-blocking I/O**: All network operations are async
+- **Shared Resources**: HTTP client, DNS resolver, database pool are shared across tasks
+- **Bounded Concurrency**: Semaphore prevents resource exhaustion
+- **Batch Writing**: Reduces database write overhead
+- **Memory Efficiency**: Response bodies limited to 50KB for HTML parsing

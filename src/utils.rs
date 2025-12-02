@@ -73,7 +73,9 @@ fn is_retriable_error(error: &anyhow::Error) -> bool {
             return true;
         }
 
-        // Check error message for specific patterns (fallback for unknown error types)
+        // Check error message for specific patterns (fallback for non-reqwest errors)
+        // This handles cases where we have an error but not a reqwest::Error with status code
+        // (e.g., errors from other libraries that don't expose HTTP status directly)
         if msg.contains("404") || msg.contains("not found") {
             return false;
         }
