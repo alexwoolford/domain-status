@@ -140,6 +140,15 @@ pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
 /// Limits the total amount of JavaScript we execute to prevent DoS attacks
 pub const MAX_TOTAL_SCRIPT_CONTENT_SIZE: usize = 500 * 1024; // 500KB total across all scripts
 
+// HTML text extraction limits
+/// Maximum HTML text content to extract in characters (50KB)
+/// Limits the amount of text we extract from HTML for performance
+/// This prevents excessive memory usage on very large pages
+pub const MAX_HTML_TEXT_EXTRACTION_CHARS: usize = 50_000;
+/// Maximum HTML preview length in characters for debugging (500 chars)
+/// Used when logging HTML previews for debugging purposes
+pub const MAX_HTML_PREVIEW_CHARS: usize = 500;
+
 // Error message and header size limits
 /// Maximum error message length in characters (2000 chars)
 /// Prevents database bloat from unbounded error messages

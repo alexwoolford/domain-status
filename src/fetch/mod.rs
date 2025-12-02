@@ -37,6 +37,33 @@ use crate::security;
 use crate::storage::BatchRecord;
 use crate::tls::get_ssl_certificate_info;
 
+/// Parses a CSS selector with a safe fallback.
+///
+/// If parsing fails, returns a selector that matches nothing (`*:not(*)`).
+/// This prevents panics while allowing the code to continue gracefully.
+///
+/// # Arguments
+///
+/// * `selector_str` - The CSS selector string to parse
+///
+/// # Returns
+///
+/// A parsed `Selector`, or a fallback selector that matches nothing if parsing fails.
+fn parse_selector_with_fallback(selector_str: &str) -> Selector {
+    Selector::parse(selector_str).unwrap_or_else(|e| {
+        log::error!(
+            "Failed to parse CSS selector '{}': {}. Using fallback selector.",
+            selector_str,
+            e
+        );
+        // Fallback to a selector that won't match anything
+        // Use a known-valid selector that won't match: "*:not(*)"
+        Selector::parse("*:not(*)").expect(
+            "Fallback selector '*:not(*)' should always parse - this is a programming error",
+        )
+    })
+}
+
 /// Serializes a value to JSON string.
 ///
 /// Note: JSON object key order is not guaranteed by the JSON spec, but serde_json
@@ -53,32 +80,84 @@ fn serialize_json_with_default<T: serde::Serialize>(value: &T, default: &str) ->
     serde_json::to_string(value).unwrap_or_else(|_| default.to_string())
 }
 
-/// Builds realistic browser request headers to reduce bot detection.
+/// Realistic browser request headers to reduce bot detection.
 ///
-/// Returns both a vector of header tuples (for failure tracking) and applies
-/// headers to a request builder. These headers mimic a modern Chrome browser
-/// to help avoid detection by header analysis.
+/// These headers mimic a modern Chrome browser to help avoid detection by header analysis.
+/// Used consistently across all HTTP requests to maintain a realistic browser fingerprint.
 ///
-/// # Returns
+/// # Why These Headers?
 ///
-/// A vector of (header_name, header_value) tuples that can be used for
-/// both request building and failure tracking.
-fn build_request_headers() -> Vec<(String, String)> {
-    vec![
-        (
-            "accept".to_string(),
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_string(),
-        ),
-        ("accept-language".to_string(), "en-US,en;q=0.9".to_string()),
-        ("accept-encoding".to_string(), "gzip, deflate, br".to_string()),
-        ("referer".to_string(), "https://www.google.com/".to_string()),
-        ("sec-fetch-dest".to_string(), "document".to_string()),
-        ("sec-fetch-mode".to_string(), "navigate".to_string()),
-        ("sec-fetch-site".to_string(), "none".to_string()),
-        ("sec-fetch-user".to_string(), "?1".to_string()),
-        ("upgrade-insecure-requests".to_string(), "1".to_string()),
-        ("cache-control".to_string(), "max-age=0".to_string()),
-    ]
+/// Modern bot detection systems analyze HTTP headers to identify automated requests.
+/// By using realistic browser headers, we reduce the likelihood of being blocked:
+///
+/// - **Accept headers**: Match modern browser content negotiation
+/// - **Accept-Language**: Indicates English-speaking user (common default)
+/// - **Accept-Encoding**: Supports compression (gzip, deflate, brotli)
+/// - **Referer**: Simulates navigation from Google (common entry point)
+/// - **Sec-Fetch-***: Modern browser security headers (helps with some detection systems)
+/// - **Upgrade-Insecure-Requests**: Indicates preference for HTTPS
+/// - **Cache-Control**: Indicates fresh content request
+///
+/// # Note on TLS Fingerprinting
+///
+/// While these headers help with header-based detection, JA3 TLS fingerprinting will
+/// still identify rustls. This is acceptable as many legitimate applications use rustls,
+/// and the combination of realistic headers + reasonable rate limiting provides good
+/// bot evasion for most use cases.
+struct RequestHeaders;
+
+impl RequestHeaders {
+    /// Returns headers as a vector of (name, value) tuples for failure tracking.
+    fn as_vec() -> Vec<(String, String)> {
+        vec![
+            (
+                "accept".to_string(),
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_string(),
+            ),
+            ("accept-language".to_string(), "en-US,en;q=0.9".to_string()),
+            ("accept-encoding".to_string(), "gzip, deflate, br".to_string()),
+            ("referer".to_string(), "https://www.google.com/".to_string()),
+            ("sec-fetch-dest".to_string(), "document".to_string()),
+            ("sec-fetch-mode".to_string(), "navigate".to_string()),
+            ("sec-fetch-site".to_string(), "none".to_string()),
+            ("sec-fetch-user".to_string(), "?1".to_string()),
+            ("upgrade-insecure-requests".to_string(), "1".to_string()),
+            ("cache-control".to_string(), "max-age=0".to_string()),
+        ]
+    }
+
+    /// Applies headers to a reqwest request builder.
+    ///
+    /// This is the preferred method for building requests as it uses reqwest's
+    /// header constants directly, avoiding string parsing overhead.
+    fn apply_to_request_builder(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        builder
+            .header(
+                reqwest::header::ACCEPT,
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            )
+            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+            .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
+            .header(reqwest::header::REFERER, "https://www.google.com/")
+            .header(
+                reqwest::header::HeaderName::from_static("sec-fetch-dest"),
+                "document",
+            )
+            .header(
+                reqwest::header::HeaderName::from_static("sec-fetch-mode"),
+                "navigate",
+            )
+            .header(
+                reqwest::header::HeaderName::from_static("sec-fetch-site"),
+                "none",
+            )
+            .header(
+                reqwest::header::HeaderName::from_static("sec-fetch-user"),
+                "?1",
+            )
+            .header(reqwest::header::UPGRADE_INSECURE_REQUESTS, "1")
+            .header(reqwest::header::CACHE_CONTROL, "max-age=0")
+    }
 }
 
 /// Extracts security-related HTTP headers from a response.
@@ -170,18 +249,7 @@ pub async fn resolve_redirect_chain(
         chain.push(current.clone());
         // Add realistic browser headers to reduce bot detection during redirect resolution
         // This is critical because sites may serve different content (or block) based on headers
-        let resp = client
-            .get(&current)
-            .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-            .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
-            .header(reqwest::header::REFERER, "https://www.google.com/")
-            .header(reqwest::header::HeaderName::from_static("sec-fetch-dest"), "document")
-            .header(reqwest::header::HeaderName::from_static("sec-fetch-mode"), "navigate")
-            .header(reqwest::header::HeaderName::from_static("sec-fetch-site"), "none")
-            .header(reqwest::header::HeaderName::from_static("sec-fetch-user"), "?1")
-            .header(reqwest::header::UPGRADE_INSECURE_REQUESTS, "1")
-            .header(reqwest::header::CACHE_CONTROL, "max-age=0")
+        let resp = RequestHeaders::apply_to_request_builder(client.get(&current))
             .send()
             .await?;
 
@@ -324,9 +392,13 @@ async fn extract_response_data(
         log::debug!("Title tag found in raw HTML for {final_domain}");
     } else {
         log::warn!("No title tag found in raw HTML for {final_domain}");
-        let preview = body.chars().take(500).collect::<String>();
+        let preview = body
+            .chars()
+            .take(crate::config::MAX_HTML_PREVIEW_CHARS)
+            .collect::<String>();
         log::debug!(
-            "HTML preview (first 500 chars) for {final_domain}: {}",
+            "HTML preview (first {} chars) for {final_domain}: {}",
+            crate::config::MAX_HTML_PREVIEW_CHARS,
             preview
         );
     }
@@ -419,17 +491,7 @@ fn parse_html_content(
 
     // Extract data needed for technology detection (to avoid double-parsing)
     let mut meta_tags = HashMap::new();
-    let meta_selector = Selector::parse("meta").unwrap_or_else(|e| {
-        log::error!(
-            "Failed to parse 'meta' selector: {}. This is a programming error.",
-            e
-        );
-        // Fallback to a selector that won't match anything
-        // Use a known-valid selector that won't match: "*:not(*)"
-        Selector::parse("*:not(*)").expect(
-            "Fallback selector '*:not(*)' should always parse - this is a programming error",
-        )
-    });
+    let meta_selector = parse_selector_with_fallback("meta");
     for element in document.select(&meta_selector) {
         // Check name attribute (standard meta tags)
         if let (Some(name), Some(content)) = (
@@ -464,17 +526,7 @@ fn parse_html_content(
     let mut script_content = String::new();
     let mut script_tag_ids = HashSet::new();
     let mut inline_script_count = 0;
-    let script_selector = Selector::parse("script").unwrap_or_else(|e| {
-        log::error!(
-            "Failed to parse 'script' selector: {}. This is a programming error.",
-            e
-        );
-        // Fallback to a selector that won't match anything
-        // Use a known-valid selector that won't match: "*:not(*)"
-        Selector::parse("*:not(*)").expect(
-            "Fallback selector '*:not(*)' should always parse - this is a programming error",
-        )
-    });
+    let script_selector = parse_selector_with_fallback("script");
     for element in document.select(&script_selector) {
         // Extract script tag IDs (for __NEXT_DATA__ etc.)
         if let Some(id) = element.value().attr("id") {
@@ -508,14 +560,12 @@ fn parse_html_content(
         final_domain
     );
 
-    // Extract text content (first 50KB for performance)
-    let html_text = document
+    // Extract text content (limited for performance)
+    let html_text: String = document
         .root_element()
         .text()
-        .collect::<String>()
-        .chars()
-        .take(50_000)
-        .collect::<String>();
+        .take(crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS)
+        .collect();
 
     HtmlData {
         title,
@@ -1282,63 +1332,11 @@ pub async fn handle_http_request(
     // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
     // help with other detection methods (header analysis, behavioral patterns)
     // Capture actual request headers for failure tracking
-    let request_headers = build_request_headers();
+    let request_headers = RequestHeaders::as_vec();
 
-    // Build request with headers
-    let mut request_builder = ctx.client.get(&final_url_string);
-    for (name, value) in &request_headers {
-        // Convert string header names to reqwest HeaderName
-        // Standard headers use constants, custom headers use from_static
-        match name.as_str() {
-            "accept" => {
-                request_builder = request_builder.header(reqwest::header::ACCEPT, value);
-            }
-            "accept-language" => {
-                request_builder = request_builder.header(reqwest::header::ACCEPT_LANGUAGE, value);
-            }
-            "accept-encoding" => {
-                request_builder = request_builder.header(reqwest::header::ACCEPT_ENCODING, value);
-            }
-            "referer" => {
-                request_builder = request_builder.header(reqwest::header::REFERER, value);
-            }
-            "upgrade-insecure-requests" => {
-                request_builder =
-                    request_builder.header(reqwest::header::UPGRADE_INSECURE_REQUESTS, value);
-            }
-            "cache-control" => {
-                request_builder = request_builder.header(reqwest::header::CACHE_CONTROL, value);
-            }
-            "sec-fetch-dest" => {
-                request_builder = request_builder.header(
-                    reqwest::header::HeaderName::from_static("sec-fetch-dest"),
-                    value,
-                );
-            }
-            "sec-fetch-mode" => {
-                request_builder = request_builder.header(
-                    reqwest::header::HeaderName::from_static("sec-fetch-mode"),
-                    value,
-                );
-            }
-            "sec-fetch-site" => {
-                request_builder = request_builder.header(
-                    reqwest::header::HeaderName::from_static("sec-fetch-site"),
-                    value,
-                );
-            }
-            "sec-fetch-user" => {
-                request_builder = request_builder.header(
-                    reqwest::header::HeaderName::from_static("sec-fetch-user"),
-                    value,
-                );
-            }
-            _ => {
-                // Unknown header - skip (shouldn't happen with our header set)
-                log::warn!("Unknown header in build_request_headers: {}", name);
-            }
-        }
-    }
+    // Build request with headers using the consolidated header builder
+    let request_builder =
+        RequestHeaders::apply_to_request_builder(ctx.client.get(&final_url_string));
 
     let res = request_builder.send().await;
 
