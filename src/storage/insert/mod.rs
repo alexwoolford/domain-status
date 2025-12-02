@@ -1,0 +1,26 @@
+//! Database insert operations.
+//!
+//! This module provides functions to insert various types of records into the database:
+//! - URL status records and related satellite tables
+//! - Run metadata and statistics
+//! - GeoIP data
+//! - Enrichment data (structured data, social media, WHOIS, analytics)
+//! - Failure records
+//!
+//! All inserts use parameterized queries to prevent SQL injection.
+
+mod enrichment;
+mod failure;
+mod run;
+mod url;
+mod utils;
+
+// Re-export public API
+pub use enrichment::{
+    insert_analytics_ids, insert_geoip_data, insert_security_warnings, insert_social_media_links,
+    insert_structured_data, insert_whois_data,
+};
+pub use failure::{insert_url_failure, insert_url_partial_failure};
+pub use run::{insert_run_metadata, update_run_stats};
+pub use url::insert_url_record;
+
