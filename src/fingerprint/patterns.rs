@@ -120,3 +120,185 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
         text.contains(pattern)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_matches_pattern_empty_pattern() {
+        // Empty pattern matches anything
+        assert!(matches_pattern("", "anything"));
+        assert!(matches_pattern("", ""));
+        assert!(matches_pattern("", "test string"));
+    }
+
+    #[test]
+    fn test_matches_pattern_simple_substring() {
+        // Simple substring matching (case-sensitive)
+        assert!(matches_pattern("nginx", "nginx/1.18.0"));
+        assert!(matches_pattern("WordPress", "Powered by WordPress")); // Case must match
+        assert!(!matches_pattern("wordpress", "Powered by WordPress")); // Case-sensitive
+        assert!(!matches_pattern("apache", "nginx/1.18.0"));
+        assert!(!matches_pattern("nginx", "apache/2.4"));
+    }
+
+    #[test]
+    fn test_matches_pattern_regex_starts_with_caret() {
+        // Regex pattern starting with ^
+        assert!(matches_pattern("^nginx", "nginx/1.18.0"));
+        assert!(!matches_pattern("^nginx", "server: nginx/1.18.0"));
+    }
+
+    #[test]
+    fn test_matches_pattern_regex_ends_with_dollar() {
+        // Regex pattern ending with $
+        assert!(matches_pattern("nginx$", "nginx"));
+        assert!(!matches_pattern("nginx$", "nginx/1.18.0"));
+    }
+
+    #[test]
+    fn test_matches_pattern_regex_special_chars() {
+        // Regex patterns with special characters
+        assert!(matches_pattern("nginx.*", "nginx/1.18.0"));
+        assert!(matches_pattern("wordpress\\+", "wordpress+"));
+        assert!(matches_pattern("test\\?", "test?"));
+        assert!(matches_pattern("[0-9]+", "version 123"));
+    }
+
+    #[test]
+    fn test_matches_pattern_invalid_regex_falls_back() {
+        // Invalid regex should fall back to substring
+        assert!(matches_pattern("[invalid", "text with [invalid"));
+        assert!(!matches_pattern("[invalid", "text without pattern"));
+    }
+
+    #[test]
+    fn test_matches_pattern_version_extraction() {
+        // Patterns with version extraction syntax
+        assert!(matches_pattern("nginx;version:\\1", "nginx/1.18.0"));
+        assert!(matches_pattern("^wordpress;version:\\1$", "wordpress"));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_simple_name() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+
+        assert!(check_meta_patterns(
+            "generator",
+            &["WordPress".to_string()],
+            &meta_tags
+        ));
+        assert!(!check_meta_patterns(
+            "generator",
+            &["Drupal".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_property_prefix() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("property:og:title".to_string(), "My Title".to_string());
+
+        assert!(check_meta_patterns(
+            "property:og:title",
+            &["My Title".to_string()],
+            &meta_tags
+        ));
+        assert!(!check_meta_patterns(
+            "property:og:title",
+            &["Other Title".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_http_equiv_prefix() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert(
+            "http-equiv:content-type".to_string(),
+            "text/html".to_string(),
+        );
+
+        assert!(check_meta_patterns(
+            "http-equiv:content-type",
+            &["text/html".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_tries_all_prefixes() {
+        // Simple key should try name:, property:, and http-equiv:
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("property:generator".to_string(), "WordPress".to_string());
+
+        // Should find it via property: prefix
+        assert!(check_meta_patterns(
+            "generator",
+            &["WordPress".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_case_insensitive_key() {
+        let mut meta_tags = HashMap::new();
+        // Key is lowercased in the function, so we need to use lowercase in the map
+        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+
+        // Key should be lowercased when looking up
+        assert!(check_meta_patterns(
+            "GENERATOR",
+            &["WordPress".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_multiple_patterns() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress 5.0".to_string());
+
+        // Should match if any pattern matches
+        assert!(check_meta_patterns(
+            "generator",
+            &["Drupal".to_string(), "WordPress".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_empty_meta_tags() {
+        let meta_tags = HashMap::new();
+        assert!(!check_meta_patterns(
+            "generator",
+            &["WordPress".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_empty_patterns() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+
+        // Empty patterns should not match
+        assert!(!check_meta_patterns("generator", &[], &meta_tags));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_regex_in_patterns() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress 5.0".to_string());
+
+        // Patterns can contain regex
+        assert!(check_meta_patterns(
+            "generator",
+            &["^WordPress".to_string()],
+            &meta_tags
+        ));
+    }
+}
