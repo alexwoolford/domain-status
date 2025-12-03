@@ -41,8 +41,15 @@ pub async fn print_and_save_final_statistics(
 }
 
 /// Prints timing statistics if enabled.
-pub fn print_timing_statistics(timing_stats: &Arc<TimingStats>) {
-    timing_stats.log_summary();
+///
+/// Optionally accepts flags to indicate whether GeoIP and WHOIS are enabled,
+/// which will be displayed in the output when these features are disabled.
+pub fn print_timing_statistics(
+    timing_stats: &Arc<TimingStats>,
+    geoip_enabled: Option<bool>,
+    whois_enabled: Option<bool>,
+) {
+    timing_stats.log_summary(geoip_enabled, whois_enabled);
 }
 
 /// Prints error, warning, and info statistics to the log.

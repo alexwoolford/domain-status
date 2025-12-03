@@ -11,6 +11,7 @@
 
 pub mod enrichment;
 pub mod failure;
+mod record;
 mod run;
 pub mod url;
 mod utils;
@@ -21,5 +22,6 @@ pub use enrichment::{
     insert_structured_data, insert_whois_data,
 };
 pub use failure::{insert_url_failure, insert_url_partial_failure};
+pub use record::insert_batch_record;
 pub use run::{insert_run_metadata, update_run_stats};
 pub use url::insert_url_record;

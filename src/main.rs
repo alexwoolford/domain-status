@@ -24,7 +24,7 @@ use utils::*;
 
 use crate::error_handling::{ErrorType, ProcessingStats};
 use crate::fetch::ProcessingContext;
-use crate::storage::{record_url_failure, start_batch_writer, BatchConfig};
+use crate::storage::record_url_failure;
 use crate::utils::ProcessUrlResult;
 
 mod adaptive_rate_limiter;
@@ -220,27 +220,8 @@ async fn main() -> Result<()> {
     .await
     .context("Failed to insert run metadata")?;
 
-    // Start batch writer for efficient database writes
-    let batch_config = BatchConfig {
-        batch_size: BATCH_SIZE,
-        flush_interval_secs: BATCH_FLUSH_INTERVAL_SECS,
-    };
-    // Initialize batch write counters for status server
-    let batch_write_successes = Arc::new(AtomicUsize::new(0));
-    let batch_write_failures = Arc::new(AtomicUsize::new(0));
-
-    // Clone the pool for the batch writer (Arc<SqlitePool> -> SqlitePool via deref)
-    let pool_for_batch = (*pool).clone();
-    let (batch_sender, batch_writer_handle) = start_batch_writer(
-        pool_for_batch,
-        batch_config,
-        Some(Arc::clone(&batch_write_successes)),
-        Some(Arc::clone(&batch_write_failures)),
-    );
-    info!(
-        "Batch writer started (batch_size={}, flush_interval={}s)",
-        BATCH_SIZE, BATCH_FLUSH_INTERVAL_SECS
-    );
+    // Records are now written directly to the database (no batching)
+    // SQLite WAL mode handles concurrent writes efficiently
 
     // Start time for measuring elapsed time during processing
     let start_time = std::time::Instant::now();
@@ -269,8 +250,6 @@ async fn main() -> Result<()> {
             failed_urls: Arc::clone(&failed_urls),
             start_time: Arc::clone(&start_time_arc),
             error_stats: error_stats.clone(),
-            batch_write_successes: Arc::clone(&batch_write_successes),
-            batch_write_failures: Arc::clone(&batch_write_failures),
         };
         tokio::spawn(async move {
             if let Err(e) = status_server::start_status_server(port, status_state).await {
@@ -288,7 +267,6 @@ async fn main() -> Result<()> {
         Arc::clone(&resolver),
         error_stats.clone(),
         Some(run_id.clone()),
-        Some(batch_sender.clone()),
         opt.enable_whois,
         Arc::clone(&db_circuit_breaker),
         Arc::clone(&pool),
@@ -514,14 +492,7 @@ async fn main() -> Result<()> {
     while (tasks.next().await).is_some() {}
 
     // Shutdown gracefully
-    shutdown_gracefully(
-        cancel,
-        logging_task,
-        rate_limiter_shutdown,
-        batch_sender,
-        batch_writer_handle,
-    )
-    .await;
+    shutdown_gracefully(cancel, logging_task, rate_limiter_shutdown).await;
 
     // Log one final time before printing the error summary
     log_progress(start_time, &completed_urls);
@@ -539,7 +510,9 @@ async fn main() -> Result<()> {
 
     // Print timing statistics if enabled
     if opt.show_timing {
-        print_timing_statistics(&timing_stats);
+        // Check if GeoIP is enabled (database is loaded)
+        let geoip_enabled = geoip::is_enabled();
+        print_timing_statistics(&timing_stats, Some(geoip_enabled), Some(opt.enable_whois));
     }
 
     Ok(())

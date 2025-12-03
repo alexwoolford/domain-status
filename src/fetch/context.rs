@@ -7,11 +7,9 @@
 use hickory_resolver::TokioAsyncResolver;
 use publicsuffix::List;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use crate::error_handling::ProcessingStats;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
-use crate::storage::BatchRecord;
 use crate::utils::TimingStats;
 use sqlx::SqlitePool;
 
@@ -33,8 +31,6 @@ pub struct ProcessingContext {
     pub error_stats: Arc<ProcessingStats>,
     /// Unique identifier for this run (for time-series tracking)
     pub run_id: Option<String>,
-    /// Batch writer sender for queuing records
-    pub batch_sender: Option<mpsc::Sender<BatchRecord>>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
     /// Circuit breaker for database write operations
@@ -55,7 +51,6 @@ impl ProcessingContext {
         resolver: Arc<TokioAsyncResolver>,
         error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
-        batch_sender: Option<mpsc::Sender<BatchRecord>>,
         enable_whois: bool,
         db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
         pool: Arc<SqlitePool>,
@@ -68,7 +63,6 @@ impl ProcessingContext {
             resolver,
             error_stats,
             run_id,
-            batch_sender,
             enable_whois,
             db_circuit_breaker,
             pool,

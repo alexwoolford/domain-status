@@ -12,7 +12,7 @@ mod types;
 
 // Re-export public API
 pub use init::init_geoip;
-pub use lookup::lookup_ip;
+pub use lookup::{is_enabled, lookup_ip};
 pub use types::{GeoIpMetadata, GeoIpResult};
 
 use maxminddb::Reader;
