@@ -94,17 +94,11 @@ impl BatchWriter {
     }
 
     /// Inserts all enrichment data for a record.
-    async fn insert_enrichment_data(
-        pool: &SqlitePool,
-        url_status_id: i64,
-        record: BatchRecord,
-    ) {
+    async fn insert_enrichment_data(pool: &SqlitePool, url_status_id: i64, record: BatchRecord) {
         // Insert partial failures (DNS/TLS errors that didn't prevent processing)
         for mut partial_failure in record.partial_failures {
             partial_failure.url_status_id = url_status_id;
-            if let Err(e) =
-                insert::insert_url_partial_failure(pool, &partial_failure).await
-            {
+            if let Err(e) = insert::insert_url_partial_failure(pool, &partial_failure).await {
                 log::warn!(
                     "Failed to insert partial failure for url_status_id {}: {}",
                     url_status_id,
@@ -116,8 +110,7 @@ impl BatchWriter {
         // Insert GeoIP data if available
         if let Some((ip_address, geoip_result)) = &record.geoip {
             if let Err(e) =
-                insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result)
-                    .await
+                insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result).await
             {
                 log::warn!("Failed to insert GeoIP data for {}: {}", ip_address, e);
             }
@@ -126,8 +119,7 @@ impl BatchWriter {
         // Insert structured data if available
         if let Some(structured_data) = &record.structured_data {
             if let Err(e) =
-                insert::insert_structured_data(pool, url_status_id, structured_data)
-                    .await
+                insert::insert_structured_data(pool, url_status_id, structured_data).await
             {
                 log::warn!(
                     "Failed to insert structured data for url_status_id {}: {}",
@@ -139,12 +131,9 @@ impl BatchWriter {
 
         // Insert social media links if available
         if !record.social_media_links.is_empty() {
-            if let Err(e) = insert::insert_social_media_links(
-                pool,
-                url_status_id,
-                &record.social_media_links,
-            )
-            .await
+            if let Err(e) =
+                insert::insert_social_media_links(pool, url_status_id, &record.social_media_links)
+                    .await
             {
                 log::warn!(
                     "Failed to insert social media links for url_status_id {}: {}",
@@ -156,12 +145,9 @@ impl BatchWriter {
 
         // Insert security warnings if available
         if !record.security_warnings.is_empty() {
-            if let Err(e) = insert::insert_security_warnings(
-                pool,
-                url_status_id,
-                &record.security_warnings,
-            )
-            .await
+            if let Err(e) =
+                insert::insert_security_warnings(pool, url_status_id, &record.security_warnings)
+                    .await
             {
                 log::warn!(
                     "Failed to insert security warnings for url_status_id {}: {}",
@@ -173,9 +159,7 @@ impl BatchWriter {
 
         // Insert WHOIS data if available
         if let Some(ref whois_result) = record.whois {
-            if let Err(e) =
-                insert::insert_whois_data(pool, url_status_id, whois_result).await
-            {
+            if let Err(e) = insert::insert_whois_data(pool, url_status_id, whois_result).await {
                 log::warn!(
                     "Failed to insert WHOIS data for url_status_id {}: {}",
                     url_status_id,
@@ -187,8 +171,7 @@ impl BatchWriter {
         // Insert analytics IDs if available
         if !record.analytics_ids.is_empty() {
             if let Err(e) =
-                insert::insert_analytics_ids(pool, url_status_id, &record.analytics_ids)
-                    .await
+                insert::insert_analytics_ids(pool, url_status_id, &record.analytics_ids).await
             {
                 log::warn!(
                     "Failed to insert analytics IDs for url_status_id {}: {}",

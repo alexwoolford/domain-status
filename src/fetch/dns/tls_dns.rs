@@ -38,7 +38,7 @@ pub(crate) async fn fetch_tls_and_dns(
 ) -> Result<(TlsDnsResult, (u64, u64, u64)), Error> {
     // Run TLS and DNS operations in parallel (they're independent)
     let tls_start = Instant::now();
-    
+
     let (tls_result, dns_result) = tokio::join!(
         // TLS certificate extraction (only for HTTPS)
         async {
@@ -64,7 +64,7 @@ pub(crate) async fn fetch_tls_and_dns(
             let forward_start = Instant::now();
             let ip_result = resolve_host_to_ip(host, resolver).await;
             let forward_ms = duration_to_ms(forward_start.elapsed());
-            
+
             let reverse_start = Instant::now();
             let result = match ip_result {
                 Ok(ip) => {
@@ -80,10 +80,12 @@ pub(crate) async fn fetch_tls_and_dns(
             result
         }
     );
-    
+
     let tls_handshake_ms = duration_to_ms(tls_start.elapsed());
     let (dns_result, dns_forward_ms, dns_reverse_ms) = match dns_result {
-        Ok((ip, reverse_dns, forward_ms, reverse_ms)) => (Ok((ip, reverse_dns)), forward_ms, reverse_ms),
+        Ok((ip, reverse_dns, forward_ms, reverse_ms)) => {
+            (Ok((ip, reverse_dns)), forward_ms, reverse_ms)
+        }
         Err((e, forward_ms, reverse_ms)) => (Err(e), forward_ms, reverse_ms),
     };
 

@@ -130,27 +130,85 @@ impl TimingStats {
         log::info!("=== Timing Metrics Summary ({} URLs) ===", count);
         log::info!("Average times per URL:");
         let percentage = |part: u64, total: u64| -> f64 {
-            if total == 0 { 0.0 } else { part as f64 / total as f64 * 100.0 }
+            if total == 0 {
+                0.0
+            } else {
+                part as f64 / total as f64 * 100.0
+            }
         };
-        log::info!("  HTTP Request:        {:>6} ms ({:.1}%)", avg.http_request_ms, percentage(avg.http_request_ms, avg.total_ms));
-        log::info!("  DNS Forward:         {:>6} ms ({:.1}%)", avg.dns_forward_ms, percentage(avg.dns_forward_ms, avg.total_ms));
-        log::info!("  DNS Reverse:         {:>6} ms ({:.1}%)", avg.dns_reverse_ms, percentage(avg.dns_reverse_ms, avg.total_ms));
-        log::info!("  DNS Additional:      {:>6} ms ({:.1}%)", avg.dns_additional_ms, percentage(avg.dns_additional_ms, avg.total_ms));
-        log::info!("  TLS Handshake:       {:>6} ms ({:.1}%)", avg.tls_handshake_ms, percentage(avg.tls_handshake_ms, avg.total_ms));
-        log::info!("  HTML Parsing:        {:>6} ms ({:.1}%)", avg.html_parsing_ms, percentage(avg.html_parsing_ms, avg.total_ms));
-        log::info!("  Tech Detection:      {:>6} ms ({:.1}%)", avg.tech_detection_ms, percentage(avg.tech_detection_ms, avg.total_ms));
-        log::info!("  GeoIP Lookup:        {:>6} ms ({:.1}%)", avg.geoip_lookup_ms, percentage(avg.geoip_lookup_ms, avg.total_ms));
-        log::info!("  WHOIS Lookup:        {:>6} ms ({:.1}%)", avg.whois_lookup_ms, percentage(avg.whois_lookup_ms, avg.total_ms));
-        log::info!("  Security Analysis:   {:>6} ms ({:.1}%)", avg.security_analysis_ms, percentage(avg.security_analysis_ms, avg.total_ms));
-        let other_ms = avg.total_ms.saturating_sub(
-            avg.http_request_ms + avg.dns_forward_ms + avg.dns_reverse_ms + 
-            avg.dns_additional_ms + avg.tls_handshake_ms + avg.html_parsing_ms + 
-            avg.tech_detection_ms + avg.geoip_lookup_ms + avg.whois_lookup_ms + 
-            avg.security_analysis_ms
+        log::info!(
+            "  HTTP Request:        {:>6} ms ({:.1}%)",
+            avg.http_request_ms,
+            percentage(avg.http_request_ms, avg.total_ms)
         );
-        log::info!("  Other/Overhead:      {:>6} ms ({:.1}%)", other_ms, percentage(other_ms, avg.total_ms));
+        log::info!(
+            "  DNS Forward:         {:>6} ms ({:.1}%)",
+            avg.dns_forward_ms,
+            percentage(avg.dns_forward_ms, avg.total_ms)
+        );
+        log::info!(
+            "  DNS Reverse:         {:>6} ms ({:.1}%)",
+            avg.dns_reverse_ms,
+            percentage(avg.dns_reverse_ms, avg.total_ms)
+        );
+        log::info!(
+            "  DNS Additional:      {:>6} ms ({:.1}%)",
+            avg.dns_additional_ms,
+            percentage(avg.dns_additional_ms, avg.total_ms)
+        );
+        log::info!(
+            "  TLS Handshake:       {:>6} ms ({:.1}%)",
+            avg.tls_handshake_ms,
+            percentage(avg.tls_handshake_ms, avg.total_ms)
+        );
+        log::info!(
+            "  HTML Parsing:        {:>6} ms ({:.1}%)",
+            avg.html_parsing_ms,
+            percentage(avg.html_parsing_ms, avg.total_ms)
+        );
+        log::info!(
+            "  Tech Detection:      {:>6} ms ({:.1}%)",
+            avg.tech_detection_ms,
+            percentage(avg.tech_detection_ms, avg.total_ms)
+        );
+        log::info!(
+            "  GeoIP Lookup:        {:>6} ms ({:.1}%)",
+            avg.geoip_lookup_ms,
+            percentage(avg.geoip_lookup_ms, avg.total_ms)
+        );
+        log::info!(
+            "  WHOIS Lookup:        {:>6} ms ({:.1}%)",
+            avg.whois_lookup_ms,
+            percentage(avg.whois_lookup_ms, avg.total_ms)
+        );
+        log::info!(
+            "  Security Analysis:   {:>6} ms ({:.1}%)",
+            avg.security_analysis_ms,
+            percentage(avg.security_analysis_ms, avg.total_ms)
+        );
+        let other_ms = avg.total_ms.saturating_sub(
+            avg.http_request_ms
+                + avg.dns_forward_ms
+                + avg.dns_reverse_ms
+                + avg.dns_additional_ms
+                + avg.tls_handshake_ms
+                + avg.html_parsing_ms
+                + avg.tech_detection_ms
+                + avg.geoip_lookup_ms
+                + avg.whois_lookup_ms
+                + avg.security_analysis_ms,
+        );
+        log::info!(
+            "  Other/Overhead:      {:>6} ms ({:.1}%)",
+            other_ms,
+            percentage(other_ms, avg.total_ms)
+        );
         log::info!("  Total:               {:>6} ms", avg.total_ms);
-        log::info!("Total time across all URLs: {} ms ({:.2} seconds)", total_sum, total_sum as f64 / 1000.0);
+        log::info!(
+            "Total time across all URLs: {} ms ({:.2} seconds)",
+            total_sum,
+            total_sum as f64 / 1000.0
+        );
     }
 }
 
@@ -158,4 +216,3 @@ impl TimingStats {
 pub fn duration_to_ms(duration: Duration) -> u64 {
     duration.as_millis() as u64
 }
-

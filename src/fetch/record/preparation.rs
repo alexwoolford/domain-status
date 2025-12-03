@@ -23,9 +23,9 @@ pub async fn prepare_record_for_insertion(
     timestamp: i64,
     ctx: &crate::fetch::ProcessingContext,
 ) -> (BatchRecord, (u64, u64, u64, u64)) {
-    use std::time::Instant;
     use crate::utils::duration_to_ms;
-    
+    use std::time::Instant;
+
     // Detect technologies
     let tech_start = Instant::now();
     let technologies_vec = detect_technologies_safely(html_data, resp_data, &ctx.error_stats).await;
@@ -48,7 +48,7 @@ pub async fn prepare_record_for_insertion(
     let geoip_data = crate::geoip::lookup_ip(&tls_dns_data.ip_address)
         .map(|result| (tls_dns_data.ip_address.clone(), result));
     let geoip_lookup_ms = duration_to_ms(geoip_start.elapsed());
-    
+
     let security_start = Instant::now();
     let security_warnings = crate::security::analyze_security(
         &resp_data.final_url,
@@ -56,10 +56,13 @@ pub async fn prepare_record_for_insertion(
         &resp_data.security_headers,
     );
     let security_analysis_ms = duration_to_ms(security_start.elapsed());
-    
+
     let whois_start = Instant::now();
     let whois_data = if ctx.enable_whois {
-        log::info!("Performing WHOIS lookup for domain: {}", resp_data.final_domain);
+        log::info!(
+            "Performing WHOIS lookup for domain: {}",
+            resp_data.final_domain
+        );
         match crate::whois::lookup_whois(&resp_data.final_domain, None).await {
             Ok(Some(whois_result)) => {
                 log::info!(
@@ -72,7 +75,10 @@ pub async fn prepare_record_for_insertion(
                 Some(whois_result)
             }
             Ok(None) => {
-                log::info!("WHOIS lookup returned no data for {}", resp_data.final_domain);
+                log::info!(
+                    "WHOIS lookup returned no data for {}",
+                    resp_data.final_domain
+                );
                 None
             }
             Err(e) => {
@@ -83,7 +89,11 @@ pub async fn prepare_record_for_insertion(
     } else {
         None
     };
-    let whois_lookup_ms = if ctx.enable_whois { duration_to_ms(whois_start.elapsed()) } else { 0 };
+    let whois_lookup_ms = if ctx.enable_whois {
+        duration_to_ms(whois_start.elapsed())
+    } else {
+        0
+    };
 
     // Build batch record
     let batch_record = build_batch_record(
@@ -100,6 +110,14 @@ pub async fn prepare_record_for_insertion(
         timestamp,
         &ctx.run_id,
     );
-    
-    (batch_record, (tech_detection_ms, geoip_lookup_ms, whois_lookup_ms, security_analysis_ms))
+
+    (
+        batch_record,
+        (
+            tech_detection_ms,
+            geoip_lookup_ms,
+            whois_lookup_ms,
+            security_analysis_ms,
+        ),
+    )
 }

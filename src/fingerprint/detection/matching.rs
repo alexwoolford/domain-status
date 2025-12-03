@@ -160,7 +160,10 @@ pub(crate) async fn matches_technology(
         let key = format!("{}:{}", js_property, pattern);
         if let Some(&found) = js_property_results.get(&key) {
             if found {
-                log::info!("Technology matched via JS property '{}' (from batch)", js_property);
+                log::info!(
+                    "Technology matched via JS property '{}' (from batch)",
+                    js_property
+                );
                 return true;
             }
             continue; // Property not found in batch, skip to next
@@ -169,7 +172,10 @@ pub(crate) async fn matches_technology(
         // Fallback to individual check if not in batch results (shouldn't happen, but safety)
         if !all_script_content.trim().is_empty() {
             if check_js_property_async(all_script_content, js_property, pattern).await {
-                log::info!("Technology matched via JS property '{}' (individual check)", js_property);
+                log::info!(
+                    "Technology matched via JS property '{}' (individual check)",
+                    js_property
+                );
                 return true;
             }
         }

@@ -49,7 +49,8 @@ mod utils;
 mod whois;
 
 use app::{
-    log_progress, print_and_save_final_statistics, print_timing_statistics, shutdown_gracefully, validate_and_normalize_url,
+    log_progress, print_and_save_final_statistics, print_timing_statistics, shutdown_gracefully,
+    validate_and_normalize_url,
 };
 
 #[tokio::main]

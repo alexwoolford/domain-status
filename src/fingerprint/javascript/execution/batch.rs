@@ -123,4 +123,3 @@ pub(crate) fn check_js_properties_batch(
 
     Ok(results)
 }
-
