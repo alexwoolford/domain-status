@@ -6,6 +6,11 @@ Cargo.lock
 *.db-shm
 *.db-wal
 
+# Coverage reports
+coverage/
+*.xml
+tarpaulin-report.html
+
 # Fingerprint cache files (runtime data, not source code)
 .fingerprints_cache/*
 !.fingerprints_cache/.gitkeep
@@ -29,11 +34,14 @@ Cargo.lock
 *_REVIEW.md
 *_PLAN.md
 *_ASSESSMENT.md
+*_ANALYSIS.md
 ARCHITECTURE_EXAMPLE.md
 ARCHITECTURE_PLAN.md
 CODE_REVIEW.md
 QUALITY_ASSESSMENT.md
 TECHNICAL_DEBT_REVIEW.md
+PROJECT_QUALITY_REVIEW.md
+PERFORMANCE_SETTINGS_ANALYSIS.md
 
 wappalyzergo/
 

@@ -1,6 +1,7 @@
 # domain_status
 
 [![CI](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/alexwoolford/domain_status/branch/main/graph/badge.svg)](https://codecov.io/gh/alexwoolford/domain_status)
 
 **domain_status** is a Rust-based tool designed for high-performance concurrent checking of URL statuses and redirections. Built with async/await (Tokio), it processes URLs efficiently while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains.
 
@@ -16,6 +17,7 @@
 - [Performance](#-performance--scalability)
 - [Technical Details](#-technical-details)
 - [Architecture](#-architecture)
+- [Development](#-development)
 - [License](#-license)
 
 ## 🚀 Quick Start
@@ -144,8 +146,7 @@ curl http://127.0.0.1:8080/status | jq
   "rate_per_second": 1.52,
   "errors": { "total": 17, "timeout": 0, "connection_error": 0, "http_error": 3, "dns_error": 14, "tls_error": 0, "parse_error": 0, "other_error": 0 },
   "warnings": { "total": 104, "missing_meta_keywords": 77, "missing_meta_description": 25, "missing_title": 2 },
-  "info": { "total": 64, "http_redirect": 55, "https_redirect": 0, "bot_detection_403": 3, "multiple_redirects": 6 },
-  "batch_writes": { "total_successful": 83, "total_failed": 0 }
+  "info": { "total": 64, "http_redirect": 55, "https_redirect": 0, "bot_detection_403": 3, "multiple_redirects": 6 }
 }
 ```
 
@@ -289,14 +290,14 @@ Average times per URL:
 **domain_status** follows a pipeline architecture:
 
 ```
-Input File → URL Validation → Concurrent Processing → Data Extraction → Batch Storage → SQLite Database
+Input File → URL Validation → Concurrent Processing → Data Extraction → Direct Database Writes → SQLite Database
 ```
 
 **Core Components:**
 1. **Main Orchestrator**: Reads URLs, validates, normalizes, manages concurrency
 2. **HTTP Request Handler**: Fetches URLs, follows redirects, extracts response data
-3. **Data Extraction**: Parses HTML, detects technologies, queries DNS/TLS/GeoIP/WHOIS
-4. **Batch Writer**: Buffers and flushes records to database
+3. **Data Extraction**: Parses HTML, detects technologies, queries DNS/TLS/GeoIP/WHOIS (parallelized where possible)
+4. **Database Writer**: Direct writes to SQLite (WAL mode handles concurrency efficiently)
 5. **Error Handling**: Categorizes errors, implements retries with exponential backoff
 6. **Rate Limiting**: Token-bucket algorithm with adaptive adjustment
 
@@ -304,15 +305,16 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 - Async runtime: Tokio
 - Concurrency control: Semaphore limits concurrent tasks
 - Rate limiting: Token-bucket with adaptive adjustment
-- Background tasks: Batch writer, status server (optional), adaptive rate limiter
+- Background tasks: Status server (optional), adaptive rate limiter
 - Graceful shutdown: All background tasks cancellable via `CancellationToken`
+- Parallel execution: Technology detection and DNS/TLS fetching run in parallel (independent operations)
 
 **Performance Characteristics:**
 - Non-blocking I/O for all network operations
 - Shared resources (HTTP client, DNS resolver, database pool) across tasks
 - Bounded concurrency prevents resource exhaustion
-- Batch writing reduces database write overhead
-- Memory efficiency: Response bodies limited to 50KB for HTML parsing
+- Direct database writes with SQLite WAL mode (efficient concurrent writes)
+- Memory efficiency: Response bodies limited to 2MB, HTML text extraction limited to 50KB
 
 ## License
 
