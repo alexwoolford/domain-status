@@ -1,4 +1,4 @@
-//! Domain module tests.
+/// Domain module tests.
 
 use super::*;
 use publicsuffix::List;

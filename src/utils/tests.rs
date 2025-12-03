@@ -1,6 +1,5 @@
-//! Utils module tests.
+/// Utils module tests.
 
-use super::*;
 use anyhow::Error;
 
 use crate::utils::retry::is_retriable_error;

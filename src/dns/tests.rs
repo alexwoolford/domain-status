@@ -1,5 +1,4 @@
-//! DNS module tests.
-
+/// DNS module tests.
 use super::*;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use std::time::Duration;
