@@ -39,4 +39,3 @@ pub fn extract_dmarc_record(txt_records: &[String]) -> Option<String> {
         .find(|txt| txt.trim().starts_with("v=DMARC1"))
         .map(|s| s.trim().to_string())
 }
-

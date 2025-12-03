@@ -62,4 +62,3 @@ pub async fn init_redirect_client(opt: &Opt) -> Result<Arc<reqwest::Client>, req
         .build()?;
     Ok(Arc::new(client))
 }
-

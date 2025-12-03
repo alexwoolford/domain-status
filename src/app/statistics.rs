@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 
-use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::database;
+use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
+use crate::utils::TimingStats;
 
 /// Prints final statistics and updates the database with run statistics.
 pub async fn print_and_save_final_statistics(
@@ -37,6 +38,11 @@ pub async fn print_and_save_final_statistics(
     print_error_statistics(error_stats);
 
     Ok(())
+}
+
+/// Prints timing statistics if enabled.
+pub fn print_timing_statistics(timing_stats: &Arc<TimingStats>) {
+    timing_stats.log_summary();
 }
 
 /// Prints error, warning, and info statistics to the log.
@@ -75,4 +81,3 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
         }
     }
 }
-

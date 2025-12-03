@@ -13,7 +13,10 @@
 /// If serialization fails, logs a warning and returns an empty JSON object `"{}"`.
 pub(crate) fn serialize_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|e| {
-        log::warn!("Failed to serialize value to JSON: {}. Using default: {{}}", e);
+        log::warn!(
+            "Failed to serialize value to JSON: {}. Using default: {{}}",
+            e
+        );
         "{}".to_string()
     })
 }
@@ -32,8 +35,11 @@ pub(crate) fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 /// If serialization fails, logs a warning and returns the provided default.
 pub(crate) fn serialize_json_with_default<T: serde::Serialize>(value: &T, default: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|e| {
-        log::warn!("Failed to serialize value to JSON: {}. Using default: {}", e, default);
+        log::warn!(
+            "Failed to serialize value to JSON: {}. Using default: {}",
+            e,
+            default
+        );
         default.to_string()
     })
 }
-

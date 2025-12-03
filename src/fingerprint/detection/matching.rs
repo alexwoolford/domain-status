@@ -81,6 +81,7 @@ pub(crate) async fn matches_technology(
     html_text: &str,
     url: &str,
     script_tag_ids: &HashSet<String>, // Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
+    js_property_results: &HashMap<String, bool>, // Batch JS property check results
 ) -> bool {
     // Match headers (header_name is already normalized to lowercase in ruleset)
     for (header_name, pattern) in &tech.headers {
@@ -136,7 +137,7 @@ pub(crate) async fn matches_technology(
     }
 
     // Match JavaScript object properties (js field)
-    // Execute JavaScript to check for properties, matching Golang Wappalyzer behavior
+    // Use batch results if available, otherwise fall back to individual checks
     // Note: This is the slowest check, so it's done last (after all fast checks)
     if !tech.js.is_empty() {
         log::debug!(
@@ -154,37 +155,25 @@ pub(crate) async fn matches_technology(
             return true;
         }
 
-        // Try JavaScript execution for window properties
-        // Following WappalyzerGo's approach: execute scripts and check for global variables
-        if !all_script_content.trim().is_empty() {
-            // Log for debugging New Relic specifically
-            if js_property == "NREUM" || js_property == "newrelic" {
-                log::debug!(
-                    "Checking for New Relic property '{}' with {} bytes of script content",
-                    js_property,
-                    all_script_content.len()
-                );
-            }
-            if check_js_property_async(all_script_content, js_property, pattern).await {
-                log::info!("Technology matched via JS property '{}'", js_property);
+        // Check batch results first (much faster)
+        // Batch results use composite key (property:pattern)
+        let key = format!("{}:{}", js_property, pattern);
+        if let Some(&found) = js_property_results.get(&key) {
+            if found {
+                log::info!("Technology matched via JS property '{}' (from batch)", js_property);
                 return true;
-            } else {
-                // Log when property check fails for debugging
-                if js_property == "NREUM" || js_property == "newrelic" {
-                    log::debug!(
-                        "New Relic property '{}' not found after JavaScript execution",
-                        js_property
-                    );
-                }
             }
-        } else {
-            log::debug!(
-                "Skipping JS property check for '{}' - no script content available",
-                js_property
-            );
+            continue; // Property not found in batch, skip to next
+        }
+
+        // Fallback to individual check if not in batch results (shouldn't happen, but safety)
+        if !all_script_content.trim().is_empty() {
+            if check_js_property_async(all_script_content, js_property, pattern).await {
+                log::info!("Technology matched via JS property '{}' (individual check)", js_property);
+                return true;
+            }
         }
     }
 
     false
 }
-

@@ -1,7 +1,7 @@
 //! JavaScript property checking logic.
 
 /// Builds the property access expression for checking property existence.
-pub(crate) fn build_property_expression(js_property: &str) -> (String, String) {
+pub fn build_property_expression(js_property: &str) -> (String, String) {
     // Handle both simple properties (e.g., "jQuery") and property paths (e.g., "window.React" or ".__NEXT_DATA__.nextExport")
     let property_expr = if js_property.starts_with('.') {
         // Property path starting with dot (e.g., ".__NEXT_DATA__.nextExport")
@@ -38,7 +38,7 @@ pub(crate) fn build_property_expression(js_property: &str) -> (String, String) {
 }
 
 /// Builds the pattern check code for property value matching.
-pub(crate) fn build_pattern_check(pattern: &str) -> String {
+pub fn build_pattern_check(pattern: &str) -> String {
     if pattern.is_empty() {
         "return true;".to_string()
     } else if pattern == "true" {
@@ -57,7 +57,7 @@ pub(crate) fn build_pattern_check(pattern: &str) -> String {
 }
 
 /// Builds the property check code for execution.
-pub(crate) fn build_property_check_code(
+pub fn build_property_check_code(
     js_property: &str,
     property_expr: &str,
     global_property_expr: &str,
@@ -136,4 +136,3 @@ pub(crate) fn build_property_check_code(
         )
     }
 }
-

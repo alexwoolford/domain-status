@@ -107,4 +107,3 @@ pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error)
     let error_type = categorize_reqwest_error(error);
     stats.increment_error(error_type);
 }
-

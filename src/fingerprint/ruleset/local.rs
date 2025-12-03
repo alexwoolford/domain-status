@@ -47,4 +47,3 @@ pub(crate) async fn load_from_path(path: &Path) -> Result<HashMap<String, Techno
         Ok(technologies)
     }
 }
-

@@ -86,9 +86,9 @@ pub struct Opt {
 
     /// Maximum concurrent requests
     ///
-    /// Lower default (20) reduces bot detection risk with Cloudflare and similar services.
+    /// Increased default from 20 to 30 for better throughput while maintaining low bot detection risk.
     /// High concurrency can trigger rate limiting even with low RPS.
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = 30)]
     pub max_concurrency: usize,
 
     /// Per-request timeout in seconds
@@ -108,11 +108,11 @@ pub struct Opt {
     /// Rate limiting automatically adjusts based on error rates:
     /// - Starts at this RPS value
     /// - Reduces by 50% when error rate exceeds threshold (default: 20%)
-    /// - Increases by 10% when error rate is below threshold
-    /// - Minimum RPS: 1, Maximum RPS: this initial value
+    /// - Increases by 15% when error rate is below threshold
+    /// - Minimum RPS: 1, Maximum RPS: 2x this initial value (allows system to adapt to good conditions)
     ///
     /// Set to 0 to disable rate limiting (not recommended for production).
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 15)]
     pub rate_limit_rps: u32,
 
     /// Error rate threshold for adaptive rate limiting (0.0-1.0, default: 0.2 = 20%)
@@ -167,5 +167,19 @@ pub struct Opt {
     /// Enable only when domain age/registrar information is needed.
     #[arg(long)]
     pub enable_whois: bool,
-}
 
+    /// Show detailed timing metrics at the end of the run
+    ///
+    /// When enabled, displays a breakdown of time spent in each operation:
+    /// - HTTP requests
+    /// - DNS lookups
+    /// - TLS handshakes
+    /// - Technology detection
+    /// - HTML parsing
+    /// - Enrichment operations
+    ///
+    /// Useful for performance analysis and identifying bottlenecks.
+    /// Disabled by default to reduce output noise.
+    #[arg(long)]
+    pub show_timing: bool,
+}

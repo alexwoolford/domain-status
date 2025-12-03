@@ -113,4 +113,3 @@ pub(crate) fn strip_js_comments_and_strings(code: &str) -> String {
 
     result
 }
-

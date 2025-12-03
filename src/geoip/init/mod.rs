@@ -56,7 +56,8 @@ pub async fn init_geoip(
                     let metadata_file = cache_path.join("metadata.json");
 
                     // Check if cached version exists and is fresh
-                    let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await {
+                    let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await
+                    {
                         if let Ok(age) = metadata.last_updated.elapsed() {
                             age.as_secs() >= geoip::CACHE_TTL_SECS || !cache_file.exists()
                         } else {
@@ -75,7 +76,8 @@ pub async fn init_geoip(
                             .collect::<String>();
                         let download_url = format!(
                             "{}?edition_id=GeoLite2-City&license_key={}&suffix=tar.gz",
-                            geoip::MAXMIND_DOWNLOAD_BASE, encoded_key
+                            geoip::MAXMIND_DOWNLOAD_BASE,
+                            encoded_key
                         );
                         download_url
                     } else {
@@ -121,9 +123,10 @@ pub async fn init_geoip(
         };
 
         let reader_arc = Arc::new(reader);
-        *GEOIP_CITY_READER.write().map_err(|e| {
-            anyhow::anyhow!("GeoIP City writer lock poisoned: {}", e)
-        })? = Some((reader_arc, metadata.clone()));
+        *GEOIP_CITY_READER
+            .write()
+            .map_err(|e| anyhow::anyhow!("GeoIP City writer lock poisoned: {}", e))? =
+            Some((reader_arc, metadata.clone()));
         log::info!("GeoIP City database loaded successfully");
 
         // Try to initialize ASN database in background (non-blocking)
@@ -143,4 +146,3 @@ pub async fn init_geoip(
         Ok(reader.as_ref().map(|(_, metadata)| metadata.clone()))
     }
 }
-

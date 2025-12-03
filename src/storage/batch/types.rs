@@ -54,11 +54,10 @@ pub struct BatchRecord {
     pub technologies: Vec<String>,
     pub subject_alternative_names: Vec<String>, // Certificate SANs (for linking domains sharing certificates)
     pub analytics_ids: Vec<AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
-    pub geoip: Option<(String, GeoIpResult)>,          // (ip_address, geoip_result)
+    pub geoip: Option<(String, GeoIpResult)>, // (ip_address, geoip_result)
     pub structured_data: Option<StructuredData>,
     pub social_media_links: Vec<SocialMediaLink>,
     pub security_warnings: Vec<SecurityWarning>,
     pub whois: Option<WhoisResult>,
     pub partial_failures: Vec<UrlPartialFailureRecord>, // DNS/TLS errors that didn't prevent processing
 }
-

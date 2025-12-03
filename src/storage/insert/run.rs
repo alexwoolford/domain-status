@@ -75,4 +75,3 @@ pub async fn update_run_stats(
 
     Ok(())
 }
-

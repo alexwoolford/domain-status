@@ -78,7 +78,12 @@ pub async fn lookup_txt_records(
                 .filter_map(|rdata| {
                     if let RData::TXT(txt) = rdata {
                         // TXT records can contain multiple strings - join them
-                        Some(txt.iter().map(|bytes| String::from_utf8_lossy(bytes).to_string()).collect::<Vec<String>>().join(""))
+                        Some(
+                            txt.iter()
+                                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                                .collect::<Vec<String>>()
+                                .join(""),
+                        )
                     } else {
                         None
                     }
@@ -154,4 +159,3 @@ pub async fn lookup_mx_records(
         }
     }
 }
-

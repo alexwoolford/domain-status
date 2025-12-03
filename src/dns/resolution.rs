@@ -59,4 +59,3 @@ pub async fn reverse_dns_lookup(
         }
     }
 }
-

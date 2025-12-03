@@ -74,4 +74,3 @@ domain_status_info_total {}
 
     (StatusCode::OK, metrics).into_response()
 }
-

@@ -108,9 +108,7 @@ impl RequestHeaders {
 ///
 /// A map of header names to header values. Only headers that are present in the
 /// response are included in the map.
-pub fn extract_security_headers(
-    headers: &reqwest::header::HeaderMap,
-) -> HashMap<String, String> {
+pub fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
     crate::config::SECURITY_HEADERS
         .iter()
         .filter_map(|&header_name| {
@@ -156,4 +154,3 @@ pub fn extract_http_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Str
         })
         .collect()
 }
-

@@ -356,4 +356,3 @@ fn test_extract_dmarc_record_case_insensitive() {
     // This test verifies our implementation matches the spec
     assert_eq!(dmarc, None); // Our implementation is case-sensitive for "v=DMARC1"
 }
-

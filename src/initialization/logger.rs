@@ -93,4 +93,3 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 
     Ok(())
 }
-

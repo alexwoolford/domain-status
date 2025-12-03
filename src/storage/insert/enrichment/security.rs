@@ -40,4 +40,3 @@ pub async fn insert_security_warnings(
 
     Ok(())
 }
-

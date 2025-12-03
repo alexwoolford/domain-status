@@ -79,4 +79,3 @@ pub async fn insert_structured_data(
 
     Ok(())
 }
-

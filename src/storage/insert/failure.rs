@@ -172,4 +172,3 @@ pub async fn insert_url_partial_failure(
 
     Ok(partial_failure_id)
 }
-

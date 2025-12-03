@@ -10,7 +10,7 @@ use anyhow::Result;
 use reqwest::header::HeaderMap;
 use std::collections::{HashMap, HashSet};
 
-use crate::fingerprint::javascript::fetch_and_combine_scripts;
+use crate::fingerprint::javascript::{check_js_properties_batch, fetch_and_combine_scripts};
 use crate::fingerprint::ruleset::get_ruleset;
 
 use matching::{apply_technology_exclusions, can_technology_match, matches_technology};
@@ -74,7 +74,78 @@ pub async fn detect_technologies(
     let has_scripts = !script_sources.is_empty();
     let has_script_content = !all_script_content.trim().is_empty();
 
-    // Match each technology
+    // Collect all JS properties that need to be checked (for batch execution)
+    // This avoids creating a new QuickJS context for each property check
+    let mut js_properties_to_check: Vec<(String, String)> = Vec::new();
+    let mut js_property_map: HashMap<String, Vec<String>> = HashMap::new(); // property -> list of tech names that need it
+    
+    for (tech_name, tech) in &ruleset.technologies {
+        // Early exit: skip technologies that can't match
+        if !can_technology_match(
+            tech,
+            has_cookies,
+            has_headers,
+            has_meta,
+            has_scripts,
+            has_script_content,
+            script_tag_ids,
+        ) {
+            continue;
+        }
+
+        // Collect JS properties for this technology
+        for (js_property, pattern) in &tech.js {
+            // Skip if already in script_tag_ids (fast check, no JS execution needed)
+            if script_tag_ids.contains(js_property) {
+                continue;
+            }
+            
+            // Add to batch list if not already present (deduplicate by property+pattern)
+            if !js_properties_to_check.iter().any(|(p, pat)| p == js_property && pat == pattern) {
+                js_properties_to_check.push((js_property.clone(), pattern.clone()));
+            }
+            
+            // Track which technologies need this property
+            js_property_map
+                .entry(js_property.clone())
+                .or_insert_with(Vec::new)
+                .push(tech_name.clone());
+        }
+    }
+
+    // Execute batch JS property check (if we have script content and properties to check)
+    let js_property_results: HashMap<String, bool> = if !all_script_content.trim().is_empty() && !js_properties_to_check.is_empty() {
+        log::debug!(
+            "Batch checking {} JS properties for {} technologies",
+            js_properties_to_check.len(),
+            js_property_map.len()
+        );
+        
+        // Run batch check in spawn_blocking with timeout (same as individual checks)
+        let script_content = all_script_content.clone();
+        let properties = js_properties_to_check.clone();
+        let timeout_duration = std::time::Duration::from_millis(crate::config::MAX_JS_EXECUTION_TIME_MS * 3); // 3x timeout for batch
+        
+        let handle = tokio::task::spawn_blocking(move || {
+            check_js_properties_batch(&script_content, &properties)
+        });
+        
+        match tokio::time::timeout(timeout_duration, handle).await {
+            Ok(Ok(results)) => results.unwrap_or_default(),
+            Ok(Err(e)) => {
+                log::debug!("Batch JS property check failed: {e}");
+                HashMap::new()
+            }
+            Err(_) => {
+                log::debug!("Batch JS property check timed out after {}ms", timeout_duration.as_millis());
+                HashMap::new()
+            }
+        }
+    } else {
+        HashMap::new()
+    };
+
+    // Match each technology (now using batch JS results)
     let mut detected = HashSet::new();
     for (tech_name, tech) in &ruleset.technologies {
         // Early exit: skip technologies that can't match
@@ -108,6 +179,7 @@ pub async fn detect_technologies(
             html_text,
             url,
             script_tag_ids,
+            &js_property_results, // Pass batch results
         )
         .await
         {
@@ -137,4 +209,3 @@ pub async fn get_technology_category(tech_name: &str) -> Option<String> {
     let first_cat_id = tech.cats.first()?;
     ruleset.categories.get(first_cat_id).cloned()
 }
-

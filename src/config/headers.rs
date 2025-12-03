@@ -73,4 +73,3 @@ pub const HTTP_HEADERS: &[&str] = &[
     HEADER_ETAG,
     HEADER_LAST_MODIFIED,
 ];
-

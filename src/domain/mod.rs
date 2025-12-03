@@ -183,4 +183,3 @@ pub fn extract_domain(list: &List, url: &str) -> Result<String> {
 mod tests {
     include!("tests.rs");
 }
-

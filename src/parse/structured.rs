@@ -175,4 +175,3 @@ fn extract_twitter_cards(document: &Html) -> HashMap<String, String> {
 
     twitter_tags
 }
-

@@ -5,7 +5,10 @@
 
 use log::debug;
 
-use crate::dns::{extract_dmarc_record, extract_spf_record, lookup_mx_records, lookup_ns_records, lookup_txt_records};
+use crate::dns::{
+    extract_dmarc_record, extract_spf_record, lookup_mx_records, lookup_ns_records,
+    lookup_txt_records,
+};
 use crate::fetch::utils::serialize_json;
 
 use super::types::{AdditionalDnsData, AdditionalDnsResult};
@@ -135,4 +138,3 @@ pub(crate) async fn fetch_additional_dns_records(
         partial_failures,
     }
 }
-

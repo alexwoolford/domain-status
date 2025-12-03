@@ -48,4 +48,3 @@ impl BatchWriter {
         self.last_flush.elapsed().as_secs() >= self.config.flush_interval_secs
     }
 }
-

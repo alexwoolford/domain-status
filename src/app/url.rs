@@ -93,4 +93,3 @@ mod tests {
         assert_eq!(result, Some("https://example.com:8080".to_string()));
     }
 }
-

@@ -41,4 +41,3 @@ pub struct AdditionalDnsResult {
     pub data: AdditionalDnsData,
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>, // (error_type, error_message)
 }
-

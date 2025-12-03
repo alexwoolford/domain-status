@@ -7,8 +7,10 @@ use axum::{
 };
 use std::sync::atomic::Ordering;
 
+use super::super::types::{
+    BatchWriteCounts, ErrorCounts, InfoCounts, StatusResponse, StatusState, WarningCounts,
+};
 use crate::error_handling::{ErrorType, InfoType, WarningType};
-use super::super::types::{BatchWriteCounts, ErrorCounts, InfoCounts, StatusState, StatusResponse, WarningCounts};
 
 /// JSON status endpoint with detailed progress information
 pub async fn status_handler(State(state): State<StatusState>) -> Response {
@@ -165,4 +167,3 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
 
     (StatusCode::OK, [("content-type", "application/json")], json).into_response()
 }
-

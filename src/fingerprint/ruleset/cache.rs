@@ -13,10 +13,7 @@ use crate::fingerprint::models::{FingerprintMetadata, FingerprintRuleset};
 const CACHE_DURATION: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Loads ruleset from cache if it exists and is fresh
-pub(crate) async fn load_from_cache(
-    cache_dir: &Path,
-    source: &str,
-) -> Result<FingerprintRuleset> {
+pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRuleset> {
     let metadata_path = cache_dir.join("metadata.json");
     let technologies_path = cache_dir.join("technologies.json");
     let categories_path = cache_dir.join("categories.json");
@@ -102,10 +99,7 @@ pub(crate) async fn load_from_cache(
 }
 
 /// Saves ruleset to cache
-pub(crate) async fn save_to_cache(
-    ruleset: &FingerprintRuleset,
-    cache_dir: &Path,
-) -> Result<()> {
+pub(crate) async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
 
     let metadata_path = cache_dir.join("metadata.json");
@@ -126,4 +120,3 @@ pub(crate) async fn save_to_cache(
 
     Ok(())
 }
-

@@ -102,4 +102,3 @@ pub(crate) fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32,
 
     None
 }
-

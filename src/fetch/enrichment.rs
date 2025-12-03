@@ -18,6 +18,7 @@ use std::collections::HashMap;
 /// # Returns
 ///
 /// A tuple of (geoip_data, security_warnings, whois_data).
+#[allow(dead_code)] // Kept for potential future use or reference
 pub(crate) async fn perform_enrichment_lookups(
     ip_address: &str,
     final_url: &str,
@@ -30,9 +31,11 @@ pub(crate) async fn perform_enrichment_lookups(
     Vec<crate::security::SecurityWarning>,
     Option<crate::whois::WhoisResult>,
 ) {
-    let geoip_data = crate::geoip::lookup_ip(ip_address).map(|result| (ip_address.to_string(), result));
+    let geoip_data =
+        crate::geoip::lookup_ip(ip_address).map(|result| (ip_address.to_string(), result));
 
-    let security_warnings = crate::security::analyze_security(final_url, tls_version, security_headers);
+    let security_warnings =
+        crate::security::analyze_security(final_url, tls_version, security_headers);
 
     let whois_data = if enable_whois {
         log::info!("Performing WHOIS lookup for domain: {}", final_domain);
@@ -62,4 +65,3 @@ pub(crate) async fn perform_enrichment_lookups(
 
     (geoip_data, security_warnings, whois_data)
 }
-

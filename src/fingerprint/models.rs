@@ -180,4 +180,3 @@ pub struct FingerprintRuleset {
     /// Metadata about the ruleset
     pub metadata: FingerprintMetadata,
 }
-

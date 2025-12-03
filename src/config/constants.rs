@@ -7,11 +7,16 @@ use std::time::Duration;
 
 // constants (used as defaults)
 #[allow(dead_code)]
-pub const SEMAPHORE_LIMIT: usize = 20;
+/// Maximum concurrent requests (semaphore limit)
+/// Increased from 20 to 30 for better throughput while maintaining low bot detection risk
+pub const SEMAPHORE_LIMIT: usize = 30;
 pub const LOGGING_INTERVAL: usize = 5;
 /// Per-URL processing timeout in seconds
-/// Increased from 30s to 45s to account for DNS, TLS, and HTTP operations
-pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(45);
+/// Set to 35s to allow for slow sites while still being reasonable
+/// Formula: HTTP timeout (10s) + DNS timeout (3s) + TCP/TLS timeouts (10s) + enrichment (5s) + buffer (7s) = ~35s
+/// Note: DNS timeout reduced to 3s helps fail fast on DNS issues, but overall timeout kept at 35s
+/// to account for enrichment operations (GeoIP, WHOIS, technology detection, etc.)
+pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(35);
 pub const DB_PATH: &str = "./url_checker.db";
 
 // Batch writing configuration
@@ -26,8 +31,9 @@ pub const CHANNEL_SIZE_MULTIPLIER: usize = 10;
 
 // Network operation timeouts
 /// DNS query timeout in seconds
-/// Increased from 5s to 10s to reduce timeout errors on TXT/NS/MX lookups
-pub const DNS_TIMEOUT_SECS: u64 = 10;
+/// Reduced to 3s - most DNS queries complete in <1s, 3s provides good buffer while failing fast
+/// This significantly reduces time wasted on slow/unresponsive DNS servers
+pub const DNS_TIMEOUT_SECS: u64 = 3;
 /// TCP connection timeout in seconds
 pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
 /// TLS handshake timeout in seconds
@@ -104,11 +110,14 @@ pub const MAX_REDIRECT_HOPS: usize = 10;
 
 // Retry strategy
 /// Initial delay in milliseconds before first retry
-pub const RETRY_INITIAL_DELAY_MS: u64 = 1000;
+/// Reduced from 1000ms to 500ms for faster recovery while still providing backoff benefit
+/// This reduces total retry overhead from ~3s to ~1.5s per failed request
+pub const RETRY_INITIAL_DELAY_MS: u64 = 500;
 /// Factor by which retry delay is multiplied on each attempt
 pub const RETRY_FACTOR: u64 = 2;
 /// Maximum delay between retries in seconds
-pub const RETRY_MAX_DELAY_SECS: u64 = 20;
+/// Reduced from 20s to 15s for faster recovery from transient issues
+pub const RETRY_MAX_DELAY_SECS: u64 = 15;
 /// Maximum number of retry attempts (including initial attempt)
 /// Set to 3 = initial attempt + 2 retries (total 3 attempts)
 /// This prevents infinite retries and ensures we don't exceed URL_PROCESSING_TIMEOUT
@@ -126,4 +135,3 @@ pub const BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
 
 // HTTP status codes (for clarity and consistency)
 pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;
-

@@ -3,10 +3,12 @@
 //! This module handles executing JavaScript code to detect technology properties,
 //! matching the behavior of the Golang Wappalyzer tool.
 
+mod batch;
 mod core;
 
 use anyhow::Result;
 
+pub(crate) use batch::check_js_properties_batch;
 use core::execute_js_property_check;
 
 /// Checks if a JavaScript property exists by executing JavaScript code (async version).
@@ -104,4 +106,3 @@ async fn execute_js_property_check_with_timeout(
         })?
         .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
 }
-

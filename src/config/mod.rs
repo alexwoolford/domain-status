@@ -13,4 +13,3 @@ mod types;
 pub use constants::*;
 pub use headers::*;
 pub use types::{LogFormat, Opt};
-

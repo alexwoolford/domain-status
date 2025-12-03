@@ -98,4 +98,3 @@ pub(crate) fn build_batch_record(
         partial_failures: partial_failure_records,
     }
 }
-

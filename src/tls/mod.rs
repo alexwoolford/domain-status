@@ -216,4 +216,3 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
         domain
     ))
 }
-

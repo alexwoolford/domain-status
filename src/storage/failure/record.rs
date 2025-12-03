@@ -3,11 +3,11 @@
 //! This module handles recording URL failures in the database with all
 //! associated context and satellite data.
 
-use anyhow::{Error, Result};
 use crate::domain::extract_domain;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
+use anyhow::{Error, Result};
 use publicsuffix::List;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -214,4 +214,3 @@ pub async fn record_url_failure(
         }
     }
 }
-

@@ -177,4 +177,3 @@ impl ProcessingStats {
         InfoType::iter().map(|i| self.get_info_count(i)).sum()
     }
 }
-

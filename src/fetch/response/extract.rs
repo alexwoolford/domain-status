@@ -3,9 +3,9 @@
 use anyhow::{Error, Result};
 use log::debug;
 
+use super::types::ResponseData;
 use crate::domain::extract_domain;
 use crate::fetch::request::{extract_http_headers, extract_security_headers};
-use super::types::ResponseData;
 
 /// Extracts and validates response data from an HTTP response.
 ///
@@ -122,4 +122,3 @@ pub(crate) async fn extract_response_data(
         body,
     }))
 }
-

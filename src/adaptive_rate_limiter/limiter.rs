@@ -134,9 +134,9 @@ impl AdaptiveRateLimiter {
                                 );
                                 decreased
                             } else if error_rate < error_threshold * 0.5 {
-                                // Additive increase: increase by 10% (only if errors are low)
-                                // Capped at max_rps (which equals initial_rps) to prevent runaway increases
-                                let increased = ((current as f64 * 1.1).min(max_rps as f64) as u32)
+                                // Additive increase: increase by 15% (only if errors are low)
+                                // Capped at max_rps (which is 2x initial_rps) to allow adaptation while preventing runaway increases
+                                let increased = ((current as f64 * 1.15).min(max_rps as f64) as u32)
                                     .max(current + 1); // At least +1
                                 if increased > current {
                                     log::info!(
@@ -170,4 +170,3 @@ impl AdaptiveRateLimiter {
         self.shutdown.clone()
     }
 }
-

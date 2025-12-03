@@ -160,4 +160,3 @@ pub(crate) fn parse_html_content(
         html_text,
     }
 }
-

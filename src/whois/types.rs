@@ -89,4 +89,3 @@ impl From<WhoisCacheResult> for WhoisResult {
         }
     }
 }
-

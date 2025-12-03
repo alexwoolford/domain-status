@@ -12,8 +12,8 @@ mod types;
 use axum::routing::get;
 use axum::Router;
 
-pub use types::StatusState;
 use handlers::{metrics_handler, status_handler};
+pub use types::StatusState;
 
 /// Creates and starts the status server
 pub async fn start_status_server(port: u16, state: StatusState) -> Result<(), anyhow::Error> {
@@ -36,4 +36,3 @@ pub async fn start_status_server(port: u16, state: StatusState) -> Result<(), an
 
     Ok(())
 }
-

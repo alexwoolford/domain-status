@@ -1,13 +1,11 @@
 //! Satellite table insertion helpers.
 
-use sqlx::Transaction;
 use sqlx::Sqlite;
+use sqlx::Transaction;
 
 use crate::fingerprint;
 
-use super::super::utils::{
-    detect_txt_type, parse_json_array, parse_mx_json_array,
-};
+use super::super::utils::{detect_txt_type, parse_json_array, parse_mx_json_array};
 
 /// Inserts technologies into url_technologies table.
 pub(crate) async fn insert_technologies(
@@ -231,4 +229,3 @@ pub(crate) async fn insert_certificate_sans(
         }
     }
 }
-

@@ -48,7 +48,9 @@ mod user_agent;
 mod utils;
 mod whois;
 
-use app::{log_progress, print_and_save_final_statistics, shutdown_gracefully, validate_and_normalize_url};
+use app::{
+    log_progress, print_and_save_final_statistics, print_timing_statistics, shutdown_gracefully, validate_and_normalize_url,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -126,8 +128,8 @@ async fn main() -> Result<()> {
         use adaptive_rate_limiter::AdaptiveRateLimiter;
         let adaptive = Arc::new(AdaptiveRateLimiter::new(
             opt.rate_limit_rps,
-            Some(1),                  // min RPS
-            Some(opt.rate_limit_rps), // max RPS (initial value)
+            Some(1),                      // min RPS
+            Some(opt.rate_limit_rps * 2), // max RPS: 2x initial (allows system to adapt to good conditions)
             Some(opt.adaptive_error_threshold),
             None, // default window size (100)
             None, // default window duration (30s)
@@ -250,6 +252,9 @@ async fn main() -> Result<()> {
         Arc::new(crate::storage::circuit_breaker::DbWriteCircuitBreaker::new());
     info!("Database write circuit breaker initialized (threshold: 5 failures, cooldown: 60s)");
 
+    // Initialize timing statistics tracker
+    let timing_stats = Arc::new(crate::utils::TimingStats::new());
+
     let completed_urls = Arc::new(AtomicUsize::new(0));
     let failed_urls = Arc::new(AtomicUsize::new(0));
     let total_urls_attempted = Arc::new(AtomicUsize::new(0));
@@ -286,6 +291,7 @@ async fn main() -> Result<()> {
         opt.enable_whois,
         Arc::clone(&db_circuit_breaker),
         Arc::clone(&pool),
+        Arc::clone(&timing_stats),
     ));
 
     loop {
@@ -529,6 +535,11 @@ async fn main() -> Result<()> {
     )
     .await
     .context("Failed to save final statistics")?;
+
+    // Print timing statistics if enabled
+    if opt.show_timing {
+        print_timing_statistics(&timing_stats);
+    }
 
     Ok(())
 }

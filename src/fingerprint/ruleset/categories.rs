@@ -109,4 +109,3 @@ pub(crate) async fn load_categories_from_path(path: &Path) -> Result<HashMap<u32
     );
     Ok(result)
 }
-

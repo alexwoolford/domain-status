@@ -130,4 +130,3 @@ pub(crate) async fn load_from_url(
 
     Ok((reader, metadata))
 }
-

@@ -86,4 +86,3 @@ pub fn get_metadata() -> Option<GeoIpMetadata> {
     let reader = GEOIP_CITY_READER.read().ok()?;
     reader.as_ref().map(|(_, metadata)| metadata.clone())
 }
-

@@ -49,4 +49,3 @@ pub(crate) fn save_to_cache(cache_path: &Path, domain: &str, result: &WhoisResul
 
     Ok(())
 }
-

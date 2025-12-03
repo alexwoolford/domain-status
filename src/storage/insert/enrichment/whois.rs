@@ -63,4 +63,3 @@ pub async fn insert_whois_data(
 
     Ok(())
 }
-

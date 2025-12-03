@@ -40,4 +40,5 @@ pub(crate) static GEOIP_CITY_READER: LazyLock<GeoIpReaderCache> =
 
 /// Global GeoIP ASN reader cache (lazy-loaded)
 /// ASN data requires a separate database (GeoLite2-ASN)
-pub(crate) static GEOIP_ASN_READER: LazyLock<GeoIpReaderCache> = LazyLock::new(|| Arc::new(RwLock::new(None)));
+pub(crate) static GEOIP_ASN_READER: LazyLock<GeoIpReaderCache> =
+    LazyLock::new(|| Arc::new(RwLock::new(None)));
