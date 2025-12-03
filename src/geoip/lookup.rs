@@ -86,3 +86,12 @@ pub fn get_metadata() -> Option<GeoIpMetadata> {
     let reader = GEOIP_CITY_READER.read().ok()?;
     reader.as_ref().map(|(_, metadata)| metadata.clone())
 }
+
+/// Checks if GeoIP is enabled (database is loaded).
+pub fn is_enabled() -> bool {
+    GEOIP_CITY_READER
+        .read()
+        .ok()
+        .and_then(|reader| reader.as_ref().map(|_| true))
+        .unwrap_or(false)
+}

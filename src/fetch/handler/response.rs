@@ -4,9 +4,10 @@ use anyhow::{Error, Result};
 use log::debug;
 
 use crate::fetch::dns::fetch_all_dns_data;
-use crate::fetch::record::{prepare_record_for_insertion, queue_batch_record};
+use crate::fetch::record::prepare_record_for_insertion;
 use crate::fetch::response::{extract_response_data, parse_html_content};
 use crate::fetch::ProcessingContext;
+use crate::storage::insert::insert_batch_record;
 use crate::utils::{duration_to_ms, UrlTimingMetrics};
 use std::time::Instant;
 
@@ -39,7 +40,8 @@ pub async fn handle_response(
     debug!("Started processing response for {final_url_str}");
 
     let mut metrics = UrlTimingMetrics {
-        http_request_ms: (elapsed * 1000.0) as u64,
+        // elapsed is in seconds, convert to microseconds for internal storage
+        http_request_ms: (elapsed * 1_000_000.0) as u64,
         ..Default::default()
     };
 
@@ -61,28 +63,49 @@ pub async fn handle_response(
     let html_data = parse_html_content(&resp_data.body, &resp_data.final_domain, &ctx.error_stats);
     metrics.html_parsing_ms = duration_to_ms(html_parse_start.elapsed());
 
-    // Fetch all DNS-related data (TLS, DNS resolution, additional DNS records)
+    // Run tech detection and DNS/TLS in parallel (they're independent)
+    // Tech detection only needs HTML data and headers, DNS/TLS only needs domain
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let redirect_chain_vec = redirect_chain.unwrap_or_default();
+
+    let (tech_result, dns_result) = tokio::join!(
+        // Technology detection (only needs HTML data and headers)
+        async {
+            use crate::fetch::record::detect_technologies_safely;
+            use crate::utils::duration_to_ms;
+            use std::time::Instant;
+
+            let tech_start = Instant::now();
+            let technologies =
+                detect_technologies_safely(&html_data, &resp_data, &ctx.error_stats).await;
+            let tech_detection_ms = duration_to_ms(tech_start.elapsed());
+            (technologies, tech_detection_ms)
+        },
+        // DNS/TLS fetching (only needs domain/hostname)
+        async {
+            fetch_all_dns_data(
+                &resp_data,
+                &ctx.resolver,
+                &ctx.error_stats,
+                ctx.run_id.as_deref(),
+            )
+            .await
+        }
+    );
+
+    let (technologies_vec, tech_detection_ms) = tech_result;
     let (
         tls_dns_data,
         additional_dns,
         partial_failures,
         (dns_forward_ms, dns_reverse_ms, dns_additional_ms, tls_handshake_ms),
-    ) = fetch_all_dns_data(
-        &resp_data,
-        &ctx.resolver,
-        &ctx.error_stats,
-        ctx.run_id.as_deref(),
-    )
-    .await?;
+    ) = dns_result?;
 
     metrics.dns_forward_ms = dns_forward_ms;
     metrics.dns_reverse_ms = dns_reverse_ms;
     metrics.dns_additional_ms = dns_additional_ms;
     metrics.tls_handshake_ms = tls_handshake_ms;
-
-    // Prepare record for insertion (technology detection, enrichment, batch record building)
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let redirect_chain_vec = redirect_chain.unwrap_or_default();
+    metrics.tech_detection_ms = tech_detection_ms;
 
     debug!(
         "Preparing to insert record for URL: {}",
@@ -93,12 +116,14 @@ pub async fn handle_response(
         resp_data.initial_domain
     );
 
-    let (batch_record, (tech_detection_ms, geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) =
+    // Prepare record for insertion (enrichment lookups and batch record building)
+    let (batch_record, (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) =
         prepare_record_for_insertion(
             &resp_data,
             &html_data,
             &tls_dns_data,
             &additional_dns,
+            technologies_vec,
             partial_failures,
             redirect_chain_vec,
             elapsed,
@@ -107,13 +132,19 @@ pub async fn handle_response(
         )
         .await;
 
-    metrics.tech_detection_ms = tech_detection_ms;
     metrics.geoip_lookup_ms = geoip_lookup_ms;
     metrics.whois_lookup_ms = whois_lookup_ms;
     metrics.security_analysis_ms = security_analysis_ms;
 
-    // Queue for batch insertion
-    queue_batch_record(batch_record, &ctx.batch_sender, &resp_data.final_url).await;
+    // Insert record directly into database
+    if let Err(e) = insert_batch_record(&ctx.pool, batch_record).await {
+        log::error!(
+            "Failed to insert record for URL {}: {}",
+            resp_data.final_url,
+            e
+        );
+        // Don't fail the entire URL processing - just log and continue
+    }
 
     metrics.total_ms = duration_to_ms(total_start.elapsed());
 

@@ -1,6 +1,7 @@
-//! Batch writer types and structures.
+//! Batch record data structure.
 //!
-//! This module defines the data structures used for batch writing operations.
+//! This module defines the BatchRecord type, which contains all data
+//! needed to insert a complete URL record and its enrichment data.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -12,39 +13,10 @@ use crate::whois::WhoisResult;
 
 use crate::storage::models::{UrlPartialFailureRecord, UrlRecord};
 
-/// Configuration for batch writing
-#[derive(Clone)]
-pub struct BatchConfig {
-    /// Maximum number of records to batch before flushing
-    pub batch_size: usize,
-    /// Interval between automatic flushes (in seconds)
-    pub flush_interval_secs: u64,
-}
-
-impl Default for BatchConfig {
-    fn default() -> Self {
-        BatchConfig {
-            batch_size: 100,
-            flush_interval_secs: 5,
-        }
-    }
-}
-
-/// Result of a batch flush operation.
+/// A complete record ready for database insertion.
 ///
-/// Provides visibility into how many records were successfully inserted
-/// and how many failed, enabling better observability and monitoring.
-#[derive(Debug, Clone)]
-pub struct FlushResult {
-    /// Total number of records in the batch
-    pub total: usize,
-    /// Number of records successfully inserted
-    pub successful: usize,
-    /// Number of records that failed to insert
-    pub failed: usize,
-}
-
-/// A complete record ready for batched insertion
+/// This struct contains all data needed to insert a URL record and
+/// all its associated enrichment data (GeoIP, WHOIS, structured data, etc.).
 pub struct BatchRecord {
     pub url_record: UrlRecord,
     pub security_headers: HashMap<String, String>,

@@ -19,16 +19,6 @@ pub const LOGGING_INTERVAL: usize = 5;
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(35);
 pub const DB_PATH: &str = "./url_checker.db";
 
-// Batch writing configuration
-/// Maximum number of records to batch before flushing to database
-pub const BATCH_SIZE: usize = 100;
-/// Interval between automatic batch flushes (in seconds)
-pub const BATCH_FLUSH_INTERVAL_SECS: u64 = 5;
-/// Channel size multiplier for batch writer
-/// The channel size is calculated as `batch_size * CHANNEL_SIZE_MULTIPLIER`
-/// This provides a buffer to handle bursts while maintaining backpressure
-pub const CHANNEL_SIZE_MULTIPLIER: usize = 10;
-
 // Network operation timeouts
 /// DNS query timeout in seconds
 /// Reduced to 3s - most DNS queries complete in <1s, 3s provides good buffer while failing fast
@@ -123,15 +113,9 @@ pub const RETRY_MAX_DELAY_SECS: u64 = 15;
 /// This prevents infinite retries and ensures we don't exceed URL_PROCESSING_TIMEOUT
 pub const RETRY_MAX_ATTEMPTS: usize = 3;
 
-// Status server and batch writer timing
+// Status server timing
 /// Status server logging interval in seconds (when status server is enabled)
 pub const STATUS_SERVER_LOGGING_INTERVAL_SECS: u64 = 30;
-/// Batch writer shutdown sleep duration in milliseconds
-/// Brief pause to allow in-flight sends to complete before awaiting batch writer
-pub const BATCH_WRITER_SHUTDOWN_SLEEP_MS: u64 = 100;
-/// Batch writer shutdown timeout in seconds
-/// Maximum time to wait for batch writer to finish before aborting
-pub const BATCH_WRITER_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
 
 // HTTP status codes (for clarity and consistency)
 pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;

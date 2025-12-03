@@ -15,10 +15,6 @@ pub struct StatusState {
     pub failed_urls: Arc<AtomicUsize>,
     pub start_time: Arc<Instant>,
     pub error_stats: Arc<ProcessingStats>,
-    /// Total number of batch write failures (records that failed to insert)
-    pub batch_write_failures: Arc<AtomicUsize>,
-    /// Total number of successful batch writes
-    pub batch_write_successes: Arc<AtomicUsize>,
 }
 
 /// JSON response for `/status` endpoint
@@ -35,7 +31,6 @@ pub struct StatusResponse {
     pub errors: ErrorCounts,
     pub warnings: WarningCounts,
     pub info: InfoCounts,
-    pub batch_writes: BatchWriteCounts,
 }
 
 #[derive(Serialize)]
@@ -65,10 +60,4 @@ pub struct InfoCounts {
     pub https_redirect: usize,
     pub bot_detection_403: usize,
     pub multiple_redirects: usize,
-}
-
-#[derive(Serialize)]
-pub struct BatchWriteCounts {
-    pub total_successful: usize,
-    pub total_failed: usize,
 }
