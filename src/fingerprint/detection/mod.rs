@@ -111,7 +111,7 @@ pub async fn detect_technologies(
             // Track which technologies need this property
             js_property_map
                 .entry(js_property.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(tech_name.clone());
         }
     }

@@ -38,8 +38,10 @@ pub async fn handle_response(
     let total_start = Instant::now();
     debug!("Started processing response for {final_url_str}");
 
-    let mut metrics = UrlTimingMetrics::default();
-    metrics.http_request_ms = (elapsed * 1000.0) as u64;
+    let mut metrics = UrlTimingMetrics {
+        http_request_ms: (elapsed * 1000.0) as u64,
+        ..Default::default()
+    };
 
     // Extract and validate response data
     let html_parse_start = Instant::now();
