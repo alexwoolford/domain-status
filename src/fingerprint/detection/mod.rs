@@ -78,7 +78,7 @@ pub async fn detect_technologies(
     // This avoids creating a new QuickJS context for each property check
     let mut js_properties_to_check: Vec<(String, String)> = Vec::new();
     let mut js_property_map: HashMap<String, Vec<String>> = HashMap::new(); // property -> list of tech names that need it
-    
+
     for (tech_name, tech) in &ruleset.technologies {
         // Early exit: skip technologies that can't match
         if !can_technology_match(
@@ -99,12 +99,15 @@ pub async fn detect_technologies(
             if script_tag_ids.contains(js_property) {
                 continue;
             }
-            
+
             // Add to batch list if not already present (deduplicate by property+pattern)
-            if !js_properties_to_check.iter().any(|(p, pat)| p == js_property && pat == pattern) {
+            if !js_properties_to_check
+                .iter()
+                .any(|(p, pat)| p == js_property && pat == pattern)
+            {
                 js_properties_to_check.push((js_property.clone(), pattern.clone()));
             }
-            
+
             // Track which technologies need this property
             js_property_map
                 .entry(js_property.clone())
@@ -114,36 +117,41 @@ pub async fn detect_technologies(
     }
 
     // Execute batch JS property check (if we have script content and properties to check)
-    let js_property_results: HashMap<String, bool> = if !all_script_content.trim().is_empty() && !js_properties_to_check.is_empty() {
-        log::debug!(
-            "Batch checking {} JS properties for {} technologies",
-            js_properties_to_check.len(),
-            js_property_map.len()
-        );
-        
-        // Run batch check in spawn_blocking with timeout (same as individual checks)
-        let script_content = all_script_content.clone();
-        let properties = js_properties_to_check.clone();
-        let timeout_duration = std::time::Duration::from_millis(crate::config::MAX_JS_EXECUTION_TIME_MS * 3); // 3x timeout for batch
-        
-        let handle = tokio::task::spawn_blocking(move || {
-            check_js_properties_batch(&script_content, &properties)
-        });
-        
-        match tokio::time::timeout(timeout_duration, handle).await {
-            Ok(Ok(results)) => results.unwrap_or_default(),
-            Ok(Err(e)) => {
-                log::debug!("Batch JS property check failed: {e}");
-                HashMap::new()
+    let js_property_results: HashMap<String, bool> =
+        if !all_script_content.trim().is_empty() && !js_properties_to_check.is_empty() {
+            log::debug!(
+                "Batch checking {} JS properties for {} technologies",
+                js_properties_to_check.len(),
+                js_property_map.len()
+            );
+
+            // Run batch check in spawn_blocking with timeout (same as individual checks)
+            let script_content = all_script_content.clone();
+            let properties = js_properties_to_check.clone();
+            let timeout_duration =
+                std::time::Duration::from_millis(crate::config::MAX_JS_EXECUTION_TIME_MS * 3); // 3x timeout for batch
+
+            let handle = tokio::task::spawn_blocking(move || {
+                check_js_properties_batch(&script_content, &properties)
+            });
+
+            match tokio::time::timeout(timeout_duration, handle).await {
+                Ok(Ok(results)) => results.unwrap_or_default(),
+                Ok(Err(e)) => {
+                    log::debug!("Batch JS property check failed: {e}");
+                    HashMap::new()
+                }
+                Err(_) => {
+                    log::debug!(
+                        "Batch JS property check timed out after {}ms",
+                        timeout_duration.as_millis()
+                    );
+                    HashMap::new()
+                }
             }
-            Err(_) => {
-                log::debug!("Batch JS property check timed out after {}ms", timeout_duration.as_millis());
-                HashMap::new()
-            }
-        }
-    } else {
-        HashMap::new()
-    };
+        } else {
+            HashMap::new()
+        };
 
     // Match each technology (now using batch JS results)
     let mut detected = HashSet::new();

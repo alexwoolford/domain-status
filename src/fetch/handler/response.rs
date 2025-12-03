@@ -7,7 +7,7 @@ use crate::fetch::dns::fetch_all_dns_data;
 use crate::fetch::record::{prepare_record_for_insertion, queue_batch_record};
 use crate::fetch::response::{extract_response_data, parse_html_content};
 use crate::fetch::ProcessingContext;
-use crate::utils::{UrlTimingMetrics, duration_to_ms};
+use crate::utils::{duration_to_ms, UrlTimingMetrics};
 use std::time::Instant;
 
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
@@ -60,14 +60,19 @@ pub async fn handle_response(
     metrics.html_parsing_ms = duration_to_ms(html_parse_start.elapsed());
 
     // Fetch all DNS-related data (TLS, DNS resolution, additional DNS records)
-    let (tls_dns_data, additional_dns, partial_failures, (dns_forward_ms, dns_reverse_ms, dns_additional_ms, tls_handshake_ms)) = fetch_all_dns_data(
+    let (
+        tls_dns_data,
+        additional_dns,
+        partial_failures,
+        (dns_forward_ms, dns_reverse_ms, dns_additional_ms, tls_handshake_ms),
+    ) = fetch_all_dns_data(
         &resp_data,
         &ctx.resolver,
         &ctx.error_stats,
         ctx.run_id.as_deref(),
     )
     .await?;
-    
+
     metrics.dns_forward_ms = dns_forward_ms;
     metrics.dns_reverse_ms = dns_reverse_ms;
     metrics.dns_additional_ms = dns_additional_ms;
@@ -86,19 +91,20 @@ pub async fn handle_response(
         resp_data.initial_domain
     );
 
-    let (batch_record, (tech_detection_ms, geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) = prepare_record_for_insertion(
-        &resp_data,
-        &html_data,
-        &tls_dns_data,
-        &additional_dns,
-        partial_failures,
-        redirect_chain_vec,
-        elapsed,
-        timestamp,
-        ctx,
-    )
-    .await;
-    
+    let (batch_record, (tech_detection_ms, geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) =
+        prepare_record_for_insertion(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            partial_failures,
+            redirect_chain_vec,
+            elapsed,
+            timestamp,
+            ctx,
+        )
+        .await;
+
     metrics.tech_detection_ms = tech_detection_ms;
     metrics.geoip_lookup_ms = geoip_lookup_ms;
     metrics.whois_lookup_ms = whois_lookup_ms;
@@ -108,7 +114,7 @@ pub async fn handle_response(
     queue_batch_record(batch_record, &ctx.batch_sender, &resp_data.final_url).await;
 
     metrics.total_ms = duration_to_ms(total_start.elapsed());
-    
+
     // Record metrics (DNS and enrichment times are set inside their respective functions)
     ctx.timing_stats.record(&metrics);
 

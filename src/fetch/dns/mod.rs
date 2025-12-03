@@ -58,6 +58,11 @@ pub(crate) async fn fetch_all_dns_data(
         tls_dns_data,
         additional_dns,
         partial_failures,
-        (dns_forward_ms, dns_reverse_ms, dns_additional_ms, tls_handshake_ms),
+        (
+            dns_forward_ms,
+            dns_reverse_ms,
+            dns_additional_ms,
+            tls_handshake_ms,
+        ),
     ))
 }

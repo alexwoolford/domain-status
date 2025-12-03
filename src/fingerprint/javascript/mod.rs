@@ -14,8 +14,8 @@ mod fetch;
 mod utils;
 
 // Re-export public API (these are crate-private, used internally by detection module)
-pub(crate) use execution::check_js_property_async;
 pub(crate) use execution::check_js_properties_batch;
+pub(crate) use execution::check_js_property_async;
 pub(crate) use fetch::fetch_and_combine_scripts;
 
 #[cfg(test)]
