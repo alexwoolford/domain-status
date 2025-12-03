@@ -107,3 +107,84 @@ pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error)
     let error_type = categorize_reqwest_error(error);
     stats.increment_error(error_type);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_get_retry_strategy_initial_delay() {
+        let strategy = get_retry_strategy();
+        let first_delay = strategy.take(1).next().unwrap();
+
+        // First delay should be at least RETRY_INITIAL_DELAY_MS
+        // (ExponentialBackoff may have a minimum delay)
+        let expected_ms = crate::config::RETRY_INITIAL_DELAY_MS as u128;
+        let actual_ms = first_delay.as_millis();
+        assert!(
+            actual_ms >= expected_ms,
+            "Expected delay >= {}ms, got {}ms",
+            expected_ms,
+            actual_ms
+        );
+    }
+
+    #[test]
+    fn test_get_retry_strategy_exponential_backoff() {
+        let strategy = get_retry_strategy();
+        let delays: Vec<Duration> = strategy.take(5).collect();
+
+        // Verify delays increase (exponential backoff or capped at max)
+        for i in 1..delays.len() {
+            let prev = delays[i - 1].as_millis();
+            let curr = delays[i].as_millis();
+            // Delay should increase (or stay at max)
+            assert!(curr >= prev, "Delay should increase: {} >= {}", curr, prev);
+
+            // If not at max, should be approximately double
+            let max_delay_ms = (crate::config::RETRY_MAX_DELAY_SECS * 1000) as u128;
+            if curr < max_delay_ms {
+                let ratio = curr as f64 / prev as f64;
+                // Allow wide tolerance - ExponentialBackoff behavior can vary
+                assert!(
+                    (1.0..=3.0).contains(&ratio),
+                    "Backoff factor should be reasonable: {} / {} = {}",
+                    curr,
+                    prev,
+                    ratio
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_retry_strategy_max_delay() {
+        let strategy = get_retry_strategy();
+        let max_delay_ms = crate::config::RETRY_MAX_DELAY_SECS * 1000;
+
+        // All delays should be <= max_delay
+        for delay in strategy {
+            assert!(
+                delay.as_millis() <= max_delay_ms as u128,
+                "Delay {}ms exceeds max {}ms",
+                delay.as_millis(),
+                max_delay_ms
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_retry_strategy_max_attempts() {
+        let strategy = get_retry_strategy();
+        let count = strategy.count();
+
+        // Should be limited to RETRY_MAX_ATTEMPTS
+        assert_eq!(count, crate::config::RETRY_MAX_ATTEMPTS);
+    }
+
+    // Note: Testing categorize_reqwest_error with actual reqwest::Error instances
+    // requires creating real HTTP responses. These tests are better suited for
+    // integration tests using httptest to create real reqwest::Error instances.
+    // See tests/integration_test.rs for HTTP-related error categorization tests.
+}

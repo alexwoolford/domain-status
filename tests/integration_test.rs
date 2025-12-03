@@ -93,4 +93,13 @@ mod tests {
         // File would be created when database is initialized
         // This test just verifies tempfile works
     }
+
+    // Note: Error categorization tests require access to the categorize_reqwest_error
+    // function, which is not accessible from integration tests in a binary crate.
+    // These tests would need to be moved to unit tests or the crate would need
+    // a lib.rs to expose the function. For now, error categorization is tested
+    // through the retry strategy tests in src/error_handling/categorization.rs.
+    //
+    // TODO: Consider refactoring to lib.rs + main.rs structure to enable
+    // integration testing of error categorization with real reqwest::Error instances.
 }

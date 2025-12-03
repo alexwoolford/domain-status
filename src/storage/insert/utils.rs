@@ -102,3 +102,228 @@ pub(crate) fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32,
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_naive_datetime_to_millis_some() {
+        let dt = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let result = naive_datetime_to_millis(Some(&dt));
+        assert!(result.is_some());
+        // Verify it's a reasonable timestamp (milliseconds since epoch)
+        let millis = result.unwrap();
+        assert!(millis > 1_700_000_000_000); // Should be > Jan 1, 2024
+        assert!(millis < 2_000_000_000_000); // Should be < year 2033
+    }
+
+    #[test]
+    fn test_naive_datetime_to_millis_none() {
+        assert_eq!(naive_datetime_to_millis(None), None);
+    }
+
+    #[test]
+    fn test_parse_json_array_valid() {
+        let json = Some(r#"["item1", "item2", "item3"]"#.to_string());
+        let result = parse_json_array(&json);
+        assert_eq!(
+            result,
+            Some(vec![
+                "item1".to_string(),
+                "item2".to_string(),
+                "item3".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_json_array_empty_string() {
+        let json = Some("".to_string());
+        assert_eq!(parse_json_array(&json), None);
+    }
+
+    #[test]
+    fn test_parse_json_array_none() {
+        assert_eq!(parse_json_array(&None), None);
+    }
+
+    #[test]
+    fn test_parse_json_array_invalid_json() {
+        let json = Some("not valid json".to_string());
+        assert_eq!(parse_json_array(&json), None);
+    }
+
+    #[test]
+    fn test_parse_json_array_not_array() {
+        let json = Some(r#"{"key": "value"}"#.to_string());
+        assert_eq!(parse_json_array(&json), None);
+    }
+
+    #[test]
+    fn test_detect_txt_type_spf() {
+        assert_eq!(
+            detect_txt_type("v=spf1 include:_spf.google.com ~all"),
+            "SPF"
+        );
+        assert_eq!(
+            detect_txt_type("V=SPF1 include:_spf.google.com ~all"),
+            "SPF"
+        ); // Case insensitive
+    }
+
+    #[test]
+    fn test_detect_txt_type_dmarc() {
+        assert_eq!(detect_txt_type("v=dmarc1; p=none"), "DMARC");
+        assert_eq!(detect_txt_type("V=DMARC1; p=quarantine"), "DMARC"); // Case insensitive
+    }
+
+    #[test]
+    fn test_detect_txt_type_verification_google() {
+        assert_eq!(
+            detect_txt_type("google-site-verification=abc123"),
+            "VERIFICATION"
+        );
+    }
+
+    #[test]
+    fn test_detect_txt_type_verification_ms() {
+        assert_eq!(detect_txt_type("ms-verify=xyz789"), "VERIFICATION");
+    }
+
+    #[test]
+    fn test_detect_txt_type_verification_facebook() {
+        assert_eq!(
+            detect_txt_type("facebook-domain-verification=def456"),
+            "VERIFICATION"
+        );
+    }
+
+    #[test]
+    fn test_detect_txt_type_verification_atlassian() {
+        assert_eq!(
+            detect_txt_type("atlassian-domain-verification=ghi012"),
+            "VERIFICATION"
+        );
+    }
+
+    #[test]
+    fn test_detect_txt_type_other() {
+        assert_eq!(detect_txt_type("some other text record"), "OTHER");
+        assert_eq!(detect_txt_type(""), "OTHER");
+    }
+
+    #[test]
+    fn test_parse_mx_record_with_priority() {
+        assert_eq!(
+            parse_mx_record("10 mail.example.com"),
+            Some((10, "mail.example.com".to_string()))
+        );
+        assert_eq!(
+            parse_mx_record("0 mail.example.com"),
+            Some((0, "mail.example.com".to_string()))
+        );
+        assert_eq!(
+            parse_mx_record("100 smtp.example.com"),
+            Some((100, "smtp.example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_mx_record_without_priority() {
+        assert_eq!(
+            parse_mx_record("mail.example.com"),
+            Some((0, "mail.example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_mx_record_multiple_spaces() {
+        assert_eq!(
+            parse_mx_record("10   mail.example.com"),
+            Some((10, "mail.example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_mx_record_invalid() {
+        assert_eq!(parse_mx_record(""), None);
+        assert_eq!(parse_mx_record("10"), None); // Priority but no hostname
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_objects_format() {
+        let json = Some(r#"[{"priority": 10, "hostname": "mail1.example.com"}, {"priority": 20, "hostname": "mail2.example.com"}]"#.to_string());
+        let result = parse_mx_json_array(&json);
+        assert_eq!(
+            result,
+            Some(vec![
+                (10, "mail1.example.com".to_string()),
+                (20, "mail2.example.com".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_strings_format() {
+        let json = Some(r#"["10 mail1.example.com", "20 mail2.example.com"]"#.to_string());
+        let result = parse_mx_json_array(&json);
+        assert_eq!(
+            result,
+            Some(vec![
+                (10, "mail1.example.com".to_string()),
+                (20, "mail2.example.com".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_strings_without_priority() {
+        let json = Some(r#"["mail1.example.com", "mail2.example.com"]"#.to_string());
+        let result = parse_mx_json_array(&json);
+        assert_eq!(
+            result,
+            Some(vec![
+                (0, "mail1.example.com".to_string()),
+                (0, "mail2.example.com".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_empty() {
+        assert_eq!(parse_mx_json_array(&None), None);
+        assert_eq!(parse_mx_json_array(&Some("".to_string())), None);
+        assert_eq!(parse_mx_json_array(&Some("[]".to_string())), None);
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_invalid_json() {
+        assert_eq!(parse_mx_json_array(&Some("not json".to_string())), None);
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_mixed_formats() {
+        // Objects format takes precedence
+        let json = Some(
+            r#"[{"priority": 10, "hostname": "mail.example.com"}, "20 mail2.example.com"]"#
+                .to_string(),
+        );
+        let result = parse_mx_json_array(&json);
+        // Should parse objects first, ignore strings if objects found
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 1); // Only the object entry
+    }
+
+    #[test]
+    fn test_parse_mx_json_array_incomplete_object() {
+        // Object missing priority or hostname should be skipped
+        let json = Some(r#"[{"priority": 10}, {"hostname": "mail.example.com"}]"#.to_string());
+        let result = parse_mx_json_array(&json);
+        assert_eq!(result, None); // Empty result after filtering
+    }
+}

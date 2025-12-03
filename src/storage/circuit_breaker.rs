@@ -181,4 +181,144 @@ mod tests {
         // Circuit should allow retry (closed)
         assert!(!cb.is_circuit_open().await);
     }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_opens_exactly_at_threshold() {
+        let cb = DbWriteCircuitBreaker::with_threshold(3, Duration::from_millis(100));
+
+        // Record failures up to threshold - 1
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert!(!cb.is_circuit_open().await);
+        assert_eq!(cb.failure_count(), 2);
+
+        // Record threshold failure - should open
+        cb.record_failure().await;
+        assert!(cb.is_circuit_open().await);
+        assert_eq!(cb.failure_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_multiple_open_close_cycles() {
+        let cb = DbWriteCircuitBreaker::with_threshold(2, Duration::from_millis(50));
+
+        // First cycle: open
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert!(cb.is_circuit_open().await);
+
+        // Wait for cooldown
+        sleep(Duration::from_millis(60)).await;
+        assert!(!cb.is_circuit_open().await);
+
+        // Second cycle: open again
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert!(cb.is_circuit_open().await);
+
+        // Wait for cooldown again
+        sleep(Duration::from_millis(60)).await;
+        assert!(!cb.is_circuit_open().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_success_closes_open_circuit() {
+        let cb = DbWriteCircuitBreaker::with_threshold(2, Duration::from_millis(100));
+
+        // Open circuit
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert!(cb.is_circuit_open().await);
+
+        // Record success - should close circuit immediately
+        cb.record_success().await;
+        assert!(!cb.is_circuit_open().await);
+        assert_eq!(cb.failure_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_success_resets_count_before_threshold() {
+        let cb = DbWriteCircuitBreaker::with_threshold(5, Duration::from_millis(100));
+
+        // Record some failures
+        cb.record_failure().await;
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert_eq!(cb.failure_count(), 3);
+        assert!(!cb.is_circuit_open().await);
+
+        // Record success - should reset count
+        cb.record_success().await;
+        assert_eq!(cb.failure_count(), 0);
+        assert!(!cb.is_circuit_open().await);
+
+        // Can accumulate failures again from zero
+        cb.record_failure().await;
+        assert_eq!(cb.failure_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_cooldown_not_expired() {
+        let cb = DbWriteCircuitBreaker::with_threshold(2, Duration::from_millis(100));
+
+        // Open circuit
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert!(cb.is_circuit_open().await);
+
+        // Wait less than cooldown
+        sleep(Duration::from_millis(50)).await;
+
+        // Circuit should still be open
+        assert!(cb.is_circuit_open().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_default_creation() {
+        let cb = DbWriteCircuitBreaker::new();
+
+        // Verify initial state
+        assert_eq!(cb.failure_count(), 0);
+        assert!(!cb.is_circuit_open().await);
+        assert!(!cb.is_open_sync());
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_custom_threshold() {
+        let cb = DbWriteCircuitBreaker::with_threshold(10, Duration::from_secs(30));
+
+        // Record 9 failures - should still be closed
+        for _ in 0..9 {
+            cb.record_failure().await;
+        }
+        assert!(!cb.is_circuit_open().await);
+        assert_eq!(cb.failure_count(), 9);
+
+        // Record 10th failure - should open
+        cb.record_failure().await;
+        assert!(cb.is_circuit_open().await);
+        assert_eq!(cb.failure_count(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_failure_after_cooldown_expires() {
+        let cb = DbWriteCircuitBreaker::with_threshold(2, Duration::from_millis(50));
+
+        // Open circuit
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert_eq!(cb.failure_count(), 2);
+        assert!(cb.is_circuit_open().await);
+
+        // Wait for cooldown
+        sleep(Duration::from_millis(60)).await;
+        assert!(!cb.is_circuit_open().await);
+
+        // Record another failure - count continues from previous (doesn't reset on cooldown)
+        cb.record_failure().await;
+        // Failure count continues: was 2, now 3
+        assert_eq!(cb.failure_count(), 3);
+        // Circuit should open again (threshold is 2, we now have 3)
+        assert!(cb.is_circuit_open().await);
+    }
 }
