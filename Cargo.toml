@@ -53,7 +53,7 @@ tar = "^0.4"
 dotenvy = "^0.15"
 rquickjs = "^0.10"
 whois-service = { version = "^0.1.1", default-features = false }
-axum = "^0.7"
+axum = "^0.8"
 tower = "^0.5"
 
 [dev-dependencies]
