@@ -3,11 +3,11 @@
 use anyhow::Error;
 use log::debug;
 
+use crate::config::MAX_REDIRECT_HOPS;
 use crate::error_handling::update_error_stats;
 use crate::fetch::request::RequestHeaders;
 use crate::fetch::utils::serialize_json_with_default;
-use crate::fetch::{ProcessingContext, resolve_redirect_chain};
-use crate::config::MAX_REDIRECT_HOPS;
+use crate::fetch::{resolve_redirect_chain, ProcessingContext};
 
 /// Handles an HTTP request, resolving redirects and processing the response.
 ///
@@ -165,4 +165,3 @@ pub async fn handle_http_request(
         }
     }
 }
-

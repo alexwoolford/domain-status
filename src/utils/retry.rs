@@ -114,4 +114,3 @@ pub(crate) fn is_retriable_error(error: &Error) -> bool {
     // Default: retry unknown errors (might be transient network issue)
     true
 }
-

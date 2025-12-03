@@ -92,4 +92,3 @@ mod tests {
     // If more comprehensive testing is needed, consider using mockito or wiremock
     // to create actual HTTP responses and test the full error categorization flow.
 }
-

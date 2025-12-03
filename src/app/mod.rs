@@ -11,6 +11,5 @@ pub mod url;
 // Re-export public API
 pub use logging::log_progress;
 pub use shutdown::shutdown_gracefully;
-pub use statistics::print_and_save_final_statistics;
+pub use statistics::{print_and_save_final_statistics, print_timing_statistics};
 pub use url::validate_and_normalize_url;
-

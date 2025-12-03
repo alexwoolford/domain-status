@@ -57,4 +57,3 @@ pub(crate) fn initialize_browser_stubs(context: &Context, js_property: &str) {
         }
     });
 }
-

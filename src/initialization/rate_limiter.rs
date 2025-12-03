@@ -122,4 +122,3 @@ pub fn init_rate_limiter(
 
     Some((limiter, shutdown))
 }
-

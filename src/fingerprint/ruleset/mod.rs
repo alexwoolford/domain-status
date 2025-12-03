@@ -223,4 +223,3 @@ async fn fetch_ruleset_from_multiple_sources(
 
     Ok(ruleset)
 }
-

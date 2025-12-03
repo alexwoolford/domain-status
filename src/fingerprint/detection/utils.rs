@@ -55,4 +55,3 @@ pub(crate) fn normalize_headers_to_map(headers: &HeaderMap) -> HashMap<String, S
         })
         .collect()
 }
-

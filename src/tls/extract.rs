@@ -120,4 +120,3 @@ pub(crate) fn extract_certificate_sans(
 
     Ok(sans)
 }
-

@@ -8,7 +8,9 @@ mod error;
 mod record;
 
 // Re-export public API
-pub use context::{attach_failure_context, extract_failure_context, FailureContext, FailureContextError};
+pub use context::{
+    attach_failure_context, extract_failure_context, FailureContext, FailureContextError,
+};
 pub use record::record_url_failure;
 
 #[cfg(test)]
@@ -21,7 +23,10 @@ mod tests {
         // Create a timeout error
         let error = anyhow::anyhow!("Process URL timeout after 45 seconds");
 
-        assert_eq!(error::extract_error_type(&error), ErrorType::ProcessUrlTimeout);
+        assert_eq!(
+            error::extract_error_type(&error),
+            ErrorType::ProcessUrlTimeout
+        );
     }
 
     #[test]
@@ -121,4 +126,3 @@ mod tests {
         assert_eq!(cb.failure_count(), 0);
     }
 }
-

@@ -11,14 +11,9 @@ use crate::storage::batch::types::{BatchRecord, FlushResult};
 impl BatchWriter {
     /// Flushes all buffered records to the database
     ///
-    /// Note: Each insert_url_record call starts its own transaction internally.
+    /// Note: Each insert function manages its own transaction internally.
     /// We process records one-by-one, and if any record fails, we log and continue.
     /// This prevents one bad record from blocking the entire batch.
-    ///
-    /// **Future improvement**:** Use a single transaction for the entire batch
-    /// for better atomicity and performance. This would require refactoring insert
-    /// functions to accept either a pool or a transaction (e.g., using generics or
-    /// a trait). Current approach works correctly but is suboptimal for large batches.
     ///
     /// Returns a summary of successful and failed inserts for observability.
     pub async fn flush(&mut self) -> Result<FlushResult, DatabaseError> {
@@ -204,4 +199,3 @@ impl BatchWriter {
         }
     }
 }
-

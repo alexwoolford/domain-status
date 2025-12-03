@@ -33,4 +33,3 @@ pub(crate) struct HtmlData {
     pub(crate) script_tag_ids: HashSet<String>, // Script tag IDs (for __NEXT_DATA__ etc.)
     pub(crate) html_text: String,
 }
-

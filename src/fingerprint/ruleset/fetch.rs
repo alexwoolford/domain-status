@@ -45,4 +45,3 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
 
     Ok(technologies)
 }
-

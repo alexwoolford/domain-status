@@ -38,4 +38,3 @@ pub(crate) async fn save_metadata(metadata: &GeoIpMetadata, metadata_file: &Path
     tokio::fs::write(metadata_file, content).await?;
     Ok(())
 }
-

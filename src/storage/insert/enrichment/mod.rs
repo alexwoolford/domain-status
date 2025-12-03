@@ -21,4 +21,3 @@ pub use security::insert_security_warnings;
 pub use social::insert_social_media_links;
 pub use structured::insert_structured_data;
 pub use whois::insert_whois_data;
-

@@ -135,4 +135,3 @@ pub fn start_batch_writer(
 
     (tx, handle)
 }
-

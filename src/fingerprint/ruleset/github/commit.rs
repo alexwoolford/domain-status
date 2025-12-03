@@ -119,4 +119,3 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         }
     }
 }
-

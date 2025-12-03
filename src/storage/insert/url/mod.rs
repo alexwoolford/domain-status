@@ -148,4 +148,3 @@ pub async fn insert_url_record(
 
     Ok(url_status_id)
 }
-

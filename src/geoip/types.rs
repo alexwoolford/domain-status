@@ -30,4 +30,3 @@ pub struct GeoIpResult {
     pub asn: Option<u32>,
     pub asn_org: Option<String>,
 }
-

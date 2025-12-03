@@ -71,4 +71,3 @@ pub fn extract_failure_context(error: &Error) -> FailureContext {
     // All error paths should attach structured context using attach_failure_context()
     FailureContext::default()
 }
-

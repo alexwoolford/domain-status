@@ -99,4 +99,3 @@ pub fn analyze_security(
 
     warnings
 }
-

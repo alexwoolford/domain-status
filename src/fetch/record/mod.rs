@@ -10,4 +10,3 @@ mod queue;
 
 pub use preparation::prepare_record_for_insertion;
 pub use queue::queue_batch_record;
-

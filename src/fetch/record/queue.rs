@@ -47,4 +47,3 @@ pub async fn queue_batch_record(
         );
     }
 }
-

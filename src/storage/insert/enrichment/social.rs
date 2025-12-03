@@ -42,4 +42,3 @@ pub async fn insert_social_media_links(
 
     Ok(())
 }
-

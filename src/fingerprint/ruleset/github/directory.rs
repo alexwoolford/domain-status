@@ -137,4 +137,3 @@ pub(crate) async fn fetch_from_github_directory(
     );
     Ok(all_technologies)
 }
-

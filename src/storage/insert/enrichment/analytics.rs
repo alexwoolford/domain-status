@@ -36,4 +36,3 @@ pub async fn insert_analytics_ids(
 
     Ok(())
 }
-

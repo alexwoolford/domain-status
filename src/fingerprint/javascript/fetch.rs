@@ -122,4 +122,3 @@ pub(crate) async fn fetch_and_combine_scripts(
 
     all_scripts
 }
-

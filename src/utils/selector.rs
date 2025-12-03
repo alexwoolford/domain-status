@@ -53,4 +53,3 @@ pub fn parse_selector_unsafe(selector_str: &str, context: &str) -> Selector {
         )
     })
 }
-

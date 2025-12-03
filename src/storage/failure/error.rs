@@ -103,4 +103,3 @@ pub(crate) fn extract_http_status(error: &Error) -> Option<u16> {
     }
     None
 }
-

@@ -5,9 +5,11 @@
 
 use anyhow::Error;
 use log::debug;
+use std::time::Instant;
 
 use crate::dns::{resolve_host_to_ip, reverse_dns_lookup};
 use crate::tls::get_ssl_certificate_info;
+use crate::utils::duration_to_ms;
 
 use super::types::{TlsDnsData, TlsDnsResult};
 
@@ -33,8 +35,10 @@ pub(crate) async fn fetch_tls_and_dns(
     final_domain: &str,
     error_stats: &crate::error_handling::ProcessingStats,
     _run_id: Option<&str>, // Reserved for future use (partial failure tracking)
-) -> Result<TlsDnsResult, Error> {
+) -> Result<(TlsDnsResult, (u64, u64, u64)), Error> {
     // Run TLS and DNS operations in parallel (they're independent)
+    let tls_start = Instant::now();
+    
     let (tls_result, dns_result) = tokio::join!(
         // TLS certificate extraction (only for HTTPS)
         async {
@@ -57,15 +61,31 @@ pub(crate) async fn fetch_tls_and_dns(
         },
         // DNS resolution (IP address and reverse DNS)
         async {
-            match resolve_host_to_ip(host, resolver).await {
-                Ok(ip) => match reverse_dns_lookup(&ip, resolver).await {
-                    Ok(reverse_dns) => Ok((ip, reverse_dns)),
-                    Err(e) => Err(e),
-                },
-                Err(e) => Err(e),
-            }
+            let forward_start = Instant::now();
+            let ip_result = resolve_host_to_ip(host, resolver).await;
+            let forward_ms = duration_to_ms(forward_start.elapsed());
+            
+            let reverse_start = Instant::now();
+            let result = match ip_result {
+                Ok(ip) => {
+                    let reverse_result = reverse_dns_lookup(&ip, resolver).await;
+                    let reverse_ms = duration_to_ms(reverse_start.elapsed());
+                    match reverse_result {
+                        Ok(reverse_dns) => Ok((ip, reverse_dns, forward_ms, reverse_ms)),
+                        Err(e) => Err((e, forward_ms, reverse_ms)),
+                    }
+                }
+                Err(e) => Err((e, forward_ms, 0)),
+            };
+            result
         }
     );
+    
+    let tls_handshake_ms = duration_to_ms(tls_start.elapsed());
+    let (dns_result, dns_forward_ms, dns_reverse_ms) = match dns_result {
+        Ok((ip, reverse_dns, forward_ms, reverse_ms)) => (Ok((ip, reverse_dns)), forward_ms, reverse_ms),
+        Err((e, forward_ms, reverse_ms)) => (Err(e), forward_ms, reverse_ms),
+    };
 
     // Extract TLS info and record partial failures
     let mut partial_failures = Vec::new();
@@ -137,21 +157,23 @@ pub(crate) async fn fetch_tls_and_dns(
     debug!("Resolved IP address: {ip_address}");
     debug!("Resolved reverse DNS name: {reverse_dns_name:?}");
 
-    Ok(TlsDnsResult {
-        data: TlsDnsData {
-            tls_version,
-            subject,
-            issuer,
-            valid_from,
-            valid_to,
-            oids,
-            cipher_suite,
-            key_algorithm,
-            subject_alternative_names,
-            ip_address,
-            reverse_dns_name,
+    Ok((
+        TlsDnsResult {
+            data: TlsDnsData {
+                tls_version,
+                subject,
+                issuer,
+                valid_from,
+                valid_to,
+                oids,
+                cipher_suite,
+                key_algorithm,
+                subject_alternative_names,
+                ip_address,
+                reverse_dns_name,
+            },
+            partial_failures,
         },
-        partial_failures,
-    })
+        (dns_forward_ms, dns_reverse_ms, tls_handshake_ms),
+    ))
 }
-

@@ -43,22 +43,24 @@ domain_status urls.txt \
   --log-level debug \
   --log-format json \
   --rate-limit-rps 10 \
-  --fingerprints https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
+  --fingerprints https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies \
+  --show-timing
 ```
 
 **Command-line Options:**
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
 - `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
 - `--db-path <PATH>`: SQLite database file path (default: `./url_checker.db`)
-- `--max-concurrency <N>`: Maximum concurrent requests (default: 20)
+- `--max-concurrency <N>`: Maximum concurrent requests (default: 30)
 - `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 45 seconds.
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
-- `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 10)
+- `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 15)
   - Rate limiter automatically adjusts based on error rates (default threshold: 20%)
   - Set to 0 to disable rate limiting (not recommended)
 - `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
 - `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set. Otherwise, GeoIP lookup is disabled.
 - `--enable-whois`: Enable WHOIS/RDAP lookup for domain registration information. WHOIS data is cached for 7 days. Default: disabled.
+- `--show-timing`: Display detailed timing metrics at the end of the run. Shows breakdown of time spent in each operation (HTTP requests, DNS lookups, TLS handshakes, technology detection, etc.). Useful for performance analysis and identifying bottlenecks. Default: disabled.
 - `--status-port <PORT>`: Start HTTP status server on the specified port (optional, disabled by default). Provides two endpoints:
   - `/metrics` - Prometheus-compatible metrics
   - `/status` - JSON status endpoint with detailed progress information
@@ -1409,11 +1411,47 @@ The tool provides detailed logging with progress updates and error summaries:
 ```
 
 **Note:** Performance varies significantly based on:
-- **Rate limiting**: Default settings (20 concurrency, 10 RPS) prioritize reliability over speed to avoid bot detection
+- **Rate limiting**: Default settings (30 concurrency, 15 RPS) prioritize reliability over speed to avoid bot detection
 - **Network conditions**: DNS lookups, TLS handshakes, and HTTP response times all affect throughput
 - **Target server behavior**: Some sites respond quickly, others may be slow or rate-limit requests
 - **Error handling**: Retries and backoff delays reduce effective throughput but improve success rates
 - **Typical performance**: Expect 0.5-2 lines/sec with default settings. Higher rates may trigger bot detection.
+
+**Performance Analysis (`--show-timing`):**
+
+To identify performance bottlenecks, use the `--show-timing` flag to display detailed timing metrics:
+
+```bash
+domain_status urls.txt --show-timing
+```
+
+This displays a breakdown of time spent in each operation:
+- HTTP requests (including redirects)
+- DNS lookups (forward, reverse, and additional records)
+- TLS handshakes
+- HTML parsing
+- Technology detection
+- Enrichment operations (GeoIP, WHOIS, security analysis)
+
+Example output:
+```
+=== Timing Metrics Summary (88 URLs) ===
+Average times per URL:
+  HTTP Request:          1287 ms (40.9%)
+  DNS Forward:            845 ms (26.8%)
+  DNS Reverse:            153 ms (4.9%)
+  DNS Additional:         286 ms (9.1%)
+  TLS Handshake:         1035 ms (32.9%)
+  HTML Parsing:            36 ms (1.1%)
+  Tech Detection:        1788 ms (56.8%)
+  GeoIP Lookup:             0 ms (0.0%)
+  WHOIS Lookup:             0 ms (0.0%)
+  Security Analysis:        0 ms (0.0%)
+  Other/Overhead:           0 ms (0.0%)
+  Total:                 3148 ms
+```
+
+**Note:** Percentages may sum to more than 100% because operations overlap (e.g., TLS handshake occurs during HTTP request, DNS lookups run in parallel). The "Other/Overhead" metric shows unaccounted time, which is typically 0 when all operations overlap.
 
 **JSON format (`--log-format json`):**
 ```json
@@ -1439,15 +1477,15 @@ The rate limiter automatically adjusts RPS based on error rates (429 errors and 
 
 ## 🚀 Performance & Scalability
 
-- **Concurrent Processing**: Default 20 concurrent requests (configurable via `--max-concurrency`)
+- **Concurrent Processing**: Default 30 concurrent requests (configurable via `--max-concurrency`)
   - Lower default reduces bot detection risk with Cloudflare and similar services
   - High concurrency can trigger rate limiting even with low RPS
 - **Adaptive Rate Limiting**: Automatic RPS adjustment based on error rates (always enabled)
-  - Starts at initial RPS (default: 10, configurable via `--rate-limit-rps`)
+  - Starts at initial RPS (default: 15, configurable via `--rate-limit-rps`)
   - Monitors 429 errors and timeouts in a sliding window (last 30 seconds, 100 requests)
   - Automatically reduces RPS by 50% when error rate exceeds threshold (default: 20%)
-  - Gradually increases RPS by 10% when error rate is below threshold
-  - **Ceiling**: Maximum RPS is capped at the initial `--rate-limit-rps` value (prevents runaway increases)
+  - Gradually increases RPS by 15% when error rate is below threshold
+  - **Ceiling**: Maximum RPS is capped at 2x the initial `--rate-limit-rps` value (allows system to adapt to good conditions)
   - **Floor**: Minimum RPS is 1 (prevents complete shutdown)
   - Adjusts every 5 seconds based on recent error patterns
   - Burst capacity automatically capped at `min(concurrency, rps * 2)` for coordinated control

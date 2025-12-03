@@ -174,4 +174,3 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
 
     analytics_ids
 }
-

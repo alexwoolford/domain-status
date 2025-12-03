@@ -50,4 +50,3 @@ pub async fn insert_geoip_data(
 
     Ok(())
 }
-

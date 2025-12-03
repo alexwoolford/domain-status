@@ -73,4 +73,3 @@ pub async fn resolve_redirect_chain(
     }
     Ok((current, chain))
 }
-

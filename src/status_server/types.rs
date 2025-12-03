@@ -72,4 +72,3 @@ pub struct BatchWriteCounts {
     pub total_successful: usize,
     pub total_failed: usize,
 }
-

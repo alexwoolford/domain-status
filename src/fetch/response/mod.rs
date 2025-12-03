@@ -9,4 +9,3 @@ mod types;
 pub(crate) use extract::extract_response_data;
 pub(crate) use html::parse_html_content;
 pub(crate) use types::{HtmlData, ResponseData};
-

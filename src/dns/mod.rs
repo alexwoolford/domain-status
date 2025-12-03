@@ -19,4 +19,3 @@ pub use resolution::{resolve_host_to_ip, reverse_dns_lookup};
 
 #[cfg(test)]
 mod tests;
-

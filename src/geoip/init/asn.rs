@@ -45,7 +45,8 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
                     form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
                 let download_url = format!(
                     "{}?edition_id=GeoLite2-ASN&license_key={}&suffix=tar.gz",
-                    geoip::MAXMIND_DOWNLOAD_BASE, encoded_key
+                    geoip::MAXMIND_DOWNLOAD_BASE,
+                    encoded_key
                 );
 
                 match load_from_url(&download_url, cache_dir, "GeoLite2-ASN").await {
@@ -82,4 +83,3 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
 
     Ok(())
 }
-

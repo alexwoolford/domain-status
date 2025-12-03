@@ -54,4 +54,3 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
         db_name
     ))
 }
-

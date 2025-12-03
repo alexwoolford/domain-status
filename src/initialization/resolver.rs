@@ -34,7 +34,7 @@ pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(crate::config::DNS_TIMEOUT_SECS);
-    opts.attempts = 2; // Reduce retry attempts to fail faster
+    opts.attempts = 1; // Single attempt to fail fast - DNS queries should succeed quickly or not at all
                        // Set ndots to 0 to prevent search domain appending (preserved from 0.25 workaround)
     opts.ndots = 0;
 
@@ -47,4 +47,3 @@ pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
         opts,
     )))
 }
-

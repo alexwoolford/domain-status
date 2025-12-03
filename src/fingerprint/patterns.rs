@@ -120,4 +120,3 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
         text.contains(pattern)
     }
 }
-

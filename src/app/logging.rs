@@ -24,4 +24,3 @@ pub fn log_progress(start_time: std::time::Instant, completed_urls: &Arc<AtomicU
         completed, elapsed_secs, rate
     );
 }
-

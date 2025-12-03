@@ -133,7 +133,8 @@ pub fn extract_meta_keywords(
 
             if keywords.is_empty() {
                 // Empty keywords - track as warning
-                error_stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
+                error_stats
+                    .increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
                 None
             } else {
                 Some(keywords)
@@ -189,4 +190,3 @@ pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Opt
 pub fn is_mobile_friendly(html: &str) -> bool {
     html.contains("viewport")
 }
-

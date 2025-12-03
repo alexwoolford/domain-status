@@ -9,10 +9,10 @@
 //!
 //! All inserts use parameterized queries to prevent SQL injection.
 
-mod enrichment;
-mod failure;
+pub mod enrichment;
+pub mod failure;
 mod run;
-mod url;
+pub mod url;
 mod utils;
 
 // Re-export public API
@@ -23,4 +23,3 @@ pub use enrichment::{
 pub use failure::{insert_url_failure, insert_url_partial_failure};
 pub use run::{insert_run_metadata, update_run_stats};
 pub use url::insert_url_record;
-

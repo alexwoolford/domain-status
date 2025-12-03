@@ -143,4 +143,3 @@ pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
 
     links
 }
-

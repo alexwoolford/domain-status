@@ -62,4 +62,3 @@ pub fn init_crypto_provider() {
     // The return value is ignored because reinstalling the provider is harmless
     let _ = CryptoProvider::install_default(default_provider());
 }
-

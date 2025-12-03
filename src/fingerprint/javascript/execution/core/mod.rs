@@ -1,13 +1,13 @@
 //! Core JavaScript execution logic for property detection.
 
-mod property;
-mod runtime;
-mod stubs;
+pub mod property;
+pub mod runtime;
+pub mod stubs;
 
 use anyhow::Result;
 
-use property::{build_pattern_check, build_property_check_code, build_property_expression};
-use runtime::{create_context, create_runtime};
+pub use property::{build_pattern_check, build_property_check_code, build_property_expression};
+pub use runtime::{create_context, create_runtime};
 use stubs::initialize_browser_stubs;
 
 /// Executes JavaScript code and checks if a property exists.
@@ -64,7 +64,12 @@ pub(crate) fn execute_js_property_check(
     let pattern_check = build_pattern_check(pattern);
 
     // Build the property check code
-    let check_code = build_property_check_code(js_property, &property_expr, &global_property_expr, &pattern_check);
+    let check_code = build_property_check_code(
+        js_property,
+        &property_expr,
+        &global_property_expr,
+        &pattern_check,
+    );
 
     // Execute the property check code and convert result to bool
     // All operations must be within the same `with` closure due to lifetime constraints
@@ -87,4 +92,3 @@ pub(crate) fn execute_js_property_check(
         }
     })
 }
-

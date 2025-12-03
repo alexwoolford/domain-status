@@ -42,10 +42,8 @@ pub(crate) async fn detect_technologies_safely(
                 "Failed to detect technologies for {}: {e}",
                 resp_data.final_domain
             );
-            error_stats
-                .increment_error(crate::error_handling::ErrorType::TechnologyDetectionError);
+            error_stats.increment_error(crate::error_handling::ErrorType::TechnologyDetectionError);
             Vec::new()
         }
     }
 }
-

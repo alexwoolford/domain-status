@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use crate::error_handling::ProcessingStats;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::BatchRecord;
+use crate::utils::TimingStats;
 use sqlx::SqlitePool;
 
 /// Context containing all shared resources needed for URL processing.
@@ -40,6 +41,8 @@ pub struct ProcessingContext {
     pub db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
     /// Database connection pool (for failure recording)
     pub pool: Arc<SqlitePool>,
+    /// Timing statistics tracker (for performance analysis)
+    pub timing_stats: Arc<TimingStats>,
 }
 
 impl ProcessingContext {
@@ -56,6 +59,7 @@ impl ProcessingContext {
         enable_whois: bool,
         db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
         pool: Arc<SqlitePool>,
+        timing_stats: Arc<TimingStats>,
     ) -> Self {
         Self {
             client,
@@ -68,6 +72,7 @@ impl ProcessingContext {
             enable_whois,
             db_circuit_breaker,
             pool,
+            timing_stats,
         }
     }
 }
