@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Alex Woolford <alex@woolford.io>"]
 description = "A Rust project that scrapes urls and captures status information in a SQLite database."
+license = "MIT"
 
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
