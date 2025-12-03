@@ -1,6 +1,6 @@
 # domain_status
 
-[![Rust](https://github.com/alexwoolford/domain_status/actions/workflows/rust.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/rust.yml)
+[![CI](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml)
 
 **domain_status** is a Rust-based tool designed for high-performance concurrent checking of URL statuses and redirections. Built with async/await (Tokio), it processes URLs efficiently while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains.
 
