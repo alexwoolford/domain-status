@@ -170,14 +170,14 @@ pub(crate) async fn matches_technology(
         }
 
         // Fallback to individual check if not in batch results (shouldn't happen, but safety)
-        if !all_script_content.trim().is_empty() {
-            if check_js_property_async(all_script_content, js_property, pattern).await {
-                log::info!(
-                    "Technology matched via JS property '{}' (individual check)",
-                    js_property
-                );
-                return true;
-            }
+        if !all_script_content.trim().is_empty()
+            && check_js_property_async(all_script_content, js_property, pattern).await
+        {
+            log::info!(
+                "Technology matched via JS property '{}' (individual check)",
+                js_property
+            );
+            return true;
         }
     }
 

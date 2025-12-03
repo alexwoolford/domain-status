@@ -1,4 +1,4 @@
-/// Utils module tests.
+// Utils module tests.
 
 use anyhow::Error;
 

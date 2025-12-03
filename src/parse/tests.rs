@@ -1,4 +1,4 @@
-/// Parse module tests.
+// Parse module tests.
 
 use super::*;
 use crate::error_handling::ProcessingStats;

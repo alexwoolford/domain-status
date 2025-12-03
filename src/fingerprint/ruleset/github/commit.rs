@@ -1,6 +1,5 @@
 //! GitHub commit SHA fetching operations.
 
-use reqwest;
 use serde::Deserialize;
 use std::time::Duration;
 

@@ -1,4 +1,4 @@
-/// Fetch module tests.
+// Fetch module tests.
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Url;
