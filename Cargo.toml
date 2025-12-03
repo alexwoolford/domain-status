@@ -51,7 +51,7 @@ maxminddb = "^0.27"
 flate2 = "^1.0"
 tar = "^0.4"
 dotenvy = "^0.15"
-rquickjs = "^0.3"
+rquickjs = "^0.10"
 whois-service = { version = "^0.1.1", default-features = false }
 axum = "^0.7"
 tower = "^0.5"
