@@ -33,4 +33,7 @@ updates:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
+      # Ignore hickory-resolver updates - 0.25 has breaking changes that require code updates
+      # See: src/initialization/resolver.rs comments about 0.25 search domain issues
+      - dependency-name: "hickory-resolver"
 
