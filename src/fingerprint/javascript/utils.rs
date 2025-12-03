@@ -14,7 +14,7 @@
 /// - Double-quoted strings ("...")
 /// - Template literals (`...`)
 #[cfg(test)]
-pub(crate) fn strip_js_comments_and_strings(code: &str) -> String {
+pub fn strip_js_comments_and_strings(code: &str) -> String {
     let mut result = String::with_capacity(code.len());
     let mut chars = code.chars().peekable();
     let mut in_single_quote = false;

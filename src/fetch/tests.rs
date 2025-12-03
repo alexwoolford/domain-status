@@ -1,8 +1,8 @@
-//! Fetch module tests.
+/// Fetch module tests.
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Url;
-use crate::fetch::request::{extract_http_headers, extract_security_headers};
+use crate::fetch::request::extract_security_headers;
 
 fn create_header_map() -> HeaderMap {
     HeaderMap::new()
