@@ -25,21 +25,18 @@ pub(crate) fn build_url_record(
         response_time: elapsed,
         title: html_data.title.clone(),
         // Normalize empty strings to None for consistency with database queries
-        keywords: html_data.keywords_str.as_ref().and_then(|k| {
-            if k.is_empty() {
-                None
-            } else {
-                Some(k.clone())
-            }
-        }),
+        // Use filter_map to avoid unnecessary clone when string is empty
+        keywords: html_data
+            .keywords_str
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .cloned(),
         // Normalize empty strings to None for consistency with database queries
-        description: html_data.description.as_ref().and_then(|d| {
-            if d.is_empty() {
-                None
-            } else {
-                Some(d.clone())
-            }
-        }),
+        description: html_data
+            .description
+            .as_ref()
+            .filter(|d| !d.is_empty())
+            .cloned(),
         tls_version: tls_dns_data.tls_version.clone(),
         ssl_cert_subject: tls_dns_data.subject.clone(),
         ssl_cert_issuer: tls_dns_data.issuer.clone(),

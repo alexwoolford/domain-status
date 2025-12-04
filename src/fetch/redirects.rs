@@ -35,10 +35,12 @@ pub async fn resolve_redirect_chain(
         return Err(anyhow::anyhow!("max_hops must be > 0"));
     }
 
-    let mut chain: Vec<String> = Vec::new();
+    // Pre-allocate chain with capacity to avoid reallocations
+    let mut chain: Vec<String> = Vec::with_capacity(max_hops + 1);
     let mut current = start_url.to_string();
 
     for _ in 0..max_hops {
+        // Clone current URL into chain (necessary since we'll modify current)
         chain.push(current.clone());
         // Add realistic browser headers to reduce bot detection during redirect resolution
         // This is critical because sites may serve different content (or block) based on headers
@@ -57,9 +59,11 @@ pub async fn resolve_redirect_chain(
             || status_code == 308
         {
             if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
-                let loc = loc.to_str().unwrap_or("").to_string();
-                let new_url = Url::parse(&loc)
-                    .or_else(|_| Url::parse(&current).and_then(|base| base.join(&loc)))?;
+                // Avoid unnecessary String allocation - parse directly from &str
+                let loc_str = loc.to_str().unwrap_or("");
+                let new_url = Url::parse(loc_str)
+                    .or_else(|_| Url::parse(&current).and_then(|base| base.join(loc_str)))?;
+                // Only allocate String when we actually need to update current
                 current = new_url.to_string();
                 continue;
             } else {
@@ -80,11 +84,12 @@ pub async fn resolve_redirect_chain(
 
     // Ensure final URL is included in chain (in case we broke out of loop)
     // The final URL is already in chain from the last iteration, but verify it's there
-    if !chain.contains(&current) {
-        chain.push(current.clone());
+    let final_url = current.clone();
+    if !chain.contains(&final_url) {
+        chain.push(final_url.clone());
     }
 
-    Ok((current, chain))
+    Ok((final_url, chain))
 }
 
 #[cfg(test)]
