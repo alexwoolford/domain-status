@@ -186,8 +186,218 @@ mod tests {
         assert_eq!(count, crate::config::RETRY_MAX_ATTEMPTS);
     }
 
-    // Note: Testing categorize_reqwest_error with actual reqwest::Error instances
-    // requires creating real HTTP responses. These tests are better suited for
-    // integration tests using httptest to create real reqwest::Error instances.
-    // See tests/integration_test.rs for HTTP-related error categorization tests.
+    #[tokio::test]
+    async fn test_update_error_stats() {
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let stats = ProcessingStats::new();
+        let server = Server::run();
+
+        // Test with 404 error
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/404"))
+                .respond_with(status_code(404).body("Not Found")),
+        );
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/404", server.addr());
+        let error = client.get(&url).send().await.unwrap_err();
+
+        update_error_stats(&stats, &error).await;
+
+        assert_eq!(
+            stats.get_error_count(ErrorType::HttpRequestNotFound),
+            1,
+            "404 error should increment HttpRequestNotFound counter"
+        );
+    }
+
+    // Test individual status codes (using separate tests to avoid lifetime issues)
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_400() {
+        test_status_code(400, ErrorType::HttpRequestBadRequest).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_401() {
+        test_status_code(401, ErrorType::HttpRequestUnauthorized).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_403() {
+        test_status_code(403, ErrorType::HttpRequestBotDetectionError).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_404() {
+        test_status_code(404, ErrorType::HttpRequestNotFound).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_429() {
+        test_status_code(429, ErrorType::HttpRequestTooManyRequests).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_500() {
+        test_status_code(500, ErrorType::HttpRequestInternalServerError).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_502() {
+        test_status_code(502, ErrorType::HttpRequestBadGateway).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_503() {
+        test_status_code(503, ErrorType::HttpRequestServiceUnavailable).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_504() {
+        test_status_code(504, ErrorType::HttpRequestGatewayTimeout).await;
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_521() {
+        test_status_code(521, ErrorType::HttpRequestCloudflareError).await;
+    }
+
+    // Helper function to test a single status code
+    async fn test_status_code(code: u16, expected_error_type: ErrorType) {
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        let client = reqwest::Client::new();
+
+        // Use a static path pattern to avoid lifetime issues
+        let path = match code {
+            400 => "/400",
+            401 => "/401",
+            403 => "/403",
+            404 => "/404",
+            429 => "/429",
+            500 => "/500",
+            502 => "/502",
+            503 => "/503",
+            504 => "/504",
+            521 => "/521",
+            _ => panic!("Unsupported status code in test"),
+        };
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", path))
+                .respond_with(status_code(code).body("Error")),
+        );
+
+        let url = format!("http://{}{}", server.addr(), path);
+        let error = client.get(&url).send().await.unwrap_err();
+        let categorized = categorize_reqwest_error(&error);
+
+        assert_eq!(
+            categorized, expected_error_type,
+            "Status code {} should be categorized as {:?}",
+            code, expected_error_type
+        );
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_other_client_errors() {
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/418"))
+                .respond_with(status_code(418).body("I'm a teapot")), // 418 is a 4xx but not specifically handled
+        );
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/418", server.addr());
+        let error = client.get(&url).send().await.unwrap_err();
+        let categorized = categorize_reqwest_error(&error);
+
+        assert_eq!(
+            categorized,
+            ErrorType::HttpRequestOtherError,
+            "Other 4xx errors should be categorized as HttpRequestOtherError"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_other_server_errors() {
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/507"))
+                .respond_with(status_code(507).body("Insufficient Storage")), // 507 is a 5xx but not specifically handled
+        );
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/507", server.addr());
+        let error = client.get(&url).send().await.unwrap_err();
+        let categorized = categorize_reqwest_error(&error);
+
+        assert_eq!(
+            categorized,
+            ErrorType::HttpRequestOtherError,
+            "Other 5xx errors should be categorized as HttpRequestOtherError"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_timeout() {
+        use std::time::Duration;
+
+        // Test timeout by using a very short timeout on a non-existent server
+        // This will trigger a timeout error
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1))
+            .build()
+            .unwrap();
+
+        // Use a URL that won't respond quickly (or at all)
+        let error = client
+            .get("http://192.0.2.1:80") // Test net (RFC 3330) - should not respond
+            .send()
+            .await
+            .unwrap_err();
+
+        let categorized = categorize_reqwest_error(&error);
+
+        // Timeout errors should be categorized as HttpRequestTimeoutError
+        // (may also be ConnectError depending on timing, but timeout is more likely)
+        assert!(
+            categorized == ErrorType::HttpRequestTimeoutError
+                || categorized == ErrorType::HttpRequestConnectError,
+            "Timeout errors should be categorized as TimeoutError or ConnectError, got {:?}",
+            categorized
+        );
+    }
+
+    #[tokio::test]
+    async fn test_categorize_reqwest_error_connect() {
+        use std::time::Duration;
+
+        // Create a client that tries to connect to a non-existent server
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .unwrap();
+        let error = client
+            .get("http://127.0.0.1:1") // Port 1 is unlikely to be listening
+            .send()
+            .await
+            .unwrap_err();
+
+        let categorized = categorize_reqwest_error(&error);
+
+        // Connection errors can be categorized as connect or timeout depending on timing
+        assert!(
+            categorized == ErrorType::HttpRequestConnectError
+                || categorized == ErrorType::HttpRequestTimeoutError,
+            "Connection errors should be categorized as ConnectError or TimeoutError, got {:?}",
+            categorized
+        );
+    }
 }
