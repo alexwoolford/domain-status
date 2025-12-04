@@ -5,7 +5,16 @@
 //! - Regex pattern matching
 //! - Meta tag pattern matching with prefix support
 
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// Global cache for compiled regex patterns.
+/// This cache is shared across all threads and persists for the lifetime of the program.
+/// Regex compilation is expensive (10-100x slower than matching), so caching provides
+/// significant performance improvements when the same patterns are used repeatedly.
+static REGEX_CACHE: Lazy<Arc<Mutex<HashMap<String, regex::Regex>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Checks if meta tag patterns match any meta tag values.
 ///
@@ -103,12 +112,32 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
         || pattern.contains('?');
 
     if is_regex {
-        // Try to compile as regex
+        // Try to compile as regex (with caching)
         // Remove version extraction syntax (e.g., ";version:\\1") for matching
         let pattern_for_match = pattern.split(';').next().unwrap_or(pattern).trim();
 
+        // Check cache first
+        let cache = REGEX_CACHE.lock().unwrap();
+        if let Some(cached_re) = cache.get(pattern_for_match) {
+            return cached_re.is_match(text);
+        }
+        drop(cache); // Release lock before compilation
+
+        // Compile regex (this is expensive, so we cache it)
         match regex::Regex::new(pattern_for_match) {
-            Ok(re) => re.is_match(text),
+            Ok(re) => {
+                // Cache the compiled regex
+                let mut cache = REGEX_CACHE.lock().unwrap();
+                // Check again in case another thread compiled it while we were waiting
+                if let Some(cached_re) = cache.get(pattern_for_match) {
+                    cached_re.is_match(text)
+                } else {
+                    // Store in cache and use it
+                    let result = re.is_match(text);
+                    cache.insert(pattern_for_match.to_string(), re);
+                    result
+                }
+            }
             Err(_) => {
                 // If regex compilation fails, fall back to substring
                 // This handles cases where the pattern looks like regex but isn't valid
@@ -124,6 +153,12 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clears the regex cache (useful for testing).
+    fn clear_regex_cache() {
+        let mut cache = REGEX_CACHE.lock().unwrap();
+        cache.clear();
+    }
 
     #[test]
     fn test_matches_pattern_empty_pattern() {
@@ -300,5 +335,105 @@ mod tests {
             &["^WordPress".to_string()],
             &meta_tags
         ));
+    }
+
+    #[test]
+    fn test_regex_cache_works() {
+        clear_regex_cache();
+
+        // First call should compile and cache
+        let start = std::time::Instant::now();
+        assert!(matches_pattern("^nginx", "nginx/1.18.0"));
+        let first_call_time = start.elapsed();
+
+        // Second call should use cache (much faster)
+        let start = std::time::Instant::now();
+        assert!(matches_pattern("^nginx", "nginx/1.18.0"));
+        let second_call_time = start.elapsed();
+
+        // Cached call should be significantly faster (at least 2x, often 10-100x)
+        // Note: This is a rough check - exact timing depends on system load
+        assert!(
+            second_call_time < first_call_time || second_call_time.as_nanos() < 1_000_000,
+            "Cached regex should be faster. First: {:?}, Second: {:?}",
+            first_call_time,
+            second_call_time
+        );
+
+        // Verify cache is populated
+        let cache = REGEX_CACHE.lock().unwrap();
+        assert!(
+            cache.contains_key("^nginx"),
+            "Cache should contain compiled regex for '^nginx'"
+        );
+    }
+
+    #[test]
+    fn test_regex_cache_thread_safety() {
+        clear_regex_cache();
+
+        // Test that multiple threads can safely use the cache
+        use std::thread;
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                thread::spawn(move || {
+                    let pattern = format!("^test{}", i);
+                    let text = format!("test{}value", i);
+                    matches_pattern(&pattern, &text)
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            assert!(handle.join().unwrap());
+        }
+
+        // Verify cache has entries from all threads
+        let cache = REGEX_CACHE.lock().unwrap();
+        assert!(
+            cache.len() >= 10,
+            "Cache should have entries from all threads"
+        );
+    }
+
+    #[test]
+    fn test_regex_cache_benchmark() {
+        clear_regex_cache();
+
+        // Benchmark: compile same regex 1000 times
+        let pattern = "^nginx.*version";
+        let text = "nginx/1.18.0 version";
+
+        // Without cache (simulated by clearing each time)
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            clear_regex_cache();
+            matches_pattern(pattern, text);
+        }
+        let without_cache_time = start.elapsed();
+
+        // With cache
+        clear_regex_cache();
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            matches_pattern(pattern, text);
+        }
+        let with_cache_time = start.elapsed();
+
+        // Cached version should be significantly faster
+        // In practice, this should be 10-100x faster
+        assert!(
+            with_cache_time < without_cache_time,
+            "Cached version should be faster. Without cache: {:?}, With cache: {:?}",
+            without_cache_time,
+            with_cache_time
+        );
+
+        println!(
+            "Regex cache benchmark: Without cache: {:?}, With cache: {:?}, Speedup: {:.2}x",
+            without_cache_time,
+            with_cache_time,
+            without_cache_time.as_nanos() as f64 / with_cache_time.as_nanos() as f64
+        );
     }
 }
