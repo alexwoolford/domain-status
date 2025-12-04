@@ -34,7 +34,11 @@ pub async fn insert_batch_record(
     )
     .await
     .map_err(|e| {
-        log::error!("Failed to insert URL record for {}: {}", domain, e);
+        log::error!(
+            "Failed to insert URL record for domain '{}': {} (SQL: INSERT INTO url_status ...)",
+            domain,
+            e
+        );
         e
     })?;
 
@@ -82,7 +86,12 @@ async fn insert_enrichment_data(pool: &SqlitePool, url_status_id: i64, record: B
         if let Err(e) =
             insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result).await
         {
-            log::warn!("Failed to insert GeoIP data for {}: {}", ip_address, e);
+            log::warn!(
+                "Failed to insert GeoIP data for IP '{}' (url_status_id {}): {}",
+                ip_address,
+                url_status_id,
+                e
+            );
         }
     }
 
