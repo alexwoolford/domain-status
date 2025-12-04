@@ -97,6 +97,7 @@ pub async fn handle_http_request(
                         ctx,
                         elapsed,
                         Some(redirect_chain),
+                        start_time, // Pass start_time so total_start can use the same baseline
                     )
                     .await
                 }

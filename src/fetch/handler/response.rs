@@ -22,8 +22,9 @@ use std::time::Instant;
 /// * `original_url` - The original URL before redirects
 /// * `final_url_str` - The final URL after redirects
 /// * `ctx` - Processing context containing all shared resources
-/// * `elapsed` - Response time in seconds
+/// * `elapsed` - Response time in seconds (includes redirect resolution + HTTP request)
 /// * `redirect_chain` - Vector of redirect chain URLs (will be inserted into url_redirect_chain table)
+/// * `start_time` - Original start time from process_url (for accurate total_ms calculation)
 ///
 /// # Errors
 ///
@@ -35,12 +36,16 @@ pub async fn handle_response(
     ctx: &ProcessingContext,
     elapsed: f64,
     redirect_chain: Option<Vec<String>>,
+    start_time: std::time::Instant,
 ) -> Result<(), Error> {
-    let total_start = Instant::now();
+    // Use start_time for total_ms calculation to ensure accurate percentages
+    // This ensures http_request_ms (which includes redirect resolution) is <= total_ms
+    // since both are measured from the same start point
     debug!("Started processing response for {final_url_str}");
 
     let mut metrics = UrlTimingMetrics {
         // elapsed is in seconds, convert to microseconds for internal storage
+        // Note: This includes redirect resolution time + HTTP request time
         http_request_ms: (elapsed * 1_000_000.0) as u64,
         ..Default::default()
     };
@@ -150,7 +155,9 @@ pub async fn handle_response(
             anyhow::anyhow!("Database write failed: {}", e)
         })?;
 
-    metrics.total_ms = duration_to_ms(total_start.elapsed());
+    // Calculate total_ms from start_time (same baseline as http_request_ms)
+    // This ensures percentages are accurate (http_request_ms <= total_ms)
+    metrics.total_ms = duration_to_ms(start_time.elapsed());
 
     // Record metrics (DNS and enrichment times are set inside their respective functions)
     ctx.timing_stats.record(&metrics);
