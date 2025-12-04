@@ -201,7 +201,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let url = format!("http://{}/404", server.addr());
-        let error = client.get(&url).send().await.unwrap_err();
+        let response = client.get(&url).send().await.unwrap();
+        let error = response.error_for_status().unwrap_err();
 
         update_error_stats(&stats, &error).await;
 
@@ -291,7 +292,8 @@ mod tests {
         );
 
         let url = format!("http://{}{}", server.addr(), path);
-        let error = client.get(&url).send().await.unwrap_err();
+        let response = client.get(&url).send().await.unwrap();
+        let error = response.error_for_status().unwrap_err();
         let categorized = categorize_reqwest_error(&error);
 
         assert_eq!(
@@ -313,7 +315,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let url = format!("http://{}/418", server.addr());
-        let error = client.get(&url).send().await.unwrap_err();
+        let response = client.get(&url).send().await.unwrap();
+        let error = response.error_for_status().unwrap_err();
         let categorized = categorize_reqwest_error(&error);
 
         assert_eq!(
@@ -335,7 +338,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let url = format!("http://{}/507", server.addr());
-        let error = client.get(&url).send().await.unwrap_err();
+        let response = client.get(&url).send().await.unwrap();
+        let error = response.error_for_status().unwrap_err();
         let categorized = categorize_reqwest_error(&error);
 
         assert_eq!(
