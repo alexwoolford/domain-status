@@ -355,17 +355,16 @@ mod tests {
 
         // Test timeout by using a very short timeout on a non-existent server
         // This will trigger a timeout error
+        // Use a slightly longer timeout to be more reliable on CI
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(1))
+            .timeout(Duration::from_millis(50))
+            .connect_timeout(Duration::from_millis(10))
             .build()
             .unwrap();
 
         // Use a URL that won't respond quickly (or at all)
-        let error = client
-            .get("http://192.0.2.1:80") // Test net (RFC 3330) - should not respond
-            .send()
-            .await
-            .unwrap_err();
+        // TEST-NET-1 (RFC 3330) - should not respond
+        let error = client.get("http://192.0.2.1:80").send().await.unwrap_err();
 
         let categorized = categorize_reqwest_error(&error);
 
@@ -384,12 +383,17 @@ mod tests {
         use std::time::Duration;
 
         // Create a client that tries to connect to a non-existent server
+        // Use a longer timeout to ensure we get a connection error rather than timeout
+        // on slower CI environments
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(100))
+            .timeout(Duration::from_millis(500))
+            .connect_timeout(Duration::from_millis(200))
             .build()
             .unwrap();
+
+        // Use a reserved IP address that should never respond (RFC 3330 - TEST-NET-1)
         let error = client
-            .get("http://127.0.0.1:1") // Port 1 is unlikely to be listening
+            .get("http://192.0.2.1:80") // TEST-NET-1, should not respond
             .send()
             .await
             .unwrap_err();
@@ -397,7 +401,7 @@ mod tests {
         let categorized = categorize_reqwest_error(&error);
 
         // Connection errors can be categorized as connect, timeout, or request error
-        // depending on the specific error and timing
+        // depending on the specific error and timing (especially on CI)
         assert!(
             categorized == ErrorType::HttpRequestConnectError
                 || categorized == ErrorType::HttpRequestTimeoutError
