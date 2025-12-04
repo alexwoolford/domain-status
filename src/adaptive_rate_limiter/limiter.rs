@@ -170,3 +170,394 @@ impl AdaptiveRateLimiter {
         self.shutdown.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_new_with_defaults() {
+        let limiter = AdaptiveRateLimiter::new(10, None, None, None, None, None);
+        assert_eq!(limiter.current_rps(), 10);
+        assert_eq!(limiter.min_rps, 1);
+        assert_eq!(limiter.max_rps, 10);
+        assert_eq!(limiter.error_threshold, 0.2);
+    }
+
+    #[tokio::test]
+    async fn test_new_with_custom_values() {
+        let limiter = AdaptiveRateLimiter::new(
+            20,
+            Some(5),
+            Some(50),
+            Some(0.3),
+            Some(200),
+            Some(Duration::from_secs(60)),
+        );
+        assert_eq!(limiter.current_rps(), 20);
+        assert_eq!(limiter.min_rps, 5);
+        assert_eq!(limiter.max_rps, 50);
+        assert_eq!(limiter.error_threshold, 0.3);
+    }
+
+    #[tokio::test]
+    async fn test_record_success() {
+        let limiter = AdaptiveRateLimiter::new(10, None, None, None, None, None);
+        limiter.record_success().await;
+        // Verify outcome was recorded by checking request count
+        let request_count = limiter.outcome_window.request_count().await;
+        assert_eq!(request_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_record_rate_limited() {
+        let limiter = AdaptiveRateLimiter::new(10, None, None, None, None, None);
+        limiter.record_rate_limited().await;
+        let request_count = limiter.outcome_window.request_count().await;
+        assert_eq!(request_count, 1);
+        // Error rate should be 100% (1 rate limited out of 1 request)
+        let error_rate = limiter.outcome_window.error_rate().await;
+        assert!((error_rate - 1.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn test_record_timeout() {
+        let limiter = AdaptiveRateLimiter::new(10, None, None, None, None, None);
+        limiter.record_timeout().await;
+        let request_count = limiter.outcome_window.request_count().await;
+        assert_eq!(request_count, 1);
+        // Error rate should be 100% (1 timeout out of 1 request)
+        let error_rate = limiter.outcome_window.error_rate().await;
+        assert!((error_rate - 1.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn test_current_rps() {
+        let limiter = AdaptiveRateLimiter::new(15, None, None, None, None, None);
+        assert_eq!(limiter.current_rps(), 15);
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_adjustment_decrease() {
+        let limiter = AdaptiveRateLimiter::new(
+            20,
+            Some(1),
+            Some(40),
+            Some(0.2), // 20% threshold
+            Some(100),
+            Some(Duration::from_secs(30)),
+        );
+
+        // Record high error rate (30% = 15 errors out of 50 requests)
+        for _ in 0..35 {
+            limiter.record_success().await;
+        }
+        for _ in 0..15 {
+            limiter.record_rate_limited().await;
+        }
+
+        // Verify error rate is above threshold
+        let error_rate = limiter.outcome_window.error_rate().await;
+        assert!(error_rate > 0.2, "Error rate should be above threshold");
+
+        // Track RPS changes
+        let rps_changes = Arc::new(AtomicU32::new(0));
+        let rps_changes_clone = Arc::clone(&rps_changes);
+        let last_rps = limiter.current_rps();
+
+        // Start adaptive adjustment with short interval for testing
+        let shutdown = limiter.start_adaptive_adjustment(
+            move |new_rps| {
+                rps_changes_clone.store(new_rps, Ordering::SeqCst);
+            },
+            Some(Duration::from_millis(100)),
+        );
+
+        // Wait for adjustment (should happen after first tick)
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // RPS should have decreased (from 20 to ~10, which is 50% reduction)
+        let new_rps = limiter.current_rps();
+        assert!(
+            new_rps < last_rps,
+            "RPS should decrease when error rate is high. Was: {}, Now: {}",
+            last_rps,
+            new_rps
+        );
+        assert!(
+            new_rps >= limiter.min_rps,
+            "RPS should not go below min_rps. Got: {}, Min: {}",
+            new_rps,
+            limiter.min_rps
+        );
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_adjustment_increase() {
+        let limiter = AdaptiveRateLimiter::new(
+            10,
+            Some(1),
+            Some(40),
+            Some(0.2), // 20% threshold
+            Some(100),
+            Some(Duration::from_secs(30)),
+        );
+
+        // Record low error rate (5% = 2 errors out of 40 requests)
+        // Error rate < threshold * 0.5 (10%) should trigger increase
+        for _ in 0..38 {
+            limiter.record_success().await;
+        }
+        for _ in 0..2 {
+            limiter.record_timeout().await;
+        }
+
+        // Verify error rate is below threshold/2
+        let error_rate = limiter.outcome_window.error_rate().await;
+        assert!(
+            error_rate < 0.1,
+            "Error rate should be below threshold/2. Got: {}",
+            error_rate
+        );
+
+        let initial_rps = limiter.current_rps();
+        let rps_changes = Arc::new(AtomicU32::new(0));
+        let rps_changes_clone = Arc::clone(&rps_changes);
+
+        // Start adaptive adjustment
+        let shutdown = limiter.start_adaptive_adjustment(
+            move |new_rps| {
+                rps_changes_clone.store(new_rps, Ordering::SeqCst);
+            },
+            Some(Duration::from_millis(100)),
+        );
+
+        // Wait for adjustment
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // RPS should have increased (by 15% or at least +1)
+        let new_rps = limiter.current_rps();
+        assert!(
+            new_rps >= initial_rps,
+            "RPS should increase or stay same when error rate is low. Was: {}, Now: {}",
+            initial_rps,
+            new_rps
+        );
+        assert!(
+            new_rps <= limiter.max_rps,
+            "RPS should not exceed max_rps. Got: {}, Max: {}",
+            new_rps,
+            limiter.max_rps
+        );
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_adjustment_no_change() {
+        let limiter = AdaptiveRateLimiter::new(
+            15,
+            Some(1),
+            Some(30),
+            Some(0.2), // 20% threshold
+            Some(100),
+            Some(Duration::from_secs(30)),
+        );
+
+        // Record error rate between threshold/2 and threshold (10-20%)
+        // This should not trigger adjustment
+        for _ in 0..85 {
+            limiter.record_success().await;
+        }
+        for _ in 0..15 {
+            limiter.record_rate_limited().await;
+        }
+
+        // Error rate should be ~15% (between 10% and 20%)
+        let error_rate = limiter.outcome_window.error_rate().await;
+        assert!(
+            (0.1..=0.2).contains(&error_rate),
+            "Error rate should be between threshold/2 and threshold. Got: {}",
+            error_rate
+        );
+
+        let initial_rps = limiter.current_rps();
+        let rps_changes = Arc::new(AtomicU32::new(0));
+        let rps_changes_clone = Arc::clone(&rps_changes);
+
+        // Start adaptive adjustment
+        let shutdown = limiter.start_adaptive_adjustment(
+            move |new_rps| {
+                rps_changes_clone.store(new_rps, Ordering::SeqCst);
+            },
+            Some(Duration::from_millis(100)),
+        );
+
+        // Wait for adjustment
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // RPS should remain the same (error rate is acceptable)
+        let new_rps = limiter.current_rps();
+        assert_eq!(
+            new_rps, initial_rps,
+            "RPS should remain unchanged when error rate is acceptable. Was: {}, Now: {}",
+            initial_rps, new_rps
+        );
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_adjustment_insufficient_data() {
+        let limiter = AdaptiveRateLimiter::new(
+            20,
+            Some(1),
+            Some(40),
+            Some(0.2),
+            Some(100),
+            Some(Duration::from_secs(30)),
+        );
+
+        // Record only 5 requests (less than 10 required for adjustment)
+        for _ in 0..5 {
+            limiter.record_success().await;
+        }
+
+        let initial_rps = limiter.current_rps();
+        let rps_changes = Arc::new(AtomicU32::new(0));
+        let rps_changes_clone = Arc::clone(&rps_changes);
+
+        // Start adaptive adjustment
+        let shutdown = limiter.start_adaptive_adjustment(
+            move |new_rps| {
+                rps_changes_clone.store(new_rps, Ordering::SeqCst);
+            },
+            Some(Duration::from_millis(100)),
+        );
+
+        // Wait for adjustment
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // RPS should not change (insufficient data points)
+        let new_rps = limiter.current_rps();
+        assert_eq!(
+            new_rps, initial_rps,
+            "RPS should not change with insufficient data. Was: {}, Now: {}",
+            initial_rps, new_rps
+        );
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_adjustment_respects_min_rps() {
+        let limiter = AdaptiveRateLimiter::new(
+            5,
+            Some(3), // Min RPS = 3
+            Some(20),
+            Some(0.2),
+            Some(100),
+            Some(Duration::from_secs(30)),
+        );
+
+        // Record very high error rate to trigger decrease
+        for _ in 0..5 {
+            limiter.record_success().await;
+        }
+        for _ in 0..95 {
+            limiter.record_rate_limited().await;
+        }
+
+        let rps_changes = Arc::new(AtomicU32::new(0));
+        let rps_changes_clone = Arc::clone(&rps_changes);
+
+        // Start adaptive adjustment
+        let shutdown = limiter.start_adaptive_adjustment(
+            move |new_rps| {
+                rps_changes_clone.store(new_rps, Ordering::SeqCst);
+            },
+            Some(Duration::from_millis(100)),
+        );
+
+        // Wait for multiple adjustments
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // RPS should never go below min_rps
+        let final_rps = limiter.current_rps();
+        assert!(
+            final_rps >= limiter.min_rps,
+            "RPS should not go below min_rps. Got: {}, Min: {}",
+            final_rps,
+            limiter.min_rps
+        );
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_adjustment_respects_max_rps() {
+        let limiter = AdaptiveRateLimiter::new(
+            10,
+            Some(1),
+            Some(15), // Max RPS = 15
+            Some(0.2),
+            Some(100),
+            Some(Duration::from_secs(30)),
+        );
+
+        // Record very low error rate to trigger increase
+        for _ in 0..95 {
+            limiter.record_success().await;
+        }
+        for _ in 0..5 {
+            limiter.record_timeout().await;
+        }
+
+        let rps_changes = Arc::new(AtomicU32::new(0));
+        let rps_changes_clone = Arc::clone(&rps_changes);
+
+        // Start adaptive adjustment
+        let shutdown = limiter.start_adaptive_adjustment(
+            move |new_rps| {
+                rps_changes_clone.store(new_rps, Ordering::SeqCst);
+            },
+            Some(Duration::from_millis(100)),
+        );
+
+        // Wait for multiple adjustments
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // RPS should never exceed max_rps
+        let final_rps = limiter.current_rps();
+        assert!(
+            final_rps <= limiter.max_rps,
+            "RPS should not exceed max_rps. Got: {}, Max: {}",
+            final_rps,
+            limiter.max_rps
+        );
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_multiple_outcome_types() {
+        let limiter = AdaptiveRateLimiter::new(10, None, None, None, None, None);
+
+        // Record mix of outcomes
+        limiter.record_success().await;
+        limiter.record_rate_limited().await;
+        limiter.record_timeout().await;
+        limiter.record_success().await;
+
+        let request_count = limiter.outcome_window.request_count().await;
+        assert_eq!(request_count, 4);
+
+        // Error rate should be 50% (2 errors out of 4 requests)
+        let error_rate = limiter.outcome_window.error_rate().await;
+        assert!((error_rate - 0.5).abs() < 0.01);
+    }
+}
