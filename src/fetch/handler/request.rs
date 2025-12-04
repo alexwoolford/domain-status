@@ -41,8 +41,15 @@ pub async fn handle_http_request(
             .increment_info(crate::error_handling::InfoType::HttpRedirect);
 
         // Check for HTTP to HTTPS redirect
-        let original_scheme = url.split("://").next().unwrap_or("");
-        let final_scheme = final_url_string.split("://").next().unwrap_or("");
+        // Use proper URL parsing to extract scheme (more reliable than string split)
+        let original_scheme = url::Url::parse(url)
+            .ok()
+            .map(|u| u.scheme().to_string())
+            .unwrap_or_default();
+        let final_scheme = url::Url::parse(&final_url_string)
+            .ok()
+            .map(|u| u.scheme().to_string())
+            .unwrap_or_default();
         if original_scheme == "http" && final_scheme == "https" {
             ctx.error_stats
                 .increment_info(crate::error_handling::InfoType::HttpsRedirect);

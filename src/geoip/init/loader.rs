@@ -60,9 +60,13 @@ pub(crate) async fn load_from_url(
             if age.as_secs() < geoip::CACHE_TTL_SECS {
                 // Cache is fresh, try to load
                 if cache_file.exists() {
-                    if let Ok((reader, _)) = load_from_file(cache_file.to_str().unwrap()).await {
-                        log::info!("Loaded GeoIP database from cache: {:?}", cache_file);
-                        return Ok((reader, metadata));
+                    if let Some(cache_path) = cache_file.to_str() {
+                        if let Ok((reader, _)) = load_from_file(cache_path).await {
+                            log::info!("Loaded GeoIP database from cache: {:?}", cache_file);
+                            return Ok((reader, metadata));
+                        }
+                    } else {
+                        log::warn!("Cache file path contains invalid UTF-8: {:?}", cache_file);
                     }
                 }
             }

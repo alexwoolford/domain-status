@@ -39,12 +39,31 @@ pub async fn insert_batch_record(
     })?;
 
     // Insert enrichment data
+    // Note: Enrichment data is inserted AFTER the main transaction commits.
+    // This design choice ensures that:
+    // 1. Main URL record is always saved (even if enrichment fails)
+    // 2. Enrichment data failures don't prevent URL processing
+    // 3. Partial enrichment data is better than no data at all
+    //
+    // Trade-off: If enrichment insertion fails, we have inconsistent state (main record exists
+    // but enrichment data is missing). This is acceptable because enrichment data is optional
+    // and failures are logged for monitoring.
     insert_enrichment_data(pool, url_status_id, record).await;
 
     Ok(())
 }
 
 /// Inserts all enrichment data for a record.
+///
+/// This function inserts enrichment data (GeoIP, WHOIS, structured data, etc.) after the main
+/// URL record has been committed. Failures are logged but don't propagate, ensuring that
+/// enrichment data failures don't prevent URL processing.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `record` - The batch record containing enrichment data
 async fn insert_enrichment_data(pool: &SqlitePool, url_status_id: i64, record: BatchRecord) {
     // Insert partial failures (DNS/TLS errors that didn't prevent processing)
     for mut partial_failure in record.partial_failures {

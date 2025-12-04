@@ -116,7 +116,10 @@ mod tests {
     #[test]
     fn test_get_retry_strategy_initial_delay() {
         let strategy = get_retry_strategy();
-        let first_delay = strategy.take(1).next().unwrap();
+        let first_delay = strategy
+            .take(1)
+            .next()
+            .expect("Retry strategy should always yield at least one delay");
 
         // First delay should be at least RETRY_INITIAL_DELAY_MS
         // (ExponentialBackoff may have a minimum delay)

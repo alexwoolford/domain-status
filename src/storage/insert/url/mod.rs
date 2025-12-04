@@ -125,8 +125,11 @@ pub async fn insert_url_record(
     .await
     .map_err(|e| {
         log::error!(
-            "Failed to insert UrlRecord for domain {}: {}",
+            "Failed to insert UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {}",
             record.initial_domain,
+            record.final_domain,
+            record.status,
+            record.timestamp,
             e
         );
         DatabaseError::SqlError(e)
@@ -147,4 +150,350 @@ pub async fn insert_url_record(
     tx.commit().await.map_err(DatabaseError::SqlError)?;
 
     Ok(url_status_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::migrations::run_migrations;
+    use chrono::NaiveDate;
+    use sqlx::{Row, SqlitePool};
+    use std::collections::{HashMap, HashSet};
+
+    /// Creates an in-memory SQLite database pool for testing
+    async fn create_test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create test database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        pool
+    }
+
+    /// Creates a minimal UrlRecord for testing
+    fn create_test_url_record() -> UrlRecord {
+        UrlRecord {
+            initial_domain: "example.com".to_string(),
+            final_domain: "example.com".to_string(),
+            ip_address: "93.184.216.34".to_string(),
+            reverse_dns_name: Some("example.com".to_string()),
+            status: 200,
+            status_desc: "OK".to_string(),
+            response_time: 0.123,
+            title: "Example Domain".to_string(),
+            keywords: Some("example, test".to_string()),
+            description: Some("Example description".to_string()),
+            tls_version: Some("TLSv1.3".to_string()),
+            ssl_cert_subject: Some("CN=example.com".to_string()),
+            ssl_cert_issuer: Some("CN=Let's Encrypt".to_string()),
+            ssl_cert_valid_from: NaiveDate::from_ymd_opt(2024, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0),
+            ssl_cert_valid_to: NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0),
+            is_mobile_friendly: true,
+            timestamp: 1704067200000, // 2024-01-01 00:00:00 UTC in milliseconds
+            nameservers: Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string()),
+            txt_records: Some(r#"["v=spf1 include:_spf.example.com ~all"]"#.to_string()),
+            mx_records: Some(r#"[{"priority": 10, "hostname": "mail.example.com"}]"#.to_string()),
+            spf_record: Some("v=spf1 include:_spf.example.com ~all".to_string()),
+            dmarc_record: Some("v=DMARC1; p=none".to_string()),
+            cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
+            key_algorithm: Some("ECDSA".to_string()),
+            run_id: Some("test-run-1".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_basic() {
+        let pool = create_test_pool().await;
+        let record = create_test_url_record();
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = Vec::new();
+        let technologies = Vec::new();
+        let sans = Vec::new();
+
+        let result = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let url_status_id = result.unwrap();
+        assert!(url_status_id > 0);
+
+        // Verify the record was inserted
+        let row =
+            sqlx::query("SELECT domain, final_domain, status, title FROM url_status WHERE id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to fetch inserted record");
+
+        assert_eq!(row.get::<String, _>("domain"), "example.com");
+        assert_eq!(row.get::<String, _>("final_domain"), "example.com");
+        assert_eq!(row.get::<i64, _>("status"), 200);
+        assert_eq!(row.get::<String, _>("title"), "Example Domain");
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_with_technologies() {
+        let pool = create_test_pool().await;
+        let record = create_test_url_record();
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = Vec::new();
+        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+        let sans = Vec::new();
+
+        let url_status_id = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await
+        .expect("Failed to insert record");
+
+        // Verify technologies were inserted
+        let tech_rows =
+            sqlx::query("SELECT technology_name FROM url_technologies WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_all(&pool)
+                .await
+                .expect("Failed to fetch technologies");
+
+        assert_eq!(tech_rows.len(), 2);
+        let tech_names: Vec<String> = tech_rows
+            .iter()
+            .map(|row| row.get::<String, _>("technology_name"))
+            .collect();
+        assert!(tech_names.contains(&"WordPress".to_string()));
+        assert!(tech_names.contains(&"PHP".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_with_redirect_chain() {
+        let pool = create_test_pool().await;
+        let record = create_test_url_record();
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = vec![
+            "http://example.com".to_string(),
+            "https://example.com".to_string(),
+        ];
+        let technologies = Vec::new();
+        let sans = Vec::new();
+
+        let url_status_id = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await
+        .expect("Failed to insert record");
+
+        // Verify redirect chain was inserted
+        let redirect_rows = sqlx::query(
+            "SELECT url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch redirect chain");
+
+        assert_eq!(redirect_rows.len(), 2);
+        assert_eq!(
+            redirect_rows[0].get::<String, _>("url"),
+            "http://example.com"
+        );
+        assert_eq!(
+            redirect_rows[1].get::<String, _>("url"),
+            "https://example.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_with_security_headers() {
+        let pool = create_test_pool().await;
+        let record = create_test_url_record();
+        let mut security_headers = HashMap::new();
+        security_headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+        security_headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = Vec::new();
+        let technologies = Vec::new();
+        let sans = Vec::new();
+
+        let url_status_id = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await
+        .expect("Failed to insert record");
+
+        // Verify security headers were inserted
+        let header_rows = sqlx::query(
+            "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch security headers");
+
+        assert_eq!(header_rows.len(), 2);
+        let mut header_map = HashMap::new();
+        for row in header_rows {
+            let name: String = row.get("header_name");
+            let value: String = row.get("header_value");
+            header_map.insert(name, value);
+        }
+        assert_eq!(
+            header_map.get("Strict-Transport-Security"),
+            Some(&"max-age=31536000".to_string())
+        );
+        assert_eq!(
+            header_map.get("X-Content-Type-Options"),
+            Some(&"nosniff".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_upsert() {
+        let pool = create_test_pool().await;
+        let mut record = create_test_url_record();
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = Vec::new();
+        let technologies = Vec::new();
+        let sans = Vec::new();
+
+        // Insert first time
+        let id1 = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await
+        .expect("Failed to insert record");
+
+        // Update record and insert again (same final_domain and timestamp)
+        record.title = "Updated Title".to_string();
+        record.status = 301;
+        let id2 = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await
+        .expect("Failed to upsert record");
+
+        // Should return same ID (UPSERT)
+        assert_eq!(id1, id2);
+
+        // Verify the record was updated
+        let row = sqlx::query("SELECT title, status FROM url_status WHERE id = ?")
+            .bind(id1)
+            .fetch_one(&pool)
+            .await
+            .expect("Failed to fetch updated record");
+
+        assert_eq!(row.get::<String, _>("title"), "Updated Title");
+        assert_eq!(row.get::<i64, _>("status"), 301);
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_nullable_fields() {
+        let pool = create_test_pool().await;
+        let mut record = create_test_url_record();
+        // Set nullable fields to None
+        record.keywords = None;
+        record.description = None;
+        record.reverse_dns_name = None;
+        record.tls_version = None;
+        record.ssl_cert_subject = None;
+        record.ssl_cert_issuer = None;
+        record.ssl_cert_valid_from = None;
+        record.ssl_cert_valid_to = None;
+        record.spf_record = None;
+        record.dmarc_record = None;
+        record.cipher_suite = None;
+        record.key_algorithm = None;
+        record.run_id = None;
+
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = Vec::new();
+        let technologies = Vec::new();
+        let sans = Vec::new();
+
+        let result = insert_url_record(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+            &redirect_chain,
+            &technologies,
+            &sans,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        // Verify NULL fields are handled correctly
+        let row =
+            sqlx::query("SELECT keywords, description, tls_version FROM url_status WHERE id = ?")
+                .bind(result.unwrap())
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to fetch record");
+
+        assert!(row.get::<Option<String>, _>("keywords").is_none());
+        assert!(row.get::<Option<String>, _>("description").is_none());
+        assert!(row.get::<Option<String>, _>("tls_version").is_none());
+    }
 }

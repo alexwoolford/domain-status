@@ -13,23 +13,28 @@ use crate::fetch::request::RequestHeaders;
 /// # Arguments
 ///
 /// * `start_url` - The initial URL to start from
-/// * `max_hops` - Maximum number of redirect hops to follow
+/// * `max_hops` - Maximum number of redirect hops to follow (must be > 0)
 /// * `client` - HTTP client with redirects disabled (for manual tracking)
 ///
 /// # Returns
 ///
 /// A tuple of (final_url, redirect_chain) where:
 /// - `final_url` is the final URL after all redirects
-/// - `redirect_chain` is a vector of all URLs in the chain
+/// - `redirect_chain` is a vector of all URLs in the chain (including final URL)
 ///
 /// # Errors
 ///
-/// Returns an error if HTTP requests fail or URL parsing fails.
+/// Returns an error if HTTP requests fail, URL parsing fails, or max_hops is 0.
 pub async fn resolve_redirect_chain(
     start_url: &str,
     max_hops: usize,
     client: &reqwest::Client,
 ) -> Result<(String, Vec<String>), Error> {
+    // Validate max_hops
+    if max_hops == 0 {
+        return Err(anyhow::anyhow!("max_hops must be > 0"));
+    }
+
     let mut chain: Vec<String> = Vec::new();
     let mut current = start_url.to_string();
 
@@ -68,8 +73,16 @@ pub async fn resolve_redirect_chain(
             }
         } else {
             // Not a redirect, we've reached the final URL
+            // Ensure final URL is in the chain (it was added at the start of the loop)
             break;
         }
     }
+
+    // Ensure final URL is included in chain (in case we broke out of loop)
+    // The final URL is already in chain from the last iteration, but verify it's there
+    if !chain.contains(&current) {
+        chain.push(current.clone());
+    }
+
     Ok((current, chain))
 }
