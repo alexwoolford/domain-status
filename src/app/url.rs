@@ -25,21 +25,13 @@ pub fn validate_and_normalize_url(url: &str) -> Option<String> {
 
     // Validate: check syntax and scheme
     match url::Url::parse(&normalized) {
-        Ok(parsed) => {
-            // Reject URLs with userinfo (security risk - credentials could be logged)
-            if !parsed.username().is_empty() || parsed.password().is_some() {
-                warn!("Skipping URL with userinfo (security risk): {url}");
-                return None;
+        Ok(parsed) => match parsed.scheme() {
+            "http" | "https" => Some(normalized),
+            _ => {
+                warn!("Skipping unsupported scheme for URL: {url}");
+                None
             }
-
-            match parsed.scheme() {
-                "http" | "https" => Some(normalized),
-                _ => {
-                    warn!("Skipping unsupported scheme for URL: {url}");
-                    None
-                }
-            }
-        }
+        },
         Err(_) => {
             warn!("Skipping invalid URL: {url}");
             None
@@ -243,13 +235,13 @@ mod tests {
 
     #[test]
     fn test_validate_and_normalize_url_with_userinfo() {
-        // URLs with userinfo should be rejected (security risk)
+        // URLs with userinfo are accepted (though credentials are not used)
         let result = validate_and_normalize_url("https://user:pass@example.com");
-        assert_eq!(result, None, "URLs with userinfo should be rejected");
+        assert_eq!(result, Some("https://user:pass@example.com".to_string()));
 
         // Test with username only
         let result = validate_and_normalize_url("https://user@example.com");
-        assert_eq!(result, None, "URLs with username should be rejected");
+        assert_eq!(result, Some("https://user@example.com".to_string()));
     }
 
     #[test]
