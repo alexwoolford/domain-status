@@ -88,3 +88,188 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+    use crate::utils::TimingStats;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_print_error_statistics_no_errors() {
+        let stats = ProcessingStats::new();
+        // Should not panic when there are no errors
+        print_error_statistics(&stats);
+    }
+
+    #[test]
+    fn test_print_error_statistics_with_errors() {
+        let stats = ProcessingStats::new();
+        stats.increment_error(ErrorType::HttpRequestTimeoutError);
+        stats.increment_error(ErrorType::HttpRequestTimeoutError);
+        stats.increment_error(ErrorType::DnsNsLookupError);
+        // Should not panic when there are errors
+        print_error_statistics(&stats);
+    }
+
+    #[test]
+    fn test_print_error_statistics_with_warnings() {
+        let stats = ProcessingStats::new();
+        stats.increment_warning(WarningType::MissingMetaDescription);
+        stats.increment_warning(WarningType::MissingTitle);
+        // Should not panic when there are warnings
+        print_error_statistics(&stats);
+    }
+
+    #[test]
+    fn test_print_error_statistics_with_info() {
+        let stats = ProcessingStats::new();
+        stats.increment_info(InfoType::HttpRedirect);
+        stats.increment_info(InfoType::HttpsRedirect);
+        // Should not panic when there are info metrics
+        print_error_statistics(&stats);
+    }
+
+    #[test]
+    fn test_print_error_statistics_all_types() {
+        let stats = ProcessingStats::new();
+        stats.increment_error(ErrorType::HttpRequestTimeoutError);
+        stats.increment_warning(WarningType::MissingMetaDescription);
+        stats.increment_info(InfoType::HttpRedirect);
+        // Should handle all types together
+        print_error_statistics(&stats);
+    }
+
+    #[test]
+    fn test_print_timing_statistics() {
+        let timing_stats = Arc::new(TimingStats::default());
+        // Should not panic
+        print_timing_statistics(&timing_stats, Some(true), Some(true));
+        print_timing_statistics(&timing_stats, Some(false), Some(false));
+        print_timing_statistics(&timing_stats, None, None);
+    }
+
+    #[tokio::test]
+    async fn test_print_and_save_final_statistics() {
+        // Create in-memory database for testing
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory database");
+
+        // Create tables (matching actual schema)
+        sqlx::query(
+            "CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                total_urls INTEGER,
+                successful_urls INTEGER,
+                failed_urls INTEGER,
+                fingerprints_source TEXT,
+                fingerprints_version TEXT,
+                geoip_version TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create runs table");
+
+        let run_id = "test-run-123";
+        let total_urls = Arc::new(AtomicUsize::new(100));
+        let completed_urls = Arc::new(AtomicUsize::new(85));
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        // Insert initial run record using insert_run_metadata
+        use crate::storage::insert_run_metadata;
+        insert_run_metadata(
+            &pool,
+            run_id,
+            chrono::Utc::now().timestamp_millis(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("Failed to insert run");
+
+        // Call function
+        let result = print_and_save_final_statistics(
+            &pool,
+            run_id,
+            &total_urls,
+            &completed_urls,
+            &error_stats,
+        )
+        .await;
+
+        assert!(result.is_ok(), "Function should succeed");
+
+        // Verify statistics were updated
+        let row = sqlx::query_as::<_, (i32, i32, i32)>(
+            "SELECT total_urls, successful_urls, failed_urls FROM runs WHERE run_id = ?",
+        )
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch run");
+
+        assert_eq!(row.0, 100, "Total URLs should be 100");
+        assert_eq!(row.1, 85, "Successful URLs should be 85");
+        assert_eq!(row.2, 15, "Failed URLs should be 15 (100 - 85)");
+    }
+
+    #[tokio::test]
+    async fn test_print_and_save_final_statistics_zero_urls() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory database");
+
+        sqlx::query(
+            "CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                total_urls INTEGER,
+                successful_urls INTEGER,
+                failed_urls INTEGER,
+                fingerprints_source TEXT,
+                fingerprints_version TEXT,
+                geoip_version TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create runs table");
+
+        let run_id = "test-run-zero";
+        let total_urls = Arc::new(AtomicUsize::new(0));
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        // Insert initial run record using insert_run_metadata
+        use crate::storage::insert_run_metadata;
+        insert_run_metadata(
+            &pool,
+            run_id,
+            chrono::Utc::now().timestamp_millis(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("Failed to insert run");
+
+        let result = print_and_save_final_statistics(
+            &pool,
+            run_id,
+            &total_urls,
+            &completed_urls,
+            &error_stats,
+        )
+        .await;
+
+        assert!(result.is_ok(), "Function should succeed with zero URLs");
+    }
+}
