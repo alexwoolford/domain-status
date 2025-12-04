@@ -125,7 +125,7 @@ pub async fn insert_url_record(
     .await
     .map_err(|e| {
         log::error!(
-            "Failed to insert UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {}",
+            "Failed to insert UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {} (SQL: INSERT INTO url_status ... ON CONFLICT)",
             record.initial_domain,
             record.final_domain,
             record.status,

@@ -28,7 +28,12 @@ pub(crate) async fn insert_technologies(
         .execute(&mut **tx)
         .await
         {
-            log::warn!("Failed to insert technology {}: {}", tech, e);
+            log::warn!(
+                "Failed to insert technology '{}' for url_status_id {}: {}",
+                tech,
+                url_status_id,
+                e
+            );
         }
     }
 }
@@ -51,7 +56,12 @@ pub(crate) async fn insert_nameservers(
             .execute(&mut **tx)
             .await
             {
-                log::warn!("Failed to insert nameserver {}: {}", nameserver, e);
+                log::warn!(
+                    "Failed to insert nameserver '{}' for url_status_id {}: {}",
+                    nameserver,
+                    url_status_id,
+                    e
+                );
             }
         }
     }
@@ -76,7 +86,11 @@ pub(crate) async fn insert_txt_records(
             .execute(&mut **tx)
             .await
             {
-                log::warn!("Failed to insert TXT record: {}", e);
+                log::warn!(
+                    "Failed to insert TXT record for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
             }
         }
     }
@@ -101,7 +115,12 @@ pub(crate) async fn insert_mx_records(
             .execute(&mut **tx)
             .await
             {
-                log::warn!("Failed to insert MX record {}: {}", mail_exchange, e);
+                log::warn!(
+                    "Failed to insert MX record '{}' for url_status_id {}: {}",
+                    mail_exchange,
+                    url_status_id,
+                    e
+                );
             }
         }
     }
@@ -126,7 +145,12 @@ pub(crate) async fn insert_security_headers(
         .execute(&mut **tx)
         .await
         {
-            log::warn!("Failed to insert security header {}: {}", header_name, e);
+            log::warn!(
+                "Failed to insert security header '{}' for url_status_id {}: {}",
+                header_name,
+                url_status_id,
+                e
+            );
         }
     }
 }
@@ -150,7 +174,12 @@ pub(crate) async fn insert_http_headers(
         .execute(&mut **tx)
         .await
         {
-            log::warn!("Failed to insert HTTP header {}: {}", header_name, e);
+            log::warn!(
+                "Failed to insert HTTP header '{}' for url_status_id {}: {}",
+                header_name,
+                url_status_id,
+                e
+            );
         }
     }
 }
@@ -172,7 +201,12 @@ pub(crate) async fn insert_oids(
         .execute(&mut **tx)
         .await
         {
-            log::warn!("Failed to insert OID {}: {}", oid, e);
+            log::warn!(
+                "Failed to insert OID '{}' for url_status_id {}: {}",
+                oid,
+                url_status_id,
+                e
+            );
         }
     }
 }
@@ -225,7 +259,12 @@ pub(crate) async fn insert_certificate_sans(
         .execute(&mut **tx)
         .await
         {
-            log::warn!("Failed to insert certificate SAN {}: {}", san, e);
+            log::warn!(
+                "Failed to insert certificate SAN '{}' for url_status_id {}: {}",
+                san,
+                url_status_id,
+                e
+            );
         }
     }
 }
