@@ -160,3 +160,114 @@ impl InfoType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn test_error_type_as_str() {
+        // Test a few error types to verify as_str() works
+        assert_eq!(
+            ErrorType::HttpRequestTimeoutError.as_str(),
+            "HTTP request timeout error"
+        );
+        assert_eq!(
+            ErrorType::HttpRequestBotDetectionError.as_str(),
+            "Bot detection (403 Forbidden)"
+        );
+        assert_eq!(ErrorType::DnsNsLookupError.as_str(), "DNS NS lookup error");
+        assert_eq!(ErrorType::HttpRequestNotFound.as_str(), "Not Found (404)");
+    }
+
+    #[test]
+    fn test_warning_type_as_str() {
+        assert_eq!(
+            WarningType::MissingMetaDescription.as_str(),
+            "Missing meta description"
+        );
+        assert_eq!(WarningType::MissingTitle.as_str(), "Missing title");
+        assert_eq!(
+            WarningType::MissingMetaKeywords.as_str(),
+            "Missing meta keywords"
+        );
+    }
+
+    #[test]
+    fn test_info_type_as_str() {
+        assert_eq!(InfoType::HttpRedirect.as_str(), "HTTP redirect");
+        assert_eq!(InfoType::HttpsRedirect.as_str(), "HTTP to HTTPS redirect");
+        assert_eq!(InfoType::BotDetection403.as_str(), "Bot detection (403)");
+        assert_eq!(InfoType::MultipleRedirects.as_str(), "Multiple redirects");
+    }
+
+    #[test]
+    fn test_all_error_types_have_string_representation() {
+        // Verify all error types have non-empty string representations
+        for error_type in ErrorType::iter() {
+            let str_repr = error_type.as_str();
+            assert!(
+                !str_repr.is_empty(),
+                "{:?} should have non-empty string",
+                error_type
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_warning_types_have_string_representation() {
+        // Verify all warning types have non-empty string representations
+        for warning_type in WarningType::iter() {
+            let str_repr = warning_type.as_str();
+            assert!(
+                !str_repr.is_empty(),
+                "{:?} should have non-empty string",
+                warning_type
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_info_types_have_string_representation() {
+        // Verify all info types have non-empty string representations
+        for info_type in InfoType::iter() {
+            let str_repr = info_type.as_str();
+            assert!(
+                !str_repr.is_empty(),
+                "{:?} should have non-empty string",
+                info_type
+            );
+        }
+    }
+
+    #[test]
+    fn test_error_type_equality() {
+        // Verify ErrorType implements PartialEq correctly
+        assert_eq!(
+            ErrorType::HttpRequestTimeoutError,
+            ErrorType::HttpRequestTimeoutError
+        );
+        assert_ne!(
+            ErrorType::HttpRequestTimeoutError,
+            ErrorType::DnsNsLookupError
+        );
+    }
+
+    #[test]
+    fn test_warning_type_equality() {
+        // Verify WarningType implements PartialEq correctly
+        assert_eq!(WarningType::MissingTitle, WarningType::MissingTitle);
+        assert_ne!(
+            WarningType::MissingTitle,
+            WarningType::MissingMetaDescription
+        );
+    }
+
+    #[test]
+    fn test_info_type_equality() {
+        // Verify InfoType implements PartialEq correctly
+        assert_eq!(InfoType::HttpRedirect, InfoType::HttpRedirect);
+        assert_ne!(InfoType::HttpRedirect, InfoType::HttpsRedirect);
+    }
+}
