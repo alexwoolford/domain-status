@@ -86,3 +86,212 @@ pub async fn resolve_redirect_chain(
 
     Ok((current, chain))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httptest::{matchers::*, responders::*, Expectation, Server};
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_no_redirects() {
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/"))
+                .respond_with(status_code(200).body("OK")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let url = server.url("/").to_string();
+        let (final_url, chain) = resolve_redirect_chain(&url, 10, &client).await.unwrap();
+
+        assert_eq!(final_url, url);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0], url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_single_redirect() {
+        let server = Server::run();
+        let final_url = server.url("/final").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", final_url.as_str())
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .respond_with(status_code(200).body("OK")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/").to_string();
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(result_final, final_url);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0], start_url);
+        assert_eq!(chain[1], final_url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_max_hops() {
+        let server = Server::run();
+        let url1 = server.url("/1").to_string();
+        let url2 = server.url("/2").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", url1.as_str())
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/1")).respond_with(
+                status_code(302)
+                    .insert_header("Location", url2.as_str())
+                    .body("Redirect"),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/").to_string();
+        // Max hops = 2, so we do 2 iterations:
+        // Iteration 1: Add start_url, request, redirect to url1, current = url1
+        // Iteration 2: Add url1, request, redirect to url2, current = url2
+        // After loop: url2 is not in chain, so we add it
+        // Result: chain has 3 URLs (start_url, url1, url2), final = url2
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 2, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0], start_url);
+        assert_eq!(chain[1], url1);
+        assert_eq!(chain[2], url2);
+        assert_eq!(result_final, url2);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_max_hops_zero() {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let result = resolve_redirect_chain("https://example.com", 0, &client).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("max_hops must be > 0"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_relative_location() {
+        let server = Server::run();
+        let final_url = server.url("/final").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/start")).respond_with(
+                status_code(302)
+                    .insert_header("Location", "/final") // Relative URL
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .respond_with(status_code(200).body("OK")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/start").to_string();
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(result_final, final_url);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0], start_url);
+        assert_eq!(chain[1], final_url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_redirect_without_location() {
+        let server = Server::run();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/"))
+                .respond_with(status_code(302).body("Redirect but no Location")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/").to_string();
+        // Should break out of loop when redirect status but no Location header
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        // Should include the start URL in chain, but not follow redirect
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0], start_url);
+        assert_eq!(result_final, start_url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_different_redirect_codes() {
+        let server = Server::run();
+        let final_url = server.url("/final").to_string();
+
+        // Test 301 (Moved Permanently)
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/301")).respond_with(
+                status_code(301)
+                    .insert_header("Location", final_url.as_str())
+                    .body("Moved"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .respond_with(status_code(200).body("OK")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/301").to_string();
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(result_final, final_url);
+        assert_eq!(chain.len(), 2);
+    }
+}
