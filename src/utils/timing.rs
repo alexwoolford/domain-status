@@ -350,3 +350,166 @@ pub fn duration_to_ms(duration: Duration) -> u64 {
     // but it actually returns microseconds which are stored internally
     duration.as_micros() as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_duration_to_ms_zero() {
+        let duration = Duration::from_micros(0);
+        assert_eq!(duration_to_ms(duration), 0);
+    }
+
+    #[test]
+    fn test_duration_to_ms_microseconds() {
+        let duration = Duration::from_micros(1234);
+        assert_eq!(duration_to_ms(duration), 1234);
+    }
+
+    #[test]
+    fn test_duration_to_ms_milliseconds() {
+        let duration = Duration::from_millis(5);
+        assert_eq!(duration_to_ms(duration), 5000); // 5ms = 5000μs
+    }
+
+    #[test]
+    fn test_duration_to_ms_seconds() {
+        let duration = Duration::from_secs(1);
+        assert_eq!(duration_to_ms(duration), 1_000_000); // 1s = 1,000,000μs
+    }
+
+    #[test]
+    fn test_duration_to_ms_nanoseconds() {
+        let duration = Duration::from_nanos(500);
+        assert_eq!(duration_to_ms(duration), 0); // 500ns < 1μs, rounds to 0
+    }
+
+    #[test]
+    fn test_timing_stats_new() {
+        let stats = TimingStats::new();
+        assert_eq!(stats.count.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_timing_stats_record_single() {
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 1000,
+            dns_forward_ms: 500,
+            total_ms: 2000,
+            ..Default::default()
+        };
+
+        stats.record(&metrics);
+
+        assert_eq!(stats.count.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), 1000);
+        assert_eq!(stats.dns_forward_sum_ms.load(Ordering::Relaxed), 500);
+        assert_eq!(stats.total_sum_ms.load(Ordering::Relaxed), 2000);
+    }
+
+    #[test]
+    fn test_timing_stats_record_multiple() {
+        let stats = TimingStats::new();
+        let metrics1 = UrlTimingMetrics {
+            http_request_ms: 1000,
+            total_ms: 2000,
+            ..Default::default()
+        };
+        let metrics2 = UrlTimingMetrics {
+            http_request_ms: 2000,
+            total_ms: 3000,
+            ..Default::default()
+        };
+
+        stats.record(&metrics1);
+        stats.record(&metrics2);
+
+        assert_eq!(stats.count.load(Ordering::Relaxed), 2);
+        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), 3000);
+        assert_eq!(stats.total_sum_ms.load(Ordering::Relaxed), 5000);
+    }
+
+    #[test]
+    fn test_timing_stats_averages_zero_count() {
+        let stats = TimingStats::new();
+        let avg = stats.averages();
+        assert_eq!(avg.http_request_ms, 0);
+        assert_eq!(avg.total_ms, 0);
+    }
+
+    #[test]
+    fn test_timing_stats_averages_single() {
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 1000,
+            dns_forward_ms: 500,
+            total_ms: 2000,
+            ..Default::default()
+        };
+
+        stats.record(&metrics);
+        let avg = stats.averages();
+
+        assert_eq!(avg.http_request_ms, 1000);
+        assert_eq!(avg.dns_forward_ms, 500);
+        assert_eq!(avg.total_ms, 2000);
+    }
+
+    #[test]
+    fn test_timing_stats_averages_multiple() {
+        let stats = TimingStats::new();
+        let metrics1 = UrlTimingMetrics {
+            http_request_ms: 1000,
+            total_ms: 2000,
+            ..Default::default()
+        };
+        let metrics2 = UrlTimingMetrics {
+            http_request_ms: 3000,
+            total_ms: 4000,
+            ..Default::default()
+        };
+
+        stats.record(&metrics1);
+        stats.record(&metrics2);
+        let avg = stats.averages();
+
+        assert_eq!(avg.http_request_ms, 2000); // (1000 + 3000) / 2
+        assert_eq!(avg.total_ms, 3000); // (2000 + 4000) / 2
+    }
+
+    #[test]
+    fn test_timing_stats_averages_rounding() {
+        let stats = TimingStats::new();
+        let metrics1 = UrlTimingMetrics {
+            http_request_ms: 1,
+            total_ms: 3,
+            ..Default::default()
+        };
+        let metrics2 = UrlTimingMetrics {
+            http_request_ms: 2,
+            total_ms: 3,
+            ..Default::default()
+        };
+
+        stats.record(&metrics1);
+        stats.record(&metrics2);
+        let avg = stats.averages();
+
+        // (1 + 2) / 2 = 1.5, but integer division = 1
+        assert_eq!(avg.http_request_ms, 1);
+        // (3 + 3) / 2 = 3
+        assert_eq!(avg.total_ms, 3);
+    }
+
+    #[test]
+    fn test_url_timing_metrics_default() {
+        let metrics = UrlTimingMetrics::default();
+        assert_eq!(metrics.http_request_ms, 0);
+        assert_eq!(metrics.dns_forward_ms, 0);
+        assert_eq!(metrics.total_ms, 0);
+    }
+}

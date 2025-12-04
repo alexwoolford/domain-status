@@ -67,14 +67,16 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
             } else {
                 // Load from cache
                 if cache_file.exists() {
-                    if let Ok((reader, metadata)) =
-                        load_from_file(cache_file.to_str().unwrap()).await
-                    {
-                        let reader_arc = Arc::new(reader);
-                        *GEOIP_ASN_READER.write().map_err(|e| {
-                            anyhow::anyhow!("GeoIP ASN writer lock poisoned: {}", e)
-                        })? = Some((reader_arc, metadata));
-                        log::info!("GeoIP ASN database loaded from cache");
+                    if let Some(cache_path) = cache_file.to_str() {
+                        if let Ok((reader, metadata)) = load_from_file(cache_path).await {
+                            let reader_arc = Arc::new(reader);
+                            *GEOIP_ASN_READER.write().map_err(|e| {
+                                anyhow::anyhow!("GeoIP ASN writer lock poisoned: {}", e)
+                            })? = Some((reader_arc, metadata));
+                            log::info!("GeoIP ASN database loaded from cache");
+                        }
+                    } else {
+                        log::warn!("Cache file path contains invalid UTF-8: {:?}", cache_file);
                     }
                 }
             }

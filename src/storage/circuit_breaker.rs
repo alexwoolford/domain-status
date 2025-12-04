@@ -85,20 +85,27 @@ impl DbWriteCircuitBreaker {
     ///
     /// Returns `true` if the circuit is open and cooldown hasn't expired.
     /// Returns `false` if the circuit is closed or cooldown has expired (allowing retry).
+    ///
+    /// This method uses a read lock to atomically check both `is_open` and `opened_at`
+    /// to prevent race conditions where the circuit state could change between checks.
     pub async fn is_circuit_open(&self) -> bool {
+        // Fast path: if circuit is not open, return immediately
         if !self.is_open.load(Ordering::SeqCst) {
             return false;
         }
 
-        // Check if cooldown period has expired
-        let opened_at = self.opened_at.read().await;
+        // Slow path: check cooldown with proper synchronization
+        // Use write lock to atomically check and update state to prevent race conditions
+        let mut opened_at = self.opened_at.write().await;
         if let Some(opened) = *opened_at {
             if opened.elapsed() >= self.cooldown_duration {
                 // Cooldown expired, allow one attempt to close circuit
+                // Atomically update both is_open and opened_at
+                self.is_open.store(false, Ordering::SeqCst);
+                *opened_at = None;
                 log::info!(
                     "Database write circuit breaker: cooldown expired, attempting to close circuit"
                 );
-                self.is_open.store(false, Ordering::SeqCst);
                 return false;
             }
         }

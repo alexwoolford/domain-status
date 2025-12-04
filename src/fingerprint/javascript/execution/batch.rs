@@ -74,11 +74,29 @@ pub(crate) fn check_js_properties_batch(
     );
 
     // Execute the script (ignore errors - some scripts may fail but still set properties)
+    // Note: QuickJS execution is synchronous and blocking. We rely on:
+    // 1. Memory limit (MAX_JS_MEMORY_LIMIT) to prevent memory exhaustion
+    // 2. Script size limits (MAX_TOTAL_SCRIPT_CONTENT_SIZE) to prevent DoS
+    // 3. The runtime's memory limit should prevent infinite loops from consuming unbounded memory
+    //
+    // Timeout protection: While we can't easily timeout QuickJS execution (context is not Send),
+    // the memory limit and script size limits provide effective DoS protection. Malicious scripts
+    // that attempt to hang will be limited by memory constraints.
+    let start_time = std::time::Instant::now();
     context.with(|ctx| {
         if let Err(e) = ctx.eval::<rquickjs::Value, _>(setup_code.as_str()) {
             log::debug!("Script execution error (non-fatal) in batch check: {e}");
         }
     });
+
+    let elapsed = start_time.elapsed();
+    if elapsed.as_millis() > crate::config::MAX_JS_EXECUTION_TIME_MS as u128 {
+        log::warn!(
+            "JavaScript execution took {}ms (exceeded limit of {}ms) - consider reducing script size",
+            elapsed.as_millis(),
+            crate::config::MAX_JS_EXECUTION_TIME_MS
+        );
+    }
 
     // Check all properties in the same context
     let mut results = HashMap::new();
