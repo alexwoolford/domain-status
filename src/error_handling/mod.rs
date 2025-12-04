@@ -6,10 +6,43 @@
 //! - Retry strategy configuration
 //! - Error type extraction from error chains
 //!
+//! # Error Handling Strategy
+//!
+//! ## Custom Error Types
+//!
+//! - **`DatabaseError`**: Used for all database operations (connection, queries, transactions)
+//!   - Provides clear distinction between SQL errors and file creation errors
+//!   - Used in: `storage::insert`, `storage::pool`, `storage::migrations`
+//!
+//! - **`InitializationError`**: Used for application startup errors
+//!   - Covers logger, HTTP client, and DNS resolver initialization
+//!   - Used in: `initialization::*` modules
+//!
+//! ## Generic Error Types
+//!
+//! - **`anyhow::Error`**: Used in processing/fetch layer where error chaining is beneficial
+//!   - Allows attaching context with `.context()` and `.with_context()`
+//!   - Used in: `fetch::*`, `utils::process`, `main.rs`
+//!   - Benefits: Flexible error propagation, automatic error chain traversal
+//!
+//! ## Error Categorization
+//!
 //! Error types are categorized into:
 //! - **Errors**: Failures that prevent successful processing
 //! - **Warnings**: Missing optional data that doesn't prevent processing
 //! - **Info**: Informational metrics (redirects, bot detection, etc.)
+//!
+//! - **`ErrorType`**: Categorizes errors for statistics and retry logic
+//!   - Used with `ProcessingStats` to track error frequencies
+//!   - Used with `get_retry_strategy()` to determine retry behavior
+//!
+//! ## Best Practices
+//!
+//! 1. Use `DatabaseError` for all database operations
+//! 2. Use `InitializationError` for startup/initialization
+//! 3. Use `anyhow::Error` for processing pipelines where context matters
+//! 4. Always categorize errors using `ErrorType` for statistics
+//! 5. Attach context with `.context()` or `.with_context()` when using `anyhow::Error`
 
 mod categorization;
 mod stats;
