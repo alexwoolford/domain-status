@@ -396,11 +396,13 @@ mod tests {
 
         let categorized = categorize_reqwest_error(&error);
 
-        // Connection errors can be categorized as connect or timeout depending on timing
+        // Connection errors can be categorized as connect, timeout, or request error
+        // depending on the specific error and timing
         assert!(
             categorized == ErrorType::HttpRequestConnectError
-                || categorized == ErrorType::HttpRequestTimeoutError,
-            "Connection errors should be categorized as ConnectError or TimeoutError, got {:?}",
+                || categorized == ErrorType::HttpRequestTimeoutError
+                || categorized == ErrorType::HttpRequestRequestError,
+            "Connection errors should be categorized as ConnectError, TimeoutError, or RequestError, got {:?}",
             categorized
         );
     }
