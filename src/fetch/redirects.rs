@@ -44,9 +44,27 @@ pub async fn resolve_redirect_chain(
         chain.push(current.clone());
         // Add realistic browser headers to reduce bot detection during redirect resolution
         // This is critical because sites may serve different content (or block) based on headers
-        let resp = RequestHeaders::apply_to_request_builder(client.get(&current))
+        // Use HEAD request for redirect resolution - we only need headers, not body
+        // This can save 50-90% of time for redirect resolution (no body download)
+        // Fall back to GET if HEAD fails (some servers don't support HEAD properly)
+        let resp = match RequestHeaders::apply_to_request_builder(client.head(&current))
             .send()
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                // HEAD failed, fall back to GET (some servers don't support HEAD)
+                // This is rare but we handle it gracefully
+                log::debug!(
+                    "HEAD request failed for {}, falling back to GET: {}",
+                    current,
+                    e
+                );
+                RequestHeaders::apply_to_request_builder(client.get(&current))
+                    .send()
+                    .await?
+            }
+        };
 
         // Only follow redirects if the status code indicates a redirect AND there's a Location header
         let status = resp.status();
@@ -100,8 +118,9 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_redirect_chain_no_redirects() {
         let server = Server::run();
+        // Redirect resolution uses HEAD requests (optimization)
         server.expect(
-            Expectation::matching(request::method_path("GET", "/"))
+            Expectation::matching(request::method_path("HEAD", "/"))
                 .respond_with(status_code(200).body("OK")),
         );
 
@@ -123,15 +142,16 @@ mod tests {
         let server = Server::run();
         let final_url = server.url("/final").to_string();
 
+        // Redirect resolution uses HEAD requests (optimization)
         server.expect(
-            Expectation::matching(request::method_path("GET", "/")).respond_with(
+            Expectation::matching(request::method_path("HEAD", "/")).respond_with(
                 status_code(302)
                     .insert_header("Location", final_url.as_str())
                     .body("Redirect"),
             ),
         );
         server.expect(
-            Expectation::matching(request::method_path("GET", "/final"))
+            Expectation::matching(request::method_path("HEAD", "/final"))
                 .respond_with(status_code(200).body("OK")),
         );
 
@@ -157,15 +177,16 @@ mod tests {
         let url1 = server.url("/1").to_string();
         let url2 = server.url("/2").to_string();
 
+        // Redirect resolution uses HEAD requests (optimization)
         server.expect(
-            Expectation::matching(request::method_path("GET", "/")).respond_with(
+            Expectation::matching(request::method_path("HEAD", "/")).respond_with(
                 status_code(302)
                     .insert_header("Location", url1.as_str())
                     .body("Redirect"),
             ),
         );
         server.expect(
-            Expectation::matching(request::method_path("GET", "/1")).respond_with(
+            Expectation::matching(request::method_path("HEAD", "/1")).respond_with(
                 status_code(302)
                     .insert_header("Location", url2.as_str())
                     .body("Redirect"),
@@ -214,15 +235,16 @@ mod tests {
         let server = Server::run();
         let final_url = server.url("/final").to_string();
 
+        // Redirect resolution uses HEAD requests (optimization)
         server.expect(
-            Expectation::matching(request::method_path("GET", "/start")).respond_with(
+            Expectation::matching(request::method_path("HEAD", "/start")).respond_with(
                 status_code(302)
                     .insert_header("Location", "/final") // Relative URL
                     .body("Redirect"),
             ),
         );
         server.expect(
-            Expectation::matching(request::method_path("GET", "/final"))
+            Expectation::matching(request::method_path("HEAD", "/final"))
                 .respond_with(status_code(200).body("OK")),
         );
 
@@ -246,8 +268,9 @@ mod tests {
     async fn test_resolve_redirect_chain_redirect_without_location() {
         let server = Server::run();
 
+        // Redirect resolution uses HEAD requests (optimization)
         server.expect(
-            Expectation::matching(request::method_path("GET", "/"))
+            Expectation::matching(request::method_path("HEAD", "/"))
                 .respond_with(status_code(302).body("Redirect but no Location")),
         );
 
@@ -274,15 +297,16 @@ mod tests {
         let final_url = server.url("/final").to_string();
 
         // Test 301 (Moved Permanently)
+        // Redirect resolution uses HEAD requests (optimization)
         server.expect(
-            Expectation::matching(request::method_path("GET", "/301")).respond_with(
+            Expectation::matching(request::method_path("HEAD", "/301")).respond_with(
                 status_code(301)
                     .insert_header("Location", final_url.as_str())
                     .body("Moved"),
             ),
         );
         server.expect(
-            Expectation::matching(request::method_path("GET", "/final"))
+            Expectation::matching(request::method_path("HEAD", "/final"))
                 .respond_with(status_code(200).body("OK")),
         );
 
