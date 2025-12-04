@@ -76,8 +76,9 @@ pub async fn detect_technologies(
 
     // Collect all JS properties that need to be checked (for batch execution)
     // This avoids creating a new QuickJS context for each property check
-    let mut js_properties_to_check: Vec<(String, String)> = Vec::new();
-    let mut js_property_map: HashMap<String, Vec<String>> = HashMap::new(); // property -> list of tech names that need it
+    // Pre-allocate with estimated capacity to reduce reallocations
+    let mut js_properties_to_check: Vec<(String, String)> = Vec::with_capacity(64);
+    let mut js_property_map: HashMap<String, Vec<String>> = HashMap::with_capacity(32); // property -> list of tech names that need it
 
     for (tech_name, tech) in &ruleset.technologies {
         // Early exit: skip technologies that can't match
@@ -154,7 +155,8 @@ pub async fn detect_technologies(
         };
 
     // Match each technology (now using batch JS results)
-    let mut detected = HashSet::new();
+    // Pre-allocate HashSet with estimated capacity (most sites have 5-20 technologies)
+    let mut detected = HashSet::with_capacity(32);
     for (tech_name, tech) in &ruleset.technologies {
         // Early exit: skip technologies that can't match
         if !can_technology_match(

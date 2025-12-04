@@ -19,7 +19,8 @@ pub async fn insert_batch_record(
     pool: &SqlitePool,
     record: BatchRecord,
 ) -> Result<(), DatabaseError> {
-    let domain = record.url_record.initial_domain.clone();
+    // Use reference instead of clone for error message (domain is already owned in record)
+    let domain = &record.url_record.initial_domain;
 
     // Insert main URL record
     let url_status_id = insert::insert_url_record(
