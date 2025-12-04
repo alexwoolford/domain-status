@@ -13,9 +13,20 @@ pub(crate) async fn insert_technologies(
     url_status_id: i64,
     technologies: &[String],
 ) {
+    // Batch optimization: Pre-fetch categories for unique technologies to avoid
+    // repeated ruleset lookups. This reduces lock contention since get_technology_category
+    // acquires a read lock on the ruleset for each call.
+    // Deduplicate technologies first (common case: same tech detected multiple times)
+    let unique_techs: std::collections::HashSet<&str> =
+        technologies.iter().map(|s| s.as_str()).collect();
+    let mut category_map = std::collections::HashMap::new();
+    for tech in &unique_techs {
+        category_map.insert(*tech, fingerprint::get_technology_category(tech).await);
+    }
+
     for tech in technologies {
-        // Get category for this technology
-        let category = fingerprint::get_technology_category(tech).await;
+        // Use pre-fetched category
+        let category = category_map.get(tech.as_str()).cloned().flatten();
 
         if let Err(e) = sqlx::query(
             "INSERT INTO url_technologies (url_status_id, technology_name, technology_category)
