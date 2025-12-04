@@ -24,8 +24,22 @@ pub(crate) fn build_url_record(
         status_desc: resp_data.status_desc.clone(),
         response_time: elapsed,
         title: html_data.title.clone(),
-        keywords: html_data.keywords_str.clone(),
-        description: html_data.description.clone(),
+        // Normalize empty strings to None for consistency with database queries
+        keywords: html_data.keywords_str.as_ref().and_then(|k| {
+            if k.is_empty() {
+                None
+            } else {
+                Some(k.clone())
+            }
+        }),
+        // Normalize empty strings to None for consistency with database queries
+        description: html_data.description.as_ref().and_then(|d| {
+            if d.is_empty() {
+                None
+            } else {
+                Some(d.clone())
+            }
+        }),
         tls_version: tls_dns_data.tls_version.clone(),
         ssl_cert_subject: tls_dns_data.subject.clone(),
         ssl_cert_issuer: tls_dns_data.issuer.clone(),

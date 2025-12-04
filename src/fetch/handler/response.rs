@@ -137,14 +137,18 @@ pub async fn handle_response(
     metrics.security_analysis_ms = security_analysis_ms;
 
     // Insert record directly into database
-    if let Err(e) = insert_batch_record(&ctx.pool, batch_record).await {
-        log::error!(
-            "Failed to insert record for URL {}: {}",
-            resp_data.final_url,
-            e
-        );
-        // Don't fail the entire URL processing - just log and continue
-    }
+    // If write fails, return error so URL is not counted as successful
+    // Database errors are non-retriable, so this won't trigger retries
+    insert_batch_record(&ctx.pool, batch_record)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "Failed to insert record for URL {}: {}",
+                resp_data.final_url,
+                e
+            );
+            anyhow::anyhow!("Database write failed: {}", e)
+        })?;
 
     metrics.total_ms = duration_to_ms(total_start.elapsed());
 
