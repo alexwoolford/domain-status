@@ -154,3 +154,103 @@ pub fn extract_http_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Str
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    fn create_test_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'".parse().unwrap(),
+        );
+        headers.insert(
+            reqwest::header::STRICT_TRANSPORT_SECURITY,
+            "max-age=31536000".parse().unwrap(),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("server"),
+            "nginx/1.18.0".parse().unwrap(),
+        );
+        headers.insert(
+            reqwest::header::HeaderName::from_static("x-powered-by"),
+            "PHP/7.4".parse().unwrap(),
+        );
+        headers
+    }
+
+    #[test]
+    fn test_extract_security_headers_present() {
+        let headers = create_test_headers();
+        let extracted = extract_security_headers(&headers);
+
+        // Should extract security headers that are present
+        // Header names from config are in Title-Case format
+        assert!(extracted.contains_key("Content-Security-Policy"));
+        assert_eq!(
+            extracted.get("Content-Security-Policy"),
+            Some(&"default-src 'self'".to_string())
+        );
+        assert!(extracted.contains_key("Strict-Transport-Security"));
+        assert_eq!(
+            extracted.get("Strict-Transport-Security"),
+            Some(&"max-age=31536000".to_string())
+        );
+
+        // Should NOT extract non-security headers
+        assert!(!extracted.contains_key("Server"));
+        assert!(!extracted.contains_key("X-Powered-By"));
+    }
+
+    #[test]
+    fn test_extract_security_headers_missing() {
+        let headers = HeaderMap::new();
+        let extracted = extract_security_headers(&headers);
+        assert!(extracted.is_empty());
+    }
+
+    #[test]
+    fn test_extract_http_headers_present() {
+        let headers = create_test_headers();
+        let extracted = extract_http_headers(&headers);
+
+        // Should extract HTTP headers that are present
+        // Header names from config are in Title-Case format
+        assert!(extracted.contains_key("Server"));
+        assert_eq!(extracted.get("Server"), Some(&"nginx/1.18.0".to_string()));
+        assert!(extracted.contains_key("X-Powered-By"));
+        assert_eq!(extracted.get("X-Powered-By"), Some(&"PHP/7.4".to_string()));
+
+        // Should NOT extract security headers
+        assert!(!extracted.contains_key("Content-Security-Policy"));
+        assert!(!extracted.contains_key("Strict-Transport-Security"));
+    }
+
+    #[test]
+    fn test_extract_http_headers_missing() {
+        let headers = HeaderMap::new();
+        let extracted = extract_http_headers(&headers);
+        assert!(extracted.is_empty());
+    }
+
+    #[test]
+    fn test_extract_security_headers_case_insensitive() {
+        let mut headers = HeaderMap::new();
+        // Header names from config are in Title-Case format
+        headers.insert(
+            reqwest::header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'; script-src 'unsafe-inline'"
+                .parse()
+                .unwrap(),
+        );
+        let extracted = extract_security_headers(&headers);
+        // Header name from config is in Title-Case
+        assert!(extracted.contains_key("Content-Security-Policy"));
+        assert!(extracted
+            .get("Content-Security-Policy")
+            .unwrap()
+            .contains("script-src"));
+    }
+}

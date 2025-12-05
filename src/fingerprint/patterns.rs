@@ -117,7 +117,8 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
         let pattern_for_match = pattern.split(';').next().unwrap_or(pattern).trim();
 
         // Check cache first
-        let cache = REGEX_CACHE.lock().unwrap();
+        // Handle mutex poisoning gracefully - if poisoned, recover by getting the inner value
+        let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(cached_re) = cache.get(pattern_for_match) {
             return cached_re.is_match(text);
         }
@@ -127,7 +128,8 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
         match regex::Regex::new(pattern_for_match) {
             Ok(re) => {
                 // Cache the compiled regex
-                let mut cache = REGEX_CACHE.lock().unwrap();
+                // Handle mutex poisoning gracefully
+                let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
                 // Check again in case another thread compiled it while we were waiting
                 if let Some(cached_re) = cache.get(pattern_for_match) {
                     cached_re.is_match(text)
@@ -155,8 +157,9 @@ mod tests {
     use super::*;
 
     /// Clears the regex cache (useful for testing).
+    /// Handles mutex poisoning gracefully.
     fn clear_regex_cache() {
-        let mut cache = REGEX_CACHE.lock().unwrap();
+        let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         cache.clear();
     }
 
@@ -361,7 +364,7 @@ mod tests {
         );
 
         // Verify cache is populated
-        let cache = REGEX_CACHE.lock().unwrap();
+        let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         assert!(
             cache.contains_key("^nginx"),
             "Cache should contain compiled regex for '^nginx'"
@@ -370,30 +373,69 @@ mod tests {
 
     #[test]
     fn test_regex_cache_thread_safety() {
-        clear_regex_cache();
+        // Use unique patterns with a test-specific prefix and timestamp to avoid conflicts
+        // with other tests running in parallel. This ensures the test is deterministic.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_prefix = format!("thread_safety_test_{}_", timestamp);
 
         // Test that multiple threads can safely use the cache
         use std::thread;
-        let handles: Vec<_> = (0..10)
-            .map(|i| {
+        let patterns: Vec<String> = (0..10).map(|i| format!("^{}{}", test_prefix, i)).collect();
+
+        // First, verify patterns work correctly (this also populates the cache)
+        for (i, pattern) in patterns.iter().enumerate() {
+            let text = format!("{}{}value", test_prefix, i);
+            assert!(
+                matches_pattern(pattern, &text),
+                "Pattern '{}' should match text '{}'",
+                pattern,
+                text
+            );
+        }
+
+        // Now test concurrent access - all threads should be able to use cached patterns
+        let handles: Vec<_> = patterns
+            .iter()
+            .enumerate()
+            .map(|(i, pattern)| {
+                let pattern_clone = pattern.clone();
+                let prefix_clone = test_prefix.clone();
                 thread::spawn(move || {
-                    let pattern = format!("^test{}", i);
-                    let text = format!("test{}value", i);
-                    matches_pattern(&pattern, &text)
+                    let text = format!("{}{}value", prefix_clone, i);
+                    // Call twice to ensure cache is used
+                    let result1 = matches_pattern(&pattern_clone, &text);
+                    let result2 = matches_pattern(&pattern_clone, &text);
+                    // Both calls should return the same result
+                    assert_eq!(
+                        result1, result2,
+                        "Cached and uncached calls should return same result"
+                    );
+                    result1
                 })
             })
             .collect();
 
+        // Verify all threads completed successfully (no panics or data races)
+        // This is the primary test - if the cache wasn't thread-safe, we'd see panics, data races,
+        // or incorrect results. The fact that all threads complete successfully with correct results
+        // proves the cache is thread-safe.
         for handle in handles {
-            assert!(handle.join().unwrap());
+            assert!(
+                handle.join().unwrap(),
+                "Thread should return true for pattern match"
+            );
         }
 
-        // Verify cache has entries from all threads
-        let cache = REGEX_CACHE.lock().unwrap();
-        assert!(
-            cache.len() >= 10,
-            "Cache should have entries from all threads"
-        );
+        // Note: We don't verify cache state here because:
+        // 1. The primary goal is to test thread safety, which is proven by successful completion
+        // 2. Cache state verification is racy when tests run in parallel (other tests may clear/modify cache)
+        // 3. Cache functionality is already tested in test_regex_cache_works
+        // 4. The fact that all threads completed without panics or incorrect results proves the cache
+        //    is working correctly and is thread-safe
     }
 
     #[test]

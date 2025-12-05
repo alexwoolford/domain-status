@@ -174,3 +174,138 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
 
     analytics_ids
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_analytics_ids_google_analytics_ua() {
+        let html = r#"
+            <script>
+                ga('create', 'UA-123456-1', 'auto');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].provider, "Google Analytics");
+        assert_eq!(ids[0].id, "UA-123456-1");
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_google_analytics_ua_double_quotes() {
+        let html = r#"
+            <script>
+                ga("create", "UA-654321-2", "auto");
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].provider, "Google Analytics");
+        assert_eq!(ids[0].id, "UA-654321-2");
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_google_analytics_4() {
+        let html = r#"
+            <script>
+                gtag('config', 'G-ABCDEFGHIJ');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].provider, "Google Analytics 4");
+        assert_eq!(ids[0].id, "G-ABCDEFGHIJ");
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_facebook_pixel() {
+        let html = r#"
+            <script>
+                fbq('init', '1234567890');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].provider, "Facebook Pixel");
+        assert_eq!(ids[0].id, "1234567890");
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_google_tag_manager() {
+        let html = r#"
+            <script>
+                dataLayer = [{'gtm.start': new Date().getTime(), event: 'gtm.js'}];
+                (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+                new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+                j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+                'https://www.googletagmanager.com/gtm.js?id=GTM-XXXXX'+i+dl;f.parentNode.insertBefore(j,f);
+                })(window,document,'script','dataLayer','GTM-XXXXX');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert!(!ids.is_empty());
+        assert!(ids
+            .iter()
+            .any(|id| id.provider == "Google Tag Manager" && id.id == "GTM-XXXXX"));
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_google_adsense() {
+        let html = r#"
+            <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1234567890123456"></script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].provider, "Google AdSense");
+        assert_eq!(ids[0].id, "pub-1234567890123456");
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_multiple() {
+        let html = r#"
+            <script>
+                ga('create', 'UA-123456-1', 'auto');
+                gtag('config', 'G-ABCDEFGHIJ');
+                fbq('init', '1234567890');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().any(|id| id.provider == "Google Analytics"));
+        assert!(ids.iter().any(|id| id.provider == "Google Analytics 4"));
+        assert!(ids.iter().any(|id| id.provider == "Facebook Pixel"));
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_duplicates() {
+        let html = r#"
+            <script>
+                ga('create', 'UA-123456-1', 'auto');
+                ga('create', 'UA-123456-1', 'auto');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        // Should only extract once
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_empty() {
+        let html = "<html><body>No analytics</body></html>";
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_analytics_ids_case_insensitive() {
+        let html = r#"
+            <script>
+                GA('CREATE', 'UA-123456-1', 'auto');
+            </script>
+        "#;
+        let ids = extract_analytics_ids(html);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].id, "UA-123456-1");
+    }
+}

@@ -109,3 +109,344 @@ pub(crate) fn build_batch_record(
         partial_failures: partial_failure_records,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ErrorType;
+    use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
+    use crate::fetch::response::{HtmlData, ResponseData};
+    use crate::geoip::GeoIpResult;
+    use crate::parse::StructuredData;
+    use crate::security::SecurityWarning;
+    use crate::whois::WhoisResult;
+    use chrono::NaiveDateTime;
+    use reqwest::header::HeaderMap;
+    use std::collections::{HashMap, HashSet};
+
+    fn create_test_response_data() -> ResponseData {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'".parse().unwrap(),
+        );
+        ResponseData {
+            final_url: "https://example.com".to_string(),
+            initial_domain: "example.com".to_string(),
+            final_domain: "example.com".to_string(),
+            host: "example.com".to_string(),
+            status: 200,
+            status_desc: "OK".to_string(),
+            headers,
+            security_headers: HashMap::new(),
+            http_headers: HashMap::new(),
+            body: "<html><head><title>Test</title></head></html>".to_string(),
+        }
+    }
+
+    fn create_test_html_data() -> HtmlData {
+        HtmlData {
+            title: "Test Page".to_string(),
+            keywords_str: Some("test, keywords".to_string()),
+            description: Some("Test description".to_string()),
+            is_mobile_friendly: true,
+            structured_data: StructuredData::default(),
+            social_media_links: vec![],
+            analytics_ids: vec![],
+            meta_tags: HashMap::new(),
+            script_sources: vec![],
+            script_content: String::new(),
+            script_tag_ids: HashSet::new(),
+            html_text: "Test content".to_string(),
+        }
+    }
+
+    fn create_test_tls_dns_data() -> TlsDnsData {
+        TlsDnsData {
+            tls_version: Some("TLSv1.3".to_string()),
+            subject: Some("CN=example.com".to_string()),
+            issuer: Some("CN=Let's Encrypt".to_string()),
+            valid_from: Some(
+                NaiveDateTime::parse_from_str("2024-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            ),
+            valid_to: Some(
+                NaiveDateTime::parse_from_str("2024-12-31 23:59:59", "%Y-%m-%d %H:%M:%S").unwrap(),
+            ),
+            oids: Some(HashSet::new()),
+            cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
+            key_algorithm: Some("RSA".to_string()),
+            subject_alternative_names: Some(vec!["example.com".to_string()]),
+            ip_address: "192.0.2.1".to_string(),
+            reverse_dns_name: Some("example.com".to_string()),
+        }
+    }
+
+    fn create_test_additional_dns_data() -> AdditionalDnsData {
+        AdditionalDnsData {
+            nameservers: Some("ns1.example.com,ns2.example.com".to_string()),
+            txt_records: Some("v=spf1 include:_spf.google.com ~all".to_string()),
+            mx_records: Some("10 mail.example.com".to_string()),
+            spf_record: Some("v=spf1 include:_spf.google.com ~all".to_string()),
+            dmarc_record: Some("v=DMARC1; p=none".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_build_url_record_basic() {
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+        let run_id = Some("test-run-123".to_string());
+
+        let record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &run_id,
+        );
+
+        assert_eq!(record.initial_domain, "example.com");
+        assert_eq!(record.final_domain, "example.com");
+        assert_eq!(record.ip_address, "192.0.2.1");
+        assert_eq!(record.status, 200);
+        assert_eq!(record.title, "Test Page");
+        assert_eq!(record.keywords, Some("test, keywords".to_string()));
+        assert_eq!(record.description, Some("Test description".to_string()));
+        assert_eq!(record.tls_version, Some("TLSv1.3".to_string()));
+        assert_eq!(record.run_id, run_id);
+    }
+
+    #[test]
+    fn test_build_url_record_empty_strings_normalized() {
+        let resp_data = create_test_response_data();
+        let mut html_data = create_test_html_data();
+        html_data.keywords_str = Some("".to_string());
+        html_data.description = Some("".to_string());
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+
+        let record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        // Empty strings should be normalized to None
+        assert_eq!(record.keywords, None);
+        assert_eq!(record.description, None);
+    }
+
+    #[test]
+    fn test_build_url_record_none_fields() {
+        let resp_data = create_test_response_data();
+        let mut html_data = create_test_html_data();
+        html_data.keywords_str = None;
+        html_data.description = None;
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+
+        let record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        assert_eq!(record.keywords, None);
+        assert_eq!(record.description, None);
+    }
+
+    #[test]
+    fn test_build_batch_record_basic() {
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+        let run_id = Some("test-run-123".to_string());
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &run_id,
+        );
+
+        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+        let redirect_chain = vec!["https://example.com".to_string()];
+        let partial_failures = vec![(ErrorType::DnsNsLookupError, "DNS lookup failed".to_string())];
+        let geoip_data = Some((
+            "192.0.2.1".to_string(),
+            GeoIpResult {
+                country_code: Some("US".to_string()),
+                country_name: Some("United States".to_string()),
+                ..Default::default()
+            },
+        ));
+        let security_warnings = vec![SecurityWarning::NoHttps];
+        let whois_data = Some(WhoisResult {
+            registrar: Some("Example Registrar".to_string()),
+            ..Default::default()
+        });
+
+        let batch_record = build_batch_record(
+            url_record,
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            technologies,
+            redirect_chain,
+            partial_failures,
+            geoip_data,
+            security_warnings,
+            whois_data,
+            1234567890,
+            &run_id,
+        );
+
+        assert_eq!(batch_record.url_record.final_domain, "example.com");
+        assert_eq!(batch_record.technologies.len(), 2);
+        assert!(batch_record.technologies.contains(&"PHP".to_string()));
+        assert_eq!(batch_record.redirect_chain.len(), 1);
+        assert_eq!(batch_record.partial_failures.len(), 1);
+        assert!(batch_record.geoip.is_some());
+        assert_eq!(batch_record.security_warnings.len(), 1);
+        assert!(batch_record.whois.is_some());
+    }
+
+    #[test]
+    fn test_build_batch_record_empty_oids() {
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let mut tls_dns_data = create_test_tls_dns_data();
+        tls_dns_data.oids = None; // Test None OIDs
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        let batch_record = build_batch_record(
+            url_record,
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            vec![],
+            vec![],
+            vec![],
+            None,
+            vec![],
+            None,
+            1234567890,
+            &None,
+        );
+
+        assert!(batch_record.oids.is_empty());
+    }
+
+    #[test]
+    fn test_build_batch_record_empty_sans() {
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let mut tls_dns_data = create_test_tls_dns_data();
+        tls_dns_data.subject_alternative_names = None; // Test None SANs
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        let batch_record = build_batch_record(
+            url_record,
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            vec![],
+            vec![],
+            vec![],
+            None,
+            vec![],
+            None,
+            1234567890,
+            &None,
+        );
+
+        assert!(batch_record.subject_alternative_names.is_empty());
+    }
+
+    #[test]
+    fn test_build_batch_record_partial_failures() {
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        let partial_failures = vec![
+            (ErrorType::DnsNsLookupError, "NS lookup failed".to_string()),
+            (
+                ErrorType::DnsTxtLookupError,
+                "TXT lookup failed".to_string(),
+            ),
+        ];
+
+        let batch_record = build_batch_record(
+            url_record,
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            vec![],
+            vec![],
+            partial_failures,
+            None,
+            vec![],
+            None,
+            1234567890,
+            &None,
+        );
+
+        assert_eq!(batch_record.partial_failures.len(), 2);
+        assert_eq!(
+            batch_record.partial_failures[0].error_type,
+            ErrorType::DnsNsLookupError.as_str()
+        );
+        assert_eq!(
+            batch_record.partial_failures[1].error_type,
+            ErrorType::DnsTxtLookupError.as_str()
+        );
+    }
+}

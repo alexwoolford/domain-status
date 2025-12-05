@@ -50,3 +50,174 @@ pub async fn insert_geoip_data(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geoip::GeoIpResult;
+    use crate::storage::migrations::run_migrations;
+    use sqlx::{Row, SqlitePool};
+
+    async fn create_test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create test database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        pool
+    }
+
+    async fn create_test_url_status(pool: &SqlitePool) -> i64 {
+        sqlx::query(
+            "INSERT INTO url_status (domain, final_domain, ip_address, status, status_description, response_time, title, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        )
+        .bind("example.com")
+        .bind("example.com")
+        .bind("93.184.216.34")
+        .bind(200i64)
+        .bind("OK")
+        .bind(0.123f64)
+        .bind("Test Page")
+        .bind(1704067200000i64)
+        .fetch_one(pool)
+        .await
+        .expect("Failed to insert test URL status")
+        .get::<i64, _>(0)
+    }
+
+    fn create_test_geoip_result() -> GeoIpResult {
+        GeoIpResult {
+            country_code: Some("US".to_string()),
+            country_name: Some("United States".to_string()),
+            region: Some("California".to_string()),
+            city: Some("San Francisco".to_string()),
+            latitude: Some(37.7749),
+            longitude: Some(-122.4194),
+            postal_code: Some("94102".to_string()),
+            timezone: Some("America/Los_Angeles".to_string()),
+            asn: Some(15169),
+            asn_org: Some("Google LLC".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_insert_geoip_data_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+        let geoip = create_test_geoip_result();
+
+        let result = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        assert!(result.is_ok());
+
+        // Verify insertion
+        let row = sqlx::query(
+            "SELECT ip_address, country_code, country_name, region, city, latitude, longitude, asn, asn_org FROM url_geoip WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch geoip data");
+
+        assert_eq!(row.get::<String, _>("ip_address"), "93.184.216.34");
+        assert_eq!(
+            row.get::<Option<String>, _>("country_code"),
+            Some("US".to_string())
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("country_name"),
+            Some("United States".to_string())
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("region"),
+            Some("California".to_string())
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("city"),
+            Some("San Francisco".to_string())
+        );
+        assert_eq!(row.get::<Option<f64>, _>("latitude"), Some(37.7749));
+        assert_eq!(row.get::<Option<f64>, _>("longitude"), Some(-122.4194));
+        assert_eq!(row.get::<Option<i64>, _>("asn"), Some(15169));
+        assert_eq!(
+            row.get::<Option<String>, _>("asn_org"),
+            Some("Google LLC".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_geoip_data_upsert() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+        let mut geoip = create_test_geoip_result();
+
+        // Insert first time
+        let result1 = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        assert!(result1.is_ok());
+
+        // Update and insert again (should upsert)
+        geoip.city = Some("Los Angeles".to_string());
+        geoip.region = Some("California".to_string());
+        let result2 = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        assert!(result2.is_ok());
+
+        // Verify only one row exists and it was updated
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_geoip WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count geoip records");
+
+        assert_eq!(count, 1);
+
+        let row = sqlx::query("SELECT city FROM url_geoip WHERE url_status_id = ?")
+            .bind(url_status_id)
+            .fetch_one(&pool)
+            .await
+            .expect("Failed to fetch updated geoip data");
+
+        assert_eq!(
+            row.get::<Option<String>, _>("city"),
+            Some("Los Angeles".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_geoip_data_partial() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        // GeoIP result with only some fields
+        let geoip = GeoIpResult {
+            country_code: Some("US".to_string()),
+            country_name: Some("United States".to_string()),
+            region: None,
+            city: None,
+            latitude: None,
+            longitude: None,
+            postal_code: None,
+            timezone: None,
+            asn: None,
+            asn_org: None,
+        };
+
+        let result = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        assert!(result.is_ok());
+
+        // Verify partial data was inserted
+        let row =
+            sqlx::query("SELECT country_code, city, asn FROM url_geoip WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to fetch geoip data");
+
+        assert_eq!(
+            row.get::<Option<String>, _>("country_code"),
+            Some("US".to_string())
+        );
+        assert_eq!(row.get::<Option<String>, _>("city"), None);
+        assert_eq!(row.get::<Option<i64>, _>("asn"), None);
+    }
+}

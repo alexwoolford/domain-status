@@ -86,14 +86,14 @@ fn extract_json_ld(html: &str) -> Vec<serde_json::Value> {
     // Handles both single and double quotes, and case-insensitive type attribute
     // Use two patterns: one for double quotes, one for single quotes
     let re_double = match Regex::new(
-        "(?i)<script[^>]*type\\s*=\\s*\"application/ld\\+json\"[^>]*>(.*?)</script>",
+        "(?is)<script[^>]*type\\s*=\\s*\"application/ld\\+json\"[^>]*>(.*?)</script>",
     ) {
         Ok(r) => r,
         Err(_) => return json_ld_scripts,
     };
 
     let re_single = match Regex::new(
-        "(?i)<script[^>]*type\\s*=\\s*'application/ld\\+json'[^>]*>(.*?)</script>",
+        "(?is)<script[^>]*type\\s*=\\s*'application/ld\\+json'[^>]*>(.*?)</script>",
     ) {
         Ok(r) => r,
         Err(_) => return json_ld_scripts,
@@ -103,13 +103,12 @@ fn extract_json_ld(html: &str) -> Vec<serde_json::Value> {
     for cap in re_double.captures_iter(html) {
         if let Some(json_content) = cap.get(1) {
             let json_str = json_content.as_str().trim();
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(json_str) {
+            // Try parsing as array first (more specific)
+            if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                json_ld_scripts.extend(json_array);
+            } else if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(json_str) {
+                // Fallback to single JSON value
                 json_ld_scripts.push(json_value);
-            } else {
-                // Try parsing as array of JSON objects
-                if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
-                    json_ld_scripts.extend(json_array);
-                }
             }
         }
     }
@@ -118,13 +117,12 @@ fn extract_json_ld(html: &str) -> Vec<serde_json::Value> {
     for cap in re_single.captures_iter(html) {
         if let Some(json_content) = cap.get(1) {
             let json_str = json_content.as_str().trim();
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(json_str) {
+            // Try parsing as array first (more specific)
+            if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                json_ld_scripts.extend(json_array);
+            } else if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(json_str) {
+                // Fallback to single JSON value
                 json_ld_scripts.push(json_value);
-            } else {
-                // Try parsing as array of JSON objects
-                if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
-                    json_ld_scripts.extend(json_array);
-                }
             }
         }
     }
@@ -174,4 +172,147 @@ fn extract_twitter_cards(document: &Html) -> HashMap<String, String> {
     }
 
     twitter_tags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_structured_data_json_ld() {
+        let html = r#"
+            <html>
+                <head>
+                    <script type="application/ld+json">
+                        {"@type": "WebPage", "name": "Test Page"}
+                    </script>
+                </head>
+            </html>
+        "#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(data.json_ld.len(), 1);
+        assert_eq!(data.json_ld[0]["@type"], "WebPage");
+    }
+
+    #[test]
+    fn test_extract_structured_data_json_ld_array() {
+        let html = r#"<html><head><script type="application/ld+json">[{"@type": "WebPage"}, {"@type": "Organization"}]</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        // After fixing the parsing order, arrays should be extended
+        assert_eq!(data.json_ld.len(), 2);
+        // Both types should be extracted
+        assert!(data.schema_types.contains(&"WebPage".to_string()));
+        assert!(data.schema_types.contains(&"Organization".to_string()));
+    }
+
+    #[test]
+    fn test_extract_structured_data_schema_types() {
+        let html = r#"<html><head><script type="application/ld+json">{"@type": "WebPage"}</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert!(data.schema_types.contains(&"WebPage".to_string()));
+    }
+
+    #[test]
+    fn test_extract_structured_data_schema_types_array() {
+        let html = r#"<html><head><script type="application/ld+json">{"@type": ["WebPage", "Article"]}</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert!(data.schema_types.contains(&"WebPage".to_string()));
+        assert!(data.schema_types.contains(&"Article".to_string()));
+    }
+
+    #[test]
+    fn test_extract_structured_data_open_graph() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta property="og:title" content="Test Title" />
+                    <meta property="og:description" content="Test Description" />
+                </head>
+            </html>
+        "#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(
+            data.open_graph.get("og:title"),
+            Some(&"Test Title".to_string())
+        );
+        assert_eq!(
+            data.open_graph.get("og:description"),
+            Some(&"Test Description".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_structured_data_twitter_cards() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="twitter:card" content="summary" />
+                    <meta name="twitter:title" content="Test Title" />
+                </head>
+            </html>
+        "#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(
+            data.twitter_cards.get("twitter:card"),
+            Some(&"summary".to_string())
+        );
+        assert_eq!(
+            data.twitter_cards.get("twitter:title"),
+            Some(&"Test Title".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_structured_data_all_types() {
+        let html = r#"
+            <html>
+                <head>
+                    <script type="application/ld+json">
+                        {"@type": "WebPage"}
+                    </script>
+                    <meta property="og:title" content="Test" />
+                    <meta name="twitter:card" content="summary" />
+                </head>
+            </html>
+        "#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert!(!data.json_ld.is_empty());
+        assert!(!data.open_graph.is_empty());
+        assert!(!data.twitter_cards.is_empty());
+        assert!(!data.schema_types.is_empty());
+    }
+
+    #[test]
+    fn test_extract_structured_data_empty() {
+        let html = "<html><body>No structured data</body></html>";
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert!(data.json_ld.is_empty());
+        assert!(data.open_graph.is_empty());
+        assert!(data.twitter_cards.is_empty());
+        assert!(data.schema_types.is_empty());
+    }
+
+    #[test]
+    fn test_extract_structured_data_json_ld_single_quotes() {
+        let html = r#"<html><head><script type='application/ld+json'>{"@type": "WebPage"}</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(data.json_ld.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_structured_data_json_ld_case_insensitive() {
+        let html = r#"<html><head><script TYPE="APPLICATION/LD+JSON">{"@type": "WebPage"}</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(data.json_ld.len(), 1);
+    }
 }
