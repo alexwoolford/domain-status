@@ -291,9 +291,8 @@ async fn main() -> Result<()> {
             continue;
         };
 
-        // Increment total URLs counter for every URL that passes validation
-        total_urls_attempted.fetch_add(1, Ordering::SeqCst);
-
+        // Acquire semaphore permit BEFORE incrementing counter to avoid race condition
+        // If semaphore acquisition fails, we don't want to count this URL as attempted
         let permit = match Arc::clone(&semaphore).acquire_owned().await {
             Ok(permit) => permit,
             Err(_) => {
@@ -301,6 +300,10 @@ async fn main() -> Result<()> {
                 continue;
             }
         };
+
+        // Increment total URLs counter AFTER semaphore acquisition succeeds
+        // This ensures the counter only includes URLs that will actually be processed
+        total_urls_attempted.fetch_add(1, Ordering::SeqCst);
 
         // Clone shared context (cheap - just Arc pointer increment)
         // Context is created once before the loop and reused for all tasks
@@ -455,6 +458,7 @@ async fn main() -> Result<()> {
 
     // Clone the Arc before the logging task
     let completed_urls_clone_for_logging = Arc::clone(&completed_urls);
+    let failed_urls_clone_for_logging = Arc::clone(&failed_urls);
     // Use total_urls_attempted for progress tracking (actual URLs that will be processed)
     let total_urls_clone_for_logging = Arc::clone(&total_urls_attempted);
 
@@ -466,7 +470,7 @@ async fn main() -> Result<()> {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        log_progress(start_time, &completed_urls_clone_for_logging, Some(&total_urls_clone_for_logging));
+                        log_progress(start_time, &completed_urls_clone_for_logging, &failed_urls_clone_for_logging, Some(&total_urls_clone_for_logging));
                     }
                     _ = cancel_logging.cancelled() => {
                         break;
@@ -484,7 +488,7 @@ async fn main() -> Result<()> {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        log_progress(start_time, &completed_urls_clone_for_logging, Some(&total_urls_clone_for_logging));
+                        log_progress(start_time, &completed_urls_clone_for_logging, &failed_urls_clone_for_logging, Some(&total_urls_clone_for_logging));
                     }
                     _ = cancel_logging.cancelled() => {
                         break;
@@ -501,7 +505,12 @@ async fn main() -> Result<()> {
     shutdown_gracefully(cancel, logging_task, rate_limiter_shutdown).await;
 
     // Log one final time before printing the error summary
-    log_progress(start_time, &completed_urls, Some(&total_urls_attempted));
+    log_progress(
+        start_time,
+        &completed_urls,
+        &failed_urls,
+        Some(&total_urls_attempted),
+    );
 
     // Print final statistics and update database
     print_and_save_final_statistics(
