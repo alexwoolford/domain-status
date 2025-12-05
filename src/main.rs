@@ -245,7 +245,8 @@ async fn main() -> Result<()> {
     // Start status server if requested
     if let Some(port) = opt.status_port {
         let status_state = status_server::StatusState {
-            total_urls: Arc::clone(&total_urls_in_file), // Use total lines in file, not URLs attempted so far
+            total_urls: Arc::clone(&total_urls_in_file), // Total lines in file (for reference)
+            total_urls_attempted: Arc::clone(&total_urls_attempted), // Valid URLs that will be processed
             completed_urls: Arc::clone(&completed_urls),
             failed_urls: Arc::clone(&failed_urls),
             start_time: Arc::clone(&start_time_arc),
@@ -454,7 +455,8 @@ async fn main() -> Result<()> {
 
     // Clone the Arc before the logging task
     let completed_urls_clone_for_logging = Arc::clone(&completed_urls);
-    let total_urls_clone_for_logging = Arc::clone(&total_urls_in_file);
+    // Use total_urls_attempted for progress tracking (actual URLs that will be processed)
+    let total_urls_clone_for_logging = Arc::clone(&total_urls_attempted);
 
     // Only log progress if status server is not enabled (to reduce verbosity)
     let logging_task = if opt.status_port.is_none() {
@@ -499,7 +501,7 @@ async fn main() -> Result<()> {
     shutdown_gracefully(cancel, logging_task, rate_limiter_shutdown).await;
 
     // Log one final time before printing the error summary
-    log_progress(start_time, &completed_urls, Some(&total_urls_in_file));
+    log_progress(start_time, &completed_urls, Some(&total_urls_attempted));
 
     // Print final statistics and update database
     print_and_save_final_statistics(
