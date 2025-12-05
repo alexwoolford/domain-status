@@ -12,6 +12,8 @@ use crate::utils::TimingStats;
 #[derive(Clone)]
 pub struct StatusState {
     /// Total lines in the input file (includes invalid URLs that will be skipped)
+    /// Kept for reference, but progress calculations use `total_urls_attempted` instead
+    #[allow(dead_code)]
     pub total_urls: Arc<AtomicUsize>,
     /// Total URLs that have been attempted (valid URLs that passed validation)
     pub total_urls_attempted: Arc<AtomicUsize>,
