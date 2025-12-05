@@ -372,3 +372,597 @@ pub(crate) async fn insert_certificate_sans(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::migrations::run_migrations;
+    use sqlx::{Row, SqlitePool};
+    use std::collections::{HashMap, HashSet};
+
+    async fn create_test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create test database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        pool
+    }
+
+    async fn create_test_url_status(pool: &SqlitePool) -> i64 {
+        sqlx::query(
+            "INSERT INTO url_status (domain, final_domain, ip_address, status, status_description, response_time, title, timestamp, is_mobile_friendly) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        )
+        .bind("example.com")
+        .bind("example.com")
+        .bind("93.184.216.34")
+        .bind(200i64)
+        .bind("OK")
+        .bind(0.123f64)
+        .bind("Test Page")
+        .bind(1704067200000i64)
+        .bind(true)
+        .fetch_one(pool)
+        .await
+        .expect("Failed to insert test URL status")
+        .get::<i64, _>(0)
+    }
+
+    #[tokio::test]
+    async fn test_insert_technologies_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+
+        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT technology_name, technology_category FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch technologies");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("technology_name"), "PHP");
+        assert_eq!(rows[1].get::<String, _>("technology_name"), "WordPress");
+    }
+
+    #[tokio::test]
+    async fn test_insert_technologies_duplicates() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let technologies = vec!["WordPress".to_string(), "WordPress".to_string()];
+
+        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify only one entry (ON CONFLICT DO NOTHING)
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_technologies WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count technologies");
+
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_insert_technologies_empty() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let technologies = vec![];
+
+        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_technologies WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count technologies");
+
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_insert_nameservers_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let nameservers_json = Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string());
+
+        insert_nameservers(&mut tx, url_status_id, &nameservers_json).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT nameserver FROM url_nameservers WHERE url_status_id = ? ORDER BY nameserver",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch nameservers");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("nameserver"), "ns1.example.com");
+        assert_eq!(rows[1].get::<String, _>("nameserver"), "ns2.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_insert_nameservers_empty() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let nameservers_json = None;
+
+        insert_nameservers(&mut tx, url_status_id, &nameservers_json).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_nameservers WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count nameservers");
+
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_insert_txt_records_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let txt_records_json =
+            Some(r#"["v=spf1 include:_spf.example.com ~all", "v=dmarc1; p=none"]"#.to_string());
+
+        insert_txt_records(&mut tx, url_status_id, &txt_records_json).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT txt_record, record_type FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch TXT records");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("record_type"), "DMARC");
+        assert_eq!(rows[1].get::<String, _>("record_type"), "SPF");
+    }
+
+    #[tokio::test]
+    async fn test_insert_txt_records_types() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let txt_records_json =
+            Some(r#"["google-site-verification=abc123", "some other record"]"#.to_string());
+
+        insert_txt_records(&mut tx, url_status_id, &txt_records_json).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify record types
+        let rows = sqlx::query(
+            "SELECT record_type FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch TXT records");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("record_type"), "OTHER");
+        assert_eq!(rows[1].get::<String, _>("record_type"), "VERIFICATION");
+    }
+
+    #[tokio::test]
+    async fn test_insert_mx_records_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let mx_records_json = Some(r#"[{"priority": 10, "hostname": "mail1.example.com"}, {"priority": 20, "hostname": "mail2.example.com"}]"#.to_string());
+
+        insert_mx_records(&mut tx, url_status_id, &mx_records_json).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT priority, mail_exchange FROM url_mx_records WHERE url_status_id = ? ORDER BY priority",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch MX records");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<i32, _>("priority"), 10);
+        assert_eq!(
+            rows[0].get::<String, _>("mail_exchange"),
+            "mail1.example.com"
+        );
+        assert_eq!(rows[1].get::<i32, _>("priority"), 20);
+        assert_eq!(
+            rows[1].get::<String, _>("mail_exchange"),
+            "mail2.example.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_security_headers_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let mut security_headers = HashMap::new();
+        security_headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+        security_headers.insert(
+            "Content-Security-Policy".to_string(),
+            "default-src 'self'".to_string(),
+        );
+
+        insert_security_headers(&mut tx, url_status_id, &security_headers).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ? ORDER BY header_name",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch security headers");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].get::<String, _>("header_name"),
+            "Content-Security-Policy"
+        );
+        assert_eq!(
+            rows[1].get::<String, _>("header_name"),
+            "Strict-Transport-Security"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_security_headers_upsert() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx1 = pool.begin().await.expect("Failed to start transaction");
+        let mut security_headers1 = HashMap::new();
+        security_headers1.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+        insert_security_headers(&mut tx1, url_status_id, &security_headers1).await;
+        tx1.commit().await.expect("Failed to commit transaction");
+
+        // Insert again with updated value
+        let mut tx2 = pool.begin().await.expect("Failed to start transaction");
+        let mut security_headers2 = HashMap::new();
+        security_headers2.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=63072000".to_string(),
+        );
+        insert_security_headers(&mut tx2, url_status_id, &security_headers2).await;
+        tx2.commit().await.expect("Failed to commit transaction");
+
+        // Verify updated value
+        let row = sqlx::query(
+            "SELECT header_value FROM url_security_headers WHERE url_status_id = ? AND header_name = 'Strict-Transport-Security'",
+        )
+        .bind(url_status_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch security header");
+
+        assert_eq!(row.get::<String, _>("header_value"), "max-age=63072000");
+    }
+
+    #[tokio::test]
+    async fn test_insert_http_headers_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let mut http_headers = HashMap::new();
+        http_headers.insert("Server".to_string(), "nginx/1.18.0".to_string());
+        http_headers.insert("X-Powered-By".to_string(), "PHP/7.4".to_string());
+
+        insert_http_headers(&mut tx, url_status_id, &http_headers).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT header_name, header_value FROM url_http_headers WHERE url_status_id = ? ORDER BY header_name",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch HTTP headers");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("header_name"), "Server");
+        assert_eq!(rows[1].get::<String, _>("header_name"), "X-Powered-By");
+    }
+
+    #[tokio::test]
+    async fn test_insert_oids_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let mut oids = HashSet::new();
+        oids.insert("1.3.6.1.4.1.311".to_string());
+        oids.insert("1.2.840.113549".to_string());
+
+        insert_oids(&mut tx, url_status_id, &oids).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query("SELECT oid FROM url_oids WHERE url_status_id = ? ORDER BY oid")
+            .bind(url_status_id)
+            .fetch_all(&pool)
+            .await
+            .expect("Failed to fetch OIDs");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("oid"), "1.2.840.113549");
+        assert_eq!(rows[1].get::<String, _>("oid"), "1.3.6.1.4.1.311");
+    }
+
+    #[tokio::test]
+    async fn test_insert_oids_duplicates() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let mut oids = HashSet::new();
+        oids.insert("1.3.6.1.4.1.311".to_string());
+        oids.insert("1.3.6.1.4.1.311".to_string()); // Duplicate (HashSet will dedupe)
+
+        insert_oids(&mut tx, url_status_id, &oids).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify only one entry
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_oids WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count OIDs");
+
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_insert_redirect_chain_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let redirect_chain = vec![
+            "http://example.com".to_string(),
+            "https://example.com".to_string(),
+            "https://www.example.com".to_string(),
+        ];
+
+        insert_redirect_chain(&mut tx, url_status_id, &redirect_chain).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion with correct sequence order
+        let rows = sqlx::query(
+            "SELECT sequence_order, url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch redirect chain");
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].get::<i32, _>("sequence_order"), 1);
+        assert_eq!(rows[0].get::<String, _>("url"), "http://example.com");
+        assert_eq!(rows[1].get::<i32, _>("sequence_order"), 2);
+        assert_eq!(rows[1].get::<String, _>("url"), "https://example.com");
+        assert_eq!(rows[2].get::<i32, _>("sequence_order"), 3);
+        assert_eq!(rows[2].get::<String, _>("url"), "https://www.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_insert_certificate_sans_basic() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let sans = vec![
+            "example.com".to_string(),
+            "www.example.com".to_string(),
+            "*.example.com".to_string(),
+        ];
+
+        insert_certificate_sans(&mut tx, url_status_id, &sans).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify insertion
+        let rows = sqlx::query(
+            "SELECT domain_name FROM url_certificate_sans WHERE url_status_id = ? ORDER BY domain_name",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch certificate SANs");
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].get::<String, _>("domain_name"), "*.example.com");
+        assert_eq!(rows[1].get::<String, _>("domain_name"), "example.com");
+        assert_eq!(rows[2].get::<String, _>("domain_name"), "www.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_insert_certificate_sans_duplicates() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let sans = vec![
+            "example.com".to_string(),
+            "example.com".to_string(), // Duplicate
+        ];
+
+        insert_certificate_sans(&mut tx, url_status_id, &sans).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify only one entry (ON CONFLICT DO NOTHING)
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_certificate_sans WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count certificate SANs");
+
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_insert_empty_collections() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+
+        // Test all empty cases
+        insert_technologies(&mut tx, url_status_id, &[]).await;
+        insert_nameservers(&mut tx, url_status_id, &None).await;
+        insert_txt_records(&mut tx, url_status_id, &None).await;
+        insert_mx_records(&mut tx, url_status_id, &None).await;
+        insert_security_headers(&mut tx, url_status_id, &HashMap::new()).await;
+        insert_http_headers(&mut tx, url_status_id, &HashMap::new()).await;
+        insert_oids(&mut tx, url_status_id, &HashSet::new()).await;
+        insert_redirect_chain(&mut tx, url_status_id, &[]).await;
+        insert_certificate_sans(&mut tx, url_status_id, &[]).await;
+
+        tx.commit().await.expect("Failed to commit transaction");
+
+        // Verify no rows inserted
+        let counts = vec![
+            (
+                "url_technologies",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_technologies WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_nameservers",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_nameservers WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_txt_records",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_txt_records WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_mx_records",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_mx_records WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_security_headers",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_security_headers WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_http_headers",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_http_headers WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_oids",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_oids WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_redirect_chain",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_redirect_chain WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+            (
+                "url_certificate_sans",
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM url_certificate_sans WHERE url_status_id = ?",
+                )
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            ),
+        ];
+
+        for (table, count) in counts {
+            assert_eq!(count, 0, "Table {} should have no rows", table);
+        }
+    }
+}

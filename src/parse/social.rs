@@ -143,3 +143,165 @@ pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
 
     links
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_social_media_links_linkedin() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://www.linkedin.com/company/example">LinkedIn</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "LinkedIn");
+        assert_eq!(links[0].url, "https://www.linkedin.com/company/example");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_twitter() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://twitter.com/example">Twitter</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "Twitter");
+        assert_eq!(links[0].url, "https://twitter.com/example");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_x_com() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://x.com/example">X</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "Twitter");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_facebook() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://www.facebook.com/example">Facebook</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "Facebook");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_instagram() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://www.instagram.com/example">Instagram</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "Instagram");
+    }
+
+    #[test]
+    fn test_extract_social_media_links_youtube() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://www.youtube.com/channel/example">YouTube</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "YouTube");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_github() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://github.com/example">GitHub</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "GitHub");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_tiktok() {
+        let html = Html::parse_document(
+            r#"<html><body><a href="https://www.tiktok.com/@example">TikTok</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].platform, "TikTok");
+        assert_eq!(links[0].identifier, Some("example".to_string()));
+    }
+
+    #[test]
+    fn test_extract_social_media_links_protocol_relative() {
+        // Protocol-relative URLs (//example.com) are converted to https:// by the implementation
+        // But the regex patterns require http:// or https:// in the original href to match
+        let html = Html::parse_document(
+            r#"<html><body><a href="//www.linkedin.com/company/example">LinkedIn</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        // The regex patterns require http:// or https:// in the href attribute to match
+        // Protocol-relative URLs (//) are converted but only after regex matching
+        assert_eq!(links.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_social_media_links_no_http() {
+        // URLs without http/https won't match the regex patterns which require http:// or https://
+        // The implementation converts them to https:// but only after regex matching
+        let html = Html::parse_document(
+            r#"<html><body><a href="www.linkedin.com/company/example">LinkedIn</a></body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        // The regex patterns require http:// or https:// in the href attribute to match
+        // So URLs without protocol won't match the pattern
+        assert_eq!(links.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_social_media_links_duplicates() {
+        let html = Html::parse_document(
+            r#"<html><body>
+                <a href="https://www.linkedin.com/company/example">Link 1</a>
+                <a href="https://www.linkedin.com/company/example">Link 2</a>
+            </body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        // Should only extract once
+        assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_social_media_links_multiple_platforms() {
+        let html = Html::parse_document(
+            r#"<html><body>
+                <a href="https://www.linkedin.com/company/example">LinkedIn</a>
+                <a href="https://twitter.com/example">Twitter</a>
+                <a href="https://github.com/example">GitHub</a>
+            </body></html>"#,
+        );
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_social_media_links_empty() {
+        let html = Html::parse_document("<html><body>No social links</body></html>");
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_social_media_links_relative_url() {
+        // Relative URLs should be skipped
+        let html =
+            Html::parse_document(r#"<html><body><a href="/linkedin">Relative</a></body></html>"#);
+        let links = extract_social_media_links(&html);
+        assert_eq!(links.len(), 0);
+    }
+}

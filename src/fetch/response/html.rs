@@ -160,3 +160,249 @@ pub(crate) fn parse_html_content(
         html_text,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+
+    fn test_error_stats() -> ProcessingStats {
+        ProcessingStats::new()
+    }
+
+    #[test]
+    fn test_parse_html_content_basic() {
+        let html = r#"
+            <html>
+                <head>
+                    <title>Test Page</title>
+                    <meta name="keywords" content="test, page">
+                    <meta name="description" content="A test page">
+                </head>
+                <body>
+                    <p>Hello, world!</p>
+                </body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert_eq!(result.title, "Test Page");
+        assert_eq!(result.keywords_str, Some("test, page".to_string()));
+        assert_eq!(result.description, Some("A test page".to_string()));
+        assert!(result.html_text.contains("Hello"));
+    }
+
+    #[test]
+    fn test_parse_html_content_meta_tags() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="author" content="John Doe">
+                    <meta property="og:title" content="OG Title">
+                    <meta http-equiv="refresh" content="30">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Check meta tags extraction
+        assert!(result.meta_tags.contains_key("name:author"));
+        assert_eq!(
+            result.meta_tags.get("name:author"),
+            Some(&"John Doe".to_string())
+        );
+        assert!(result.meta_tags.contains_key("property:og:title"));
+        assert_eq!(
+            result.meta_tags.get("property:og:title"),
+            Some(&"OG Title".to_string())
+        );
+        assert!(result.meta_tags.contains_key("http-equiv:refresh"));
+        assert_eq!(
+            result.meta_tags.get("http-equiv:refresh"),
+            Some(&"30".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_html_content_script_extraction() {
+        let html = r#"
+            <html>
+                <head>
+                    <script src="https://example.com/script.js"></script>
+                    <script id="__NEXT_DATA__">{"page":"test"}</script>
+                    <script>console.log("inline");</script>
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Check script sources
+        assert_eq!(result.script_sources.len(), 1);
+        assert!(result
+            .script_sources
+            .contains(&"https://example.com/script.js".to_string()));
+
+        // Check script IDs
+        assert!(result.script_tag_ids.contains("__NEXT_DATA__"));
+
+        // Check inline script content
+        assert!(result.script_content.contains("console.log"));
+    }
+
+    #[test]
+    fn test_parse_html_content_social_media_links() {
+        let html = r#"
+            <html>
+                <body>
+                    <a href="https://twitter.com/example">Twitter</a>
+                    <a href="https://www.linkedin.com/company/example">LinkedIn</a>
+                    <a href="https://github.com/example">GitHub</a>
+                </body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert!(!result.social_media_links.is_empty());
+        let platforms: Vec<&str> = result
+            .social_media_links
+            .iter()
+            .map(|link| link.platform.as_str())
+            .collect();
+        assert!(platforms.contains(&"Twitter") || platforms.contains(&"X"));
+        assert!(platforms.contains(&"LinkedIn"));
+        assert!(platforms.contains(&"GitHub"));
+    }
+
+    #[test]
+    fn test_parse_html_content_analytics_ids() {
+        let html = r#"
+            <html>
+                <head>
+                    <script>
+                        ga('create', 'UA-123456-1', 'auto');
+                        gtag('config', 'G-XXXXXXXXXX');
+                    </script>
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert!(!result.analytics_ids.is_empty());
+        let providers: Vec<&str> = result
+            .analytics_ids
+            .iter()
+            .map(|id| id.provider.as_str())
+            .collect();
+        assert!(providers.contains(&"Google Analytics"));
+    }
+
+    #[test]
+    fn test_parse_html_content_structured_data() {
+        let html = r#"
+            <html>
+                <head>
+                    <script type="application/ld+json">{"@type":"WebPage","name":"Test"}</script>
+                    <meta property="og:title" content="OG Title">
+                    <meta name="twitter:card" content="summary">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Check structured data - JSON-LD might be empty if parsing fails, but OG and Twitter should work
+        // Open Graph and Twitter Cards are extracted from meta tags
+        assert!(!result.structured_data.open_graph.is_empty());
+        assert!(!result.structured_data.twitter_cards.is_empty());
+        // JSON-LD extraction depends on valid JSON - may be empty if JSON is invalid
+        // We just verify the function doesn't panic
+    }
+
+    #[test]
+    fn test_parse_html_content_mobile_friendly() {
+        let html_with_viewport = r#"
+            <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let html_without_viewport = r#"
+            <html>
+                <head></head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+
+        let result_with = parse_html_content(html_with_viewport, "example.com", &stats);
+        assert!(result_with.is_mobile_friendly);
+
+        let result_without = parse_html_content(html_without_viewport, "example.com", &stats);
+        assert!(!result_without.is_mobile_friendly);
+    }
+
+    #[test]
+    fn test_parse_html_content_empty_html() {
+        let html = "<html><head></head><body></body></html>";
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert_eq!(result.title, "");
+        assert_eq!(result.keywords_str, None);
+        assert_eq!(result.description, None);
+        assert!(result.script_sources.is_empty());
+        assert!(result.social_media_links.is_empty());
+        assert!(result.analytics_ids.is_empty());
+    }
+
+    #[test]
+    fn test_parse_html_content_multiple_scripts() {
+        let html = r#"
+            <html>
+                <head>
+                    <script src="https://example.com/script1.js"></script>
+                    <script src="https://example.com/script2.js"></script>
+                    <script>var x = 1;</script>
+                    <script>var y = 2;</script>
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert_eq!(result.script_sources.len(), 2);
+        assert!(result.script_content.contains("var x"));
+        assert!(result.script_content.contains("var y"));
+    }
+
+    #[test]
+    fn test_parse_html_content_meta_tags_case_insensitive() {
+        let html = r#"
+            <html>
+                <head>
+                    <meta NAME="keywords" CONTENT="test">
+                    <meta PROPERTY="og:title" CONTENT="Title">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Meta tag keys should be lowercased
+        assert!(result.meta_tags.contains_key("name:keywords"));
+        assert!(result.meta_tags.contains_key("property:og:title"));
+    }
+}
