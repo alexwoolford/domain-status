@@ -7,7 +7,10 @@ use axum::{
 };
 use std::sync::atomic::Ordering;
 
-use super::super::types::{ErrorCounts, InfoCounts, StatusResponse, StatusState, WarningCounts};
+use super::super::types::{
+    ErrorCounts, InfoCounts, StatusResponse, StatusState, TimingMetrics, TimingSummary,
+    WarningCounts,
+};
 use crate::error_handling::{ErrorType, InfoType, WarningType};
 
 /// JSON status endpoint with detailed progress information
@@ -146,6 +149,33 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
                 .error_stats
                 .get_info_count(InfoType::MultipleRedirects),
         },
+        timing: state.timing_stats.as_ref().and_then(|timing_stats| {
+            let count = timing_stats.count.load(Ordering::Relaxed);
+            if count > 0 {
+                let avg = timing_stats.averages();
+                // Convert from microseconds to milliseconds for display
+                let micros_to_ms = |micros: u64| (micros + 500) / 1000;
+
+                Some(TimingSummary {
+                    count,
+                    averages: TimingMetrics {
+                        http_request_ms: micros_to_ms(avg.http_request_ms),
+                        dns_forward_ms: micros_to_ms(avg.dns_forward_ms),
+                        dns_reverse_ms: micros_to_ms(avg.dns_reverse_ms),
+                        dns_additional_ms: micros_to_ms(avg.dns_additional_ms),
+                        tls_handshake_ms: micros_to_ms(avg.tls_handshake_ms),
+                        html_parsing_ms: micros_to_ms(avg.html_parsing_ms),
+                        tech_detection_ms: micros_to_ms(avg.tech_detection_ms),
+                        geoip_lookup_ms: micros_to_ms(avg.geoip_lookup_ms),
+                        whois_lookup_ms: micros_to_ms(avg.whois_lookup_ms),
+                        security_analysis_ms: micros_to_ms(avg.security_analysis_ms),
+                        total_ms: micros_to_ms(avg.total_ms),
+                    },
+                })
+            } else {
+                None
+            }
+        }),
     };
 
     let json = match serde_json::to_string_pretty(&response) {
