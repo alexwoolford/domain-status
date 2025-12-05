@@ -75,7 +75,18 @@ pub async fn resolve_redirect_chain(
         if is_redirect_status(status_code) {
             if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
                 // Avoid unnecessary String allocation - parse directly from &str
-                let loc_str = loc.to_str().unwrap_or("");
+                // If header value is not valid UTF-8, skip this redirect (unusual but possible)
+                let loc_str = match loc.to_str() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log::warn!(
+                            "Location header for {} contains invalid UTF-8: {}. Skipping redirect.",
+                            current,
+                            e
+                        );
+                        break;
+                    }
+                };
                 let new_url = Url::parse(loc_str)
                     .or_else(|_| Url::parse(&current).and_then(|base| base.join(loc_str)))?;
                 // Only allocate String when we actually need to update current
