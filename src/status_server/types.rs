@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::error_handling::ProcessingStats;
+use crate::utils::TimingStats;
 
 /// Shared state for the status server
 #[derive(Clone)]
@@ -15,6 +16,8 @@ pub struct StatusState {
     pub failed_urls: Arc<AtomicUsize>,
     pub start_time: Arc<Instant>,
     pub error_stats: Arc<ProcessingStats>,
+    /// Timing statistics for performance monitoring
+    pub timing_stats: Option<Arc<TimingStats>>,
 }
 
 /// JSON response for `/status` endpoint
@@ -31,6 +34,31 @@ pub struct StatusResponse {
     pub errors: ErrorCounts,
     pub warnings: WarningCounts,
     pub info: InfoCounts,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<TimingSummary>,
+}
+
+/// Timing summary for status endpoint
+#[derive(Serialize)]
+pub struct TimingSummary {
+    pub count: u64,
+    pub averages: TimingMetrics,
+}
+
+/// Timing metrics in milliseconds
+#[derive(Serialize)]
+pub struct TimingMetrics {
+    pub http_request_ms: u64,
+    pub dns_forward_ms: u64,
+    pub dns_reverse_ms: u64,
+    pub dns_additional_ms: u64,
+    pub tls_handshake_ms: u64,
+    pub html_parsing_ms: u64,
+    pub tech_detection_ms: u64,
+    pub geoip_lookup_ms: u64,
+    pub whois_lookup_ms: u64,
+    pub security_analysis_ms: u64,
+    pub total_ms: u64,
 }
 
 #[derive(Serialize)]

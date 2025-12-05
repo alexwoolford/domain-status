@@ -250,6 +250,7 @@ async fn main() -> Result<()> {
             failed_urls: Arc::clone(&failed_urls),
             start_time: Arc::clone(&start_time_arc),
             error_stats: error_stats.clone(),
+            timing_stats: Some(Arc::clone(&timing_stats)),
         };
         tokio::spawn(async move {
             if let Err(e) = status_server::start_status_server(port, status_state).await {
@@ -453,6 +454,7 @@ async fn main() -> Result<()> {
 
     // Clone the Arc before the logging task
     let completed_urls_clone_for_logging = Arc::clone(&completed_urls);
+    let total_urls_clone_for_logging = Arc::clone(&total_urls_in_file);
 
     // Only log progress if status server is not enabled (to reduce verbosity)
     let logging_task = if opt.status_port.is_none() {
@@ -462,7 +464,7 @@ async fn main() -> Result<()> {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        log_progress(start_time, &completed_urls_clone_for_logging);
+                        log_progress(start_time, &completed_urls_clone_for_logging, Some(&total_urls_clone_for_logging));
                     }
                     _ = cancel_logging.cancelled() => {
                         break;
@@ -480,7 +482,7 @@ async fn main() -> Result<()> {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        log_progress(start_time, &completed_urls_clone_for_logging);
+                        log_progress(start_time, &completed_urls_clone_for_logging, Some(&total_urls_clone_for_logging));
                     }
                     _ = cancel_logging.cancelled() => {
                         break;
@@ -497,7 +499,7 @@ async fn main() -> Result<()> {
     shutdown_gracefully(cancel, logging_task, rate_limiter_shutdown).await;
 
     // Log one final time before printing the error summary
-    log_progress(start_time, &completed_urls);
+    log_progress(start_time, &completed_urls, Some(&total_urls_in_file));
 
     // Print final statistics and update database
     print_and_save_final_statistics(
