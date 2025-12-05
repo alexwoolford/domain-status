@@ -7,7 +7,7 @@
 //! - `extract_domain()` - Extracts the registrable domain from a URL
 //! - `normalize_domain()` - Normalizes domain names (lowercase, removes www)
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use publicsuffix::{List, Psl};
 use reqwest::Url;
 
@@ -36,15 +36,19 @@ use reqwest::Url;
 /// 3. If they're the same, we need to extract the registrable domain manually by finding
 ///    the part of the hostname that comes before the suffix
 pub fn extract_domain(list: &List, url: &str) -> Result<String> {
-    let parsed = Url::parse(url)?;
+    let parsed = Url::parse(url).with_context(|| format!("Failed to parse URL: {}", url))?;
     let host = parsed
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("Failed to extract host from {url}"))?;
+        .ok_or_else(|| anyhow::anyhow!("URL '{}' has no host component", url))?;
 
     // Get what domain() returns (may be just a partial suffix for multi-part TLDs)
-    let domain_result = list
-        .domain(host.as_bytes())
-        .ok_or_else(|| anyhow::anyhow!("Failed to extract domain from {url}"))?;
+    let domain_result = list.domain(host.as_bytes()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to extract registrable domain from host '{}' in URL '{}'",
+            host,
+            url
+        )
+    })?;
     let domain_str = String::from_utf8_lossy(domain_result.as_bytes()).to_string();
 
     let host_lower = host.to_lowercase();

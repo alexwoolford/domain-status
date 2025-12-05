@@ -23,16 +23,16 @@ pub async fn insert_batch_record(
     let domain = &record.url_record.initial_domain;
 
     // Insert main URL record
-    let url_status_id = insert::insert_url_record(
+    let url_status_id = insert::insert_url_record(insert::url::UrlRecordInsertParams {
         pool,
-        &record.url_record,
-        &record.security_headers,
-        &record.http_headers,
-        &record.oids,
-        &record.redirect_chain,
-        &record.technologies,
-        &record.subject_alternative_names,
-    )
+        record: &record.url_record,
+        security_headers: &record.security_headers,
+        http_headers: &record.http_headers,
+        oids: &record.oids,
+        redirect_chain: &record.redirect_chain,
+        technologies: &record.technologies,
+        subject_alternative_names: &record.subject_alternative_names,
+    })
     .await
     .map_err(|e| {
         log::error!(

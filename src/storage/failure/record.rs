@@ -15,6 +15,31 @@ use std::sync::Arc;
 use super::context::FailureContext;
 use super::error::{extract_error_type, extract_http_status};
 
+/// Parameters for recording a URL failure.
+///
+/// This struct groups all parameters needed to record a failure, reducing
+/// function argument count and improving maintainability.
+pub struct FailureRecordParams<'a> {
+    /// Database connection pool
+    pub pool: &'a SqlitePool,
+    /// Public Suffix List extractor for domain extraction
+    pub extractor: &'a List,
+    /// The original URL that failed
+    pub url: &'a str,
+    /// The error that occurred
+    pub error: &'a Error,
+    /// Failure context (final_url, redirect_chain, headers)
+    pub context: FailureContext,
+    /// Number of retry attempts made
+    pub retry_count: u32,
+    /// Time spent before failure (in seconds)
+    pub elapsed_time: f64,
+    /// Run identifier (optional)
+    pub run_id: Option<&'a str>,
+    /// Circuit breaker for database write operations
+    pub circuit_breaker: Arc<DbWriteCircuitBreaker>,
+}
+
 /// Records a URL failure in the database.
 ///
 /// This function extracts failure information from an error and inserts it
@@ -25,56 +50,44 @@ use super::error::{extract_error_type, extract_http_status};
 ///
 /// # Arguments
 ///
-/// * `pool` - Database connection pool
-/// * `extractor` - Public Suffix List extractor for domain extraction
-/// * `url` - The original URL that failed
-/// * `error` - The error that occurred
-/// * `context` - Failure context (final_url, redirect_chain, headers) - passed directly to avoid fragile parsing
-/// * `retry_count` - Number of retry attempts made
-/// * `elapsed_time` - Time spent before failure
-/// * `run_id` - Run identifier (optional)
-/// * `circuit_breaker` - Circuit breaker for database write operations
-#[allow(clippy::too_many_arguments)] // All arguments are necessary for comprehensive failure tracking
-pub async fn record_url_failure(
-    pool: &SqlitePool,
-    extractor: &List,
-    url: &str,
-    error: &Error,
-    context: FailureContext,
-    retry_count: u32,
-    elapsed_time: f64,
-    run_id: Option<&str>,
-    circuit_breaker: Arc<DbWriteCircuitBreaker>,
-) -> Result<(), anyhow::Error> {
+/// * `params` - Parameters for failure recording
+pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), anyhow::Error> {
     // Check if circuit breaker is open (database writes are blocked)
-    if circuit_breaker.is_circuit_open().await {
+    if params.circuit_breaker.is_circuit_open().await {
         log::warn!(
             "Database write circuit breaker is open - skipping failure record for {} (circuit will retry after cooldown)",
-            url
+            params.url
         );
         return Ok(()); // Return Ok to avoid propagating error - we've logged the issue
     }
     // Extract context from error chain if not provided directly
     // This allows us to get context even if it wasn't passed explicitly
-    let extracted_context = super::context::extract_failure_context(error);
+    let extracted_context = super::context::extract_failure_context(params.error);
 
     // Use provided context if fields are populated, otherwise use extracted context
-    let final_url = context.final_url.or(extracted_context.final_url);
-    let redirect_chain = if !context.redirect_chain.is_empty() {
-        context.redirect_chain
+    let final_url = params.context.final_url.or(extracted_context.final_url);
+    let redirect_chain = if !params.context.redirect_chain.is_empty() {
+        params.context.redirect_chain
     } else {
         extracted_context.redirect_chain
     };
 
     // Extract domain information
-    let domain = extract_domain(extractor, url).unwrap_or_else(|_| "unknown".to_string());
+    let domain = extract_domain(params.extractor, params.url).unwrap_or_else(|e| {
+        log::debug!(
+            "Failed to extract domain from URL {}: {}. Using 'unknown' as fallback.",
+            params.url,
+            e
+        );
+        "unknown".to_string()
+    });
 
     let final_domain = final_url
         .as_ref()
-        .and_then(|u| extract_domain(extractor, u).ok());
+        .and_then(|u| extract_domain(params.extractor, u).ok());
 
     // Extract error information
-    let error_type = extract_error_type(error);
+    let error_type = extract_error_type(params.error);
 
     // Build error message - enhanced: use root cause with error chain summary for complex errors
     // The root cause is typically the first reqwest error or the first meaningful message
@@ -82,7 +95,7 @@ pub async fn record_url_failure(
         // Try to find reqwest error first (most informative)
         let mut found_reqwest = false;
         let mut reqwest_msg = String::new();
-        for cause in error.chain() {
+        for cause in params.error.chain() {
             if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
                 reqwest_msg = reqwest_err.to_string();
                 // Try to get underlying source for more detail
@@ -97,9 +110,10 @@ pub async fn record_url_failure(
 
         let msg = if found_reqwest {
             // For complex errors (long chain), include chain summary
-            let chain_count = error.chain().count();
+            let chain_count = params.error.chain().count();
             if chain_count > 3 {
-                let chain_summary: Vec<String> = error
+                let chain_summary: Vec<String> = params
+                    .error
                     .chain()
                     .skip(1) // Skip the reqwest error we already have
                     .take(3) // Limit to first 3 additional causes
@@ -119,15 +133,19 @@ pub async fn record_url_failure(
             }
         } else {
             // Fallback: use first meaningful message or full error string
-            let chain: Vec<String> = error.chain().map(|cause| cause.to_string()).collect();
+            let chain: Vec<String> = params
+                .error
+                .chain()
+                .map(|cause| cause.to_string())
+                .collect();
             if chain.len() > 1 {
                 format!(
                     "{} (error chain: {})",
-                    chain.first().unwrap_or(&error.to_string()),
+                    chain.first().unwrap_or(&params.error.to_string()),
                     chain[1..].join(" -> ")
                 )
             } else {
-                error.to_string()
+                params.error.to_string()
             }
         };
 
@@ -135,14 +153,14 @@ pub async fn record_url_failure(
         // Sanitize and truncate error message to prevent database bloat
         crate::utils::sanitize::sanitize_and_truncate_error_message(&msg)
     };
-    let http_status = extract_http_status(error);
-    let response_headers = if !context.response_headers.is_empty() {
-        context.response_headers
+    let http_status = extract_http_status(params.error);
+    let response_headers = if !params.context.response_headers.is_empty() {
+        params.context.response_headers
     } else {
         extracted_context.response_headers
     };
-    let request_headers = if !context.request_headers.is_empty() {
-        context.request_headers
+    let request_headers = if !params.context.request_headers.is_empty() {
+        params.context.request_headers
     } else {
         extracted_context.request_headers
     };
@@ -184,32 +202,32 @@ pub async fn record_url_failure(
 
     // Build failure record
     let failure = UrlFailureRecord {
-        url: url.to_string(),
+        url: params.url.to_string(),
         final_url: final_url.map(|s| s.to_string()),
         domain,
         final_domain,
         error_type: error_type.as_str().to_string(),
         error_message,
         http_status,
-        retry_count,
-        elapsed_time_seconds: Some(elapsed_time),
+        retry_count: params.retry_count,
+        elapsed_time_seconds: Some(params.elapsed_time),
         timestamp: chrono::Utc::now().timestamp_millis(),
-        run_id: run_id.map(|s| s.to_string()),
+        run_id: params.run_id.map(|s| s.to_string()),
         redirect_chain,
         response_headers,
         request_headers,
     };
 
     // Insert failure record
-    match insert_url_failure(pool, &failure).await {
+    match insert_url_failure(params.pool, &failure).await {
         Ok(_) => {
             // Record success to reset circuit breaker
-            circuit_breaker.record_success().await;
+            params.circuit_breaker.record_success().await;
             Ok(())
         }
         Err(e) => {
             // Record failure in circuit breaker
-            circuit_breaker.record_failure().await;
+            params.circuit_breaker.record_failure().await;
             Err(anyhow::anyhow!("Failed to insert failure record: {}", e))
         }
     }

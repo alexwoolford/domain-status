@@ -123,7 +123,7 @@ pub async fn handle_http_request(
                         request_headers: request_headers.clone(),
                     };
                     // Attach structured failure context using helper function
-                    // Also attach string context for backward compatibility
+                    // This provides detailed debugging information (URL, redirect chain, headers)
                     let redirect_chain_str = serialize_json_with_default(&redirect_chain, "[]");
                     let error = Error::from(e);
                     Err(crate::storage::failure::attach_failure_context(

@@ -5,7 +5,9 @@ use sqlx::Transaction;
 
 use crate::fingerprint;
 
-use super::super::utils::{detect_txt_type, parse_json_array, parse_mx_json_array};
+use super::super::utils::{
+    build_batch_insert_query, detect_txt_type, parse_json_array, parse_mx_json_array,
+};
 
 /// Inserts technologies into url_technologies table.
 pub(crate) async fn insert_technologies(
@@ -62,12 +64,11 @@ pub(crate) async fn insert_nameservers(
 
         // Batch insert: build VALUES clause for all nameservers
         // SQLite supports up to 500 parameters per query, so we can safely batch
-        let placeholders: Vec<String> = (0..ns.len()).map(|_| "(?, ?)".to_string()).collect();
-        let query = format!(
-            "INSERT INTO url_nameservers (url_status_id, nameserver)
-             VALUES {}
-             ON CONFLICT(url_status_id, nameserver) DO NOTHING",
-            placeholders.join(", ")
+        let query = build_batch_insert_query(
+            "url_nameservers",
+            &["url_status_id", "nameserver"],
+            ns.len(),
+            Some("ON CONFLICT(url_status_id, nameserver) DO NOTHING"),
         );
 
         let mut query_builder = sqlx::query(&query);
@@ -102,13 +103,11 @@ pub(crate) async fn insert_txt_records(
             txts.iter().map(|txt| (txt, detect_txt_type(txt))).collect();
 
         // Batch insert: build VALUES clause for all TXT records
-        let placeholders: Vec<String> = (0..txt_with_types.len())
-            .map(|_| "(?, ?, ?)".to_string())
-            .collect();
-        let query = format!(
-            "INSERT INTO url_txt_records (url_status_id, txt_record, record_type)
-             VALUES {}",
-            placeholders.join(", ")
+        let query = build_batch_insert_query(
+            "url_txt_records",
+            &["url_status_id", "txt_record", "record_type"],
+            txt_with_types.len(),
+            None,
         );
 
         let mut query_builder = sqlx::query(&query);
@@ -142,14 +141,11 @@ pub(crate) async fn insert_mx_records(
         }
 
         // Batch insert: build VALUES clause for all MX records
-        let placeholders: Vec<String> = (0..mx_records.len())
-            .map(|_| "(?, ?, ?)".to_string())
-            .collect();
-        let query = format!(
-            "INSERT INTO url_mx_records (url_status_id, priority, mail_exchange)
-             VALUES {}
-             ON CONFLICT(url_status_id, priority, mail_exchange) DO NOTHING",
-            placeholders.join(", ")
+        let query = build_batch_insert_query(
+            "url_mx_records",
+            &["url_status_id", "priority", "mail_exchange"],
+            mx_records.len(),
+            Some("ON CONFLICT(url_status_id, priority, mail_exchange) DO NOTHING"),
         );
 
         let mut query_builder = sqlx::query(&query);
@@ -185,15 +181,11 @@ pub(crate) async fn insert_security_headers(
     let headers: Vec<(&String, &String)> = security_headers.iter().collect();
 
     // Batch insert: build VALUES clause for all security headers
-    let placeholders: Vec<String> = (0..headers.len())
-        .map(|_| "(?, ?, ?)".to_string())
-        .collect();
-    let query = format!(
-        "INSERT INTO url_security_headers (url_status_id, header_name, header_value)
-         VALUES {}
-         ON CONFLICT(url_status_id, header_name) DO UPDATE SET
-         header_value=excluded.header_value",
-        placeholders.join(", ")
+    let query = build_batch_insert_query(
+        "url_security_headers",
+        &["url_status_id", "header_name", "header_value"],
+        headers.len(),
+        Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
     );
 
     let mut query_builder = sqlx::query(&query);
@@ -228,15 +220,11 @@ pub(crate) async fn insert_http_headers(
     let headers: Vec<(&String, &String)> = http_headers.iter().collect();
 
     // Batch insert: build VALUES clause for all HTTP headers
-    let placeholders: Vec<String> = (0..headers.len())
-        .map(|_| "(?, ?, ?)".to_string())
-        .collect();
-    let query = format!(
-        "INSERT INTO url_http_headers (url_status_id, header_name, header_value)
-         VALUES {}
-         ON CONFLICT(url_status_id, header_name) DO UPDATE SET
-         header_value=excluded.header_value",
-        placeholders.join(", ")
+    let query = build_batch_insert_query(
+        "url_http_headers",
+        &["url_status_id", "header_name", "header_value"],
+        headers.len(),
+        Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
     );
 
     let mut query_builder = sqlx::query(&query);
@@ -271,12 +259,11 @@ pub(crate) async fn insert_oids(
     let oids_vec: Vec<&String> = oids.iter().collect();
 
     // Batch insert: build VALUES clause for all OIDs
-    let placeholders: Vec<String> = (0..oids_vec.len()).map(|_| "(?, ?)".to_string()).collect();
-    let query = format!(
-        "INSERT INTO url_oids (url_status_id, oid)
-         VALUES {}
-         ON CONFLICT(url_status_id, oid) DO NOTHING",
-        placeholders.join(", ")
+    let query = build_batch_insert_query(
+        "url_oids",
+        &["url_status_id", "oid"],
+        oids_vec.len(),
+        Some("ON CONFLICT(url_status_id, oid) DO NOTHING"),
     );
 
     let mut query_builder = sqlx::query(&query);
@@ -306,15 +293,11 @@ pub(crate) async fn insert_redirect_chain(
 
     // Batch insert: build VALUES clause for all redirects
     // Preserve sequence order (redirects happen in order, 1-based)
-    let placeholders: Vec<String> = (0..redirect_chain.len())
-        .map(|_| "(?, ?, ?)".to_string())
-        .collect();
-    let query = format!(
-        "INSERT INTO url_redirect_chain (url_status_id, sequence_order, url)
-         VALUES {}
-         ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET
-         url=excluded.url",
-        placeholders.join(", ")
+    let query = build_batch_insert_query(
+        "url_redirect_chain",
+        &["url_status_id", "sequence_order", "url"],
+        redirect_chain.len(),
+        Some("ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET url=excluded.url"),
     );
 
     let mut query_builder = sqlx::query(&query);
@@ -348,14 +331,11 @@ pub(crate) async fn insert_certificate_sans(
 
     // SANs are stored in a separate table to enable graph analysis (linking domains sharing certificates)
     // Batch insert: build VALUES clause for all SANs
-    let placeholders: Vec<String> = (0..subject_alternative_names.len())
-        .map(|_| "(?, ?)".to_string())
-        .collect();
-    let query = format!(
-        "INSERT INTO url_certificate_sans (url_status_id, domain_name)
-         VALUES {}
-         ON CONFLICT(url_status_id, domain_name) DO NOTHING",
-        placeholders.join(", ")
+    let query = build_batch_insert_query(
+        "url_certificate_sans",
+        &["url_status_id", "domain_name"],
+        subject_alternative_names.len(),
+        Some("ON CONFLICT(url_status_id, domain_name) DO NOTHING"),
     );
 
     let mut query_builder = sqlx::query(&query);

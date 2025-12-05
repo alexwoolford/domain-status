@@ -69,23 +69,42 @@ pub(crate) fn apply_technology_exclusions(
     final_detected
 }
 
-/// Checks if a technology matches based on its patterns
-#[allow(clippy::too_many_arguments)] // Technology matching requires many parameters
-pub(crate) async fn matches_technology(
-    tech: &Technology,
-    headers: &HashMap<String, String>,
-    cookies: &HashMap<String, String>,
-    meta_tags: &HashMap<String, String>,
-    script_sources: &[String],
-    all_script_content: &str, // Combined inline + external scripts for JS execution
-    html_text: &str,
-    url: &str,
-    script_tag_ids: &HashSet<String>, // Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
-    js_property_results: &HashMap<String, bool>, // Batch JS property check results
-) -> bool {
+/// Parameters for technology matching.
+///
+/// This struct groups all parameters needed to match a technology, reducing
+/// function argument count and improving maintainability.
+pub struct TechnologyMatchParams<'a> {
+    /// The technology to match
+    pub tech: &'a Technology,
+    /// HTTP headers (normalized to lowercase)
+    pub headers: &'a HashMap<String, String>,
+    /// HTTP cookies (normalized to lowercase)
+    pub cookies: &'a HashMap<String, String>,
+    /// HTML meta tags
+    pub meta_tags: &'a HashMap<String, String>,
+    /// Script source URLs
+    pub script_sources: &'a [String],
+    /// Combined inline + external scripts for JS execution
+    pub all_script_content: &'a str,
+    /// HTML text content
+    pub html_text: &'a str,
+    /// The URL being checked
+    pub url: &'a str,
+    /// Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
+    pub script_tag_ids: &'a HashSet<String>,
+    /// Batch JS property check results (key format: "property:pattern")
+    pub js_property_results: &'a HashMap<String, bool>,
+}
+
+/// Checks if a technology matches based on its patterns.
+///
+/// # Arguments
+///
+/// * `params` - Parameters for technology matching
+pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> bool {
     // Match headers (header_name is already normalized to lowercase in ruleset)
-    for (header_name, pattern) in &tech.headers {
-        if let Some(header_value) = headers.get(header_name) {
+    for (header_name, pattern) in &params.tech.headers {
+        if let Some(header_value) = params.headers.get(header_name) {
             if matches_pattern(pattern, header_value) {
                 return true;
             }
@@ -93,8 +112,8 @@ pub(crate) async fn matches_technology(
     }
 
     // Match cookies (cookie_name is already normalized to lowercase in ruleset)
-    for (cookie_name, pattern) in &tech.cookies {
-        if let Some(cookie_value) = cookies.get(cookie_name) {
+    for (cookie_name, pattern) in &params.tech.cookies {
+        if let Some(cookie_value) = params.cookies.get(cookie_name) {
             if pattern.is_empty() || matches_pattern(pattern, cookie_value) {
                 return true;
             }
@@ -107,15 +126,15 @@ pub(crate) async fn matches_technology(
     // - Prefixed: "property:og:title" -> matches meta property="og:title"
     // - Prefixed: "http-equiv:content-type" -> matches meta http-equiv="content-type"
     // Note: meta values are now Vec<String> to handle both string and array formats (from enthec source)
-    for (meta_key, patterns) in &tech.meta {
-        if check_meta_patterns(meta_key, patterns, meta_tags) {
+    for (meta_key, patterns) in &params.tech.meta {
+        if check_meta_patterns(meta_key, patterns, params.meta_tags) {
             return true;
         }
     }
 
     // Match script sources
-    for pattern in &tech.script {
-        for script_src in script_sources {
+    for pattern in &params.tech.script {
+        for script_src in params.script_sources {
             if matches_pattern(pattern, script_src) {
                 return true;
             }
@@ -123,15 +142,15 @@ pub(crate) async fn matches_technology(
     }
 
     // Match HTML text
-    for pattern in &tech.html {
-        if matches_pattern(pattern, html_text) {
+    for pattern in &params.tech.html {
+        if matches_pattern(pattern, params.html_text) {
             return true;
         }
     }
 
     // Match URL patterns (can be multiple patterns)
-    for url_pattern in &tech.url {
-        if matches_pattern(url_pattern, url) {
+    for url_pattern in &params.tech.url {
+        if matches_pattern(url_pattern, params.url) {
             return true;
         }
     }
@@ -139,18 +158,18 @@ pub(crate) async fn matches_technology(
     // Match JavaScript object properties (js field)
     // Use batch results if available, otherwise fall back to individual checks
     // Note: This is the slowest check, so it's done last (after all fast checks)
-    if !tech.js.is_empty() {
+    if !params.tech.js.is_empty() {
         log::debug!(
             "Checking {} JS properties for technology ({} bytes of script content)",
-            tech.js.len(),
-            all_script_content.len()
+            params.tech.js.len(),
+            params.all_script_content.len()
         );
     }
-    for (js_property, pattern) in &tech.js {
+    for (js_property, pattern) in &params.tech.js {
         // Special case: Properties that match script tag IDs (like __NEXT_DATA__)
         // The Golang Wappalyzer checks for script tag IDs when the js property matches
         // This is how Next.js detection works - it looks for <script id="__NEXT_DATA__">
-        if script_tag_ids.contains(js_property) {
+        if params.script_tag_ids.contains(js_property) {
             log::info!("Technology matched via script tag ID '{}'", js_property);
             return true;
         }
@@ -158,7 +177,7 @@ pub(crate) async fn matches_technology(
         // Check batch results first (much faster)
         // Batch results use composite key (property:pattern)
         let key = format!("{}:{}", js_property, pattern);
-        if let Some(&found) = js_property_results.get(&key) {
+        if let Some(&found) = params.js_property_results.get(&key) {
             if found {
                 log::info!(
                     "Technology matched via JS property '{}' (from batch)",
@@ -170,8 +189,8 @@ pub(crate) async fn matches_technology(
         }
 
         // Fallback to individual check if not in batch results (shouldn't happen, but safety)
-        if !all_script_content.trim().is_empty()
-            && check_js_property_async(all_script_content, js_property, pattern).await
+        if !params.all_script_content.trim().is_empty()
+            && check_js_property_async(params.all_script_content, js_property, pattern).await
         {
             log::info!(
                 "Technology matched via JS property '{}' (individual check)",

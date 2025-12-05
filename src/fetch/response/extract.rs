@@ -162,10 +162,13 @@ mod tests {
 
         // Should return error because domain extraction fails on IPv6 addresses
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to extract domain"));
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Failed to extract registrable domain")
+                || error_msg.contains("Failed to extract domain"),
+            "Error message should mention domain extraction failure, got: {}",
+            error_msg
+        );
     }
 
     #[tokio::test]

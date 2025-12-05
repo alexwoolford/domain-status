@@ -123,18 +123,18 @@ pub async fn handle_response(
 
     // Prepare record for insertion (enrichment lookups and batch record building)
     let (batch_record, (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) =
-        prepare_record_for_insertion(
-            &resp_data,
-            &html_data,
-            &tls_dns_data,
-            &additional_dns,
+        prepare_record_for_insertion(crate::fetch::record::RecordPreparationParams {
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            additional_dns: &additional_dns,
             technologies_vec,
             partial_failures,
-            redirect_chain_vec,
+            redirect_chain: redirect_chain_vec,
             elapsed,
             timestamp,
             ctx,
-        )
+        })
         .await;
 
     metrics.geoip_lookup_ms = geoip_lookup_ms;
