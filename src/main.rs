@@ -350,18 +350,19 @@ async fn main() -> Result<()> {
                     let elapsed = process_start.elapsed().as_secs_f64();
                     // Extract context from error (uses structured context if available, falls back to string parsing)
                     let context = crate::storage::failure::extract_failure_context(&e);
-                    if let Err(record_err) = record_url_failure(
-                        &ctx.pool,
-                        &ctx.extractor,
-                        url_for_logging.as_ref(),
-                        &e,
-                        context,
-                        retry_count, // Use actual retry count from process_url
-                        elapsed,
-                        ctx.run_id.as_deref(),
-                        Arc::clone(&ctx.db_circuit_breaker),
-                    )
-                    .await
+                    if let Err(record_err) =
+                        record_url_failure(crate::storage::failure::FailureRecordParams {
+                            pool: &ctx.pool,
+                            extractor: &ctx.extractor,
+                            url: url_for_logging.as_ref(),
+                            error: &e,
+                            context,
+                            retry_count, // Use actual retry count from process_url
+                            elapsed_time: elapsed,
+                            run_id: ctx.run_id.as_deref(),
+                            circuit_breaker: Arc::clone(&ctx.db_circuit_breaker),
+                        })
+                        .await
                     {
                         log::warn!(
                             "Failed to record failure for {}: {}",
@@ -415,18 +416,19 @@ async fn main() -> Result<()> {
                         response_headers: Vec::new(),
                         request_headers: Vec::new(),
                     };
-                    if let Err(record_err) = record_url_failure(
-                        &ctx.pool,
-                        &ctx.extractor,
-                        url_for_logging.as_ref(),
-                        &timeout_error,
-                        context,
-                        crate::config::RETRY_MAX_ATTEMPTS as u32 - 1, // Max retries attempted
-                        elapsed,
-                        ctx.run_id.as_deref(),
-                        Arc::clone(&ctx.db_circuit_breaker),
-                    )
-                    .await
+                    if let Err(record_err) =
+                        record_url_failure(crate::storage::failure::FailureRecordParams {
+                            pool: &ctx.pool,
+                            extractor: &ctx.extractor,
+                            url: url_for_logging.as_ref(),
+                            error: &timeout_error,
+                            context,
+                            retry_count: crate::config::RETRY_MAX_ATTEMPTS as u32 - 1, // Max retries attempted
+                            elapsed_time: elapsed,
+                            run_id: ctx.run_id.as_deref(),
+                            circuit_breaker: Arc::clone(&ctx.db_circuit_breaker),
+                        })
+                        .await
                     {
                         log::warn!(
                             "Failed to record timeout failure for {}: {}",

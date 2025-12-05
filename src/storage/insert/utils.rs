@@ -103,6 +103,66 @@ pub(crate) fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32,
     None
 }
 
+/// Builds a batch INSERT SQL query string for satellite tables.
+///
+/// This helper function reduces code duplication by generating the SQL query
+/// string with proper placeholders. Each function still handles its own
+/// binding logic since the value types differ.
+///
+/// # Arguments
+///
+/// * `table_name` - Name of the table to insert into
+/// * `columns` - Column names (e.g., `["url_status_id", "nameserver"]`)
+/// * `row_count` - Number of rows to insert
+/// * `conflict_clause` - Optional conflict resolution clause (e.g., `"ON CONFLICT(...) DO NOTHING"`)
+///
+/// # Returns
+///
+/// The formatted SQL query string ready for binding.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let query = build_batch_insert_query(
+///     "url_nameservers",
+///     &["url_status_id", "nameserver"],
+///     2,
+///     Some("ON CONFLICT(url_status_id, nameserver) DO NOTHING"),
+/// );
+/// // Returns: "INSERT INTO url_nameservers (url_status_id, nameserver) VALUES (?, ?), (?, ?) ON CONFLICT(...)"
+/// ```
+pub(crate) fn build_batch_insert_query(
+    table_name: &str,
+    columns: &[&str],
+    row_count: usize,
+    conflict_clause: Option<&str>,
+) -> String {
+    if row_count == 0 {
+        return String::new();
+    }
+
+    let num_columns = columns.len();
+    let placeholder = format!(
+        "({})",
+        (0..num_columns).map(|_| "?").collect::<Vec<_>>().join(", ")
+    );
+    let placeholders: Vec<String> = (0..row_count).map(|_| placeholder.clone()).collect();
+
+    let mut query = format!(
+        "INSERT INTO {} ({}) VALUES {}",
+        table_name,
+        columns.join(", "),
+        placeholders.join(", ")
+    );
+
+    if let Some(conflict) = conflict_clause {
+        query.push(' ');
+        query.push_str(conflict);
+    }
+
+    query
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

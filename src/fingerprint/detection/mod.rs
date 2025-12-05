@@ -179,18 +179,18 @@ pub async fn detect_technologies(
             );
         }
 
-        if matches_technology(
+        if matches_technology(matching::TechnologyMatchParams {
             tech,
-            &header_map,
-            &cookies,
+            headers: &header_map,
+            cookies: &cookies,
             meta_tags,
             script_sources,
-            &all_script_content,
+            all_script_content: &all_script_content,
             html_text,
             url,
             script_tag_ids,
-            &js_property_results, // Pass batch results
-        )
+            js_property_results: &js_property_results, // Pass batch results
+        })
         .await
         {
             detected.insert(tech_name.clone());

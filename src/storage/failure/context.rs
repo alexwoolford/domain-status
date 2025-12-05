@@ -6,20 +6,37 @@
 use anyhow::Error;
 
 /// Failure context passed directly to avoid fragile string parsing.
+///
+/// This struct contains structured information about a failed HTTP request,
+/// including the final URL, redirect chain, and headers. This context is
+/// attached to errors to provide detailed debugging information without
+/// relying on fragile string parsing.
 #[derive(Debug, Clone, Default)]
 pub struct FailureContext {
+    /// The final URL after following redirects (if available).
     pub final_url: Option<String>,
+    /// The complete redirect chain from initial to final URL.
+    ///
+    /// Each element in the vector represents one redirect hop.
     pub redirect_chain: Vec<String>,
+    /// HTTP response headers received from the server.
+    ///
+    /// Stored as a vector of (name, value) tuples.
     pub response_headers: Vec<(String, String)>,
+    /// HTTP request headers sent to the server.
+    ///
+    /// Stored as a vector of (name, value) tuples.
     pub request_headers: Vec<(String, String)>,
 }
 
 /// Custom error type that carries failure context.
 ///
 /// This allows us to pass structured failure context through the error chain
-/// without relying on fragile string parsing.
+/// without relying on fragile string parsing. The context is automatically
+/// included in the error message when displayed.
 #[derive(Debug)]
 pub struct FailureContextError {
+    /// The failure context containing URL, redirect chain, and headers.
     pub context: FailureContext,
 }
 

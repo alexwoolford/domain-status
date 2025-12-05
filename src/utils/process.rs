@@ -9,9 +9,20 @@ use crate::fetch::{handle_http_request, ProcessingContext};
 use super::retry::is_retriable_error;
 
 /// Result of processing a URL, including retry count.
+///
+/// This struct is returned by `process_url()` to provide both the processing result
+/// and information about retry attempts made.
 #[derive(Debug)]
 pub struct ProcessUrlResult {
+    /// The result of processing the URL.
+    ///
+    /// - `Ok(())` indicates successful processing
+    /// - `Err(error)` indicates the URL processing failed
     pub result: Result<(), Error>,
+    /// The number of retry attempts made (not including the initial attempt).
+    ///
+    /// This value is tracked manually and may not be 100% accurate in all edge cases,
+    /// but provides a good approximation for monitoring and debugging purposes.
     pub retry_count: u32,
 }
 

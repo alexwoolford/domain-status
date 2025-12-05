@@ -18,6 +18,29 @@ use satellite::{
     insert_txt_records,
 };
 
+/// Parameters for inserting a URL record.
+///
+/// This struct groups all parameters needed to insert a URL record, reducing
+/// function argument count and improving maintainability.
+pub struct UrlRecordInsertParams<'a> {
+    /// Database connection pool
+    pub pool: &'a SqlitePool,
+    /// The URL record to insert
+    pub record: &'a UrlRecord,
+    /// Security headers HashMap (will be inserted into url_security_headers table)
+    pub security_headers: &'a std::collections::HashMap<String, String>,
+    /// HTTP headers HashMap (will be inserted into url_http_headers table)
+    pub http_headers: &'a std::collections::HashMap<String, String>,
+    /// Vector of OID strings (will be inserted into url_oids table)
+    pub oids: &'a std::collections::HashSet<String>,
+    /// Vector of redirect URLs (will be inserted into url_redirect_chain table)
+    pub redirect_chain: &'a [String],
+    /// Vector of detected technology names (will be inserted into url_technologies table)
+    pub technologies: &'a [String],
+    /// Vector of DNS names from certificate SAN extension (will be inserted into url_certificate_sans table)
+    pub subject_alternative_names: &'a [String],
+}
+
 /// Inserts a `UrlRecord` into the database.
 ///
 /// This function inserts data into:
@@ -32,39 +55,22 @@ use satellite::{
 ///
 /// # Arguments
 ///
-/// * `pool` - Database connection pool
-/// * `record` - The URL record to insert
-/// * `security_headers` - Security headers HashMap (will be inserted into url_security_headers table)
-/// * `http_headers` - HTTP headers HashMap (will be inserted into url_http_headers table)
-/// * `oids` - Vector of OID strings (will be inserted into url_oids table)
-/// * `redirect_chain` - Vector of redirect URLs (will be inserted into url_redirect_chain table)
-/// * `technologies` - Vector of detected technology names (will be inserted into url_technologies table)
-/// * `subject_alternative_names` - Vector of DNS names from certificate SAN extension (will be inserted into url_certificate_sans table)
+/// * `params` - Parameters for URL record insertion
 ///
 /// # Returns
 ///
 /// Returns the `id` of the inserted (or updated) `url_status` record, or an error if insertion fails.
-#[allow(clippy::too_many_arguments)] // URL record insertion requires many data sources
-pub async fn insert_url_record(
-    pool: &SqlitePool,
-    record: &UrlRecord,
-    security_headers: &std::collections::HashMap<String, String>,
-    http_headers: &std::collections::HashMap<String, String>,
-    oids: &std::collections::HashSet<String>,
-    redirect_chain: &[String],
-    technologies: &[String],
-    subject_alternative_names: &[String],
-) -> Result<i64, DatabaseError> {
-    let valid_from_millis = naive_datetime_to_millis(record.ssl_cert_valid_from.as_ref());
-    let valid_to_millis = naive_datetime_to_millis(record.ssl_cert_valid_to.as_ref());
+pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
+    let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
+    let valid_to_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_to.as_ref());
 
     log::debug!(
         "Inserting UrlRecord: initial_domain={}",
-        record.initial_domain
+        params.record.initial_domain
     );
 
     // Start transaction for atomic dual-write
-    let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+    let mut tx = params.pool.begin().await.map_err(DatabaseError::SqlError)?;
 
     // 1. Insert into main url_status table
     // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
@@ -99,52 +105,52 @@ pub async fn insert_url_record(
             run_id=excluded.run_id
         RETURNING id",
     )
-    .bind(&record.initial_domain)
-    .bind(&record.final_domain)
-    .bind(&record.ip_address)
-    .bind(&record.reverse_dns_name)
-    .bind(record.status)
-    .bind(&record.status_desc)
-    .bind(record.response_time)
-    .bind(&record.title)
-    .bind(&record.keywords)
-    .bind(&record.description)
-    .bind(&record.tls_version)
-    .bind(&record.ssl_cert_subject)
-    .bind(&record.ssl_cert_issuer)
+    .bind(&params.record.initial_domain)
+    .bind(&params.record.final_domain)
+    .bind(&params.record.ip_address)
+    .bind(&params.record.reverse_dns_name)
+    .bind(params.record.status)
+    .bind(&params.record.status_desc)
+    .bind(params.record.response_time)
+    .bind(&params.record.title)
+    .bind(&params.record.keywords)
+    .bind(&params.record.description)
+    .bind(&params.record.tls_version)
+    .bind(&params.record.ssl_cert_subject)
+    .bind(&params.record.ssl_cert_issuer)
     .bind(valid_from_millis)
     .bind(valid_to_millis)
-    .bind(record.is_mobile_friendly)
-    .bind(record.timestamp)
-    .bind(&record.spf_record)
-    .bind(&record.dmarc_record)
-    .bind(&record.cipher_suite)
-    .bind(&record.key_algorithm)
-    .bind(&record.run_id)
+    .bind(params.record.is_mobile_friendly)
+    .bind(params.record.timestamp)
+    .bind(&params.record.spf_record)
+    .bind(&params.record.dmarc_record)
+    .bind(&params.record.cipher_suite)
+    .bind(&params.record.key_algorithm)
+    .bind(&params.record.run_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         log::error!(
             "Failed to insert UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {} (SQL: INSERT INTO url_status ... ON CONFLICT)",
-            record.initial_domain,
-            record.final_domain,
-            record.status,
-            record.timestamp,
+            params.record.initial_domain,
+            params.record.final_domain,
+            params.record.status,
+            params.record.timestamp,
             e
         );
         DatabaseError::SqlError(e)
     })?;
 
     // 2-10. Insert into satellite tables
-    insert_technologies(&mut tx, url_status_id, technologies).await;
-    insert_nameservers(&mut tx, url_status_id, &record.nameservers).await;
-    insert_txt_records(&mut tx, url_status_id, &record.txt_records).await;
-    insert_mx_records(&mut tx, url_status_id, &record.mx_records).await;
-    insert_security_headers(&mut tx, url_status_id, security_headers).await;
-    insert_http_headers(&mut tx, url_status_id, http_headers).await;
-    insert_oids(&mut tx, url_status_id, oids).await;
-    insert_redirect_chain(&mut tx, url_status_id, redirect_chain).await;
-    insert_certificate_sans(&mut tx, url_status_id, subject_alternative_names).await;
+    insert_technologies(&mut tx, url_status_id, params.technologies).await;
+    insert_nameservers(&mut tx, url_status_id, &params.record.nameservers).await;
+    insert_txt_records(&mut tx, url_status_id, &params.record.txt_records).await;
+    insert_mx_records(&mut tx, url_status_id, &params.record.mx_records).await;
+    insert_security_headers(&mut tx, url_status_id, params.security_headers).await;
+    insert_http_headers(&mut tx, url_status_id, params.http_headers).await;
+    insert_oids(&mut tx, url_status_id, params.oids).await;
+    insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await;
+    insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await;
 
     // Commit transaction
     tx.commit().await.map_err(DatabaseError::SqlError)?;
@@ -217,16 +223,16 @@ mod tests {
         let technologies = Vec::new();
         let sans = Vec::new();
 
-        let result = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let result = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await;
 
         assert!(result.is_ok());
@@ -258,16 +264,16 @@ mod tests {
         let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
         let sans = Vec::new();
 
-        let url_status_id = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let url_status_id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await
         .expect("Failed to insert record");
 
@@ -302,16 +308,16 @@ mod tests {
         let technologies = Vec::new();
         let sans = Vec::new();
 
-        let url_status_id = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let url_status_id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await
         .expect("Failed to insert record");
 
@@ -351,16 +357,16 @@ mod tests {
         let technologies = Vec::new();
         let sans = Vec::new();
 
-        let url_status_id = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let url_status_id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await
         .expect("Failed to insert record");
 
@@ -402,32 +408,32 @@ mod tests {
         let sans = Vec::new();
 
         // Insert first time
-        let id1 = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let id1 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await
         .expect("Failed to insert record");
 
         // Update record and insert again (same final_domain and timestamp)
         record.title = "Updated Title".to_string();
         record.status = 301;
-        let id2 = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let id2 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await
         .expect("Failed to upsert record");
 
@@ -471,16 +477,16 @@ mod tests {
         let technologies = Vec::new();
         let sans = Vec::new();
 
-        let result = insert_url_record(
-            &pool,
-            &record,
-            &security_headers,
-            &http_headers,
-            &oids,
-            &redirect_chain,
-            &technologies,
-            &sans,
-        )
+        let result = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+        })
         .await;
 
         assert!(result.is_ok());

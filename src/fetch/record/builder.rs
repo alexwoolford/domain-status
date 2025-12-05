@@ -55,57 +55,80 @@ pub(crate) fn build_url_record(
     }
 }
 
+/// Parameters for building a BatchRecord.
+///
+/// This struct groups all parameters needed to build a batch record, reducing
+/// function argument count and improving maintainability.
+pub struct BatchRecordParams<'a> {
+    /// The URL record to include in the batch
+    pub record: UrlRecord,
+    /// Response data (headers, status, etc.)
+    pub resp_data: &'a ResponseData,
+    /// HTML parsing results
+    pub html_data: &'a HtmlData,
+    /// TLS and DNS data
+    pub tls_dns_data: &'a TlsDnsData,
+    /// Detected technologies
+    pub technologies_vec: Vec<String>,
+    /// Redirect chain URLs
+    pub redirect_chain: Vec<String>,
+    /// Partial failures (DNS/TLS errors that didn't prevent processing)
+    pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
+    /// GeoIP lookup result (IP address and data)
+    pub geoip_data: Option<(String, crate::geoip::GeoIpResult)>,
+    /// Security warnings
+    pub security_warnings: Vec<crate::security::SecurityWarning>,
+    /// WHOIS lookup result
+    pub whois_data: Option<crate::whois::WhoisResult>,
+    /// Timestamp for the record
+    pub timestamp: i64,
+    /// Run identifier
+    pub run_id: &'a Option<String>,
+}
+
 /// Builds a BatchRecord from all extracted data.
-#[allow(clippy::too_many_arguments)] // Batch record requires many data sources
-pub(crate) fn build_batch_record(
-    record: UrlRecord,
-    resp_data: &ResponseData,
-    html_data: &HtmlData,
-    tls_dns_data: &TlsDnsData,
-    technologies_vec: Vec<String>,
-    redirect_chain: Vec<String>,
-    partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
-    geoip_data: Option<(String, crate::geoip::GeoIpResult)>,
-    security_warnings: Vec<crate::security::SecurityWarning>,
-    whois_data: Option<crate::whois::WhoisResult>,
-    timestamp: i64,
-    run_id: &Option<String>,
-) -> BatchRecord {
-    let oids_set: std::collections::HashSet<String> = tls_dns_data.oids.clone().unwrap_or_default();
+///
+/// # Arguments
+///
+/// * `params` - Parameters for building the batch record
+pub(crate) fn build_batch_record(params: BatchRecordParams<'_>) -> BatchRecord {
+    let oids_set: std::collections::HashSet<String> =
+        params.tls_dns_data.oids.clone().unwrap_or_default();
 
-    let partial_failure_records: Vec<crate::storage::models::UrlPartialFailureRecord> =
-        partial_failures
-            .into_iter()
-            .map(|(error_type, error_message)| {
-                crate::storage::models::UrlPartialFailureRecord {
-                    url_status_id: 0, // Will be set when record is inserted
-                    error_type: error_type.as_str().to_string(),
-                    error_message,
-                    timestamp,
-                    run_id: run_id.clone(),
-                }
-            })
-            .collect();
+    let partial_failure_records: Vec<crate::storage::models::UrlPartialFailureRecord> = params
+        .partial_failures
+        .into_iter()
+        .map(|(error_type, error_message)| {
+            crate::storage::models::UrlPartialFailureRecord {
+                url_status_id: 0, // Will be set when record is inserted
+                error_type: error_type.as_str().to_string(),
+                error_message,
+                timestamp: params.timestamp,
+                run_id: params.run_id.clone(),
+            }
+        })
+        .collect();
 
-    let sans_vec: Vec<String> = tls_dns_data
+    let sans_vec: Vec<String> = params
+        .tls_dns_data
         .subject_alternative_names
         .clone()
         .unwrap_or_default();
 
     BatchRecord {
-        url_record: record,
-        security_headers: resp_data.security_headers.clone(),
-        http_headers: resp_data.http_headers.clone(),
+        url_record: params.record,
+        security_headers: params.resp_data.security_headers.clone(),
+        http_headers: params.resp_data.http_headers.clone(),
         oids: oids_set,
-        redirect_chain,
-        technologies: technologies_vec,
+        redirect_chain: params.redirect_chain,
+        technologies: params.technologies_vec,
         subject_alternative_names: sans_vec,
-        analytics_ids: html_data.analytics_ids.clone(),
-        geoip: geoip_data,
-        structured_data: Some(html_data.structured_data.clone()),
-        social_media_links: html_data.social_media_links.clone(),
-        security_warnings,
-        whois: whois_data,
+        analytics_ids: params.html_data.analytics_ids.clone(),
+        geoip: params.geoip_data,
+        structured_data: Some(params.html_data.structured_data.clone()),
+        social_media_links: params.html_data.social_media_links.clone(),
+        security_warnings: params.security_warnings,
+        whois: params.whois_data,
         partial_failures: partial_failure_records,
     }
 }
@@ -302,20 +325,20 @@ mod tests {
             ..Default::default()
         });
 
-        let batch_record = build_batch_record(
-            url_record,
-            &resp_data,
-            &html_data,
-            &tls_dns_data,
-            technologies,
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: technologies,
             redirect_chain,
             partial_failures,
             geoip_data,
             security_warnings,
             whois_data,
-            1234567890,
-            &run_id,
-        );
+            timestamp: 1234567890,
+            run_id: &run_id,
+        });
 
         assert_eq!(batch_record.url_record.final_domain, "example.com");
         assert_eq!(batch_record.technologies.len(), 2);
@@ -345,20 +368,20 @@ mod tests {
             &None,
         );
 
-        let batch_record = build_batch_record(
-            url_record,
-            &resp_data,
-            &html_data,
-            &tls_dns_data,
-            vec![],
-            vec![],
-            vec![],
-            None,
-            vec![],
-            None,
-            1234567890,
-            &None,
-        );
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain: vec![],
+            partial_failures: vec![],
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &None,
+        });
 
         assert!(batch_record.oids.is_empty());
     }
@@ -381,20 +404,20 @@ mod tests {
             &None,
         );
 
-        let batch_record = build_batch_record(
-            url_record,
-            &resp_data,
-            &html_data,
-            &tls_dns_data,
-            vec![],
-            vec![],
-            vec![],
-            None,
-            vec![],
-            None,
-            1234567890,
-            &None,
-        );
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain: vec![],
+            partial_failures: vec![],
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &None,
+        });
 
         assert!(batch_record.subject_alternative_names.is_empty());
     }
@@ -424,20 +447,20 @@ mod tests {
             ),
         ];
 
-        let batch_record = build_batch_record(
-            url_record,
-            &resp_data,
-            &html_data,
-            &tls_dns_data,
-            vec![],
-            vec![],
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain: vec![],
             partial_failures,
-            None,
-            vec![],
-            None,
-            1234567890,
-            &None,
-        );
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &None,
+        });
 
         assert_eq!(batch_record.partial_failures.len(), 2);
         assert_eq!(

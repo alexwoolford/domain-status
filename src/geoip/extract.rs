@@ -54,3 +54,115 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
         db_name
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    use tar::Builder;
+
+    /// Creates a test tar.gz archive with the specified files.
+    fn create_test_tar_gz(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut tar_builder = Builder::new(Vec::new());
+        for (name, content) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(name).unwrap();
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            tar_builder.append(&header, *content).unwrap();
+        }
+        let tar_bytes = tar_builder.into_inner().unwrap();
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&tar_bytes).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_success() {
+        let mmdb_content = b"fake mmdb content";
+        let tar_gz = create_test_tar_gz(&[("GeoLite2-City.mmdb", mmdb_content)]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), mmdb_content);
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_multiple_files() {
+        let mmdb_content = b"fake mmdb content";
+        let other_content = b"other file content";
+        let tar_gz = create_test_tar_gz(&[
+            ("README.txt", other_content),
+            ("GeoLite2-City.mmdb", mmdb_content),
+            ("LICENSE.txt", other_content),
+        ]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), mmdb_content);
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_not_found() {
+        let tar_gz = create_test_tar_gz(&[("README.txt", b"readme content")]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("GeoLite2-City.mmdb not found"));
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_wrong_name() {
+        let mmdb_content = b"fake mmdb content";
+        let tar_gz = create_test_tar_gz(&[("GeoLite2-ASN.mmdb", mmdb_content)]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("GeoLite2-City.mmdb not found"));
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_nested_path() {
+        // Some archives have nested paths like "GeoLite2-City_20240101/GeoLite2-City.mmdb"
+        let mmdb_content = b"fake mmdb content";
+        let tar_gz =
+            create_test_tar_gz(&[("GeoLite2-City_20240101/GeoLite2-City.mmdb", mmdb_content)]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), mmdb_content);
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_empty_archive() {
+        let tar_gz = create_test_tar_gz(&[]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_invalid_gzip() {
+        let invalid_data = b"not a valid tar.gz file";
+        let result = extract_mmdb_from_tar_gz(invalid_data, "GeoLite2-City");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_case_sensitive() {
+        let mmdb_content = b"fake mmdb content";
+        let tar_gz = create_test_tar_gz(&[("geolite2-city.mmdb", mmdb_content)]); // lowercase
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City"); // mixed case
+        assert!(result.is_err()); // Should not match due to case sensitivity
+    }
+}

@@ -8,6 +8,22 @@ use reqwest::Url;
 
 use crate::fetch::request::RequestHeaders;
 
+/// Checks if an HTTP status code indicates a redirect.
+///
+/// Returns `true` for redirect status codes: 301, 302, 303, 307, 308.
+/// These are the standard HTTP redirect status codes that should be followed.
+///
+/// # Arguments
+///
+/// * `status_code` - The HTTP status code to check
+///
+/// # Returns
+///
+/// `true` if the status code is a redirect, `false` otherwise.
+fn is_redirect_status(status_code: u16) -> bool {
+    matches!(status_code, 301 | 302 | 303 | 307 | 308)
+}
+
 /// Resolves the redirect chain for a URL, following redirects up to a maximum number of hops.
 ///
 /// # Arguments
@@ -56,12 +72,7 @@ pub async fn resolve_redirect_chain(
         let status = resp.status();
         let status_code = status.as_u16();
         // Check if status is a redirect (301, 302, 303, 307, 308)
-        if status_code == 301
-            || status_code == 302
-            || status_code == 303
-            || status_code == 307
-            || status_code == 308
-        {
+        if is_redirect_status(status_code) {
             if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
                 // Avoid unnecessary String allocation - parse directly from &str
                 let loc_str = loc.to_str().unwrap_or("");

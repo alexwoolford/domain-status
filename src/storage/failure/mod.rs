@@ -11,7 +11,7 @@ mod record;
 pub use context::{
     attach_failure_context, extract_failure_context, FailureContext, FailureContextError,
 };
-pub use record::record_url_failure;
+pub use record::{record_url_failure, FailureRecordParams};
 
 #[cfg(test)]
 mod tests {
