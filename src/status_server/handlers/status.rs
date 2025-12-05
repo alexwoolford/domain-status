@@ -15,7 +15,7 @@ use crate::error_handling::{ErrorType, InfoType, WarningType};
 
 /// JSON status endpoint with detailed progress information
 pub async fn status_handler(State(state): State<StatusState>) -> Response {
-    let total = state.total_urls.load(Ordering::SeqCst);
+    let total_attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
@@ -25,19 +25,22 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
         0.0
     };
 
-    // Calculate percentage based on total URLs (completed + failed out of total)
-    // This shows progress through the entire job, not just attempted URLs
+    // Calculate percentage based on attempted URLs (completed + failed out of attempted)
+    // This shows progress through URLs that will actually be processed, not total lines
     let attempted = completed + failed;
-    let percentage = if total > 0 {
-        (attempted as f64 / total as f64) * 100.0
+    let percentage = if total_attempted > 0 {
+        (attempted as f64 / total_attempted as f64) * 100.0
     } else {
         0.0
     };
 
-    let pending_urls = total.saturating_sub(completed).saturating_sub(failed);
+    // Pending URLs = attempted URLs that haven't completed or failed yet
+    let pending_urls = total_attempted
+        .saturating_sub(completed)
+        .saturating_sub(failed);
 
     let response = StatusResponse {
-        total_urls: total,
+        total_urls: total_attempted, // Use attempted URLs, not total lines
         completed_urls: completed,
         failed_urls: failed,
         pending_urls: Some(pending_urls),

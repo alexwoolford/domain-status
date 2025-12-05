@@ -11,7 +11,10 @@ use crate::utils::TimingStats;
 /// Shared state for the status server
 #[derive(Clone)]
 pub struct StatusState {
+    /// Total lines in the input file (includes invalid URLs that will be skipped)
     pub total_urls: Arc<AtomicUsize>,
+    /// Total URLs that have been attempted (valid URLs that passed validation)
+    pub total_urls_attempted: Arc<AtomicUsize>,
     pub completed_urls: Arc<AtomicUsize>,
     pub failed_urls: Arc<AtomicUsize>,
     pub start_time: Arc<Instant>,

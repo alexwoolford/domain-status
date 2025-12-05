@@ -1,5 +1,6 @@
 //! Graceful shutdown handling.
 
+use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -25,7 +26,8 @@ pub async fn shutdown_gracefully(
     // Try to await the logging task gracefully, but abort if it takes too long
     if let Some(logging_task) = logging_task {
         // Create a wrapper that can be used in select
-        let task_handle = std::sync::Arc::new(std::sync::Mutex::new(Some(logging_task)));
+        // Use tokio::sync::Mutex for async compatibility (avoids blocking the runtime)
+        let task_handle = Arc::new(tokio::sync::Mutex::new(Some(logging_task)));
         let task_handle_clone = task_handle.clone();
 
         // Wait up to SHUTDOWN_TIMEOUT_SECS for graceful shutdown
@@ -36,7 +38,7 @@ pub async fn shutdown_gracefully(
             result = async {
                 // Extract task from mutex before awaiting (drop guard first)
                 let task = {
-                    let mut handle_guard = task_handle_clone.lock().unwrap();
+                    let mut handle_guard = task_handle_clone.lock().await;
                     handle_guard.take()
                 };
                 if let Some(task) = task {
@@ -64,7 +66,7 @@ pub async fn shutdown_gracefully(
                 );
                 // Extract task from mutex before awaiting (drop guard first)
                 let task = {
-                    let mut handle_guard = task_handle.lock().unwrap();
+                    let mut handle_guard = task_handle.lock().await;
                     handle_guard.take()
                 };
                 if let Some(task) = task {
