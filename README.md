@@ -348,4 +348,4 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 
 ## License
 
-MIT License - see [LICENSE-MIT](LICENSE-MIT) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
