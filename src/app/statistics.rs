@@ -18,6 +18,7 @@ pub async fn print_and_save_final_statistics(
     completed_urls: &Arc<AtomicUsize>,
     failed_urls: &Arc<AtomicUsize>,
     error_stats: &Arc<ProcessingStats>,
+    elapsed_seconds: f64,
 ) -> Result<()> {
     // Calculate run statistics
     // All tasks have completed at this point, so counters should be final
@@ -40,7 +41,35 @@ pub async fn print_and_save_final_statistics(
     // Print processing statistics
     print_error_statistics(error_stats);
 
+    // Print simple one-line summary at the end
+    print_simple_summary(
+        total_urls,
+        successful_urls,
+        failed_urls_count,
+        elapsed_seconds,
+    );
+
     Ok(())
+}
+
+/// Prints a simple one-line summary of the run.
+///
+/// This provides immediate feedback to the user in a concise format.
+/// Works with both plain and JSON log formats (log::info! handles formatting).
+fn print_simple_summary(
+    total_urls: i32,
+    successful_urls: i32,
+    failed_urls: i32,
+    elapsed_seconds: f64,
+) {
+    info!(
+        "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+        total_urls,
+        if total_urls == 1 { "" } else { "s" },
+        successful_urls,
+        failed_urls,
+        elapsed_seconds
+    );
 }
 
 /// Prints timing statistics if enabled.
@@ -206,6 +235,7 @@ mod tests {
             &completed_urls,
             &failed_urls,
             &error_stats,
+            10.5, // elapsed_seconds for test
         )
         .await;
 
@@ -274,6 +304,7 @@ mod tests {
             &completed_urls,
             &failed_urls,
             &error_stats,
+            0.0, // elapsed_seconds for test (zero URLs)
         )
         .await;
 
