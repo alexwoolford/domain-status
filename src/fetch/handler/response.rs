@@ -46,7 +46,9 @@ pub async fn handle_response(
     let mut metrics = UrlTimingMetrics {
         // elapsed is in seconds, convert to microseconds for internal storage
         // Note: This includes redirect resolution time + HTTP request time
-        http_request_ms: (elapsed * 1_000_000.0) as u64,
+        // Use saturating cast to prevent overflow if elapsed is very large
+        // Max safe value: ~18,446 seconds (u64::MAX microseconds) before overflow
+        http_request_ms: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
         ..Default::default()
     };
 
@@ -116,7 +118,7 @@ pub async fn handle_response(
         "Preparing to insert record for URL: {}",
         resp_data.final_url
     );
-    log::info!(
+    log::debug!(
         "Attempting to insert record into database for domain: {}",
         resp_data.initial_domain
     );

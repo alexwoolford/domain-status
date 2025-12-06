@@ -89,6 +89,13 @@ pub async fn init_ruleset(
         return Ok(ruleset_arc);
     }
 
+    // If cache miss and we're about to fetch, warn about potential rate limits
+    if sources.iter().any(|s| s.contains("github.com")) && std::env::var("GITHUB_TOKEN").is_err() {
+        log::info!(
+            "💡 Tip: Set GITHUB_TOKEN environment variable to avoid rate limits (60 → 5000 requests/hour)"
+        );
+    }
+
     // Fetch from all sources and merge
     log::info!(
         "Fetching fingerprint ruleset from {} source(s)",
@@ -125,15 +132,38 @@ async fn fetch_ruleset_from_multiple_sources(
     let mut all_technologies = HashMap::new();
     let mut all_categories = HashMap::new();
     let mut versions = Vec::new();
+    let mut successful_sources = 0;
 
     // Fetch from all sources and merge
+    // If a source fails, log a warning but continue with other sources
+    // This allows partial success (e.g., if one GitHub repo is rate-limited, we can still use the other)
     for source in sources {
         log::info!("Fetching from source: {}", source);
 
-        let technologies = if source.starts_with("http://") || source.starts_with("https://") {
-            fetch_from_url(source).await?
+        let technologies = match if source.starts_with("http://") || source.starts_with("https://")
+        {
+            fetch_from_url(source).await
         } else {
-            load_from_path(Path::new(source)).await?
+            load_from_path(Path::new(source)).await
+        } {
+            Ok(techs) => {
+                successful_sources += 1;
+                techs
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to fetch from source '{}': {}. Continuing with other sources...",
+                    source,
+                    e
+                );
+                // Check if this is a rate limit error and provide helpful guidance
+                if e.to_string().contains("rate limit") {
+                    log::warn!(
+                        "💡 Tip: Set GITHUB_TOKEN environment variable to increase rate limits from 60 to 5000 requests/hour"
+                    );
+                }
+                continue; // Skip this source, try others
+            }
         };
 
         // Merge technologies (later sources overwrite earlier ones for same tech name)
@@ -191,6 +221,29 @@ async fn fetch_ruleset_from_multiple_sources(
                 versions.push(format!("{}:{}", source, sha));
             }
         }
+    }
+
+    // Ensure we got at least one successful source
+    if successful_sources == 0 {
+        return Err(anyhow::anyhow!(
+            "Failed to fetch ruleset from all {} source(s). \
+            This may be due to network issues or GitHub API rate limits. \
+            \
+            Solutions: \
+            1. Set GITHUB_TOKEN environment variable (increases rate limit from 60 to 5000/hour) \
+            2. Use a cached ruleset (if available) \
+            3. Wait before retrying (rate limits reset hourly) \
+            4. Use a local ruleset file instead of URLs",
+            sources.len()
+        ));
+    }
+
+    if successful_sources < sources.len() {
+        log::warn!(
+            "Only {} of {} sources succeeded. Some technologies may be missing.",
+            successful_sources,
+            sources.len()
+        );
     }
 
     let version = if versions.is_empty() {

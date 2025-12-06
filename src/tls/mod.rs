@@ -14,7 +14,7 @@ mod extract;
 
 use anyhow::Result;
 use chrono::NaiveDateTime;
-use log::{error, info};
+use log::error;
 use rustls::pki_types::ServerName;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -58,7 +58,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    log::info!("Attempting to resolve server name for domain: {domain}");
+    log::debug!("Attempting to resolve server name for domain: {domain}");
     let server_name = match ServerName::try_from(domain.clone()) {
         Ok(name) => name,
         Err(e) => {
@@ -67,7 +67,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
         }
     };
 
-    log::info!("Attempting to connect to domain: {domain}");
+    log::debug!("Attempting to connect to domain: {domain}");
     let sock = match tokio::time::timeout(
         std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
         TcpStream::connect((domain.clone(), 443)),
@@ -111,7 +111,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
         }
     };
 
-    log::info!("Extracting TLS version for domain: {domain}");
+    log::debug!("Extracting TLS version for domain: {domain}");
     let tls_version = tls_stream
         .get_ref()
         .1
@@ -179,7 +179,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 );
             }
 
-            log::info!("Extracting validity period for domain: {domain}");
+            log::debug!("Extracting validity period for domain: {domain}");
             let valid_from_str =
                 tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
                     anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
@@ -195,7 +195,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
             let valid_to = NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
                 .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
 
-            info!("SSL certificate info extracted for domain: {domain}");
+            log::debug!("SSL certificate info extracted for domain: {domain}");
 
             return Ok(CertificateInfo {
                 tls_version: Some(tls_version),

@@ -44,12 +44,22 @@ pub(crate) async fn fetch_from_github_directory(
     let api_url_with_ref = format!("{}?ref=main", api_url);
     log::debug!("Fetching directory listing from: {}", api_url_with_ref);
 
-    let response = client
+    // Build request with optional GitHub token for authentication
+    let mut request = client
         .get(&api_url_with_ref)
         .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", "domain_status/0.1.0")
-        .send()
-        .await?;
+        .header("User-Agent", "domain_status/0.1.0");
+
+    // Add GitHub token if available (increases rate limit from 60 to 5000 requests/hour)
+    // Token can be set via environment variable or .env file (loaded at startup)
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        if !token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", token));
+            log::info!("Using GitHub token for authentication (rate limit: 5000 requests/hour)");
+        }
+    }
+
+    let response = request.send().await?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -57,6 +67,25 @@ pub(crate) async fn fetch_from_github_directory(
             .text()
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
+
+        // Provide helpful error message for rate limits
+        if status.as_u16() == 403 && error_text.contains("rate limit") {
+            return Err(anyhow::anyhow!(
+                "GitHub API rate limit exceeded. \
+                Unauthenticated requests are limited to 60 requests/hour. \
+                To increase the limit to 5000 requests/hour, set the GITHUB_TOKEN environment variable. \
+                \
+                Get a token at: https://github.com/settings/tokens \
+                (no special permissions needed for public repositories). \
+                \
+                Alternatively, use a cached ruleset or wait before retrying. \
+                \
+                Error: {} - {}",
+                status,
+                error_text
+            ));
+        }
+
         return Err(anyhow::anyhow!(
             "Failed to fetch directory listing: {} - {}",
             status,

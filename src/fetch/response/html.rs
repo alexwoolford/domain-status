@@ -138,6 +138,35 @@ pub(crate) fn parse_html_content(
         final_domain
     );
 
+    // Log all script sources for debugging (helpful to see what we're working with)
+    // Also identify which scripts might set jQuery/React/etc.
+    if !script_sources.is_empty() {
+        let mut identified_scripts = Vec::new();
+        for src in &script_sources {
+            let src_lower = src.to_lowercase();
+            if src_lower.contains("jquery") {
+                identified_scripts.push(format!("{} (jQuery)", src));
+            } else if src_lower.contains("react") {
+                identified_scripts.push(format!("{} (React)", src));
+            } else if src_lower.contains("adobe")
+                || src_lower.contains("dtm")
+                || src_lower.contains("satellite")
+            {
+                identified_scripts.push(format!("{} (Adobe DTM)", src));
+            } else if src_lower.contains("salesforce") || src_lower.contains("sfdc") {
+                identified_scripts.push(format!("{} (Salesforce)", src));
+            } else {
+                identified_scripts.push(src.clone());
+            }
+        }
+        log::debug!(
+            "Script sources for {} ({} total): {:?}",
+            final_domain,
+            script_sources.len(),
+            identified_scripts
+        );
+    }
+
     // Extract text content (limited for performance)
     let html_text: String = document
         .root_element()

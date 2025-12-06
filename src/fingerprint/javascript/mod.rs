@@ -1,22 +1,12 @@
-//! JavaScript execution for technology detection.
+//! JavaScript utility functions for technology detection.
 //!
-//! This module handles executing JavaScript code to detect technology properties,
-//! matching the behavior of the Golang Wappalyzer tool.
-//!
-//! **Security measures:**
-//! - Memory limit: 10MB per JavaScript context
-//! - Execution timeout: 1 second per property check
-//! - Script size limits: 100KB per script, 500KB total
-//! - Maximum external scripts: 10 per page (to prevent excessive fetching)
+//! **Note:** WappalyzerGo does NOT execute JavaScript and does NOT fetch external scripts.
+//! It only analyzes the initial HTML response. We match this behavior:
+//! - Script source patterns match against URLs from HTML (not fetched content)
+//! - JS property matching is disabled - we only match via script tag IDs
+//! - Only inline script content is used for JS pattern matching (if enabled)
 
-mod execution;
-mod fetch;
 mod utils;
-
-// Re-export public API (these are crate-private, used internally by detection module)
-pub(crate) use execution::check_js_properties_batch;
-pub(crate) use execution::check_js_property_async;
-pub(crate) use fetch::fetch_and_combine_scripts;
 
 #[cfg(test)]
 pub use utils::strip_js_comments_and_strings;

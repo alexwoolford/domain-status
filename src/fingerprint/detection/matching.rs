@@ -5,7 +5,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::fingerprint::javascript::check_js_property_async;
 use crate::fingerprint::models::{FingerprintRuleset, Technology};
 use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
 
@@ -18,7 +17,6 @@ pub(crate) fn can_technology_match(
     has_headers: bool,
     has_meta: bool,
     has_scripts: bool,
-    has_script_content: bool,
     script_tag_ids: &HashSet<String>,
 ) -> bool {
     // If technology requires cookies but we have none, skip it
@@ -37,10 +35,9 @@ pub(crate) fn can_technology_match(
     if !tech.script.is_empty() && !has_scripts {
         return false;
     }
-    // If technology requires JS execution but we have no script content, skip it
-    // (unless it can match via script tag IDs)
-    if !tech.js.is_empty() && !has_script_content {
-        // Check if any JS property could match via script tag IDs
+    // If technology requires JS patterns but we can't match via script tag IDs, skip it
+    // We only match JS patterns via script tag IDs (e.g., __NEXT_DATA__), not via script content
+    if !tech.js.is_empty() {
         let can_match_via_tag_id = tech.js.keys().any(|prop| script_tag_ids.contains(prop));
         if !can_match_via_tag_id {
             return false;
@@ -84,16 +81,12 @@ pub struct TechnologyMatchParams<'a> {
     pub meta_tags: &'a HashMap<String, String>,
     /// Script source URLs
     pub script_sources: &'a [String],
-    /// Combined inline + external scripts for JS execution
-    pub all_script_content: &'a str,
     /// HTML text content
     pub html_text: &'a str,
     /// The URL being checked
     pub url: &'a str,
     /// Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
     pub script_tag_ids: &'a HashSet<String>,
-    /// Batch JS property check results (key format: "property:pattern")
-    pub js_property_results: &'a HashMap<String, bool>,
 }
 
 /// Checks if a technology matches based on its patterns.
@@ -101,11 +94,35 @@ pub struct TechnologyMatchParams<'a> {
 /// # Arguments
 ///
 /// * `params` - Parameters for technology matching
+///
+/// # Note
+///
+/// Technologies with no patterns (empty script, html, js, headers, cookies, meta, url)
+/// will never match. This is by design - if a technology has no detection patterns,
+/// it cannot be detected.
 pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> bool {
+    // If technology has no patterns at all, it cannot match
+    // This handles cases like Brightcove which has empty patterns in the ruleset
+    if params.tech.script.is_empty()
+        && params.tech.html.is_empty()
+        && params.tech.js.is_empty()
+        && params.tech.headers.is_empty()
+        && params.tech.cookies.is_empty()
+        && params.tech.meta.is_empty()
+        && params.tech.url.is_empty()
+    {
+        return false;
+    }
     // Match headers (header_name is already normalized to lowercase in ruleset)
     for (header_name, pattern) in &params.tech.headers {
         if let Some(header_value) = params.headers.get(header_name) {
             if matches_pattern(pattern, header_value) {
+                log::debug!(
+                    "Technology matched via header: {}='{}' matched pattern '{}'",
+                    header_name,
+                    header_value,
+                    pattern
+                );
                 return true;
             }
         }
@@ -115,6 +132,12 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
     for (cookie_name, pattern) in &params.tech.cookies {
         if let Some(cookie_value) = params.cookies.get(cookie_name) {
             if pattern.is_empty() || matches_pattern(pattern, cookie_value) {
+                log::debug!(
+                    "Technology matched via cookie: {}='{}' matched pattern '{}'",
+                    cookie_name,
+                    cookie_value,
+                    pattern
+                );
                 return true;
             }
         }
@@ -135,7 +158,33 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
     // Match script sources
     for pattern in &params.tech.script {
         for script_src in params.script_sources {
-            if matches_pattern(pattern, script_src) {
+            let matched = matches_pattern(pattern, script_src);
+            // Log attempts for high-value technologies to debug why they're not matching
+            let high_value_patterns = [
+                "brightcove",
+                "jquery",
+                "react",
+                "salesforce",
+                "adobe",
+                "omniture",
+            ];
+            if high_value_patterns
+                .iter()
+                .any(|p| pattern.to_lowercase().contains(p))
+            {
+                log::debug!(
+                    "Script pattern check: pattern '{}' vs script '{}' -> {}",
+                    pattern,
+                    script_src,
+                    matched
+                );
+            }
+            if matched {
+                log::debug!(
+                    "Technology matched via script src: pattern '{}' matched '{}'",
+                    pattern,
+                    script_src
+                );
                 return true;
             }
         }
@@ -144,6 +193,10 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
     // Match HTML text
     for pattern in &params.tech.html {
         if matches_pattern(pattern, params.html_text) {
+            log::debug!(
+                "Technology matched via HTML pattern: '{}' matched in HTML text",
+                pattern
+            );
             return true;
         }
     }
@@ -155,47 +208,19 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
         }
     }
 
-    // Match JavaScript object properties (js field)
-    // Use batch results if available, otherwise fall back to individual checks
-    // Note: This is the slowest check, so it's done last (after all fast checks)
-    if !params.tech.js.is_empty() {
-        log::debug!(
-            "Checking {} JS properties for technology ({} bytes of script content)",
-            params.tech.js.len(),
-            params.all_script_content.len()
-        );
+    // Match JavaScript patterns (js field) - only via script tag IDs
+    // WappalyzerGo does NOT execute JavaScript and does NOT match JS properties in source code
+    // It only checks script tag IDs (e.g., <script id="__NEXT_DATA__"> for Next.js)
+    // This matches WappalyzerGo's behavior exactly
+    if params.tech.js.is_empty() {
+        return false;
     }
-    for (js_property, pattern) in &params.tech.js {
-        // Special case: Properties that match script tag IDs (like __NEXT_DATA__)
-        // The Golang Wappalyzer checks for script tag IDs when the js property matches
-        // This is how Next.js detection works - it looks for <script id="__NEXT_DATA__">
+
+    // Check if any JS property matches a script tag ID
+    // This is how Next.js and similar technologies are detected
+    for js_property in params.tech.js.keys() {
         if params.script_tag_ids.contains(js_property) {
-            log::info!("Technology matched via script tag ID '{}'", js_property);
-            return true;
-        }
-
-        // Check batch results first (much faster)
-        // Batch results use composite key (property:pattern)
-        let key = format!("{}:{}", js_property, pattern);
-        if let Some(&found) = params.js_property_results.get(&key) {
-            if found {
-                log::info!(
-                    "Technology matched via JS property '{}' (from batch)",
-                    js_property
-                );
-                return true;
-            }
-            continue; // Property not found in batch, skip to next
-        }
-
-        // Fallback to individual check if not in batch results (shouldn't happen, but safety)
-        if !params.all_script_content.trim().is_empty()
-            && check_js_property_async(params.all_script_content, js_property, pattern).await
-        {
-            log::info!(
-                "Technology matched via JS property '{}' (individual check)",
-                js_property
-            );
+            log::debug!("Technology matched via script tag ID '{}'", js_property);
             return true;
         }
     }

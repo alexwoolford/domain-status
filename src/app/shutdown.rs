@@ -25,10 +25,9 @@ pub async fn shutdown_gracefully(
 
     // Try to await the logging task gracefully, but abort if it takes too long
     if let Some(logging_task) = logging_task {
-        // Create a wrapper that can be used in select
         // Use tokio::sync::Mutex for async compatibility (avoids blocking the runtime)
+        // Wrap the task in a mutex so we can extract it atomically in select! branches
         let task_handle = Arc::new(tokio::sync::Mutex::new(Some(logging_task)));
-        let task_handle_clone = task_handle.clone();
 
         // Wait up to SHUTDOWN_TIMEOUT_SECS for graceful shutdown
         let timeout_future = tokio::time::sleep(Duration::from_secs(SHUTDOWN_TIMEOUT_SECS));
@@ -38,7 +37,7 @@ pub async fn shutdown_gracefully(
             result = async {
                 // Extract task from mutex before awaiting (drop guard first)
                 let task = {
-                    let mut handle_guard = task_handle_clone.lock().await;
+                    let mut handle_guard = task_handle.lock().await;
                     handle_guard.take()
                 };
                 if let Some(task) = task {
@@ -64,7 +63,8 @@ pub async fn shutdown_gracefully(
                     "Logging task did not complete within {} seconds, aborting",
                     SHUTDOWN_TIMEOUT_SECS
                 );
-                // Extract task from mutex before awaiting (drop guard first)
+                // Extract task from mutex before aborting (drop guard first)
+                // Note: tokio::select! ensures only one branch executes, so this is safe
                 let task = {
                     let mut handle_guard = task_handle.lock().await;
                     handle_guard.take()

@@ -4,17 +4,19 @@
 //! fingerprint rules from community sources like HTTP Archive or Enthec.
 //! Rules are cached locally and can be updated periodically.
 //!
-//! # JavaScript Property Detection
+//! # Pattern Matching
 //!
-//! This module executes JavaScript code (both inline and external scripts) to detect
-//! JavaScript object properties, matching the behavior of the Golang Wappalyzer tool.
+//! Technology detection matches patterns against:
+//! - HTTP headers (Server, X-Powered-By, etc.)
+//! - Cookies
+//! - Meta tags (name, property, http-equiv)
+//! - Script source URLs (from HTML, not fetched)
+//! - HTML text content
+//! - URL patterns
+//! - Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
 //!
-//! **Security measures:**
-//! - Memory limit: 10MB per JavaScript context
-//! - Execution timeout: 1 second per property check
-//! - Script size limits: 100KB per script, 500KB total
-//! - Maximum external scripts: 10 per page (to prevent excessive fetching)
-//! - Fallback to regex: If JavaScript execution fails, falls back to regex matching
+//! **Note:** We match WappalyzerGo's behavior - we do NOT execute JavaScript
+//! or fetch external scripts. We only analyze the initial HTML response.
 
 mod detection;
 mod javascript;

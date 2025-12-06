@@ -12,7 +12,6 @@
 
 mod context;
 mod dns;
-mod enrichment;
 mod handler;
 mod record;
 mod redirects;

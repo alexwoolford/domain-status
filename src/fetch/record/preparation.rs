@@ -98,7 +98,7 @@ pub async fn prepare_record_for_insertion(
         async {
             if params.ctx.enable_whois {
                 let whois_start = Instant::now();
-                log::info!(
+                log::debug!(
                     "Performing WHOIS lookup for domain: {}",
                     params.resp_data.final_domain
                 );
@@ -106,7 +106,7 @@ pub async fn prepare_record_for_insertion(
                     .await
                 {
                     Ok(Some(whois_result)) => {
-                        log::info!(
+                        log::debug!(
                             "WHOIS lookup successful for {}: registrar={:?}, creation={:?}, expiration={:?}",
                             params.resp_data.final_domain,
                             whois_result.registrar,

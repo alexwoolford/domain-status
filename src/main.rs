@@ -113,7 +113,9 @@ async fn main() -> Result<()> {
     // This ensures rate limiting and concurrency work together, not independently
     let rate_burst = if opt.rate_limit_rps > 0 {
         // Cap burst at 2x RPS or concurrency, whichever is smaller
-        std::cmp::min(opt.max_concurrency, (opt.rate_limit_rps * 2) as usize)
+        // Use saturating_mul to prevent integer overflow
+        let rps_doubled = opt.rate_limit_rps.saturating_mul(2);
+        std::cmp::min(opt.max_concurrency, rps_doubled as usize)
     } else {
         // If rate limiting disabled, use concurrency as burst
         opt.max_concurrency
@@ -499,7 +501,17 @@ async fn main() -> Result<()> {
     };
 
     // Wait for all tasks to complete
-    while (tasks.next().await).is_some() {}
+    // Handle panicked tasks: if a task panics, it won't have incremented completed_urls or failed_urls
+    // but total_urls_attempted was already incremented, so we need to count panicked tasks as failed
+    while let Some(task_result) = tasks.next().await {
+        if let Err(join_error) = task_result {
+            // Task panicked - count it as failed to maintain consistency
+            // (total_urls_attempted should equal completed_urls + failed_urls)
+            failed_urls.fetch_add(1, Ordering::SeqCst);
+            log::warn!("Task panicked: {:?}", join_error);
+        }
+        // If task completed successfully (Ok(())), it already incremented completed_urls or failed_urls
+    }
 
     // Shutdown gracefully
     shutdown_gracefully(cancel, logging_task, rate_limiter_shutdown).await;
@@ -518,6 +530,7 @@ async fn main() -> Result<()> {
         &run_id,
         &total_urls_attempted,
         &completed_urls,
+        &failed_urls,
         &error_stats,
     )
     .await
