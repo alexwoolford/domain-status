@@ -276,7 +276,7 @@ Average times per URL:
 **Dependencies:**
 - **HTTP Client**: `reqwest` with `rustls` TLS backend
 - **DNS Resolution**: `hickory-resolver` (async DNS with system config fallback)
-- **Domain Extraction**: `publicsuffix` for accurate domain parsing
+- **Domain Extraction**: `tldextract` for accurate domain parsing (handles multi-part TLDs correctly)
 - **HTML Parsing**: `scraper` (CSS selector-based extraction)
 - **TLS/Certificates**: `tokio-rustls` and `x509-parser` for certificate analysis
 - **Technology Detection**: Custom implementation using Wappalyzer rulesets with JavaScript execution via `rquickjs`
@@ -284,6 +284,10 @@ Average times per URL:
 - **GeoIP**: `maxminddb` for geographic and network information
 - **Database**: `sqlx` with SQLite (WAL mode enabled)
 - **Async Runtime**: Tokio
+
+**Security:**
+- **Security Audit**: `cargo-audit` runs in CI to detect known vulnerabilities in dependencies (uses RustSec advisory database)
+- **Code Quality**: Clippy with `-D warnings` enforces strict linting rules and catches security issues
 
 ## 🏗️ Architecture
 
