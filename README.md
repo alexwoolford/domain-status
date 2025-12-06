@@ -199,7 +199,7 @@ The database uses a **star schema** design pattern with:
 - **Dimension Table**: `runs` (run-level metadata)
 - **Junction Tables**: Multi-valued fields (technologies, headers, DNS records, etc.)
 - **One-to-One Tables**: `url_geoip`, `url_whois`
-- **Failure Tracking**: `url_failures` with satellite tables for error context
+- **Failure Tracking**: `url_failures` with related tables for error context (redirect chains, request/response headers)
 
 **Key Features:**
 - WAL mode for concurrent reads/writes
