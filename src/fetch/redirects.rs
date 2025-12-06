@@ -54,10 +54,13 @@ pub async fn resolve_redirect_chain(
     // Pre-allocate chain with capacity to avoid reallocations
     let mut chain: Vec<String> = Vec::with_capacity(max_hops + 1);
     let mut current = start_url.to_string();
+    let mut last_fetched_url = start_url.to_string(); // Track the last URL we actually fetched
 
-    for _ in 0..max_hops {
+    for hop_num in 0..max_hops {
         // Clone current URL into chain (necessary since we'll modify current)
         chain.push(current.clone());
+        last_fetched_url = current.clone(); // This is the URL we're about to fetch
+
         // Add realistic browser headers to reduce bot detection during redirect resolution
         // This is critical because sites may serve different content (or block) based on headers
         // Note: We use GET instead of HEAD because:
@@ -84,11 +87,29 @@ pub async fn resolve_redirect_chain(
                             current,
                             e
                         );
+                        // Break here: we've reached a non-redirect state (invalid redirect)
+                        // last_fetched_url is the final URL we actually fetched
                         break;
                     }
                 };
                 let new_url = Url::parse(loc_str)
                     .or_else(|_| Url::parse(&current).and_then(|base| base.join(loc_str)))?;
+
+                // Check if we've reached max_hops - if so, don't follow the redirect
+                // Return the last URL we actually fetched instead of the Location header URL
+                if hop_num == max_hops - 1 {
+                    log::warn!(
+                        "Redirect chain for {} exceeded max_hops ({}). Stopping at {} (which returned redirect to {}).",
+                        start_url,
+                        max_hops,
+                        last_fetched_url,
+                        new_url
+                    );
+                    // Return the last URL we actually fetched, not the Location header URL
+                    // This ensures we only return URLs that were actually fetched
+                    break;
+                }
+
                 // Only allocate String when we actually need to update current
                 current = new_url.to_string();
                 continue;
@@ -99,18 +120,22 @@ pub async fn resolve_redirect_chain(
                     status_code,
                     current
                 );
+                // Break here: we've reached a non-redirect state (invalid redirect)
+                // last_fetched_url is the final URL we actually fetched
                 break;
             }
         } else {
             // Not a redirect, we've reached the final URL
-            // Ensure final URL is in the chain (it was added at the start of the loop)
+            // last_fetched_url is the final URL we actually fetched
             break;
         }
     }
 
-    // Ensure final URL is included in chain (in case we broke out of loop)
-    // The final URL is already in chain from the last iteration, but verify it's there
-    let final_url = current.clone();
+    // Use last_fetched_url as the final URL (the last URL we actually fetched)
+    // This ensures we never return a URL that wasn't actually fetched
+    let final_url = last_fetched_url.clone();
+
+    // Ensure final URL is included in chain (in case we broke out of loop early)
     if !chain.contains(&final_url) {
         chain.push(final_url.clone());
     }
@@ -205,19 +230,19 @@ mod tests {
 
         let start_url = server.url("/").to_string();
         // Max hops = 2, so we do 2 iterations:
-        // Iteration 1: Add start_url, request, redirect to url1, current = url1
-        // Iteration 2: Add url1, request, redirect to url2, current = url2
-        // After loop: url2 is not in chain, so we add it
-        // Result: chain has 3 URLs (start_url, url1, url2), final = url2
+        // Iteration 0: Add start_url, request, redirect to url1, current = url1, last_fetched_url = start_url
+        // Iteration 1: Add url1, request, redirect to url2, but we're at max_hops-1, so we break
+        // Result: chain has 2 URLs (start_url, url1), final = url1 (the last URL we actually fetched)
+        // We do NOT return url2 because we never fetched it - we hit the redirect limit
         let (result_final, chain) = resolve_redirect_chain(&start_url, 2, &client)
             .await
             .unwrap();
 
-        assert_eq!(chain.len(), 3);
+        assert_eq!(chain.len(), 2);
         assert_eq!(chain[0], start_url);
         assert_eq!(chain[1], url1);
-        assert_eq!(chain[2], url2);
-        assert_eq!(result_final, url2);
+        // Final URL should be url1 (last URL we actually fetched), not url2 (which we never fetched)
+        assert_eq!(result_final, url1);
     }
 
     #[tokio::test]

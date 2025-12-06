@@ -129,10 +129,12 @@ async fn main() -> Result<()> {
     // Initialize adaptive rate limiter (always enabled when rate limiting is on)
     let adaptive_limiter = if opt.rate_limit_rps > 0 {
         use adaptive_rate_limiter::AdaptiveRateLimiter;
+        // Use saturating_mul to prevent integer overflow (consistent with rate_burst calculation above)
+        let max_rps = opt.rate_limit_rps.saturating_mul(2);
         let adaptive = Arc::new(AdaptiveRateLimiter::new(
             opt.rate_limit_rps,
-            Some(1),                      // min RPS
-            Some(opt.rate_limit_rps * 2), // max RPS: 2x initial (allows system to adapt to good conditions)
+            Some(1),       // min RPS
+            Some(max_rps), // max RPS: 2x initial (allows system to adapt to good conditions)
             Some(opt.adaptive_error_threshold),
             None, // default window size (100)
             None, // default window duration (30s)

@@ -67,17 +67,27 @@ impl DbWriteCircuitBreaker {
     /// Records a failed write operation.
     ///
     /// Increments the failure count and opens the circuit if threshold is reached.
+    /// Uses atomic compare-and-swap to prevent race conditions when opening the circuit.
     pub async fn record_failure(&self) {
         let count = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
 
-        if count >= self.failure_threshold && !self.is_open.load(Ordering::SeqCst) {
-            self.is_open.store(true, Ordering::SeqCst);
-            *self.opened_at.write().await = Some(Instant::now());
-            log::error!(
-                "Database write circuit breaker: circuit opened after {} consecutive failures (cooldown: {}s)",
-                count,
-                self.cooldown_duration.as_secs()
-            );
+        if count >= self.failure_threshold {
+            // Use compare-and-swap to atomically check and set is_open
+            // This prevents race conditions where multiple threads try to open the circuit simultaneously
+            let was_closed = self
+                .is_open
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok();
+
+            if was_closed {
+                // Only one thread will successfully open the circuit
+                *self.opened_at.write().await = Some(Instant::now());
+                log::error!(
+                    "Database write circuit breaker: circuit opened after {} consecutive failures (cooldown: {}s)",
+                    count,
+                    self.cooldown_duration.as_secs()
+                );
+            }
         }
     }
 

@@ -48,6 +48,8 @@ pub async fn handle_response(
         // Note: This includes redirect resolution time + HTTP request time
         // Use saturating cast to prevent overflow if elapsed is very large
         // Max safe value: ~18,446 seconds (u64::MAX microseconds) before overflow
+        // NOTE: Field is named `_ms` but actually stores microseconds (μs) for precision
+        // This is a naming legacy - all timing fields store microseconds internally
         http_request_ms: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
         ..Default::default()
     };
