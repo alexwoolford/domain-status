@@ -75,9 +75,6 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
                     .get_error_count(ErrorType::HttpRequestNotFound)
                 + state
                     .error_stats
-                    .get_error_count(ErrorType::HttpRequestNotAcceptable)
-                + state
-                    .error_stats
                     .get_error_count(ErrorType::HttpRequestInternalServerError)
                 + state
                     .error_stats
@@ -88,9 +85,6 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
                 + state
                     .error_stats
                     .get_error_count(ErrorType::HttpRequestGatewayTimeout)
-                + state
-                    .error_stats
-                    .get_error_count(ErrorType::HttpRequestCloudflareError)
                 + state
                     .error_stats
                     .get_error_count(ErrorType::HttpRequestBotDetectionError),

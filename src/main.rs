@@ -359,15 +359,15 @@ async fn main() -> Result<()> {
                     let context = crate::storage::failure::extract_failure_context(&e);
                     if let Err(record_err) =
                         record_url_failure(crate::storage::failure::FailureRecordParams {
-                            pool: &ctx.pool,
-                            extractor: &ctx.extractor,
+                            pool: &ctx.db.pool,
+                            extractor: &ctx.network.extractor,
                             url: url_for_logging.as_ref(),
                             error: &e,
                             context,
                             retry_count, // Use actual retry count from process_url
                             elapsed_time: elapsed,
-                            run_id: ctx.run_id.as_deref(),
-                            circuit_breaker: Arc::clone(&ctx.db_circuit_breaker),
+                            run_id: ctx.config.run_id.as_deref(),
+                            circuit_breaker: Arc::clone(&ctx.db.circuit_breaker),
                         })
                         .await
                     {
@@ -425,15 +425,15 @@ async fn main() -> Result<()> {
                     };
                     if let Err(record_err) =
                         record_url_failure(crate::storage::failure::FailureRecordParams {
-                            pool: &ctx.pool,
-                            extractor: &ctx.extractor,
+                            pool: &ctx.db.pool,
+                            extractor: &ctx.network.extractor,
                             url: url_for_logging.as_ref(),
                             error: &timeout_error,
                             context,
                             retry_count: crate::config::RETRY_MAX_ATTEMPTS as u32 - 1, // Max retries attempted
                             elapsed_time: elapsed,
-                            run_id: ctx.run_id.as_deref(),
-                            circuit_breaker: Arc::clone(&ctx.db_circuit_breaker),
+                            run_id: ctx.config.run_id.as_deref(),
+                            circuit_breaker: Arc::clone(&ctx.db.circuit_breaker),
                         })
                         .await
                     {
@@ -444,7 +444,8 @@ async fn main() -> Result<()> {
                         );
                     }
 
-                    ctx.error_stats
+                    ctx.config
+                        .error_stats
                         .increment_error(ErrorType::ProcessUrlTimeout);
                     if let Some(adaptive) = adaptive_limiter_for_task {
                         adaptive.record_timeout().await;

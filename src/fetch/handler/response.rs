@@ -54,8 +54,13 @@ pub async fn handle_response(
 
     // Extract and validate response data
     let html_parse_start = Instant::now();
-    let Some(resp_data) =
-        extract_response_data(response, original_url, final_url_str, &ctx.extractor).await?
+    let Some(resp_data) = extract_response_data(
+        response,
+        original_url,
+        final_url_str,
+        &ctx.network.extractor,
+    )
+    .await?
     else {
         // Non-HTML or empty response, skip silently
         // This is logged at debug level in extract_response_data
@@ -67,7 +72,11 @@ pub async fn handle_response(
     };
 
     // Parse HTML content
-    let html_data = parse_html_content(&resp_data.body, &resp_data.final_domain, &ctx.error_stats);
+    let html_data = parse_html_content(
+        &resp_data.body,
+        &resp_data.final_domain,
+        &ctx.config.error_stats,
+    );
     metrics.html_parsing_ms = duration_to_ms(html_parse_start.elapsed());
 
     // Run tech detection and DNS/TLS in parallel (they're independent)
@@ -84,7 +93,7 @@ pub async fn handle_response(
 
             let tech_start = Instant::now();
             let technologies =
-                detect_technologies_safely(&html_data, &resp_data, &ctx.error_stats).await;
+                detect_technologies_safely(&html_data, &resp_data, &ctx.config.error_stats).await;
             let tech_detection_ms = duration_to_ms(tech_start.elapsed());
             (technologies, tech_detection_ms)
         },
@@ -92,9 +101,9 @@ pub async fn handle_response(
         async {
             fetch_all_dns_data(
                 &resp_data,
-                &ctx.resolver,
-                &ctx.error_stats,
-                ctx.run_id.as_deref(),
+                &ctx.network.resolver,
+                &ctx.config.error_stats,
+                ctx.config.run_id.as_deref(),
             )
             .await
         }
@@ -146,7 +155,7 @@ pub async fn handle_response(
     // Insert record directly into database
     // If write fails, return error so URL is not counted as successful
     // Database errors are non-retriable, so this won't trigger retries
-    insert_batch_record(&ctx.pool, batch_record)
+    insert_batch_record(&ctx.db.pool, batch_record)
         .await
         .map_err(|e| {
             log::error!(
@@ -162,7 +171,7 @@ pub async fn handle_response(
     metrics.total_ms = duration_to_ms(start_time.elapsed());
 
     // Record metrics (DNS and enrichment times are set inside their respective functions)
-    ctx.timing_stats.record(&metrics);
+    ctx.config.timing_stats.record(&metrics);
 
     Ok(())
 }

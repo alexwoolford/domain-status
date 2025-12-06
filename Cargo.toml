@@ -26,7 +26,6 @@ sqlx = { version = "^0.8", default-features = false, features = ["sqlite", "runt
 # Scraping and URL handling
 scraper = "^0.24"
 url = "^2.5"
-publicsuffix = "^2.2"
 serde_json = "^1.0"
 
 # CLI and error handling
@@ -55,6 +54,7 @@ dotenvy = "^0.15"
 whois-service = { version = "^0.1.1", default-features = false }
 axum = "^0.8"
 tower = "^0.5"
+tldextract = "0.6.0"
 
 [dev-dependencies]
 httptest = "^0.16"

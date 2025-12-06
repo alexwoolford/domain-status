@@ -24,7 +24,7 @@ pub(crate) async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
     _final_url_str: &str,
-    extractor: &publicsuffix::List,
+    extractor: &tldextract::TldExtractor,
 ) -> Result<Option<ResponseData>, Error> {
     let final_url = response.url().to_string();
     debug!("Final url after redirects: {final_url}");
@@ -128,8 +128,8 @@ mod tests {
     use super::*;
     use httptest::{matchers::*, responders::*, Expectation, Server};
 
-    fn create_test_extractor() -> publicsuffix::List {
-        publicsuffix::List::new()
+    fn create_test_extractor() -> tldextract::TldExtractor {
+        tldextract::TldExtractor::new(tldextract::TldOption::default())
     }
 
     #[tokio::test]
@@ -165,7 +165,8 @@ mod tests {
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("Failed to extract registrable domain")
-                || error_msg.contains("Failed to extract domain"),
+                || error_msg.contains("Failed to extract domain")
+                || error_msg.contains("IP addresses do not have registrable domains"),
             "Error message should mention domain extraction failure, got: {}",
             error_msg
         );
