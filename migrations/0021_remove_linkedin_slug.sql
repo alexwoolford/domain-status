@@ -36,7 +36,7 @@ INSERT INTO url_status_new (
     ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, is_mobile_friendly, timestamp,
     spf_record, dmarc_record, cipher_suite, key_algorithm, run_id
 )
-SELECT 
+SELECT
     id, domain, final_domain, ip_address, reverse_dns_name, status, status_description,
     response_time, title, keywords, description, tls_version, ssl_cert_subject,
     ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, is_mobile_friendly, timestamp,
@@ -50,8 +50,7 @@ DROP TABLE url_status;
 ALTER TABLE url_status_new RENAME TO url_status;
 
 -- Step 5: Recreate indexes (they were dropped with the old table)
-CREATE INDEX IF NOT EXISTS idx_url_status_final_domain_timestamp 
+CREATE INDEX IF NOT EXISTS idx_url_status_final_domain_timestamp
     ON url_status(final_domain, timestamp);
-CREATE INDEX IF NOT EXISTS idx_url_status_run_id_timestamp 
+CREATE INDEX IF NOT EXISTS idx_url_status_run_id_timestamp
     ON url_status(run_id, timestamp);
-

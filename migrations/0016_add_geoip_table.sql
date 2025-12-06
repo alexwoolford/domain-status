@@ -25,4 +25,3 @@ CREATE INDEX IF NOT EXISTS idx_url_geoip_country_code ON url_geoip(country_code)
 CREATE INDEX IF NOT EXISTS idx_url_geoip_city ON url_geoip(city);
 CREATE INDEX IF NOT EXISTS idx_url_geoip_asn ON url_geoip(asn);
 CREATE INDEX IF NOT EXISTS idx_url_geoip_url_status_id ON url_geoip(url_status_id);
-

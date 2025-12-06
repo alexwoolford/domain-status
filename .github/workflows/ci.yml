@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -33,16 +33,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      
+
       - name: Check formatting
         run: cargo fmt --check
-      
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-      
+
       - name: Run tests
         run: cargo test --all-features --all-targets
-      
+
       - name: Build release
         run: cargo build --release
 
@@ -51,10 +51,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -67,16 +67,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      
+
       - name: Install cargo-tarpaulin
         run: |
           cargo install cargo-tarpaulin --locked
-      
+
       - name: Generate coverage report
         run: |
           cargo tarpaulin --out Xml --output-dir coverage --all-features --all-targets
         continue-on-error: true
-      
+
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -90,18 +90,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Full history needed for secret scanning
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Install cargo-audit
         run: |
           cargo install cargo-audit --features=fix
-      
+
       - name: Run security audit
         run: cargo audit --file audit.toml
         continue-on-error: true
-      
+
       - name: Scan for secrets
         uses: gitleaks/gitleaks-action@v2
         env:
@@ -112,4 +112,3 @@ jobs:
           exit-code: 1
           verbose: true
           redact: true
-

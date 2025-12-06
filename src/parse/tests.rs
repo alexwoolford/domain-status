@@ -258,4 +258,3 @@ fn test_extract_analytics_ids_gtm_url_format() {
         gtm_ids
     );
 }
-

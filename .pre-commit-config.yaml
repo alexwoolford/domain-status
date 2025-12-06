@@ -1,0 +1,29 @@
+# Pre-commit hooks configuration
+# Install: cargo install pre-commit-rs (or use pre-commit framework)
+# Or: brew install pre-commit
+# Then: pre-commit install
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+        args: ['--verbose', '--redact']
+        description: "Detect hardcoded secrets before commit"
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+        description: "Prevent committing large files"
+      - id: check-json
+        description: "Validate JSON files"
+      - id: check-yaml
+        description: "Validate YAML files"
+      - id: end-of-file-fixer
+        description: "Ensure files end with newline"
+      - id: trailing-whitespace
+        description: "Remove trailing whitespace"
+      - id: check-merge-conflict
+        description: "Check for merge conflict markers"

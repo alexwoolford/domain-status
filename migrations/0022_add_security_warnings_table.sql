@@ -15,4 +15,3 @@ CREATE INDEX IF NOT EXISTS idx_url_security_warnings_code ON url_security_warnin
 
 -- Index for querying by url_status_id
 CREATE INDEX IF NOT EXISTS idx_url_security_warnings_status_id ON url_security_warnings(url_status_id);
-

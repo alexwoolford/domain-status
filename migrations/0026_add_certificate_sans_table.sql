@@ -15,4 +15,3 @@ CREATE INDEX IF NOT EXISTS idx_url_certificate_sans_domain_name ON url_certifica
 
 -- Index for querying by url_status_id
 CREATE INDEX IF NOT EXISTS idx_url_certificate_sans_url_status_id ON url_certificate_sans(url_status_id);
-

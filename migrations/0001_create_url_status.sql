@@ -22,4 +22,3 @@ CREATE TABLE IF NOT EXISTS url_status (
     is_mobile_friendly BOOLEAN,
     timestamp INTEGER NOT NULL
 );
-

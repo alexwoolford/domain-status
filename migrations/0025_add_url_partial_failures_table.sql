@@ -21,4 +21,3 @@ CREATE INDEX IF NOT EXISTS idx_url_partial_failures_error_type ON url_partial_fa
 
 -- Index for querying partial failures by url_status_id
 CREATE INDEX IF NOT EXISTS idx_url_partial_failures_url_status_id ON url_partial_failures(url_status_id);
-

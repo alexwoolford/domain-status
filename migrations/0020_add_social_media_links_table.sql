@@ -12,12 +12,11 @@ CREATE TABLE IF NOT EXISTS url_social_media_links (
     UNIQUE (url_status_id, platform, url) -- Prevent duplicate links per URL
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_social_media_links_platform 
+CREATE INDEX IF NOT EXISTS idx_url_social_media_links_platform
     ON url_social_media_links(platform);
 
-CREATE INDEX IF NOT EXISTS idx_url_social_media_links_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_social_media_links_status_id
     ON url_social_media_links(url_status_id);
 
-CREATE INDEX IF NOT EXISTS idx_url_social_media_links_identifier 
+CREATE INDEX IF NOT EXISTS idx_url_social_media_links_identifier
     ON url_social_media_links(identifier);
-

@@ -25,4 +25,3 @@ CREATE INDEX IF NOT EXISTS idx_url_whois_country ON url_whois(registrant_country
 
 -- Index for querying by url_status_id
 CREATE INDEX IF NOT EXISTS idx_url_whois_status_id ON url_whois(url_status_id);
-

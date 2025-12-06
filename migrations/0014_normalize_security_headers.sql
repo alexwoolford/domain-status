@@ -12,22 +12,22 @@ CREATE TABLE IF NOT EXISTS url_security_headers (
     UNIQUE (url_status_id, header_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_security_headers_name 
+CREATE INDEX IF NOT EXISTS idx_url_security_headers_name
     ON url_security_headers(header_name);
 
-CREATE INDEX IF NOT EXISTS idx_url_security_headers_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_security_headers_status_id
     ON url_security_headers(url_status_id);
 
 -- Step 2: Migrate existing data from JSON column to normalized table
 -- This extracts key-value pairs from the JSON security_headers column
 INSERT INTO url_security_headers (url_status_id, header_name, header_value)
-SELECT 
+SELECT
     us.id,
     json_each.key,
     json_each.value
 FROM url_status us,
      json_each(us.security_headers)
-WHERE us.security_headers IS NOT NULL 
+WHERE us.security_headers IS NOT NULL
   AND us.security_headers != '{}'
   AND us.security_headers != '';
 
@@ -73,7 +73,7 @@ INSERT INTO url_status_new (
     timestamp, redirect_chain, spf_record, dmarc_record, cipher_suite,
     key_algorithm, run_id
 )
-SELECT 
+SELECT
     id, domain, final_domain, ip_address, reverse_dns_name,
     status, status_description, response_time, title, keywords, description,
     linkedin_slug, tls_version, ssl_cert_subject, ssl_cert_issuer,
@@ -97,4 +97,3 @@ CREATE INDEX IF NOT EXISTS idx_url_status_run_id_timestamp ON url_status(run_id,
 -- Note: The normalized child tables (url_technologies, url_nameservers, url_txt_records,
 -- url_mx_records, url_security_headers) already exist and contain the data. The foreign key
 -- constraints will remain valid because we preserved the `id` column (PRIMARY KEY) in the new table.
-

@@ -228,19 +228,19 @@ fn test_extract_domain_fallback_when_extraction_fails() {
 fn test_tldextract_domain_behavior() {
     // This test verifies what tldextract returns
     let extractor = test_extractor();
-    
+
     println!("\nTesting tldextract API behavior:");
     println!("==================================");
-    
+
     let urls = vec![
         "https://www.example.com",
         "https://www.example.co.uk",
         "https://example.co.uk",
     ];
-    
+
     for url in urls {
         println!("\nURL: {}", url);
-        
+
         match extractor.extract(url) {
             Ok(result) => {
                 println!("  Domain: {:?}", result.domain);
@@ -260,4 +260,3 @@ fn test_tldextract_domain_behavior() {
         }
     }
 }
-

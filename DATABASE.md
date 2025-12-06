@@ -429,10 +429,10 @@ JOIN url_http_headers uhh ON us.id = uhh.url_status_id
 WHERE uhh.header_name = 'CF-Ray';
 
 -- Find sites with aggressive caching
-SELECT DISTINCT us.domain, uhh.header_value 
+SELECT DISTINCT us.domain, uhh.header_value
 FROM url_status us
 JOIN url_http_headers uhh ON us.id = uhh.url_status_id
-WHERE uhh.header_name = 'Cache-Control' 
+WHERE uhh.header_name = 'Cache-Control'
   AND uhh.header_value LIKE '%max-age=31536000%';
 ```
 
@@ -1035,7 +1035,7 @@ The database uses a **star schema** design pattern:
 
 ```sql
 -- Find all sites using WordPress
-SELECT DISTINCT us.domain 
+SELECT DISTINCT us.domain
 FROM url_status us
 JOIN url_technologies ut ON us.id = ut.url_status_id
 WHERE ut.technology_name = 'WordPress';
@@ -1060,7 +1060,7 @@ WHERE us.final_domain = 'example.com'
 ORDER BY urc.sequence_order;
 
 -- Compare technologies between runs
-SELECT ut1.technology_name, 
+SELECT ut1.technology_name,
        COUNT(DISTINCT us1.id) as run1_count,
        COUNT(DISTINCT us2.id) as run2_count
 FROM url_status us1
@@ -1071,7 +1071,7 @@ WHERE us1.run_id = 'run_123' AND us2.run_id = 'run_456'
 GROUP BY ut1.technology_name;
 
 -- Analyze failure patterns by error type
-SELECT error_type, COUNT(*) as count, 
+SELECT error_type, COUNT(*) as count,
        AVG(elapsed_time_seconds) as avg_time,
        AVG(retry_count) as avg_retries
 FROM url_failures
@@ -1111,4 +1111,3 @@ ORDER BY uf.domain;
 - Response body size is capped at 2MB to prevent memory exhaustion
 - Only HTML content-types are processed (others are skipped)
 - Maximum redirect hops: 10 (prevents infinite loops)
-

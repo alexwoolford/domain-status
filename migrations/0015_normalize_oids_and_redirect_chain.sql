@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS url_oids (
     UNIQUE (url_status_id, oid)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_oids_oid 
+CREATE INDEX IF NOT EXISTS idx_url_oids_oid
     ON url_oids(oid);
 
-CREATE INDEX IF NOT EXISTS idx_url_oids_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_oids_status_id
     ON url_oids(url_status_id);
 
 -- Step 2: Create child table for redirect chain
@@ -27,30 +27,30 @@ CREATE TABLE IF NOT EXISTS url_redirect_chain (
     UNIQUE (url_status_id, sequence_order)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_redirect_chain_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_redirect_chain_status_id
     ON url_redirect_chain(url_status_id);
 
 -- Step 3: Migrate existing OIDs data from JSON column to normalized table
 INSERT INTO url_oids (url_status_id, oid)
-SELECT 
+SELECT
     us.id,
     json_each.value
 FROM url_status us,
      json_each(us.oids)
-WHERE us.oids IS NOT NULL 
+WHERE us.oids IS NOT NULL
   AND us.oids != '[]'
   AND us.oids != '';
 
 -- Step 4: Migrate existing redirect chain data from JSON column to normalized table
 -- Preserve sequence order using rowid from json_each
 INSERT INTO url_redirect_chain (url_status_id, sequence_order, url)
-SELECT 
+SELECT
     us.id,
     json_each.key + 1 as sequence_order, -- json_each.key is 0-based, we want 1-based
     json_each.value
 FROM url_status us,
      json_each(us.redirect_chain)
-WHERE us.redirect_chain IS NOT NULL 
+WHERE us.redirect_chain IS NOT NULL
   AND us.redirect_chain != '[]'
   AND us.redirect_chain != '';
 
@@ -95,7 +95,7 @@ INSERT INTO url_status_new (
     timestamp, spf_record, dmarc_record, cipher_suite,
     key_algorithm, run_id
 )
-SELECT 
+SELECT
     id, domain, final_domain, ip_address, reverse_dns_name,
     status, status_description, response_time, title, keywords, description,
     linkedin_slug, tls_version, ssl_cert_subject, ssl_cert_issuer,
@@ -120,4 +120,3 @@ CREATE INDEX IF NOT EXISTS idx_url_status_run_id_timestamp ON url_status(run_id,
 -- url_mx_records, url_security_headers, url_oids, url_redirect_chain) already exist and contain
 -- the data. The foreign key constraints will remain valid because we preserved the `id` column
 -- (PRIMARY KEY) in the new table.
-

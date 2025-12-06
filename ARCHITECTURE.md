@@ -143,4 +143,3 @@ See [DATABASE.md](DATABASE.md) for complete schema documentation.
 4. **Redirect Limits**: Maximum 10 redirect hops
 5. **JavaScript Execution**: Memory and time limits enforced
 6. **TLS**: Uses `rustls` (no native TLS dependencies)
-

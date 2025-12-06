@@ -273,4 +273,3 @@ fn test_url_join_different_scheme() {
     assert_eq!(url.scheme(), "https");
     assert_eq!(url.as_str(), "https://example.com/secure");
 }
-
