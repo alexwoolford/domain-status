@@ -11,6 +11,13 @@ pub(crate) async fn insert_technologies(
     url_status_id: i64,
     technologies: &[String],
 ) {
+    log::debug!(
+        "Inserting {} technologies for url_status_id {}: {:?}",
+        technologies.len(),
+        url_status_id,
+        technologies
+    );
+
     // Batch optimization: Pre-fetch categories for unique technologies to avoid
     // repeated ruleset lookups. This reduces lock contention since get_technology_category
     // acquires a read lock on the ruleset for each call.
@@ -22,11 +29,13 @@ pub(crate) async fn insert_technologies(
         category_map.insert(*tech, fingerprint::get_technology_category(tech).await);
     }
 
+    let mut inserted_count = 0;
+    let mut conflict_count = 0;
     for tech in technologies {
         // Use pre-fetched category
         let category = category_map.get(tech.as_str()).cloned().flatten();
 
-        if let Err(e) = sqlx::query(
+        match sqlx::query(
             "INSERT INTO url_technologies (url_status_id, technology_name, technology_category)
              VALUES (?, ?, ?)
              ON CONFLICT(url_status_id, technology_name) DO NOTHING",
@@ -37,14 +46,36 @@ pub(crate) async fn insert_technologies(
         .execute(&mut **tx)
         .await
         {
-            log::warn!(
-                "Failed to insert technology '{}' for url_status_id {}: {}",
-                tech,
-                url_status_id,
-                e
-            );
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    inserted_count += 1;
+                } else {
+                    conflict_count += 1;
+                    log::debug!(
+                        "Technology '{}' already exists for url_status_id {} (conflict)",
+                        tech,
+                        url_status_id
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to insert technology '{}' for url_status_id {}: {}",
+                    tech,
+                    url_status_id,
+                    e
+                );
+            }
         }
     }
+
+    log::debug!(
+        "Inserted {} technologies for url_status_id {} ({} conflicts, {} total)",
+        inserted_count,
+        url_status_id,
+        conflict_count,
+        technologies.len()
+    );
 }
 
 #[cfg(test)]

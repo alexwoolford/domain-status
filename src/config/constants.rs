@@ -57,12 +57,10 @@ pub const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
 
 // Script content size limits
 /// Maximum script content size in bytes (100KB per script)
-/// Limits the amount of JavaScript we extract per script tag
-/// This is enforced in src/fetch/mod.rs when extracting script content
+/// Limits the amount of inline JavaScript we extract per script tag
+/// This prevents DoS attacks via large inline scripts
+/// Enforced in src/fetch/response/html.rs when extracting inline script content
 pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
-/// Maximum total script content size in bytes (500KB total across all scripts)
-/// Limits the total amount of JavaScript we execute to prevent DoS attacks
-pub const MAX_TOTAL_SCRIPT_CONTENT_SIZE: usize = 500 * 1024; // 500KB total across all scripts
 
 // HTML text extraction limits
 /// Maximum HTML text content to extract in characters (50KB)
@@ -82,16 +80,8 @@ pub const MAX_ERROR_MESSAGE_LENGTH: usize = 2000;
 /// Prevents database bloat from very long header values (e.g., accept-ch headers)
 /// Header values longer than this are truncated
 pub const MAX_HEADER_VALUE_LENGTH: usize = 1000;
-/// Maximum JavaScript execution time in milliseconds (1 second)
-/// Prevents infinite loops and CPU exhaustion attacks
-pub const MAX_JS_EXECUTION_TIME_MS: u64 = 1000;
-/// Maximum memory limit for QuickJS context in bytes (10MB)
-/// Prevents memory exhaustion attacks
-pub const MAX_JS_MEMORY_LIMIT: usize = 10 * 1024 * 1024;
-/// Maximum number of external scripts to fetch per page
-/// Set to 0 to disable external script fetching (faster, but may miss some technologies)
-/// External script fetching can cause timeouts on slow sites
-pub const MAX_EXTERNAL_SCRIPTS: usize = 0;
+// Note: JavaScript execution constants removed - we don't execute JavaScript
+// We match JS patterns as text (like WappalyzerGo) instead of executing JavaScript
 
 // Redirect handling
 /// Maximum number of redirect hops to follow

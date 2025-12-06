@@ -52,7 +52,7 @@ pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Opti
         .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {}", e))?;
     match client.lookup(domain).await {
         Ok(response) => {
-            log::info!("WHOIS lookup successful for {}", domain);
+            log::debug!("WHOIS lookup successful for {}", domain);
             let result = convert_parsed_data(&response);
 
             // Cache the result

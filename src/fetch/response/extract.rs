@@ -91,7 +91,7 @@ pub(crate) async fn extract_response_data(
         return Ok(None);
     }
 
-    log::info!("Body length for {final_domain}: {} bytes", body.len());
+    log::debug!("Body length for {final_domain}: {} bytes", body.len());
 
     // Check if title tag exists in raw HTML (for debugging)
     if body.contains("<title") || body.contains("<TITLE") {

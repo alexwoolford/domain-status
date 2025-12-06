@@ -16,21 +16,24 @@ pub async fn print_and_save_final_statistics(
     run_id: &str,
     total_urls_attempted: &Arc<AtomicUsize>,
     completed_urls: &Arc<AtomicUsize>,
+    failed_urls: &Arc<AtomicUsize>,
     error_stats: &Arc<ProcessingStats>,
 ) -> Result<()> {
     // Calculate run statistics
     // All tasks have completed at this point, so counters should be final
     let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
     let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
-    let failed_urls = total_urls - successful_urls;
+    // Use actual failed_urls counter instead of calculating it
+    // This ensures accuracy even if there are pending URLs
+    let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
 
     info!(
         "Run statistics: total={}, successful={}, failed={}",
-        total_urls, successful_urls, failed_urls
+        total_urls, successful_urls, failed_urls_count
     );
 
     // Update run statistics in database
-    database::update_run_stats(pool, run_id, total_urls, successful_urls, failed_urls)
+    database::update_run_stats(pool, run_id, total_urls, successful_urls, failed_urls_count)
         .await
         .context("Failed to update run statistics")?;
 
@@ -179,6 +182,7 @@ mod tests {
         let run_id = "test-run-123";
         let total_urls = Arc::new(AtomicUsize::new(100));
         let completed_urls = Arc::new(AtomicUsize::new(85));
+        let failed_urls = Arc::new(AtomicUsize::new(15));
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Insert initial run record using insert_run_metadata
@@ -200,6 +204,7 @@ mod tests {
             run_id,
             &total_urls,
             &completed_urls,
+            &failed_urls,
             &error_stats,
         )
         .await;
@@ -246,6 +251,7 @@ mod tests {
         let run_id = "test-run-zero";
         let total_urls = Arc::new(AtomicUsize::new(0));
         let completed_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Insert initial run record using insert_run_metadata
@@ -266,6 +272,7 @@ mod tests {
             run_id,
             &total_urls,
             &completed_urls,
+            &failed_urls,
             &error_stats,
         )
         .await;
