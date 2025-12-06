@@ -29,6 +29,16 @@ tarpaulin-report.html
 
 # Environment variables (contains secrets)
 .env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+*.secret
+secrets.*
 
 # Temporary LLM-generated working files (should never be committed)
 *_REVIEW.md
