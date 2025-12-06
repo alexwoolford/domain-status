@@ -321,6 +321,31 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 - Direct database writes with SQLite WAL mode (efficient concurrent writes)
 - Memory efficiency: Response bodies limited to 2MB, HTML text extraction limited to 50KB
 
+## 🔒 Security & Secret Management
+
+**Preventing Credential Leaks:**
+
+1. **Pre-commit hooks** (recommended): Install pre-commit hooks to catch secrets before they're committed:
+   ```bash
+   # Install pre-commit (if not already installed)
+   brew install pre-commit  # macOS
+   # or: pip install pre-commit
+
+   # Install hooks
+   pre-commit install
+   ```
+   This will automatically scan for secrets before every commit.
+
+2. **CI scanning**: Gitleaks runs in CI to catch secrets in pull requests and scan git history.
+
+3. **GitHub Secret Scanning**: GitHub automatically scans public repositories for known secret patterns (enabled by default).
+
+4. **Best practices**:
+   - Never commit `.env` files (already in `.gitignore`)
+   - Use environment variables for all secrets
+   - Use GitHub Secrets for CI/CD tokens
+   - Review gitleaks output if CI fails
+
 ## License
 
 MIT License - see [LICENSE-MIT](LICENSE-MIT) file for details.

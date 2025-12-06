@@ -32,7 +32,7 @@ INSERT INTO url_status_new (
     response_time, title, keywords, description, linkedin_slug, security_headers, tls_version,
     ssl_cert_subject, ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, is_mobile_friendly, timestamp, redirect_chain
 )
-SELECT 
+SELECT
     id, domain, final_domain, ip_address, reverse_dns_name, status, status_description,
     response_time, title, keywords, description, linkedin_slug, security_headers, tls_version,
     ssl_cert_subject, ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, oids, is_mobile_friendly, timestamp, NULL
@@ -45,5 +45,3 @@ ALTER TABLE url_status_new RENAME TO url_status;
 CREATE INDEX IF NOT EXISTS idx_url_status_domain ON url_status(domain);
 CREATE INDEX IF NOT EXISTS idx_url_status_final_domain ON url_status(final_domain);
 CREATE INDEX IF NOT EXISTS idx_url_status_timestamp ON url_status(timestamp);
-
-

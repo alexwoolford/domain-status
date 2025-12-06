@@ -156,5 +156,3 @@ sqlite3 url_checker.db "SELECT id, domain, status, title FROM url_status ORDER B
 - Switch `reqwest` to `rustls` backend only and trim features
 - Add indexes on `domain`, `timestamp`; consider UPSERT for idempotent writes
 - Provide JSON log output option and metrics
-
-

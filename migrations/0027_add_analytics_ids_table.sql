@@ -20,4 +20,3 @@ CREATE INDEX IF NOT EXISTS idx_url_analytics_ids_tracking_id ON url_analytics_id
 
 -- Index for querying by url_status_id
 CREATE INDEX IF NOT EXISTS idx_url_analytics_ids_url_status_id ON url_analytics_ids(url_status_id);
-

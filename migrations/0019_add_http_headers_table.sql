@@ -15,9 +15,8 @@ CREATE TABLE IF NOT EXISTS url_http_headers (
     UNIQUE (url_status_id, header_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_http_headers_name 
+CREATE INDEX IF NOT EXISTS idx_url_http_headers_name
     ON url_http_headers(header_name);
 
-CREATE INDEX IF NOT EXISTS idx_url_http_headers_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_http_headers_status_id
     ON url_http_headers(url_status_id);
-

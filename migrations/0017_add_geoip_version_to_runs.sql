@@ -4,4 +4,3 @@
 ALTER TABLE runs ADD COLUMN geoip_version TEXT;
 
 -- Note: geoip_version is NULL if GeoIP lookup was not enabled for the run
-

@@ -13,9 +13,8 @@ CREATE TABLE IF NOT EXISTS runs (
     failed_urls INTEGER DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_runs_start_time 
+CREATE INDEX IF NOT EXISTS idx_runs_start_time
     ON runs(start_time);
 
 -- Note: We keep fingerprints_source and fingerprints_version in url_status for backward compatibility
 -- but they should be queried from the runs table instead
-

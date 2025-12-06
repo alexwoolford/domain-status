@@ -23,4 +23,3 @@ fn test_is_retriable_error_database() {
     // This would require creating a sqlx::Error
     // which is complex without a real database connection
 }
-

@@ -11,10 +11,10 @@ CREATE TABLE IF NOT EXISTS url_technologies (
     UNIQUE(url_status_id, technology_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_technologies_name 
+CREATE INDEX IF NOT EXISTS idx_url_technologies_name
     ON url_technologies(technology_name);
 
-CREATE INDEX IF NOT EXISTS idx_url_technologies_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_technologies_status_id
     ON url_technologies(url_status_id);
 
 -- Nameservers table: one row per nameserver per URL
@@ -26,10 +26,10 @@ CREATE TABLE IF NOT EXISTS url_nameservers (
     UNIQUE(url_status_id, nameserver)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_nameservers_nameserver 
+CREATE INDEX IF NOT EXISTS idx_url_nameservers_nameserver
     ON url_nameservers(nameserver);
 
-CREATE INDEX IF NOT EXISTS idx_url_nameservers_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_nameservers_status_id
     ON url_nameservers(url_status_id);
 
 -- TXT records table: one row per TXT record per URL
@@ -42,10 +42,10 @@ CREATE TABLE IF NOT EXISTS url_txt_records (
     FOREIGN KEY (url_status_id) REFERENCES url_status(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_txt_records_type 
+CREATE INDEX IF NOT EXISTS idx_url_txt_records_type
     ON url_txt_records(record_type);
 
-CREATE INDEX IF NOT EXISTS idx_url_txt_records_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_txt_records_status_id
     ON url_txt_records(url_status_id);
 
 -- MX records table: one row per MX record per URL
@@ -59,9 +59,8 @@ CREATE TABLE IF NOT EXISTS url_mx_records (
     UNIQUE(url_status_id, priority, mail_exchange)
 );
 
-CREATE INDEX IF NOT EXISTS idx_url_mx_records_exchange 
+CREATE INDEX IF NOT EXISTS idx_url_mx_records_exchange
     ON url_mx_records(mail_exchange);
 
-CREATE INDEX IF NOT EXISTS idx_url_mx_records_status_id 
+CREATE INDEX IF NOT EXISTS idx_url_mx_records_status_id
     ON url_mx_records(url_status_id);
-

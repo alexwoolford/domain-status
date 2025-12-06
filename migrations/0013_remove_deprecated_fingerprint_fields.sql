@@ -47,7 +47,7 @@ INSERT INTO url_status_new (
     timestamp, redirect_chain, spf_record, dmarc_record, cipher_suite,
     key_algorithm, run_id
 )
-SELECT 
+SELECT
     id, domain, final_domain, ip_address, reverse_dns_name,
     status, status_description, response_time, title, keywords, description,
     linkedin_slug, security_headers, tls_version, ssl_cert_subject, ssl_cert_issuer,
@@ -71,4 +71,3 @@ CREATE INDEX IF NOT EXISTS idx_url_status_run_id_timestamp ON url_status(run_id,
 -- Note: The normalized child tables (url_technologies, url_nameservers, etc.)
 -- already exist and contain the data. The foreign key constraints will remain valid
 -- because we preserved the `id` column (PRIMARY KEY) in the new table.
-

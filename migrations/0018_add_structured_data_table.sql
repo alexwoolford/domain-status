@@ -19,4 +19,3 @@ CREATE INDEX IF NOT EXISTS idx_url_structured_data_status_id ON url_structured_d
 
 -- Composite index for common queries (e.g., find all og:title values)
 CREATE INDEX IF NOT EXISTS idx_url_structured_data_type_property ON url_structured_data(data_type, property_name);
-

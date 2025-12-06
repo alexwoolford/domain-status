@@ -66,5 +66,3 @@ CREATE TABLE IF NOT EXISTS url_failure_request_headers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_url_failure_request_headers_failure_id ON url_failure_request_headers(url_failure_id);
-
-
