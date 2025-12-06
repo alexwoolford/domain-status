@@ -287,6 +287,7 @@ Average times per URL:
 
 **Security:**
 - **Security Audit**: `cargo-audit` runs in CI to detect known vulnerabilities in dependencies (uses RustSec advisory database)
+- **Secret Scanning**: `gitleaks` scans commits and code for accidentally committed secrets, API keys, tokens, and credentials
 - **Code Quality**: Clippy with `-D warnings` enforces strict linting rules and catches security issues
 
 ## 🏗️ Architecture

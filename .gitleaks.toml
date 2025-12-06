@@ -1,0 +1,43 @@
+# Gitleaks configuration for domain_status
+# Scans for secrets, API keys, tokens, passwords, etc.
+
+title = "domain_status Secret Detection"
+
+[extend]
+# Use default rules
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known false positives"
+paths = [
+  # Allow test files that might contain example patterns
+  '''\.test\.rs$''',
+  '''tests/''',
+  # Allow documentation
+  '''\.md$''',
+  # Allow generated files
+  '''target/''',
+  '''Cargo.lock''',
+]
+
+commits = [
+  # Add commit hashes here if you need to allowlist specific commits
+]
+
+regexes = [
+  # Allow example patterns in comments/documentation
+  '''example\.com''',
+  '''test.*key''',
+  '''placeholder''',
+]
+
+[rules]
+# Custom rules can be added here if needed
+# The default ruleset already covers:
+# - API keys (AWS, GitHub, Google, etc.)
+# - Passwords
+# - Tokens
+# - Private keys
+# - Database credentials
+# - etc.
+

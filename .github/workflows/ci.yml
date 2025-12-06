@@ -88,6 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for secret scanning
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -99,4 +101,14 @@ jobs:
       - name: Run security audit
         run: cargo audit --file audit.toml
         continue-on-error: true
+      
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config-path: .gitleaks.toml
+          no-git: false
+          exit-code: 1
+          verbose: true
 
