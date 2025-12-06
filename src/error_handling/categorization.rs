@@ -44,19 +44,18 @@ pub fn categorize_reqwest_error(error: &reqwest::Error) -> ErrorType {
     // Check HTTP status codes first
     if let Some(status) = error.status() {
         match status.as_u16() {
-            // Client errors (4xx)
+            // Client errors (4xx) - track common ones specifically
             400 => return ErrorType::HttpRequestBadRequest,
             401 => return ErrorType::HttpRequestUnauthorized,
             403 => return ErrorType::HttpRequestBotDetectionError,
             404 => return ErrorType::HttpRequestNotFound,
-            406 => return ErrorType::HttpRequestNotAcceptable,
             429 => return ErrorType::HttpRequestTooManyRequests,
-            // Server errors (5xx)
+            // Server errors (5xx) - track common ones specifically
             500 => return ErrorType::HttpRequestInternalServerError,
             502 => return ErrorType::HttpRequestBadGateway,
             503 => return ErrorType::HttpRequestServiceUnavailable,
             504 => return ErrorType::HttpRequestGatewayTimeout,
-            521 => return ErrorType::HttpRequestCloudflareError,
+            // Less common status codes (406, 521, etc.) fall through to generic categories
             // Other client errors (4xx) - use generic format
             _ if status.is_client_error() => {
                 return ErrorType::HttpRequestOtherError;
@@ -261,7 +260,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_521() {
-        test_status_code(521, ErrorType::HttpRequestCloudflareError).await;
+        // 521 (Cloudflare) is now categorized as HttpRequestOtherError (server error)
+        test_status_code(521, ErrorType::HttpRequestOtherError).await;
     }
 
     // Helper function to test a single status code

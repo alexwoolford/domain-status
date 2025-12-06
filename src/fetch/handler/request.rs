@@ -28,7 +28,7 @@ pub async fn handle_http_request(
     debug!("Resolving redirects for {url}");
 
     let (final_url_string, redirect_chain) =
-        resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.redirect_client).await?;
+        resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.network.redirect_client).await?;
 
     // Track redirect info metrics
     // redirect_chain includes the original URL, so:
@@ -37,7 +37,8 @@ pub async fn handle_http_request(
     // - len > 2: Multiple redirects (original + intermediate + final)
     if redirect_chain.len() > 1 {
         // Any redirect occurred (single or multiple)
-        ctx.error_stats
+        ctx.config
+            .error_stats
             .increment_info(crate::error_handling::InfoType::HttpRedirect);
 
         // Check for HTTP to HTTPS redirect
@@ -51,13 +52,15 @@ pub async fn handle_http_request(
             .map(|u| u.scheme().to_string())
             .unwrap_or_default();
         if original_scheme == "http" && final_scheme == "https" {
-            ctx.error_stats
+            ctx.config
+                .error_stats
                 .increment_info(crate::error_handling::InfoType::HttpsRedirect);
         }
 
         // Multiple redirects (more than one redirect hop)
         if redirect_chain.len() > 2 {
-            ctx.error_stats
+            ctx.config
+                .error_stats
                 .increment_info(crate::error_handling::InfoType::MultipleRedirects);
         }
     }
@@ -72,7 +75,7 @@ pub async fn handle_http_request(
 
     // Build request with headers using the consolidated header builder
     let request_builder =
-        RequestHeaders::apply_to_request_builder(ctx.client.get(&final_url_string));
+        RequestHeaders::apply_to_request_builder(ctx.network.client.get(&final_url_string));
 
     let res = request_builder.send().await;
 
@@ -102,12 +105,13 @@ pub async fn handle_http_request(
                     .await
                 }
                 Err(e) => {
-                    update_error_stats(&ctx.error_stats, &e).await;
+                    update_error_stats(&ctx.config.error_stats, &e).await;
 
                     // Track bot detection (403) as info metric
                     if let Some(status) = e.status() {
                         if status.as_u16() == 403 {
-                            ctx.error_stats
+                            ctx.config
+                                .error_stats
                                 .increment_info(crate::error_handling::InfoType::BotDetection403);
                         }
                     }
@@ -142,7 +146,7 @@ pub async fn handle_http_request(
             }
         }
         Err(e) => {
-            update_error_stats(&ctx.error_stats, &e).await;
+            update_error_stats(&ctx.config.error_stats, &e).await;
             log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
                 url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 

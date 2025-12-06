@@ -471,11 +471,14 @@ mod tests {
             with_cache_time
         );
 
+        let speedup = if with_cache_time.as_nanos() > 0 {
+            without_cache_time.as_nanos() as f64 / with_cache_time.as_nanos() as f64
+        } else {
+            0.0 // Fallback if with_cache_time is 0 (shouldn't happen due to assertion above)
+        };
         println!(
             "Regex cache benchmark: Without cache: {:?}, With cache: {:?}, Speedup: {:.2}x",
-            without_cache_time,
-            with_cache_time,
-            without_cache_time.as_nanos() as f64 / with_cache_time.as_nanos() as f64
+            without_cache_time, with_cache_time, speedup
         );
     }
 }

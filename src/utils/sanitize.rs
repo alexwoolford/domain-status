@@ -52,9 +52,13 @@ pub fn sanitize_and_truncate_error_message(message: &str) -> String {
     let sanitized = sanitize_error_message(message);
 
     if sanitized.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
+        // Truncate to MAX_ERROR_MESSAGE_LENGTH - 50 to leave room for truncation message
+        // Use min to ensure we don't go out of bounds if constant is changed
+        let truncate_len = crate::config::MAX_ERROR_MESSAGE_LENGTH.saturating_sub(50);
+        let truncate_len = truncate_len.min(sanitized.len());
         format!(
             "{}... (truncated, original length: {} chars)",
-            &sanitized[..crate::config::MAX_ERROR_MESSAGE_LENGTH - 50],
+            &sanitized[..truncate_len],
             sanitized.len()
         )
     } else {

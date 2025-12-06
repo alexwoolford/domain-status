@@ -8,9 +8,9 @@ use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
 use anyhow::{Error, Result};
-use publicsuffix::List;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use tldextract::TldExtractor;
 
 use super::context::FailureContext;
 use super::error::{extract_error_type, extract_http_status};
@@ -22,8 +22,8 @@ use super::error::{extract_error_type, extract_http_status};
 pub struct FailureRecordParams<'a> {
     /// Database connection pool
     pub pool: &'a SqlitePool,
-    /// Public Suffix List extractor for domain extraction
-    pub extractor: &'a List,
+    /// Domain extractor for extracting registrable domains from URLs
+    pub extractor: &'a TldExtractor,
     /// The original URL that failed
     pub url: &'a str,
     /// The error that occurred

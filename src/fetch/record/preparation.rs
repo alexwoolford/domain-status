@@ -56,7 +56,7 @@ pub async fn prepare_record_for_insertion(
         params.additional_dns,
         params.elapsed,
         params.timestamp,
-        &params.ctx.run_id,
+        &params.ctx.config.run_id,
     );
 
     // Perform enrichment lookups in parallel where possible
@@ -96,7 +96,7 @@ pub async fn prepare_record_for_insertion(
         },
         // WHOIS lookup (async, can be slow)
         async {
-            if params.ctx.enable_whois {
+            if params.ctx.config.enable_whois {
                 let whois_start = Instant::now();
                 log::debug!(
                     "Performing WHOIS lookup for domain: {}",
@@ -156,7 +156,7 @@ pub async fn prepare_record_for_insertion(
         security_warnings,
         whois_data,
         timestamp: params.timestamp,
-        run_id: &params.ctx.run_id,
+        run_id: &params.ctx.config.run_id,
     });
 
     (
