@@ -111,4 +111,5 @@ jobs:
           no-git: false
           exit-code: 1
           verbose: true
+          redact: true
 
