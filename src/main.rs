@@ -527,6 +527,9 @@ async fn main() -> Result<()> {
         Some(&total_urls_attempted),
     );
 
+    // Calculate total elapsed time
+    let elapsed_seconds = start_time.elapsed().as_secs_f64();
+
     // Print final statistics and update database
     print_and_save_final_statistics(
         &pool,
@@ -535,6 +538,7 @@ async fn main() -> Result<()> {
         &completed_urls,
         &failed_urls,
         &error_stats,
+        elapsed_seconds,
     )
     .await
     .context("Failed to save final statistics")?;
