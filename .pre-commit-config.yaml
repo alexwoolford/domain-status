@@ -8,8 +8,10 @@ repos:
     rev: v8.18.0
     hooks:
       - id: gitleaks
-        args: ['--verbose', '--redact']
+        args: ['--verbose', '--redact', '--no-banner', '--staged']
         description: "Detect hardcoded secrets before commit"
+        pass_filenames: false
+        always_run: true
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
