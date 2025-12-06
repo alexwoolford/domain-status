@@ -47,4 +47,13 @@ COVERAGE_SETUP.md
 
 wappalyzergo/
 
+# Profiling data
+*.profraw
+default_*.profraw
+
+# Temporary test files
+test_*.rs
+test_*
+check_psl*
+
 
