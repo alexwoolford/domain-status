@@ -72,7 +72,12 @@ pub async fn init_ruleset(
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
 
     // Create a cache key from all sources
-    let cache_key = if sources.len() == 1 {
+    // Defensive check: sources should never be empty (either from parameter or DEFAULT_FINGERPRINTS_URLS)
+    let cache_key = if sources.is_empty() {
+        // Fallback to default cache key if sources is somehow empty (should never happen)
+        log::warn!("Fingerprint sources is empty, using default cache key");
+        "default".to_string()
+    } else if sources.len() == 1 {
         sources[0].clone()
     } else {
         format!("merged:{}", sources.join("+"))
