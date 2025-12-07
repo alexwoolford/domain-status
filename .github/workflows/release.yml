@@ -36,6 +36,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -45,6 +46,9 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} --locked
+        env:
+          # For macOS cross-compilation
+          MACOSX_DEPLOYMENT_TARGET: "10.13"
 
       - name: Strip binary (Unix)
         if: matrix.os != 'windows-latest'
@@ -55,21 +59,25 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../../${{ matrix.asset_name }}.tar.gz domain_status
-          cd ../../../../
+          tar czf ${{ github.workspace }}/${{ matrix.asset_name }}.tar.gz domain_status
+          cd ${{ github.workspace }}
 
       - name: Create release archive (Windows)
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/domain_status.exe -DestinationPath ${{ matrix.asset_name }}.zip -Force
+          $workspace = "${{ github.workspace }}"
+          Compress-Archive -Path target/${{ matrix.target }}/release/domain_status.exe -DestinationPath "$workspace/${{ matrix.asset_name }}.zip" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}.*
+          path: |
+            ${{ matrix.asset_name }}.tar.gz
+            ${{ matrix.asset_name }}.zip
           if-no-files-found: error
+          retention-days: 30
 
   create-release:
     name: Create GitHub Release
