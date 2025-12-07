@@ -52,6 +52,7 @@ tar = "^0.4"
 dotenvy = "^0.15"
 whois-service = { version = "^0.1", default-features = false }
 axum = "^0.8"
+include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
