@@ -1,8 +1,6 @@
 [advisories]
 ignore = [
   "RUSTSEC-2023-0071",
-  # idna 0.2.3 - required by tldextract 0.6.0, can't upgrade until tldextract supports idna 1.x
-  "RUSTSEC-2024-0421",
   # fxhash 0.2.1 - unmaintained but still used by scraper/selectors, no alternative available
   "RUSTSEC-2025-0057",
   # rustls-pemfile 1.0.4 - unmaintained but required by reqwest, no alternative available
