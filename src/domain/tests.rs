@@ -1,10 +1,9 @@
 // Domain module tests.
 
 use super::*;
-use tldextract::TldExtractor;
 
-fn test_extractor() -> TldExtractor {
-    TldExtractor::new(tldextract::TldOption::default())
+fn test_extractor() -> psl::List {
+    psl::List
 }
 
 #[test]
@@ -225,12 +224,12 @@ fn test_extract_domain_fallback_when_extraction_fails() {
 // but they prevent panics if edge cases arise.
 
 #[test]
-fn test_tldextract_domain_behavior() {
-    // This test verifies what tldextract returns
+fn test_psl_domain_behavior() {
+    // This test verifies what psl returns
     let extractor = test_extractor();
 
-    println!("\nTesting tldextract API behavior:");
-    println!("==================================");
+    println!("\nTesting psl API behavior:");
+    println!("==========================");
 
     let urls = vec![
         "https://www.example.com",
@@ -241,18 +240,10 @@ fn test_tldextract_domain_behavior() {
     for url in urls {
         println!("\nURL: {}", url);
 
-        match extractor.extract(url) {
-            Ok(result) => {
-                println!("  Domain: {:?}", result.domain);
-                println!("  Suffix: {:?}", result.suffix);
-                let domain = match (&result.domain, &result.suffix) {
-                    (Some(d), Some(s)) => format!("{}.{}", d, s),
-                    (Some(d), None) => d.clone(),
-                    (None, Some(s)) => s.clone(),
-                    (None, None) => "".to_string(),
-                };
+        match extract_domain(&extractor, url) {
+            Ok(domain) => {
                 println!("  Registrable domain: {}", domain);
-                println!("  -> tldextract correctly returns registrable domain");
+                println!("  -> psl correctly returns registrable domain");
             }
             Err(e) => {
                 println!("  Error: {}", e);

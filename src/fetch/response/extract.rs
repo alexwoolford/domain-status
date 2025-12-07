@@ -24,7 +24,7 @@ pub(crate) async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
     _final_url_str: &str,
-    extractor: &tldextract::TldExtractor,
+    extractor: &psl::List,
 ) -> Result<Option<ResponseData>, Error> {
     let final_url = response.url().to_string();
     debug!("Final url after redirects: {final_url}");
@@ -128,8 +128,8 @@ mod tests {
     use super::*;
     use httptest::{matchers::*, responders::*, Expectation, Server};
 
-    fn create_test_extractor() -> tldextract::TldExtractor {
-        tldextract::TldExtractor::new(tldextract::TldOption::default())
+    fn create_test_extractor() -> psl::List {
+        psl::List
     }
 
     #[tokio::test]

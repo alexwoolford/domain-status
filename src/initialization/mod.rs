@@ -16,7 +16,6 @@ mod resolver;
 use std::sync::Arc;
 
 use rustls::crypto::{ring::default_provider, CryptoProvider};
-use tldextract::TldExtractor;
 use tokio::sync::Semaphore;
 
 // Re-export public API
@@ -43,14 +42,14 @@ pub fn init_semaphore(count: usize) -> Arc<Semaphore> {
 
 /// Initializes the Public Suffix List extractor.
 ///
-/// Creates a new `TldExtractor` instance for extracting registrable domains
+/// Creates a new `psl::List` instance for extracting registrable domains
 /// from URLs using the Public Suffix List.
 ///
 /// # Returns
 ///
-/// An `Arc<TldExtractor>` that can be shared across multiple tasks for domain extraction.
-pub fn init_extractor() -> Arc<TldExtractor> {
-    Arc::new(TldExtractor::new(tldextract::TldOption::default()))
+/// An `Arc<psl::List>` that can be shared across multiple tasks for domain extraction.
+pub fn init_extractor() -> Arc<psl::List> {
+    Arc::new(psl::List)
 }
 
 /// Initializes the crypto provider for TLS operations.
