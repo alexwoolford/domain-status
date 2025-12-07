@@ -54,7 +54,9 @@ dotenvy = "^0.15"
 whois-service = { version = "^0.1.1", default-features = false }
 axum = "^0.8"
 tower = "^0.5"
-tldextract = "0.6.0"
+# Using git version until 0.6.1+ is published - the published 0.6.0 uses idna 0.2.3,
+# but the git version uses idna 1.x which eliminates the dual-version problem
+tldextract = { git = "https://github.com/dovahcrow/tldextract-rs" }
 
 [dev-dependencies]
 httptest = "^0.16"
