@@ -86,6 +86,30 @@ cargo build --release --target x86_64-pc-windows-msvc
 
 Note: Cross-compilation from macOS to Linux requires additional setup. The GitHub Actions workflow handles this automatically.
 
+## macOS Code Signing and Notarization (Future)
+
+Currently, macOS binaries are unsigned, which triggers Gatekeeper warnings. To eliminate these warnings:
+
+1. **Requires Apple Developer Account** ($99/year)
+2. **Code Sign the Binary**:
+   ```bash
+   codesign --force --deep --sign "Developer ID Application: Your Name" domain_status
+   ```
+3. **Notarize with Apple**:
+   ```bash
+   xcrun notarytool submit domain_status --keychain-profile "AC_PASSWORD" --wait
+   ```
+4. **Staple the Ticket**:
+   ```bash
+   xcrun stapler staple domain_status
+   ```
+
+**Current Workaround**: Users can bypass Gatekeeper by:
+- Right-clicking → Open (first time only)
+- Or running: `xattr -d com.apple.quarantine domain_status`
+
+**Note**: For open-source projects, code signing is optional but improves user experience. Many projects skip it due to the cost and complexity.
+
 ## Future: Publishing to crates.io
 
 When ready to publish to crates.io:

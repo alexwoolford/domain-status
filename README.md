@@ -40,12 +40,17 @@ chmod +x domain_status
 wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-macos-x86_64.tar.gz
 tar xzf domain_status-macos-x86_64.tar.gz
 chmod +x domain_status
-./domain_status urls.txt
 
 # macOS (Apple Silicon)
 wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-macos-aarch64.tar.gz
 tar xzf domain_status-macos-aarch64.tar.gz
 chmod +x domain_status
+
+# macOS: Handle Gatekeeper warning (unsigned binary)
+# Option 1: Right-click the binary, select "Open", then click "Open" in the dialog
+# Option 2: Run this command to remove the quarantine attribute:
+xattr -d com.apple.quarantine domain_status 2>/dev/null || true
+
 ./domain_status urls.txt
 
 # Windows
