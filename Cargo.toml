@@ -1,6 +1,6 @@
 [package]
 name = "domain_status"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Alex Woolford <alex@woolford.io>"]
 description = "A Rust project that scrapes urls and captures status information in a SQLite database."
