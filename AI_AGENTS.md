@@ -1,6 +1,8 @@
-## AGENTS playbook: quality, robustness, and safety
+## AI Coding Agents Playbook: Quality, Robustness, and Safety
 
-This document codifies how agents and contributors should change, test, and operate `domain_status` to keep it fast, safe, and reliable.
+> **Note:** This file is for AI coding assistants (e.g., Cursor, ChatGPT, GitHub Copilot) to understand project conventions and avoid common mistakes. It has nothing to do with HTTP user agents.
+
+This document codifies how AI coding agents and contributors should change, test, and operate `domain_status` to keep it fast, safe, and reliable.
 
 ### Architecture snapshot
 - HTTP via `reqwest` and async `tokio` runtime
@@ -44,7 +46,7 @@ cargo build --release
   - `ARCHITECTURE_EXAMPLE.md`
 - These files are for LLM analysis only and should be excluded via `.gitignore`
 - If you create such files during analysis, delete them before committing
-- Only commit permanent documentation files: `README.md`, `AGENTS.md`, and user-requested documentation
+- Only commit permanent documentation files: `README.md`, `AI_AGENTS.md`, and user-requested documentation
 
 ### Dependency hygiene
 - Pin to compatible minor versions, avoid wildcard (`*`).
@@ -120,7 +122,7 @@ Coverage targets:
 - [ ] Lints pass with `-D warnings`
 - [ ] No network calls in tests (unless `e2e` feature enabled)
 - [ ] DB migrations added (if schema touched)
-- [ ] CLI/README/AGENTS updated (if behavior changed)
+- [ ] CLI/README/AI_AGENTS updated (if behavior changed)
 - [ ] Logs are actionable and not overly verbose
 - [ ] No temporary LLM-generated markdown files committed (e.g., `*_REVIEW.md`, `*_PLAN.md`, `*_ASSESSMENT.md`)
 
