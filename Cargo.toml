@@ -40,7 +40,6 @@ colored = "^3.0"
 
 # Other
 chrono = "^0.4"
-rand = "^0.9"
 strum = "^0.27"
 strum_macros = "^0.27"
 serde = { version = "^1.0", features = ["derive"] }
@@ -53,7 +52,6 @@ tar = "^0.4"
 dotenvy = "^0.15"
 whois-service = { version = "^0.1.1", default-features = false }
 axum = "^0.8"
-tower = "^0.5"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
