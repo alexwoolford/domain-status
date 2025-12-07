@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate"] }
-http = "^1.0" # Updated for wappalyzer compatibility
+http = "^1.4" # Updated for wappalyzer compatibility
 tokio = { version = "^1", features = ["full"] }
 tokio-util = "^0.7"
 tokio-retry = "^0.3"
