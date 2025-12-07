@@ -62,8 +62,9 @@ include_dir = "^0.7"
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
 # Constrain base64ct to avoid edition 2024 requirement (transitive dependency)
-# base64ct 1.8.1+ requires edition 2024 which isn't stable yet
-base64ct = "=1.8.0"
+# base64ct 1.8.0+ requires edition 2024 which isn't stable yet
+# Use 1.6.x which is the last stable version without edition 2024
+base64ct = "=1.6.0"
 
 [dev-dependencies]
 httptest = "^0.16"
