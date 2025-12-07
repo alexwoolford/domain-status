@@ -14,9 +14,14 @@ use log::LevelFilter;
 /// Configures `env_logger` with custom formatting. Supports both plain text
 /// (with colors and emojis) and JSON formats for structured logging.
 ///
+/// The logger reads from the `RUST_LOG` environment variable by default, but
+/// the provided `level` parameter will override it. This allows developers to
+/// use `RUST_LOG=debug` for quick debugging while still supporting explicit
+/// CLI control via `--log-level`.
+///
 /// # Arguments
 ///
-/// * `level` - Minimum log level to display
+/// * `level` - Minimum log level to display (overrides `RUST_LOG` if set)
 /// * `format` - Log format (Plain or Json)
 ///
 /// # Returns
@@ -26,12 +31,26 @@ use log::LevelFilter;
 /// # Errors
 ///
 /// Returns `InitializationError::LoggerError` if logger initialization fails.
+///
+/// # Examples
+///
+/// ```bash
+/// # Use RUST_LOG for quick debugging (no CLI args needed)
+/// RUST_LOG=debug domain_status urls.txt
+///
+/// # Override with CLI args (takes precedence)
+/// RUST_LOG=debug domain_status urls.txt --log-level info
+///
+/// # Per-module filtering via RUST_LOG
+/// RUST_LOG=domain_status=debug,reqwest=info domain_status urls.txt
+/// ```
 pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), InitializationError> {
     colored::control::set_override(true);
 
-    let mut builder = env_logger::Builder::new();
+    // Read from RUST_LOG environment variable first, then override with CLI arg
+    let mut builder = env_logger::Builder::from_default_env();
 
-    // Set base level
+    // Override with CLI-provided level (takes precedence over RUST_LOG)
     builder.filter_level(level);
     builder.filter_module("html5ever", LevelFilter::Error);
     builder.filter_module("sqlx", LevelFilter::Info);
