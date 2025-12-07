@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
+## [0.1.1] - 2025-12-06
+
+### Fixed
+- Constrained `base64ct` to 1.8.0 to avoid edition 2024 requirement (fixes `cargo install` on older Rust toolchains)
+
 ## [0.1.0] - 2025-12-06
 
 Initial release.
