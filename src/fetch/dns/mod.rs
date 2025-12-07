@@ -21,7 +21,7 @@ use tls_dns::fetch_tls_and_dns;
 /// Timing metrics: (dns_forward_ms, dns_reverse_ms, dns_additional_ms, tls_handshake_ms)
 pub(crate) async fn fetch_all_dns_data(
     resp_data: &crate::fetch::response::ResponseData,
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
     error_stats: &crate::error_handling::ProcessingStats,
     run_id: Option<&str>,
 ) -> Result<

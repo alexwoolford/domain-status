@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error_handling::InitializationError;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 /// Initializes the DNS resolver for hostname lookups.
 ///
@@ -21,29 +21,35 @@ use hickory_resolver::TokioAsyncResolver;
 ///
 /// # Returns
 ///
-/// A configured `TokioAsyncResolver` wrapped in `Arc` for sharing across tasks,
+/// A configured `TokioResolver` wrapped in `Arc` for sharing across tasks,
 /// or an error if initialization fails.
 ///
 /// # Errors
 ///
 /// Returns `InitializationError::DnsResolverError` if both system and fallback
 /// configurations fail (though fallback should rarely fail).
-pub fn init_resolver() -> Result<Arc<TokioAsyncResolver>, InitializationError> {
-    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
+    use hickory_resolver::config::ResolverOpts;
 
     // Configure DNS resolver with timeouts
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(crate::config::DNS_TIMEOUT_SECS);
     opts.attempts = 1; // Single attempt to fail fast - DNS queries should succeed quickly or not at all
-                       // Set ndots to 0 to prevent search domain appending (preserved from 0.25 workaround)
+                       // Set ndots to 0 to prevent search domain appending
     opts.ndots = 0;
 
-    // Use default resolver configuration with timeouts
-    // This ensures consistent timeout behavior across all DNS queries
-    // In hickory-resolver 0.24, use TokioAsyncResolver::tokio() with ResolverConfig::default()
-    // This worked correctly and didn't have the search domain issues of 0.25
-    Ok(Arc::new(TokioAsyncResolver::tokio(
-        ResolverConfig::default(),
-        opts,
-    )))
+    // Use builder API for hickory-resolver 0.25+
+    // The builder uses system config by default (reads resolv.conf), we just need to set options
+    // This provides better security, DNSSEC validation, and correctness improvements
+    let resolver = TokioResolver::builder_tokio()
+        .map_err(|e| {
+            InitializationError::DnsResolverError(format!(
+                "Failed to create resolver builder: {}",
+                e
+            ))
+        })?
+        .with_options(opts)
+        .build();
+
+    Ok(Arc::new(resolver))
 }

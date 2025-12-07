@@ -31,7 +31,7 @@ use super::types::{TlsDnsData, TlsDnsResult};
 pub(crate) async fn fetch_tls_and_dns(
     final_url: &str,
     host: &str,
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
     final_domain: &str,
     error_stats: &crate::error_handling::ProcessingStats,
     _run_id: Option<&str>, // Reserved for future use (partial failure tracking)

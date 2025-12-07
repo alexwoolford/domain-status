@@ -26,7 +26,7 @@ use super::types::{AdditionalDnsData, AdditionalDnsResult};
 /// Returns DNS data and any partial failures (errors that didn't prevent processing).
 pub(crate) async fn fetch_additional_dns_records(
     final_domain: &str,
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
     error_stats: &crate::error_handling::ProcessingStats,
 ) -> AdditionalDnsResult {
     // Query additional DNS records (NS, TXT, MX) in parallel

@@ -3,7 +3,7 @@
 //! This module defines context structs that group related resources together,
 //! reducing function argument counts and improving maintainability.
 
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use std::sync::Arc;
 
 use crate::error_handling::ProcessingStats;
@@ -21,7 +21,7 @@ pub struct NetworkContext {
     /// Domain extractor for extracting registrable domains from URLs
     pub extractor: Arc<psl::List>,
     /// DNS resolver for hostname lookups
-    pub resolver: Arc<TokioAsyncResolver>,
+    pub resolver: Arc<TokioResolver>,
 }
 
 /// Database-related resources (connection pool, circuit breaker).
@@ -66,7 +66,7 @@ impl NetworkContext {
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
         extractor: Arc<psl::List>,
-        resolver: Arc<TokioAsyncResolver>,
+        resolver: Arc<TokioResolver>,
     ) -> Self {
         Self {
             client,
@@ -111,7 +111,7 @@ impl ProcessingContext {
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
         extractor: Arc<psl::List>,
-        resolver: Arc<TokioAsyncResolver>,
+        resolver: Arc<TokioResolver>,
         error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
         enable_whois: bool,
@@ -130,13 +130,15 @@ impl ProcessingContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+    use hickory_resolver::config::ResolverOpts;
 
-    fn create_test_resolver() -> Arc<TokioAsyncResolver> {
-        Arc::new(TokioAsyncResolver::tokio(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-        ))
+    fn create_test_resolver() -> Arc<TokioResolver> {
+        Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        )
     }
 
     fn create_test_extractor() -> Arc<psl::List> {
