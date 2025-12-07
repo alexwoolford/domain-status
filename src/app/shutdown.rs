@@ -14,7 +14,7 @@ const SHUTDOWN_TIMEOUT_SECS: u64 = 2;
 ///
 /// The logging task is cancelled via `CancellationToken`, and if it doesn't complete
 /// within `SHUTDOWN_TIMEOUT_SECS`, it is forcefully aborted using `JoinHandle::abort()`
-/// as per AGENTS.md requirements.
+/// as per AI_AGENTS.md requirements.
 pub async fn shutdown_gracefully(
     cancel: CancellationToken,
     logging_task: Option<tokio::task::JoinHandle<()>>,
