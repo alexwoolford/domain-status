@@ -61,6 +61,9 @@ include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
+# Constrain base64ct to avoid edition 2024 requirement (transitive dependency)
+# base64ct 1.8.1+ requires edition 2024 which isn't stable yet
+base64ct = "=1.8.0"
 
 [dev-dependencies]
 httptest = "^0.16"
