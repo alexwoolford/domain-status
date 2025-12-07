@@ -104,7 +104,7 @@ The tool will:
 
 ## 🌟 Features
 
-* **High-Performance Concurrency**: Async/await with configurable concurrency limits (default: 30 concurrent requests, 15 RPS)
+* **Concurrent Processing**: Async/await with configurable concurrency limits (default: 30 concurrent requests, 15 RPS)
 * **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, WHOIS registration data, structured data (JSON-LD, Open Graph, Twitter Cards), security warnings, and complete redirect chains
 * **Technology Fingerprinting**: Detects web technologies using community-maintained Wappalyzer rulesets with JavaScript execution for dynamic detection
 * **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (auto-downloads if license key provided)
