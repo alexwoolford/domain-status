@@ -5,6 +5,11 @@ edition = "2021"
 authors = ["Alex Woolford <alex@woolford.io>"]
 description = "A Rust project that scrapes urls and captures status information in a SQLite database."
 license = "MIT"
+repository = "https://github.com/alexwoolford/domain_status"
+homepage = "https://github.com/alexwoolford/domain_status"
+documentation = "https://docs.rs/domain_status"
+keywords = ["url", "scraper", "domain", "status", "monitoring", "http", "tls", "dns", "whois", "sqlite"]
+categories = ["web-programming", "command-line-utilities", "development-tools"]
 
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
