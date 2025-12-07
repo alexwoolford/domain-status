@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2025-12-06
 
 ### Fixed
-- Constrained `base64ct` to 1.8.0 to avoid edition 2024 requirement (fixes `cargo install` on older Rust toolchains)
+- Constrained `base64ct` to 1.6.0 to avoid edition 2024 requirement (1.8.0+ requires edition 2024, fixes `cargo install` on older Rust toolchains)
 
 ## [0.1.0] - 2025-12-06
 
