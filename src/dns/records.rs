@@ -7,7 +7,7 @@
 
 use anyhow::{Error, Result};
 use hickory_resolver::proto::rr::{RData, RecordType};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 /// Queries NS (nameserver) records for a domain.
 ///
@@ -21,7 +21,7 @@ use hickory_resolver::TokioAsyncResolver;
 /// A vector of nameserver hostnames, or an empty vector if the query fails.
 pub async fn lookup_ns_records(
     domain: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
     // For TXT/NS/MX lookups, use domain as-is (no trailing dot needed)
     match resolver.lookup(domain, RecordType::NS).await {
@@ -69,7 +69,7 @@ pub async fn lookup_ns_records(
 /// A vector of TXT record strings, or an empty vector if the query fails.
 pub async fn lookup_txt_records(
     domain: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Vec<String>, Error> {
     match resolver.lookup(domain, RecordType::TXT).await {
         Ok(lookup) => {
@@ -123,7 +123,7 @@ pub async fn lookup_txt_records(
 /// Returns an empty vector if the query fails or no MX records exist.
 pub async fn lookup_mx_records(
     domain: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Vec<(u16, String)>, Error> {
     match resolver.lookup(domain, RecordType::MX).await {
         Ok(lookup) => {

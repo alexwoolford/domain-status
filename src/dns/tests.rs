@@ -1,16 +1,19 @@
 /// DNS module tests.
 use super::*;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::config::ResolverOpts;
 use std::time::Duration;
 
 /// Creates a test DNS resolver with short timeouts for faster test execution.
-fn create_test_resolver() -> hickory_resolver::TokioAsyncResolver {
+fn create_test_resolver() -> hickory_resolver::TokioResolver {
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(5);
     opts.attempts = 1; // Single attempt for faster failures in tests
     opts.ndots = 0;
 
-    hickory_resolver::TokioAsyncResolver::tokio(ResolverConfig::default(), opts)
+    hickory_resolver::TokioResolver::builder_tokio()
+        .unwrap()
+        .with_options(opts)
+        .build()
 }
 
 #[tokio::test]

@@ -4,7 +4,7 @@
 //! and perform reverse DNS lookups (PTR records).
 
 use anyhow::{Error, Result};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 /// Resolves a hostname to an IP address using DNS.
 ///
@@ -20,10 +20,7 @@ use hickory_resolver::TokioAsyncResolver;
 /// # Errors
 ///
 /// Returns an error if DNS resolution fails or no IP addresses are found.
-pub async fn resolve_host_to_ip(
-    host: &str,
-    resolver: &TokioAsyncResolver,
-) -> Result<String, Error> {
+pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<String, Error> {
     // In 0.24, this worked fine without FQDN workarounds
     let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
     let ip = response
@@ -46,7 +43,7 @@ pub async fn resolve_host_to_ip(
 /// The reverse DNS name, or `None` if the lookup fails.
 pub async fn reverse_dns_lookup(
     ip: &str,
-    resolver: &TokioAsyncResolver,
+    resolver: &TokioResolver,
 ) -> Result<Option<String>, Error> {
     match resolver.reverse_lookup(ip.parse()?).await {
         Ok(response) => {
@@ -63,17 +60,20 @@ pub async fn reverse_dns_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+    use hickory_resolver::config::ResolverOpts;
     use std::time::Duration;
 
     /// Creates a test DNS resolver with short timeouts for faster test execution.
-    fn create_test_resolver() -> TokioAsyncResolver {
+    fn create_test_resolver() -> TokioResolver {
         let mut opts = ResolverOpts::default();
         opts.timeout = Duration::from_secs(5);
         opts.attempts = 1; // Single attempt for faster failures in tests
         opts.ndots = 0;
 
-        TokioAsyncResolver::tokio(ResolverConfig::default(), opts)
+        TokioResolver::builder_tokio()
+            .unwrap()
+            .with_options(opts)
+            .build()
     }
 
     #[tokio::test]
