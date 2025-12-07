@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/alexwoolford/domain_status/branch/main/graph/badge.svg)](https://codecov.io/gh/alexwoolford/domain_status)
+[![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
 
 **domain_status** is a Rust-based tool designed for high-performance concurrent checking of URL statuses and redirections. Built with async/await (Tokio), it processes URLs efficiently while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains.
 
@@ -22,13 +23,56 @@
 
 ## 🚀 Quick Start
 
-### Building
+### Installation
+
+**Option 1: Download Pre-built Binary (Recommended)**
+
+Download the latest release from the [Releases page](https://github.com/alexwoolford/domain_status/releases):
 
 ```bash
+# Linux (x86_64)
+wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-linux-x86_64.tar.gz
+tar xzf domain_status-linux-x86_64.tar.gz
+chmod +x domain_status
+./domain_status urls.txt
+
+# macOS (Intel)
+wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-macos-x86_64.tar.gz
+tar xzf domain_status-macos-x86_64.tar.gz
+chmod +x domain_status
+./domain_status urls.txt
+
+# macOS (Apple Silicon)
+wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-macos-aarch64.tar.gz
+tar xzf domain_status-macos-aarch64.tar.gz
+chmod +x domain_status
+./domain_status urls.txt
+
+# Windows
+# Download domain_status-windows-x86_64.exe.zip and extract
+```
+
+**Option 2: Build from Source**
+
+Requires [Rust](https://www.rust-lang.org/tools/install) (stable toolchain):
+
+```bash
+# Clone the repository
+git clone https://github.com/alexwoolford/domain_status.git
+cd domain_status
+
+# Build release binary
 cargo build --release
 ```
 
-This creates an executable in `./target/release/domain_status`.
+This creates an executable in `./target/release/domain_status` (or `domain_status.exe` on Windows).
+
+**Option 3: Install via Cargo (Future)**
+
+Once published to crates.io:
+```bash
+cargo install domain_status
+```
 
 ### Basic Usage
 
