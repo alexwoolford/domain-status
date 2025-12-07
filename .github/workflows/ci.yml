@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -13,60 +18,53 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
 
+      # rust-toolchain.toml will be used automatically by rustup
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          workspaces: '.'
+          cache-on-failure: true
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --check --locked
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-features --all-targets
+        run: cargo test --all-features --all-targets --locked
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --release --locked
 
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          workspaces: '.'
+          cache-on-failure: true
 
       - name: Install cargo-tarpaulin
         run: |
@@ -74,18 +72,24 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          cargo tarpaulin --out Xml --output-dir coverage --all-features --all-targets
+          cargo tarpaulin --out Xml --output-dir coverage --all-features --all-targets --locked
         continue-on-error: true
 
+      # Only upload if token is available (fork-friendly)
       - name: Upload coverage reports to Codecov
+        if: secrets.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: alexwoolford/domain_status
+          fail_ci_if_error: false
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,11 +100,12 @@ jobs:
 
       - name: Install cargo-audit
         run: |
-          cargo install cargo-audit --features=fix
+          cargo install cargo-audit --features=fix --locked
 
+      # .cargo/audit.toml will be automatically detected by cargo-audit
       - name: Run security audit
-        run: cargo audit --file audit.toml
-        continue-on-error: true
+        run: cargo audit
+        # Removed continue-on-error since config is now correctly placed
 
       - name: Scan for secrets
         uses: gitleaks/gitleaks-action@v2
