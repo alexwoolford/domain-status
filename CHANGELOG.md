@@ -31,11 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.4] - 2025-12-06
 
 ### Changed
-- Added `rust-version = "1.83"` requirement to `Cargo.toml` - dependencies require Rust 1.83+
-- Updated README to clearly state Rust 1.83+ is required
-
-### Fixed
-- Constrained `base64ct` to 1.6.0 and `home` to 0.5.11 to avoid edition 2024 requirement
+- Added `rust-version = "1.85"` requirement to `Cargo.toml` - enables edition 2024 support in dependencies
+- Updated README to clearly state Rust 1.85+ is required
+- Removed constraints on `base64ct` and `home` - no longer needed with Rust 1.85+ (edition 2024 support)
 
 ## [0.1.3] - 2025-12-06
 

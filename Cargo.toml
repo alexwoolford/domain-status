@@ -2,7 +2,7 @@
 name = "domain_status"
 version = "0.1.4"
 edition = "2021"
-rust-version = "1.83"
+rust-version = "1.85"
 authors = ["Alex Woolford <alex@woolford.io>"]
 description = "A Rust project that scrapes urls and captures status information in a SQLite database."
 license = "MIT"
@@ -62,11 +62,8 @@ include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
-# Constrain transitive dependencies to avoid edition 2024 requirement
-# These crates have newer versions that require edition 2024 (not stable yet)
-# Constraining to last versions that work with Rust 2021 edition
-base64ct = "=1.6.0"  # 1.8.0+ requires edition 2024
-home = "=0.5.11"     # 0.5.12+ requires edition 2024
+# Note: With rust-version = "1.85", edition 2024 is available
+# No need to constrain base64ct or home - newer versions will work
 
 [dev-dependencies]
 httptest = "^0.16"
