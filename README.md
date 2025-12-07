@@ -25,7 +25,23 @@
 
 ### Installation
 
-**Option 1: Download Pre-built Binary (Recommended)**
+**Option 1: Install via Cargo (Recommended for Rust users)**
+
+Requires [Rust](https://www.rust-lang.org/tools/install) (stable toolchain):
+
+```bash
+cargo install domain_status
+```
+
+This compiles from source and installs the binary to `~/.cargo/bin/domain_status` (or `%USERPROFILE%\.cargo\bin\domain_status.exe` on Windows). The binary is added to your PATH automatically.
+
+**Benefits:**
+- ✅ No macOS Gatekeeper warnings (compiled locally)
+- ✅ Works on any platform Rust supports
+- ✅ Easy updates: `cargo install --force domain_status`
+- ✅ No manual downloads or extraction needed
+
+**Option 2: Download Pre-built Binary**
 
 Download the latest release from the [Releases page](https://github.com/alexwoolford/domain_status/releases):
 
@@ -57,7 +73,7 @@ xattr -d com.apple.quarantine domain_status 2>/dev/null || true
 # Download domain_status-windows-x86_64.exe.zip and extract
 ```
 
-**Option 2: Build from Source**
+**Option 3: Build from Source**
 
 Requires [Rust](https://www.rust-lang.org/tools/install) (stable toolchain):
 
@@ -71,13 +87,6 @@ cargo build --release
 ```
 
 This creates an executable in `./target/release/domain_status` (or `domain_status.exe` on Windows).
-
-**Option 3: Install via Cargo (Future)**
-
-Once published to crates.io:
-```bash
-cargo install domain_status
-```
 
 ### Basic Usage
 
