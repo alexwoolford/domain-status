@@ -5,7 +5,6 @@
 
 use hickory_resolver::TokioAsyncResolver;
 use std::sync::Arc;
-use tldextract::TldExtractor;
 
 use crate::error_handling::ProcessingStats;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
@@ -20,7 +19,7 @@ pub struct NetworkContext {
     /// HTTP client for redirect resolution (with redirects disabled)
     pub redirect_client: Arc<reqwest::Client>,
     /// Domain extractor for extracting registrable domains from URLs
-    pub extractor: Arc<TldExtractor>,
+    pub extractor: Arc<psl::List>,
     /// DNS resolver for hostname lookups
     pub resolver: Arc<TokioAsyncResolver>,
 }
@@ -66,7 +65,7 @@ impl NetworkContext {
     pub fn new(
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
-        extractor: Arc<TldExtractor>,
+        extractor: Arc<psl::List>,
         resolver: Arc<TokioAsyncResolver>,
     ) -> Self {
         Self {
@@ -111,7 +110,7 @@ impl ProcessingContext {
     pub fn new(
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
-        extractor: Arc<TldExtractor>,
+        extractor: Arc<psl::List>,
         resolver: Arc<TokioAsyncResolver>,
         error_stats: Arc<ProcessingStats>,
         run_id: Option<String>,
@@ -140,9 +139,9 @@ mod tests {
         ))
     }
 
-    fn create_test_extractor() -> Arc<TldExtractor> {
+    fn create_test_extractor() -> Arc<psl::List> {
         // Create a domain extractor for testing
-        Arc::new(TldExtractor::new(tldextract::TldOption::default()))
+        Arc::new(psl::List)
     }
 
     #[tokio::test]

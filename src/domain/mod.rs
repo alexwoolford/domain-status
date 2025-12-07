@@ -8,13 +8,12 @@
 //! - `normalize_domain()` - Normalizes domain names (lowercase, removes www)
 
 use anyhow::{Context, Result};
-use tldextract::TldExtractor;
 
-/// Extracts the registrable domain from a URL using tldextract.
+/// Extracts the registrable domain from a URL using psl.
 ///
 /// # Arguments
 ///
-/// * `extractor` - The TldExtractor instance
+/// * `_list` - The psl::List instance (unused, kept for API compatibility)
 /// * `url` - The URL to extract the domain from
 ///
 /// # Returns
@@ -26,10 +25,10 @@ use tldextract::TldExtractor;
 /// Returns an error if the URL cannot be parsed, if the URL is an IP address,
 /// or if domain extraction fails.
 ///
-/// Uses `tldextract` to correctly extract the registrable domain, handling
+/// Uses `psl` to correctly extract the registrable domain, handling
 /// both simple TLDs (e.g., "example.com") and multi-part TLDs (e.g., "example.co.uk").
-pub fn extract_domain(extractor: &TldExtractor, url: &str) -> Result<String> {
-    // First validate that the URL can be parsed (tldextract is lenient, so we validate first)
+pub fn extract_domain(_list: &psl::List, url: &str) -> Result<String> {
+    // First validate that the URL can be parsed
     let parsed = url::Url::parse(url).with_context(|| format!("Failed to parse URL: {}", url))?;
 
     // Ensure URL has a host component
@@ -52,19 +51,10 @@ pub fn extract_domain(extractor: &TldExtractor, url: &str) -> Result<String> {
         ));
     }
 
-    // Use tldextract to get the registrable domain
-    let result = extractor
-        .extract(url)
-        .with_context(|| format!("Failed to extract domain from URL: {}", url))?;
-
-    // Combine domain and suffix to get the full registrable domain
-    // Handle cases where domain or suffix might be None
-    match (result.domain, result.suffix) {
-        (Some(domain), Some(suffix)) => Ok(format!("{}.{}", domain, suffix)),
-        (Some(domain), None) => Ok(domain),
-        (None, Some(suffix)) => Ok(suffix),
-        (None, None) => Err(anyhow::anyhow!("No domain or suffix found in URL: {}", url)),
-    }
+    // Use psl::domain_str() to get the registrable domain as a string
+    psl::domain_str(host)
+        .ok_or_else(|| anyhow::anyhow!("Failed to extract domain from URL: {}", url))
+        .map(|s| s.to_string())
 }
 
 #[cfg(test)]

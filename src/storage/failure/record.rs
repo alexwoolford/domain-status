@@ -10,7 +10,6 @@ use crate::storage::models::UrlFailureRecord;
 use anyhow::{Error, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tldextract::TldExtractor;
 
 use super::context::FailureContext;
 use super::error::{extract_error_type, extract_http_status};
@@ -23,7 +22,7 @@ pub struct FailureRecordParams<'a> {
     /// Database connection pool
     pub pool: &'a SqlitePool,
     /// Domain extractor for extracting registrable domains from URLs
-    pub extractor: &'a TldExtractor,
+    pub extractor: &'a psl::List,
     /// The original URL that failed
     pub url: &'a str,
     /// The error that occurred
