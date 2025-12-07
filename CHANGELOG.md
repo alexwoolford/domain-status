@@ -28,9 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-## [0.1.0] - 2025-01-27
+## [0.1.0] - 2025-12-06
 
 Initial release.
+
+### Fixed
+- Embedded database migrations into binary to fix "No such file or directory" error in distributed binaries
+- Fixed release workflow archive paths and artifact upload issues
 
 [Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/alexwoolford/domain_status/releases/tag/v0.1.0
