@@ -76,8 +76,9 @@ jobs:
         continue-on-error: true
 
       # Only upload if token is available (fork-friendly)
+      # Skip upload for PRs from forks (secrets not available) or when token is missing
       - name: Upload coverage reports to Codecov
-        if: secrets.CODECOV_TOKEN != ''
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
