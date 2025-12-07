@@ -56,7 +56,7 @@ axum = "^0.8"
 tower = "^0.5"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
-psl = "2.1"
+psl = "^2.1"
 
 [dev-dependencies]
 httptest = "^0.16"
