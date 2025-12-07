@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
+## [0.1.4] - 2025-12-06
+
+### Changed
+- Added `rust-version = "1.83"` requirement to `Cargo.toml` - dependencies require Rust 1.83+
+- Updated README to clearly state Rust 1.83+ is required
+
+### Fixed
+- Constrained `base64ct` to 1.6.0 and `home` to 0.5.11 to avoid edition 2024 requirement
+
 ## [0.1.3] - 2025-12-06
 
 ### Fixed
