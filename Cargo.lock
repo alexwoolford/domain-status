@@ -830,10 +830,11 @@ dependencies = [
 
 [[package]]
 name = "domain_status"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
+ "base64ct",
  "chrono",
  "clap",
  "colored",
