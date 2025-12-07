@@ -77,7 +77,7 @@ xattr -d com.apple.quarantine domain_status 2>/dev/null || true
 
 **Option 3: Build from Source**
 
-Requires [Rust](https://www.rust-lang.org/tools/install) (stable toolchain):
+Requires [Rust](https://www.rust-lang.org/tools/install) 1.85 or newer:
 
 ```bash
 # Clone the repository
@@ -89,6 +89,8 @@ cargo build --release
 ```
 
 This creates an executable in `./target/release/domain_status` (or `domain_status.exe` on Windows).
+
+**Note:** SQLite is bundled in the binary - no system SQLite installation required. The tool is completely self-contained.
 
 ### Basic Usage
 
