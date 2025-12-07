@@ -27,7 +27,7 @@
 
 **Option 1: Install via Cargo (Recommended for Rust users)**
 
-Requires [Rust](https://www.rust-lang.org/tools/install) (stable toolchain):
+Requires [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, Rust 1.70+ recommended):
 
 ```bash
 cargo install domain_status
@@ -40,6 +40,8 @@ This compiles from source and installs the binary to `~/.cargo/bin/domain_status
 - ✅ Works on any platform Rust supports
 - ✅ Easy updates: `cargo install --force domain_status`
 - ✅ No manual downloads or extraction needed
+
+**Note:** If you encounter edition 2024 errors during installation, update your Rust toolchain: `rustup update stable`. The crate constrains some transitive dependencies to avoid edition 2024 requirements, but newer Rust versions (1.85+) are recommended.
 
 **Option 2: Download Pre-built Binary**
 
