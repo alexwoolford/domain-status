@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/alexwoolford/domain_status"
 homepage = "https://github.com/alexwoolford/domain_status"
 documentation = "https://docs.rs/domain_status"
-keywords = ["url", "scraper", "domain", "status", "monitoring", "http", "tls", "dns", "whois", "sqlite"]
+keywords = ["url", "scraper", "domain", "status", "monitoring"]
 categories = ["web-programming", "command-line-utilities", "development-tools"]
 
 [dependencies]
