@@ -36,3 +36,7 @@ updates:
       # Ignore hickory-resolver updates - 0.25 has breaking changes that require code updates
       # See: src/initialization/resolver.rs comments about 0.25 search domain issues
       - dependency-name: "hickory-resolver"
+      # Ignore idna updates - tldextract 0.6.0 requires idna 0.2.x, while other deps use idna 1.x
+      # This creates a dual-version situation that Dependabot can't resolve automatically
+      # Ignore until tldextract is updated to support idna 1.x
+      - dependency-name: "idna"
