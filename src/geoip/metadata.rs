@@ -165,4 +165,45 @@ mod tests {
         // last_updated might differ slightly, so we just verify it exists
         assert!(loaded.last_updated.elapsed().is_ok());
     }
+
+    #[tokio::test]
+    async fn test_save_metadata_very_long_source() {
+        // Test saving metadata with very long source path
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let metadata_file = temp_dir.path().join("long_source.json");
+        let long_source = "https://example.com/".to_string() + &"a".repeat(1000) + "/db.mmdb";
+        let metadata = GeoIpMetadata {
+            source: long_source.clone(),
+            version: "build_12345".to_string(),
+            last_updated: SystemTime::now(),
+        };
+
+        let result = save_metadata(&metadata, &metadata_file).await;
+        assert!(result.is_ok());
+
+        // Verify it can be loaded back
+        let loaded = load_metadata(&metadata_file).await;
+        assert!(loaded.is_ok());
+        assert_eq!(loaded.unwrap().source, long_source);
+    }
+
+    #[tokio::test]
+    async fn test_save_metadata_special_characters() {
+        // Test saving metadata with special characters in source
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let metadata_file = temp_dir.path().join("special_chars.json");
+        let metadata = GeoIpMetadata {
+            source: "https://example.com/path with spaces & special=chars.mmdb".to_string(),
+            version: "build_2024-01-01".to_string(),
+            last_updated: SystemTime::now(),
+        };
+
+        let result = save_metadata(&metadata, &metadata_file).await;
+        assert!(result.is_ok());
+
+        // Verify special characters are preserved
+        let loaded = load_metadata(&metadata_file).await;
+        assert!(loaded.is_ok());
+        assert!(loaded.unwrap().source.contains("special=chars"));
+    }
 }

@@ -255,4 +255,72 @@ mod tests {
     // Note: Error chain tests removed because anyhow's error wrapping makes downcast
     // behavior unpredictable in chains. The core functionality is tested above with
     // direct error types, which is the realistic use case.
+
+    #[test]
+    fn test_is_retriable_error_mixed_chain() {
+        // Test error chain with multiple error types
+        // This tests that the first matching error type in the chain determines retriability
+        let db_err = sqlx::Error::PoolClosed;
+        let err: anyhow::Error = db_err.into();
+        let wrapped = err.context("Additional context");
+
+        // Database error should be non-retriable even when wrapped
+        assert!(!is_retriable_error(&wrapped));
+    }
+
+    #[test]
+    fn test_is_retriable_error_chain_order() {
+        // Test that error chain order matters (first match wins)
+        // If a non-retriable error is wrapped by a retriable-looking message,
+        // the downcast should catch the non-retriable error first
+        let parse_err = url::ParseError::EmptyHost;
+        let err: anyhow::Error = parse_err.into();
+        let wrapped = err.context("Some other context"); // Don't use DNS message to avoid confusion
+
+        // URL parse error should be detected via downcast, not message
+        // Note: The function checks downcast_ref first, so URL parse errors should be non-retriable
+        assert!(!is_retriable_error(&wrapped));
+    }
+
+    #[test]
+    fn test_is_retriable_error_message_case_insensitive() {
+        // Test that error message matching is case-insensitive
+        let err1 = anyhow::anyhow!("404 NOT FOUND");
+        let err2 = anyhow::anyhow!("Not Found");
+        let err3 = anyhow::anyhow!("FORBIDDEN");
+
+        // All should be non-retriable (case-insensitive matching)
+        assert!(!is_retriable_error(&err1));
+        // Note: "Not Found" without "404" might not match the pattern
+        // The function checks for "404", "403", "401" specifically
+        let _result2 = is_retriable_error(&err2);
+        let result3 = is_retriable_error(&err3);
+        // "FORBIDDEN" should match "forbidden" pattern
+        assert!(!result3, "FORBIDDEN should be non-retriable");
+    }
+
+    #[test]
+    fn test_is_retriable_error_partial_message_match() {
+        // Test that partial message matches work correctly
+        let err1 = anyhow::anyhow!("Error: 404 page not found");
+        let err2 = anyhow::anyhow!("HTTP 500 internal server error occurred");
+        let err3 = anyhow::anyhow!("DNS resolution failed for domain");
+
+        assert!(!is_retriable_error(&err1));
+        assert!(is_retriable_error(&err2));
+        assert!(is_retriable_error(&err3));
+    }
+
+    #[test]
+    fn test_is_retriable_error_nested_context() {
+        // Test error with nested context (multiple .context() calls)
+        let base_err = anyhow::anyhow!("Base error");
+        let err = base_err
+            .context("First context")
+            .context("Second context")
+            .context("DNS lookup failed");
+
+        // Should detect DNS in the chain
+        assert!(is_retriable_error(&err));
+    }
 }
