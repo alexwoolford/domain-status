@@ -114,3 +114,208 @@ pub fn strip_js_comments_and_strings(code: &str) -> String {
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_js_comments_and_strings_single_line_comment() {
+        let code = "var x = 1; // This is a comment\nvar y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // Comment should be replaced with spaces, newline preserved
+        assert!(result.contains("var x = 1"));
+        assert!(result.contains("var y = 2"));
+        assert!(result.contains('\n'));
+        assert!(!result.contains("This is a comment"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_multi_line_comment() {
+        let code = "var x = 1; /* This is a\nmulti-line comment */ var y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // Multi-line comment should be replaced with spaces
+        assert!(result.contains("var x = 1"));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("This is a"));
+        assert!(!result.contains("multi-line comment"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_double_quoted_string() {
+        let code = r#"var x = "hello world"; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // String content should be replaced with spaces
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("hello world"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_single_quoted_string() {
+        let code = "var x = 'hello world'; var y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // String content should be replaced with spaces
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("hello world"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_template_literal() {
+        let code = "var x = `hello ${world}`; var y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // Template literal content should be replaced with spaces
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("hello"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_escaped_quotes() {
+        let code = r#"var x = "hello \"world\""; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // Escaped quotes should be handled (backslash and quote preserved, content replaced)
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("hello"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_nested_strings() {
+        let code = r#"var x = "outer 'inner' string"; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // Nested quotes should be treated as part of outer string
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("outer"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_comment_in_string() {
+        let code = r#"var x = "string with // comment"; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // Comment inside string should be part of string (not stripped separately)
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("comment"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_string_in_comment() {
+        let code = r#"var x = 1; // comment with "string"
+var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // String in comment should be stripped with comment, newline ends comment
+        assert!(result.contains("var x = 1"));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("comment"));
+        assert!(!result.contains("string"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_multiple_strings() {
+        let code = r#"var x = "first"; var y = 'second'; var z = `third`;"#;
+        let result = strip_js_comments_and_strings(code);
+        // All strings should be stripped
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y ="));
+        assert!(result.contains("var z ="));
+        assert!(!result.contains("first"));
+        assert!(!result.contains("second"));
+        assert!(!result.contains("third"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_unclosed_string() {
+        let code = r#"var x = "unclosed string; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // Should handle unclosed string gracefully (treat as string to end)
+        assert!(result.contains("var x ="));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_unclosed_comment() {
+        let code = "var x = 1; /* unclosed comment; var y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // Should handle unclosed comment gracefully (treat as comment to end)
+        assert!(result.contains("var x = 1"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_regex_like_pattern() {
+        // Test that regex-like patterns (e.g., /pattern/) are not confused with comments
+        let code = "var regex = /test/; var y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // Note: This function doesn't handle regex literals specially, so /test/ might be partially stripped
+        // This is acceptable for the use case (pattern matching, not full parsing)
+        assert!(result.contains("var regex"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_empty_code() {
+        let code = "";
+        let result = strip_js_comments_and_strings(code);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_only_comments() {
+        let code = "// Only comment\n/* Another comment */";
+        let result = strip_js_comments_and_strings(code);
+        // Comments should be replaced with spaces, newline preserved
+        assert!(result.contains('\n'));
+        assert!(!result.contains("Only comment"));
+        assert!(!result.contains("Another comment"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_only_strings() {
+        let code = r#""string1" 'string2' `string3`"#;
+        let result = strip_js_comments_and_strings(code);
+        // Strings should be replaced with spaces
+        assert!(!result.contains("string1"));
+        assert!(!result.contains("string2"));
+        assert!(!result.contains("string3"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_complex_nested() {
+        let code = r#"var x = "outer /* not a comment */ string"; // comment with "string"
+        var y = 'inner // not a comment';"#;
+        let result = strip_js_comments_and_strings(code);
+        // Should strip strings and comments correctly
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y ="));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_escaped_backslash() {
+        let code = r#"var x = "path\\to\\file"; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // Escaped backslashes should be handled correctly
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_template_literal_with_expression() {
+        let code = "var x = `hello ${name}`; var y = 2;";
+        let result = strip_js_comments_and_strings(code);
+        // Template literal should be stripped
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+        assert!(!result.contains("hello"));
+    }
+
+    #[test]
+    fn test_strip_js_comments_and_strings_multiline_string() {
+        let code = r#"var x = "line1
+line2
+line3"; var y = 2;"#;
+        let result = strip_js_comments_and_strings(code);
+        // Multi-line string should be stripped
+        assert!(result.contains("var x ="));
+        assert!(result.contains("var y = 2"));
+    }
+}
