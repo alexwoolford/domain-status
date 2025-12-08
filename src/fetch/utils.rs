@@ -133,4 +133,78 @@ mod tests {
         assert!(json.contains("key2"));
         assert!(json.contains("null")); // null values should be serialized
     }
+
+    #[test]
+    fn test_serialize_json_very_large_structure() {
+        // Test with very large structure (should not panic or hang)
+        let mut large_map: HashMap<String, String> = HashMap::new();
+        for i in 0..10000 {
+            large_map.insert(format!("key_{}", i), format!("value_{}", i));
+        }
+        let json = serialize_json(&large_map);
+        // Should serialize successfully (may be large but should complete)
+        assert!(json.len() > 1000);
+        assert!(json.contains("key_0"));
+        assert!(json.contains("value_9999"));
+    }
+
+    #[test]
+    fn test_serialize_json_with_default_very_large_array() {
+        // Test with very large array
+        let large_vec: Vec<String> = (0..10000).map(|i| format!("item_{}", i)).collect();
+        let json = serialize_json_with_default(&large_vec, "[]");
+        assert!(json.len() > 1000);
+        assert!(json.contains("item_0"));
+        assert!(json.contains("item_9999"));
+    }
+
+    #[test]
+    fn test_serialize_json_nested_structures() {
+        #[derive(serde::Serialize)]
+        struct Nested {
+            level1: Level1,
+        }
+        #[derive(serde::Serialize)]
+        struct Level1 {
+            level2: Level2,
+        }
+        #[derive(serde::Serialize)]
+        struct Level2 {
+            value: String,
+        }
+
+        let nested = Nested {
+            level1: Level1 {
+                level2: Level2 {
+                    value: "deep".to_string(),
+                },
+            },
+        };
+        let json = serialize_json(&nested);
+        assert!(json.contains("deep"));
+        assert!(json.contains("level1"));
+        assert!(json.contains("level2"));
+    }
+
+    #[test]
+    fn test_serialize_json_with_default_empty_string() {
+        let empty: Vec<String> = vec![];
+        let json = serialize_json_with_default(&empty, "fallback");
+        // Empty array should serialize to "[]", not use fallback
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_serialize_json_special_characters() {
+        let mut map = HashMap::new();
+        map.insert(
+            "key".to_string(),
+            "value with \"quotes\" and 'apostrophes'".to_string(),
+        );
+        map.insert("unicode".to_string(), "测试 🚀".to_string());
+        let json = serialize_json(&map);
+        assert!(json.contains("quotes"));
+        assert!(json.contains("测试"));
+        assert!(json.contains("🚀"));
+    }
 }
