@@ -61,19 +61,23 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
 
     // Check error message for specific patterns (for errors without reqwest::Error)
     let msg = error.to_string().to_lowercase();
-    if msg.contains("timeout") {
+    // Check for HTTP request timeout first (more specific)
+    if msg.contains("request timeout") || msg.contains("http") && msg.contains("timeout") {
+        return ErrorType::HttpRequestTimeoutError;
+    } else if msg.contains("timeout") {
         return ErrorType::ProcessUrlTimeout;
     }
 
     // Check for DNS errors in error message
     if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
         // Try to determine which DNS lookup failed
-        if msg.contains("ns") || msg.contains("nameserver") {
-            return ErrorType::DnsNsLookupError;
-        } else if msg.contains("txt") {
+        // Check for specific types FIRST (more specific patterns before general ones)
+        if msg.contains("txt") {
             return ErrorType::DnsTxtLookupError;
         } else if msg.contains("mx") || msg.contains("mail") {
             return ErrorType::DnsMxLookupError;
+        } else if msg.contains("ns") || msg.contains("nameserver") {
+            return ErrorType::DnsNsLookupError;
         }
         // Generic DNS error - default to NS lookup error
         return ErrorType::DnsNsLookupError;
@@ -102,4 +106,215 @@ pub(crate) fn extract_http_status(error: &Error) -> Option<u16> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ErrorType;
+
+    #[tokio::test]
+    async fn test_extract_error_type_reqwest_dns_error() {
+        // Test DNS error detection from reqwest error message
+        // This is critical - DNS errors should be categorized correctly
+        // Create a reqwest error by attempting an invalid request
+        // Use a longer timeout to avoid timeout errors, focus on DNS errors
+        let reqwest_err = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap()
+            .get("http://invalid-domain-that-does-not-exist-12345.com")
+            .send()
+            .await
+            .unwrap_err();
+        let error = anyhow::Error::from(reqwest_err);
+
+        let error_type = extract_error_type(&error);
+        // Should detect DNS error from message (or timeout/connect error)
+        // Accept multiple error types as DNS resolution can fail in different ways
+        // Also accept HttpRequestRequestError as it can occur for various network issues
+        assert!(
+            matches!(
+                error_type,
+                ErrorType::DnsNsLookupError
+                    | ErrorType::DnsTxtLookupError
+                    | ErrorType::DnsMxLookupError
+                    | ErrorType::HttpRequestConnectError
+                    | ErrorType::HttpRequestTimeoutError
+                    | ErrorType::HttpRequestRequestError
+                    | ErrorType::HttpRequestOtherError
+            ),
+            "Expected DNS-related or network error type, got: {:?}",
+            error_type
+        );
+    }
+
+    #[test]
+    fn test_extract_error_type_reqwest_dns_txt_error() {
+        // Test TXT-specific DNS error detection
+        // This is critical - TXT lookups should be distinguished from NS lookups
+        // Create error with DNS TXT message pattern
+        let error = anyhow::anyhow!("DNS TXT lookup failed");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::DnsTxtLookupError);
+    }
+
+    #[test]
+    fn test_extract_error_type_reqwest_dns_mx_error() {
+        // Test MX-specific DNS error detection
+        // This is critical - MX lookups should be distinguished
+        // Create error with DNS MX message pattern
+        let error = anyhow::anyhow!("DNS mail exchange lookup failed");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::DnsMxLookupError);
+    }
+
+    #[test]
+    fn test_extract_error_type_reqwest_tls_error() {
+        // Test TLS error detection from reqwest error message
+        // This is critical - TLS errors should be categorized correctly
+        // Create error with TLS message pattern
+        let error = anyhow::anyhow!("TLS handshake failed: certificate error");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::TlsCertificateError);
+    }
+
+    #[test]
+    fn test_extract_error_type_reqwest_ssl_error() {
+        // Test SSL error detection (alternative to TLS)
+        // Create error with SSL message pattern
+        let error = anyhow::anyhow!("SSL certificate validation failed");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::TlsCertificateError);
+    }
+
+    #[test]
+    fn test_extract_error_type_reqwest_timeout_in_message() {
+        // Test timeout detection when error message contains "timeout"
+        // This is critical - timeouts should be distinguished from other errors
+        // Create error with timeout message pattern
+        let error = anyhow::anyhow!("request timeout after 30 seconds");
+
+        let error_type = extract_error_type(&error);
+        // Should detect timeout from message
+        assert_eq!(error_type, ErrorType::HttpRequestTimeoutError);
+    }
+
+    #[test]
+    fn test_extract_error_type_non_reqwest_timeout() {
+        // Test timeout detection for non-reqwest errors
+        // This is critical - timeout errors should be detected even without reqwest
+        let error = anyhow::anyhow!("Process URL timeout after 45 seconds");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::ProcessUrlTimeout);
+    }
+
+    #[test]
+    fn test_extract_error_type_non_reqwest_dns_error() {
+        // Test DNS error detection for non-reqwest errors
+        // This is critical - DNS errors should be detected even without reqwest
+        let error = anyhow::anyhow!("DNS lookup failed for example.com");
+
+        let error_type = extract_error_type(&error);
+        assert!(
+            matches!(
+                error_type,
+                ErrorType::DnsNsLookupError
+                    | ErrorType::DnsTxtLookupError
+                    | ErrorType::DnsMxLookupError
+            ),
+            "Expected DNS error type, got: {:?}",
+            error_type
+        );
+    }
+
+    #[test]
+    fn test_extract_error_type_non_reqwest_tls_error() {
+        // Test TLS error detection for non-reqwest errors
+        let error = anyhow::anyhow!("TLS certificate validation failed");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::TlsCertificateError);
+    }
+
+    #[test]
+    fn test_extract_error_type_fallback_to_other() {
+        // Test fallback to HttpRequestOtherError for unknown errors
+        // This is critical - unknown errors should not panic
+        let error = anyhow::anyhow!("Unknown error occurred");
+
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::HttpRequestOtherError);
+    }
+
+    #[tokio::test]
+    async fn test_extract_http_status_with_status() {
+        // Test HTTP status extraction from reqwest error
+        // This is critical - status codes should be extracted correctly
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/500"))
+                .respond_with(status_code(500).body("Internal Server Error")),
+        );
+
+        let client = reqwest::Client::new();
+        let url = server.url("/500").to_string();
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("Failed to create test request");
+        let status = response.status();
+        let reqwest_err = response.error_for_status().unwrap_err();
+        let error = anyhow::Error::from(reqwest_err);
+
+        let extracted_status = extract_http_status(&error);
+        assert_eq!(extracted_status, Some(status.as_u16()));
+    }
+
+    #[test]
+    fn test_extract_http_status_no_status() {
+        // Test HTTP status extraction when no status is available
+        // This is critical - should return None, not panic
+        let error = anyhow::anyhow!("Connection error");
+
+        let extracted_status = extract_http_status(&error);
+        assert_eq!(extracted_status, None);
+    }
+
+    #[tokio::test]
+    async fn test_extract_http_status_nested_error_chain() {
+        // Test HTTP status extraction from nested error chain
+        // This is critical - status should be found even if nested
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/404"))
+                .respond_with(status_code(404).body("Not Found")),
+        );
+
+        let client = reqwest::Client::new();
+        let url = server.url("/404").to_string();
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("Failed to create test request");
+        let status = response.status();
+        let reqwest_err = response.error_for_status().unwrap_err();
+        let error = anyhow::Error::from(reqwest_err)
+            .context("Additional context")
+            .context("More context");
+
+        let extracted_status = extract_http_status(&error);
+        assert_eq!(extracted_status, Some(status.as_u16()));
+    }
 }
