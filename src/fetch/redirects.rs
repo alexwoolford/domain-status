@@ -635,4 +635,79 @@ mod tests {
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
     }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_circular_redirect() {
+        // Test circular redirect: A -> B -> A (should stop at max_hops, not loop infinitely)
+        let server = Server::run();
+        let url_a = server.url("/a").to_string();
+        let url_b = server.url("/b").to_string();
+
+        // A redirects to B (will be called multiple times in circular redirect)
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/a"))
+                .times(3) // A will be fetched: initial, then after B->A redirects (twice more)
+                .respond_with(
+                    status_code(302)
+                        .insert_header("Location", url_b.as_str())
+                        .body("Redirect to B"),
+                ),
+        );
+
+        // B redirects back to A (circular) - will be called twice
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/b"))
+                .times(2) // B will be fetched twice: A->B, then A->B again
+                .respond_with(
+                    status_code(302)
+                        .insert_header("Location", url_a.as_str())
+                        .body("Redirect to A"),
+                ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        // With max_hops=5, should stop after 5 hops (A -> B -> A -> B -> A)
+        let (result_final, chain) = resolve_redirect_chain(&url_a, 5, &client).await.unwrap();
+
+        // Should stop at max_hops, not loop infinitely
+        // Chain should contain: [A, B, A, B, A] (5 hops)
+        assert_eq!(chain.len(), 5);
+        // Final URL should be the last URL we actually fetched (A, since we stop at max_hops)
+        assert_eq!(result_final, url_a);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_max_hops_one() {
+        // Test edge case: max_hops = 1 (should fetch start URL, not follow any redirects)
+        let server = Server::run();
+        let start_url = server.url("/").to_string();
+        let redirect_url = server.url("/redirect").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", redirect_url.as_str())
+                    .body("Redirect"),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 1, &client)
+            .await
+            .unwrap();
+
+        // With max_hops=1, should only fetch start URL, not follow redirect
+        assert_eq!(chain.len(), 1);
+        assert_eq!(result_final, start_url);
+        // Should NOT include redirect_url in chain
+        assert!(!chain.contains(&redirect_url));
+    }
 }

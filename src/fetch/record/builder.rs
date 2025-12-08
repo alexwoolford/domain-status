@@ -472,4 +472,210 @@ mod tests {
             ErrorType::DnsTxtLookupError.as_str()
         );
     }
+
+    #[test]
+    fn test_build_url_record_whitespace_only_strings() {
+        // Test that whitespace-only strings are NOT normalized to None
+        // Only empty strings are normalized - whitespace is preserved
+        let resp_data = create_test_response_data();
+        let mut html_data = create_test_html_data();
+        html_data.keywords_str = Some("   ".to_string()); // Whitespace only
+        html_data.description = Some("\t\n".to_string()); // Whitespace only
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+
+        let record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        // Whitespace-only strings should be preserved (not normalized to None)
+        // This is intentional - only truly empty strings are normalized
+        assert_eq!(record.keywords, Some("   ".to_string()));
+        assert_eq!(record.description, Some("\t\n".to_string()));
+    }
+
+    #[test]
+    fn test_build_batch_record_duplicate_oids() {
+        // Test that duplicate OIDs are deduplicated (HashSet behavior)
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let mut tls_dns_data = create_test_tls_dns_data();
+        let mut oids = HashSet::new();
+        oids.insert("1.2.3.4".to_string());
+        oids.insert("1.2.3.4".to_string()); // Duplicate
+        oids.insert("5.6.7.8".to_string());
+        tls_dns_data.oids = Some(oids);
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain: vec![],
+            partial_failures: vec![],
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &None,
+        });
+
+        // Duplicate OIDs should be deduplicated by HashSet
+        assert_eq!(batch_record.oids.len(), 2); // Only 2 unique OIDs
+        assert!(batch_record.oids.contains("1.2.3.4"));
+        assert!(batch_record.oids.contains("5.6.7.8"));
+    }
+
+    #[test]
+    fn test_build_batch_record_duplicate_sans() {
+        // Test that duplicate SANs are preserved (Vec, not HashSet)
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let mut tls_dns_data = create_test_tls_dns_data();
+        tls_dns_data.subject_alternative_names = Some(vec![
+            "example.com".to_string(),
+            "www.example.com".to_string(),
+            "example.com".to_string(), // Duplicate
+        ]);
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain: vec![],
+            partial_failures: vec![],
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &None,
+        });
+
+        // SANs are Vec, so duplicates are preserved (this is intentional - matches cert data)
+        assert_eq!(batch_record.subject_alternative_names.len(), 3);
+        assert_eq!(batch_record.subject_alternative_names[0], "example.com");
+        assert_eq!(batch_record.subject_alternative_names[2], "example.com");
+    }
+
+    #[test]
+    fn test_build_batch_record_large_redirect_chain() {
+        // Test that large redirect chains are handled correctly
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        // Create a large redirect chain (100 URLs)
+        let redirect_chain: Vec<String> = (0..100)
+            .map(|i| format!("https://example.com/redirect{}", i))
+            .collect();
+
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain,
+            partial_failures: vec![],
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &None,
+        });
+
+        // Large redirect chain should be preserved
+        assert_eq!(batch_record.redirect_chain.len(), 100);
+        assert_eq!(
+            batch_record.redirect_chain[0],
+            "https://example.com/redirect0"
+        );
+        assert_eq!(
+            batch_record.redirect_chain[99],
+            "https://example.com/redirect99"
+        );
+    }
+
+    #[test]
+    fn test_build_batch_record_run_id_propagation() {
+        // Test that run_id is correctly propagated to partial failure records
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let tls_dns_data = create_test_tls_dns_data();
+        let additional_dns = create_test_additional_dns_data();
+
+        let url_record = build_url_record(
+            &resp_data,
+            &html_data,
+            &tls_dns_data,
+            &additional_dns,
+            1.5,
+            1234567890,
+            &None,
+        );
+
+        let run_id = Some("test-run-456".to_string());
+        let partial_failures = vec![(ErrorType::DnsNsLookupError, "Test error".to_string())];
+
+        let batch_record = build_batch_record(BatchRecordParams {
+            record: url_record,
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            technologies_vec: vec![],
+            redirect_chain: vec![],
+            partial_failures,
+            geoip_data: None,
+            security_warnings: vec![],
+            whois_data: None,
+            timestamp: 1234567890,
+            run_id: &run_id,
+        });
+
+        // Run ID should be propagated to partial failure records
+        assert_eq!(batch_record.partial_failures.len(), 1);
+        assert_eq!(batch_record.partial_failures[0].run_id, run_id);
+    }
 }
