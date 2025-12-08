@@ -373,4 +373,215 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_try_fetch_chrome_version_json_missing_stable() {
+        // Test JSON with channels but no Stable channel
+        let json = r#"{
+            "channels": {
+                "Beta": {
+                    "version": "132.0.6778.85"
+                }
+            }
+        }"#;
+
+        #[derive(serde::Deserialize)]
+        struct ChromeVersions {
+            channels: Option<ChromeChannels>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeChannels {
+            #[serde(rename = "Stable")]
+            stable: Option<ChromeVersion>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeVersion {
+            #[allow(dead_code)]
+            version: String,
+        }
+
+        let versions: ChromeVersions = serde_json::from_str(json).unwrap();
+        // Should handle missing Stable channel gracefully
+        if let Some(channels) = versions.channels {
+            assert!(channels.stable.is_none());
+        }
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_json_missing_version_field() {
+        // Test JSON with Stable channel but missing version field
+        let json = r#"{
+            "channels": {
+                "Stable": {}
+            }
+        }"#;
+
+        #[derive(serde::Deserialize)]
+        struct ChromeVersions {
+            #[allow(dead_code)]
+            channels: Option<ChromeChannels>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeChannels {
+            #[serde(rename = "Stable")]
+            #[allow(dead_code)]
+            stable: Option<ChromeVersion>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeVersion {
+            #[allow(dead_code)]
+            version: String,
+        }
+
+        // Should fail to deserialize if version field is missing (serde will error)
+        let result: Result<ChromeVersions, _> = serde_json::from_str(json);
+        // serde_json will error on missing required field
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_json_empty_channels() {
+        // Test JSON with empty channels object
+        let json = r#"{
+            "channels": {}
+        }"#;
+
+        #[derive(serde::Deserialize)]
+        struct ChromeVersions {
+            channels: Option<ChromeChannels>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeChannels {
+            #[serde(rename = "Stable")]
+            stable: Option<ChromeVersion>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeVersion {
+            #[allow(dead_code)]
+            version: String,
+        }
+
+        let versions: ChromeVersions = serde_json::from_str(json).unwrap();
+        if let Some(channels) = versions.channels {
+            assert!(channels.stable.is_none());
+        }
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_latest_release_empty_string() {
+        // Test empty version string handling
+        let version_text = "";
+        let major = version_text.split('.').next().unwrap_or(version_text);
+        // Empty string should result in ".0.0.0"
+        let formatted = format!("{}.0.0.0", major);
+        assert_eq!(formatted, ".0.0.0");
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_latest_release_no_dots() {
+        // Test version string without dots
+        let version_text = "131";
+        let major = version_text.split('.').next().unwrap_or(version_text);
+        let formatted = format!("{}.0.0.0", major);
+        assert_eq!(formatted, "131.0.0.0");
+    }
+
+    #[test]
+    fn test_load_from_cache_missing_chrome_version_field() {
+        // Test cache file with missing chrome_version field
+        let json = r#"{
+            "last_updated": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let result: Result<UserAgentMetadata, _> = serde_json::from_str(json);
+        // Should fail to deserialize if chrome_version field is missing
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_from_cache_invalid_timestamp() {
+        // Test cache file with invalid timestamp (future date)
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Create cache with future timestamp (should still be valid if within cache duration)
+        let metadata = UserAgentMetadata {
+            chrome_version: "131.0.0.0".to_string(),
+            last_updated: SystemTime::now() + Duration::from_secs(24 * 60 * 60), // 1 day in future
+        };
+
+        let metadata_path = cache_dir.join("version.json");
+        std::fs::create_dir_all(cache_dir).unwrap();
+        let metadata_json = serde_json::to_string_pretty(&metadata).unwrap();
+        std::fs::write(&metadata_path, metadata_json).unwrap();
+
+        // Future timestamp should still be valid (elapsed() returns error for future times)
+        let result = load_from_cache(cache_dir).await;
+        // Should succeed because elapsed() returns Err for future times, so age check is skipped
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_save_to_cache_directory_creation() {
+        // Test that cache directory is created if it doesn't exist
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path().join("nested").join("cache");
+
+        // Directory doesn't exist yet
+        assert!(!cache_dir.exists());
+
+        let version = "131.0.0.0";
+        let result = save_to_cache(&cache_dir, version).await;
+        assert!(result.is_ok());
+
+        // Directory should now exist
+        assert!(cache_dir.exists());
+        assert!(cache_dir.join("version.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_get_chrome_version_cache_fresh() {
+        // Test that fresh cache is used instead of fetching
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Create fresh cache
+        let metadata = UserAgentMetadata {
+            chrome_version: "131.0.0.0".to_string(),
+            last_updated: SystemTime::now() - Duration::from_secs(24 * 60 * 60), // 1 day ago
+        };
+
+        let metadata_path = cache_dir.join("version.json");
+        std::fs::create_dir_all(cache_dir).unwrap();
+        let metadata_json = serde_json::to_string_pretty(&metadata).unwrap();
+        std::fs::write(&metadata_path, metadata_json).unwrap();
+
+        // Should return cached version
+        let version = get_chrome_version(Some(cache_dir)).await;
+        assert_eq!(version, "131.0.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_get_chrome_version_cache_expired() {
+        // Test that expired cache triggers fetch
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Create expired cache
+        let metadata = UserAgentMetadata {
+            chrome_version: "100.0.0.0".to_string(), // Old version
+            last_updated: SystemTime::now() - Duration::from_secs(31 * 24 * 60 * 60), // 31 days ago
+        };
+
+        let metadata_path = cache_dir.join("version.json");
+        std::fs::create_dir_all(cache_dir).unwrap();
+        let metadata_json = serde_json::to_string_pretty(&metadata).unwrap();
+        std::fs::write(&metadata_path, metadata_json).unwrap();
+
+        // Should fetch new version (or use fallback if network unavailable)
+        let version = get_chrome_version(Some(cache_dir)).await;
+        // Version should be updated (not the old cached version)
+        assert_ne!(version, "100.0.0.0");
+        assert!(!version.is_empty());
+    }
 }
