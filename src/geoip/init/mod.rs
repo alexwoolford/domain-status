@@ -155,8 +155,9 @@ mod tests {
     #[tokio::test]
     async fn test_init_geoip_no_path_no_license() {
         // Test when no path and no license key
-        // Note: If GeoIP was previously initialized in another test, it might return Some
-        // This test verifies the disabled path works correctly
+        // Ensure environment variable is cleared (previous tests might have set it)
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+
         let result = init_geoip(None, None).await;
         assert!(result.is_ok());
         // Should return None if GeoIP is disabled (no path, no license)
