@@ -131,4 +131,52 @@ mod tests {
         // They should be different Arc instances
         assert!(!Arc::ptr_eq(&client1, &client2));
     }
+
+    #[tokio::test]
+    async fn test_init_client_empty_user_agent() {
+        // Test that empty user agent string is handled gracefully
+        let mut config = create_test_config();
+        config.user_agent = String::new();
+        let result = init_client(&config).await;
+        // Should succeed even with empty user agent (reqwest allows it)
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_init_client_zero_timeout() {
+        // Test that zero timeout is handled (edge case - should still create client)
+        let mut config = create_test_config();
+        config.timeout_seconds = 0;
+        let result = init_client(&config).await;
+        // Should succeed (zero timeout means no timeout, not immediate failure)
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_init_client_very_large_timeout() {
+        // Test that very large timeout values don't cause overflow
+        let mut config = create_test_config();
+        config.timeout_seconds = u64::MAX / 1000; // Large but reasonable timeout
+        let result = init_client(&config).await;
+        // Should succeed (Duration handles large values gracefully)
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_init_redirect_client_empty_user_agent() {
+        // Test that empty user agent works for redirect client too
+        let mut config = create_test_config();
+        config.user_agent = String::new();
+        let result = init_redirect_client(&config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_init_redirect_client_zero_timeout() {
+        // Test that zero timeout works for redirect client
+        let mut config = create_test_config();
+        config.timeout_seconds = 0;
+        let result = init_redirect_client(&config).await;
+        assert!(result.is_ok());
+    }
 }

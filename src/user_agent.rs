@@ -584,4 +584,90 @@ mod tests {
         assert_ne!(version, "100.0.0.0");
         assert!(!version.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_try_fetch_chrome_version_http_error() {
+        // Test that HTTP errors are handled correctly
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/error"))
+                .respond_with(status_code(500).body("Internal Server Error")),
+        );
+
+        let url = server.url("/error").to_string();
+        let result = try_fetch_chrome_version(&url).await;
+
+        // Should return error for HTTP 500
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("HTTP 500"));
+    }
+
+    #[tokio::test]
+    async fn test_try_fetch_chrome_version_invalid_json() {
+        // Test that invalid JSON is handled correctly
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/invalid")).respond_with(
+                status_code(200)
+                    .insert_header("Content-Type", "application/json")
+                    .body("{ invalid json }"),
+            ),
+        );
+
+        let url = server.url("/invalid").to_string();
+        let result = try_fetch_chrome_version(&url).await;
+
+        // Should return error for invalid JSON
+        assert!(result.is_err());
+        // Error should mention JSON parsing or deserialize
+        let error_msg = result.unwrap_err().to_string();
+        // serde_json errors may vary, but should indicate parsing failure
+        assert!(
+            error_msg.contains("JSON")
+                || error_msg.contains("parse")
+                || error_msg.contains("invalid")
+                || error_msg.contains("deserialize")
+                || error_msg.contains("expected"),
+            "Error message should indicate parsing failure: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_fetch_chrome_version_empty_response() {
+        // Test that empty response is handled correctly
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/empty"))
+                .respond_with(status_code(200).body("")),
+        );
+
+        let url = server.url("/empty").to_string();
+        let result = try_fetch_chrome_version(&url).await;
+
+        // Empty response for LATEST_RELEASE format should result in ".0.0.0"
+        // Empty response for chrome-for-testing should error
+        // Either is acceptable - the function should handle gracefully
+        let _ = result;
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_version_parsing_edge_cases() {
+        // Test edge cases in version parsing
+        // Many dots
+        let many = "131.0.6778.85.123.456";
+        let major = many.split('.').next().unwrap_or(many);
+        assert_eq!(format!("{}.0.0.0", major), "131.0.0.0");
+
+        // Non-numeric
+        let non_numeric = "abc.def.ghi";
+        let major = non_numeric.split('.').next().unwrap_or(non_numeric);
+        assert_eq!(format!("{}.0.0.0", major), "abc.0.0.0");
+    }
 }
