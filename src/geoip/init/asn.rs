@@ -177,4 +177,86 @@ mod tests {
 
         std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
+
+    #[tokio::test]
+    async fn test_init_asn_database_download_failure_continues() {
+        // Test that ASN download failure doesn't break the system
+        // This is critical - ASN is optional, failures should be logged but not fatal
+        // The code at line 60-65 handles download failures gracefully
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "invalid_key");
+
+        // Should return Ok even if download fails
+        let result = init_asn_database(temp_dir.path()).await;
+        assert!(
+            result.is_ok(),
+            "ASN download failure should not break initialization"
+        );
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_cache_load_failure_continues() {
+        // Test that cache load failure doesn't break the system
+        // This is critical - corrupted cache shouldn't prevent ASN initialization
+        use crate::geoip::metadata::save_metadata;
+        use std::time::SystemTime;
+        use tempfile::TempDir;
+        use tokio::io::AsyncWriteExt;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
+        let metadata_file = temp_dir.path().join("asn_metadata.json");
+
+        // Create corrupted cache file
+        let mut file = tokio::fs::File::create(&cache_file)
+            .await
+            .expect("Failed to create cache file");
+        file.write_all(b"corrupted asn data")
+            .await
+            .expect("Failed to write corrupted data");
+
+        // Create valid metadata
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test://source".to_string(),
+            version: "1.0".to_string(),
+            last_updated: SystemTime::now(),
+        };
+        save_metadata(&metadata, &metadata_file)
+            .await
+            .expect("Failed to save metadata");
+
+        // Should handle corrupted cache gracefully (fall through to download or skip)
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let result = init_asn_database(temp_dir.path()).await;
+        // Should return Ok even if cache load fails
+        assert!(result.is_ok());
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_concurrent_initialization() {
+        // Test that concurrent ASN initialization doesn't cause issues
+        // This is critical - multiple background tasks might try to initialize
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+
+        // Spawn multiple tasks
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let cache_dir = temp_dir.path().to_path_buf();
+                tokio::spawn(async move { init_asn_database(&cache_dir).await })
+            })
+            .collect();
+
+        // All should succeed (even if download fails)
+        for handle in handles {
+            let result = handle.await.expect("Task panicked");
+            assert!(result.is_ok());
+        }
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
 }
