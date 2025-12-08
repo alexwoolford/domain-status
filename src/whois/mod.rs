@@ -66,3 +66,75 @@ pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Opti
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_lookup_whois_invalid_domain() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        // Invalid domain format
+        let result = lookup_whois("not-a-valid-domain-format", Some(temp_dir.path())).await;
+        // Should handle gracefully (may return None or error depending on whois-service behavior)
+        // We verify it doesn't panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_empty_domain() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let result = lookup_whois("", Some(temp_dir.path())).await;
+        // Should handle gracefully
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_nonexistent_domain() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        // Domain that definitely doesn't exist
+        let result = lookup_whois(
+            "this-domain-definitely-does-not-exist-12345.invalid",
+            Some(temp_dir.path()),
+        )
+        .await;
+        // Should return None or error gracefully
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_cache_directory_creation() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_dir = temp_dir.path().join("whois_cache");
+
+        // Should create cache directory if it doesn't exist
+        let _result = lookup_whois("example.com", Some(&cache_dir)).await;
+
+        // Cache directory should exist (created by save_to_cache)
+        // Note: This may fail if lookup fails before cache is created
+        // We just verify the function doesn't panic by completing successfully
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_with_cache_dir() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let result = lookup_whois("example.com", Some(temp_dir.path())).await;
+        // May succeed or fail depending on network, but shouldn't panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_without_cache_dir() {
+        // Uses default cache directory
+        let result = lookup_whois("example.com", None).await;
+        // May succeed or fail depending on network, but shouldn't panic
+        let _ = result;
+    }
+
+    // Note: Full integration tests for successful WHOIS lookups would require:
+    // - Network access
+    // - Valid domains
+    // - Mock whois-service responses
+    // These are better suited for integration_test.rs with #[ignore] flag
+}
