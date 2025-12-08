@@ -25,27 +25,18 @@
 - [Development](#-development)
 - [License](#-license)
 
-## 🚀 Quick Start
+## 🚀 Quick Start (5 minutes)
 
-**1. Create a file with URLs (one per line):**
-
-```bash
-cat > urls.txt << EOF
-https://example.com
-https://example.org
-http://old-website.gov
-EOF
-```
-
-**2. Run the scan:**
+**Install and run in 3 commands:**
 
 ```bash
-domain_status urls.txt
-```
+# 1. Install (requires Rust 1.85+)
+cargo install domain_status
 
-**3. Query results:**
+# 2. Create URLs file and run scan
+echo -e "https://example.com\nhttps://example.org" > urls.txt && domain_status urls.txt
 
-```bash
+# 3. View results
 sqlite3 url_checker.db "SELECT domain, status, title FROM url_status;"
 ```
 
@@ -55,10 +46,11 @@ domain            | status | title
 ------------------|--------|--------------------------
 example.com       | 200    | Example Domain
 rust-lang.org     | 200    | Rust Programming Language
-old-website.gov   | 301    | (redirected)
 ```
 
-The tool processes URLs concurrently (30 by default), stores all data in SQLite, and provides progress updates. See [Installation](#-installation) below to get started.
+**That's it!** The tool processes URLs concurrently (30 by default), stores all data in SQLite, and provides progress updates.
+
+**Alternative:** Don't have Rust? Download a pre-built binary from the [Releases page](https://github.com/alexwoolford/domain_status/releases) - see [Installation](#-installation) for details.
 
 ## 📦 Installation
 

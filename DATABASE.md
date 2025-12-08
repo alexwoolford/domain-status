@@ -1103,7 +1103,7 @@ ORDER BY uf.domain;
 - TLS/SSL fields (`tls_version`, `cipher_suite`, `key_algorithm`, etc.) are `NULL` for HTTP (non-HTTPS) URLs
 - DNS records (NS, TXT, MX) are queried for the final domain after redirects
 - SPF and DMARC records are automatically extracted from TXT records; DMARC is also checked at `_dmarc.<domain>`
-- Technology fingerprints are detected using community-maintained rulesets (HTTP Archive and Enthec Wappalyzer forks) with JavaScript execution for dynamic detection
+- Technology fingerprints are detected using community-maintained rulesets (HTTP Archive and Enthec Wappalyzer forks) via pattern matching (headers, cookies, HTML, script URLs) - **does not execute JavaScript**
 - Fingerprint rulesets are cached locally in `.fingerprints_cache/` for 7 days to reduce network requests
 - **GeoIP lookup**: Requires MaxMind GeoLite2 databases (City and ASN). If `MAXMIND_LICENSE_KEY` environment variable is set, databases are automatically downloaded and cached in `.geoip_cache/` for 7 days. If license key is not set or GeoIP initialization fails, the application continues without GeoIP data (no error).
 - **WHOIS lookup**: Requires `--enable-whois` flag. WHOIS data is cached in `.whois_cache/` for 7 days. WHOIS queries are rate-limited to 0.5 queries/second to respect registrar limits.

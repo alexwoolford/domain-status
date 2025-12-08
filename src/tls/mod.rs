@@ -250,21 +250,110 @@ mod tests {
         init_crypto_for_test();
         // Test with an invalid domain name
         let result = get_ssl_certificate_info("".to_string()).await;
-        assert!(result.is_err());
-        // Just verify it's an error - don't check message as it may vary
+        match result {
+            Ok(_) => panic!("Expected error for invalid domain"),
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("Invalid domain name") || error_msg.contains("invalid"),
+                    "Expected invalid domain error, got: {}",
+                    error_msg
+                );
+            }
+        }
     }
 
     #[tokio::test]
-    #[ignore] // May timeout - requires network access
-    async fn test_get_ssl_certificate_info_nonexistent_domain() {
+    async fn test_get_ssl_certificate_info_invalid_domain_format() {
         init_crypto_for_test();
-        // Test with a domain that likely doesn't exist
+        // Test with various invalid domain formats
+        let invalid_domains = vec![
+            "..",               // Invalid format
+            "domain..com",      // Double dots
+            "domain@invalid",   // Invalid character
+            "domain space.com", // Space in domain
+        ];
+
+        for domain in invalid_domains {
+            let result = get_ssl_certificate_info(domain.to_string()).await;
+            // Should fail at domain validation or connection
+            assert!(
+                result.is_err(),
+                "Expected error for invalid domain: {}",
+                domain
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_ssl_certificate_info_connection_refused() {
+        init_crypto_for_test();
+        // Use a port that's guaranteed to be closed (connection refused)
+        // Port 1 is typically reserved and closed
+        let result = get_ssl_certificate_info("127.0.0.1".to_string()).await;
+        // Should fail with connection error or timeout
+        match result {
+            Ok(_) => panic!("Expected error for connection refused"),
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("Failed to connect")
+                        || error_msg.contains("connection")
+                        || error_msg.contains("timeout")
+                        || error_msg.contains("refused"),
+                    "Expected connection error, got: {}",
+                    error_msg
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_ssl_certificate_info_nonexistent_domain_dns() {
+        init_crypto_for_test();
+        // Test with a domain that definitely doesn't exist (DNS failure)
         let result = get_ssl_certificate_info(
             "this-domain-definitely-does-not-exist-12345.invalid".to_string(),
         )
         .await;
         // Should fail with DNS or connection error
-        assert!(result.is_err());
+        match result {
+            Ok(_) => panic!("Expected error for nonexistent domain"),
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("Failed to connect")
+                        || error_msg.contains("connection")
+                        || error_msg.contains("timeout")
+                        || error_msg.contains("Invalid domain name"),
+                    "Expected DNS/connection error, got: {}",
+                    error_msg
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_ssl_certificate_info_tcp_timeout() {
+        init_crypto_for_test();
+        // Test with a domain that will timeout (using a non-routable IP)
+        // 192.0.2.0/24 is reserved for documentation (TEST-NET-1)
+        // It should timeout rather than fail immediately
+        let result = get_ssl_certificate_info("192.0.2.1".to_string()).await;
+        // Should fail with timeout or connection error
+        match result {
+            Ok(_) => panic!("Expected error for timeout scenario"),
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("timeout")
+                        || error_msg.contains("Failed to connect")
+                        || error_msg.contains("connection"),
+                    "Expected timeout or connection error, got: {}",
+                    error_msg
+                );
+            }
+        }
     }
 
     #[test]

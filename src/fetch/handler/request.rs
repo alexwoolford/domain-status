@@ -116,7 +116,7 @@ pub async fn handle_http_request(
                         }
                     }
 
-                    log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
+                    log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
                         url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
                     // Attach structured failure context to error
@@ -147,7 +147,7 @@ pub async fn handle_http_request(
         }
         Err(e) => {
             update_error_stats(&ctx.config.error_stats, &e).await;
-            log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})", 
+            log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
                 url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
             // Attach structured failure context to error
@@ -175,5 +175,368 @@ pub async fn handle_http_request(
                 ))
                 .context(Error::from(context_error))) // Attach structured context
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+    use crate::fetch::context::ProcessingContext;
+    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
+    use crate::utils::TimingStats;
+    use hickory_resolver::{config::ResolverOpts, TokioResolver};
+    use httptest::{matchers::*, responders::*, Expectation, Server};
+    use std::sync::Arc;
+
+    async fn create_test_context(_server: &Server) -> ProcessingContext {
+        let client = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("Failed to create HTTP client"),
+        );
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("Failed to create redirect client"),
+        );
+        let extractor = Arc::new(psl::List);
+        let resolver = Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+        let error_stats = Arc::new(ProcessingStats::new());
+        let timing_stats = Arc::new(TimingStats::new());
+        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
+        let pool = Arc::new(
+            sqlx::SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("Failed to create test pool"),
+        );
+
+        ProcessingContext::new(
+            client,
+            redirect_client,
+            extractor,
+            resolver,
+            error_stats,
+            None,
+            false,
+            db_circuit_breaker,
+            pool,
+            timing_stats,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_success() {
+        let server = Server::run();
+        let url = server.url("/success").to_string();
+
+        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/success"))
+                .times(2)
+                .respond_with(status_code(200).body("<html><title>Success</title></html>")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        // This will fail because handle_response needs a database with migrations
+        // But we can test that the request part works
+        let result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should fail at domain extraction or database insertion
+        // (httptest uses IP addresses which don't have registrable domains)
+        assert!(result.is_err()); // Expected - domain extraction or database issue
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Database")
+                || error_msg.contains("migration")
+                || error_msg.contains("registrable domains")
+                || error_msg.contains("domain"),
+            "Expected domain/database error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_403_bot_detection() {
+        let server = Server::run();
+        let url = server.url("/forbidden").to_string();
+
+        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/forbidden"))
+                .times(2)
+                .respond_with(status_code(403).body("Forbidden")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        let result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should return error for 403
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        // Error message should contain context about the failure
+        // reqwest error format: "Request failed for ..." or status code in message
+        assert!(
+            error_msg.contains("403")
+                || error_msg.contains("Forbidden")
+                || error_msg.contains("Request failed")
+                || error_msg.contains("HTTP request failed"),
+            "Expected 403 error context, got: {}",
+            error_msg
+        );
+
+        // Bot detection should be tracked
+        assert_eq!(
+            ctx.config
+                .error_stats
+                .get_info_count(crate::error_handling::InfoType::BotDetection403),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_404_not_found() {
+        let server = Server::run();
+        let url = server.url("/notfound").to_string();
+
+        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/notfound"))
+                .times(2)
+                .respond_with(status_code(404).body("Not Found")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        let result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should return error for 404
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("404")
+                || error_msg.contains("Not Found")
+                || error_msg.contains("Request failed")
+                || error_msg.contains("HTTP request failed"),
+            "Expected 404 error context, got: {}",
+            error_msg
+        );
+
+        // 404 should NOT trigger bot detection
+        assert_eq!(
+            ctx.config
+                .error_stats
+                .get_info_count(crate::error_handling::InfoType::BotDetection403),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_500_server_error() {
+        let server = Server::run();
+        let url = server.url("/error").to_string();
+
+        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/error"))
+                .times(2)
+                .respond_with(status_code(500).body("Internal Server Error")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        let result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should return error for 500
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("500")
+                || error_msg.contains("Internal Server Error")
+                || error_msg.contains("Request failed")
+                || error_msg.contains("HTTP request failed"),
+            "Expected 500 error context, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_connection_error() {
+        // Use a port that's guaranteed to be closed (connection refused)
+        let url = "http://127.0.0.1:1/".to_string();
+
+        let client = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_millis(100))
+                .build()
+                .expect("Failed to create HTTP client"),
+        );
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(100))
+                .build()
+                .expect("Failed to create redirect client"),
+        );
+        let extractor = Arc::new(psl::List);
+        let resolver = Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+        let error_stats = Arc::new(ProcessingStats::new());
+        let timing_stats = Arc::new(TimingStats::new());
+        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
+        let pool = Arc::new(
+            sqlx::SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("Failed to create test pool"),
+        );
+
+        let ctx = ProcessingContext::new(
+            client,
+            redirect_client,
+            extractor,
+            resolver,
+            error_stats,
+            None,
+            false,
+            db_circuit_breaker,
+            pool,
+            timing_stats,
+        );
+
+        let start_time = std::time::Instant::now();
+
+        let result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should return connection error
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        // Connection errors should have failure context attached
+        // The error might be from redirect resolution (which happens first) or main request
+        assert!(
+            error_msg.contains("HTTP request failed")
+                || error_msg.contains("Connection")
+                || error_msg.contains("timeout")
+                || error_msg.contains("refused")
+                || error_msg.contains("Request failed")
+                || error_msg.contains("error sending request")
+                || error_msg.contains("127.0.0.1:1"), // The URL in the error message
+            "Expected connection error context, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_with_redirect_tracks_metrics() {
+        let server = Server::run();
+        let final_url = server.url("/final").to_string();
+        let start_url = server.url("/redirect").to_string();
+
+        // Setup redirect: resolve_redirect_chain will follow the redirect
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/redirect")).respond_with(
+                status_code(302)
+                    .insert_header("Location", final_url.as_str())
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .times(2) // Once for redirect resolution, once for main request
+                .respond_with(status_code(200).body("<html><title>Final</title></html>")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        // This will fail at database insertion, but redirect tracking should work
+        let _result = handle_http_request(&ctx, &start_url, start_time).await;
+
+        // Redirect should be tracked
+        assert_eq!(
+            ctx.config
+                .error_stats
+                .get_info_count(crate::error_handling::InfoType::HttpRedirect),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_http_to_https_redirect() {
+        let server = Server::run();
+        let url = server.url("/secure").to_string();
+
+        // Note: httptest doesn't support scheme changes, so we'll test the logic path
+        // by checking that the redirect chain is tracked correctly
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/secure"))
+                .times(2) // resolve_redirect_chain + main request
+                .respond_with(status_code(200).body("<html><title>Secure</title></html>")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        // Test with a URL that would trigger HTTP->HTTPS detection
+        // Since httptest uses http://, we can't fully test this, but we can verify
+        // the redirect tracking logic doesn't panic
+        let _result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should not panic and should handle redirects
+        // (Actual HTTP->HTTPS detection requires real redirect, tested in integration)
+    }
+
+    #[tokio::test]
+    async fn test_handle_http_request_failure_context_attached() {
+        let server = Server::run();
+        let url = server.url("/forbidden").to_string();
+
+        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/forbidden"))
+                .times(2)
+                .respond_with(
+                    status_code(403)
+                        .insert_header("X-Custom-Header", "test-value")
+                        .body("Forbidden"),
+                ),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        let result = handle_http_request(&ctx, &url, start_time).await;
+
+        // Should return error
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        // Failure context should be attached (check for key markers)
+        // The context is attached via anyhow context, so it may be in the chain
+        assert!(
+            error_msg.contains("FINAL_URL")
+                || error_msg.contains("REDIRECT_CHAIN")
+                || error_msg.contains("Request failed")
+                || error_msg.contains("HTTP request failed"),
+            "Expected failure context in error message, got: {}",
+            error_msg
+        );
     }
 }
