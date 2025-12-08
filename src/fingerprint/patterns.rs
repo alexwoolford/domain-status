@@ -536,4 +536,86 @@ mod tests {
         // The key behavior is that it doesn't panic
         let _ = result;
     }
+
+    #[test]
+    fn test_matches_pattern_very_long_string() {
+        // Test pattern matching with very long strings (performance/overflow edge case)
+        let very_long_text = "A".repeat(1_000_000);
+        let pattern = "test";
+
+        // Should handle very long strings without panicking or excessive memory usage
+        let result = matches_pattern(pattern, &very_long_text);
+        assert!(!result, "Pattern should not match in very long string");
+    }
+
+    #[test]
+    fn test_matches_pattern_special_regex_chars_in_substring() {
+        // Test that special regex characters in substring mode don't cause issues
+        // These should be treated as literal characters, not regex
+        let text = "test[pattern]with(special)chars";
+
+        // Patterns without ^ or other regex indicators should be substring matches
+        assert!(matches_pattern("[pattern]", text));
+        assert!(matches_pattern("(special)", text));
+        assert!(matches_pattern("chars", text));
+    }
+
+    #[test]
+    fn test_matches_pattern_version_extraction_complex() {
+        // Test version extraction syntax with complex patterns
+        // Version extraction syntax: ";version:\\1" should be stripped before matching
+        let pattern = "^nginx/(\\d+\\.\\d+);version:\\1";
+        let text = "nginx/1.18.0";
+
+        // Should match the pattern part (before ;) and ignore version extraction
+        assert!(matches_pattern(pattern, text));
+    }
+
+    #[test]
+    fn test_matches_pattern_regex_anchors_edge_cases() {
+        // Test regex anchors with edge cases
+        // ^ at start, $ at end
+        assert!(matches_pattern("^start", "start of text"));
+        assert!(!matches_pattern("^start", "text with start"));
+        assert!(matches_pattern("end$", "text with end"));
+        assert!(!matches_pattern("end$", "end of text with more"));
+        assert!(matches_pattern("^exact$", "exact"));
+        assert!(!matches_pattern("^exact$", "not exact"));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_empty_patterns_vector() {
+        // Test with empty patterns vector (edge case)
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+
+        // Empty patterns should not match
+        assert!(!check_meta_patterns("generator", &[], &meta_tags));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_multiple_prefixes_same_key() {
+        // Test that simple key tries all prefixes correctly
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:test".to_string(), "value1".to_string());
+        meta_tags.insert("property:test".to_string(), "value2".to_string());
+        meta_tags.insert("http-equiv:test".to_string(), "value3".to_string());
+
+        // Should match if any prefix matches
+        assert!(check_meta_patterns(
+            "test",
+            &["value1".to_string()],
+            &meta_tags
+        ));
+        assert!(check_meta_patterns(
+            "test",
+            &["value2".to_string()],
+            &meta_tags
+        ));
+        assert!(check_meta_patterns(
+            "test",
+            &["value3".to_string()],
+            &meta_tags
+        ));
+    }
 }

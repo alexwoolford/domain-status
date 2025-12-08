@@ -609,4 +609,142 @@ mod tests {
         // Should not match because script_tag_ids doesn't contain "__NEXT_DATA__"
         assert!(!result);
     }
+
+    #[test]
+    fn test_matches_technology_cookie_empty_pattern() {
+        // Test that empty cookie pattern matches any value (special case in code)
+        let mut tech = create_empty_technology();
+        tech.cookies.insert("session".to_string(), String::new()); // Empty pattern
+
+        let mut cookies = HashMap::new();
+        cookies.insert("session".to_string(), "any_value".to_string());
+
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &HashMap::new(),
+            cookies: &cookies,
+            meta_tags: &HashMap::new(),
+            script_sources: &[],
+            html_text: "",
+            url: "https://example.com",
+            script_tag_ids: &HashSet::new(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        // Empty pattern should match any cookie value
+        assert!(result);
+    }
+
+    #[test]
+    fn test_matches_technology_header_case_sensitivity() {
+        // Test that header matching is case-insensitive (headers normalized to lowercase)
+        let mut tech = create_empty_technology();
+        tech.headers
+            .insert("server".to_string(), "nginx".to_string());
+
+        // Headers should be normalized to lowercase before matching
+        let mut headers = HashMap::new();
+        headers.insert("server".to_string(), "NGINX/1.18.0".to_string()); // Uppercase value
+
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &headers,
+            cookies: &HashMap::new(),
+            meta_tags: &HashMap::new(),
+            script_sources: &[],
+            html_text: "",
+            url: "https://example.com",
+            script_tag_ids: &HashSet::new(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        // Pattern matching is case-sensitive, so "nginx" won't match "NGINX"
+        // This tests the actual behavior (case-sensitive pattern matching)
+        assert!(
+            !result,
+            "Case-sensitive pattern 'nginx' should not match 'NGINX'"
+        );
+    }
+
+    #[test]
+    fn test_matches_technology_url_pattern_special_chars() {
+        // Test URL pattern matching with special characters
+        let mut tech = create_empty_technology();
+        tech.url.push("example\\.com".to_string()); // Escaped dot in regex
+
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &HashMap::new(),
+            cookies: &HashMap::new(),
+            meta_tags: &HashMap::new(),
+            script_sources: &[],
+            html_text: "",
+            url: "https://example.com/page",
+            script_tag_ids: &HashSet::new(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        // Escaped dot should match literal dot
+        assert!(result);
+    }
+
+    #[test]
+    fn test_matches_technology_script_source_special_chars() {
+        // Test script source matching with URL-encoded and special characters
+        let mut tech = create_empty_technology();
+        tech.script.push("jquery".to_string());
+
+        let script_sources = vec![
+            "https://example.com/jquery.min.js".to_string(),
+            "https://cdn.example.com/libs/jquery/3.6.0/jquery.js".to_string(),
+        ];
+
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &HashMap::new(),
+            cookies: &HashMap::new(),
+            meta_tags: &HashMap::new(),
+            script_sources: &script_sources,
+            html_text: "",
+            url: "https://example.com",
+            script_tag_ids: &HashSet::new(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        // Should match script sources containing "jquery"
+        assert!(result);
+    }
+
+    #[test]
+    fn test_matches_technology_html_pattern_very_long_text() {
+        // Test HTML pattern matching with very long HTML text
+        let mut tech = create_empty_technology();
+        tech.html.push("WordPress".to_string());
+
+        // Create very long HTML text
+        let html_text = format!("<html><body>{}</body></html>", "content ".repeat(10000));
+
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &HashMap::new(),
+            cookies: &HashMap::new(),
+            meta_tags: &HashMap::new(),
+            script_sources: &[],
+            html_text: &html_text,
+            url: "https://example.com",
+            script_tag_ids: &HashSet::new(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        // Should handle very long text without panicking
+        assert!(
+            !result,
+            "Should not match 'WordPress' in long text without that word"
+        );
+    }
 }

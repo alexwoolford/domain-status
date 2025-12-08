@@ -165,4 +165,46 @@ mod tests {
         let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City"); // mixed case
         assert!(result.is_err()); // Should not match due to case sensitivity
     }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_very_large_file() {
+        // Test extraction of very large .mmdb file (performance/memory edge case)
+        let large_content = vec![0u8; 10_000_000]; // 10MB
+        let tar_gz = create_test_tar_gz(&[("GeoLite2-City.mmdb", &large_content)]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 10_000_000);
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_multiple_mmdb_files() {
+        // Test archive with multiple .mmdb files (should extract first match)
+        let city_content = b"city mmdb";
+        let asn_content = b"asn mmdb";
+        let tar_gz = create_test_tar_gz(&[
+            ("GeoLite2-ASN.mmdb", asn_content),
+            ("GeoLite2-City.mmdb", city_content),
+        ]);
+
+        let result = extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City");
+        assert!(result.is_ok());
+        // Should extract City, not ASN (first match in iteration order)
+        assert_eq!(result.unwrap(), city_content);
+    }
+
+    #[test]
+    fn test_extract_mmdb_from_tar_gz_corrupted_tar() {
+        // Test with corrupted tar (valid gzip but invalid tar)
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"not a valid tar file").unwrap();
+        let corrupted_gz = encoder.finish().unwrap();
+
+        let result = extract_mmdb_from_tar_gz(&corrupted_gz, "GeoLite2-City");
+        assert!(result.is_err());
+    }
 }
