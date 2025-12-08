@@ -5,8 +5,22 @@
 
 use anyhow::{Error, Result};
 use reqwest::Url;
+use url::Host;
 
 use crate::fetch::request::RequestHeaders;
+use crate::security::validate_url_safe;
+
+/// Checks if two hosts match (same origin check for SSRF protection)
+/// Allows same-origin redirects (e.g., localhost to localhost) while blocking
+/// cross-origin redirects to private IPs
+fn hosts_match(host1: Host<&str>, host2: Host<&str>) -> bool {
+    match (host1, host2) {
+        (Host::Domain(d1), Host::Domain(d2)) => d1 == d2,
+        (Host::Ipv4(ip1), Host::Ipv4(ip2)) => ip1 == ip2,
+        (Host::Ipv6(ip1), Host::Ipv6(ip2)) => ip1 == ip2,
+        _ => false,
+    }
+}
 
 /// Checks if an HTTP status code indicates a redirect.
 ///
@@ -94,6 +108,32 @@ pub async fn resolve_redirect_chain(
                 };
                 let new_url = Url::parse(loc_str)
                     .or_else(|_| Url::parse(&current).and_then(|base| base.join(loc_str)))?;
+
+                // SSRF protection: validate redirect URL is safe before following
+                // Allow same-origin redirects (e.g., localhost to localhost) but block
+                // cross-origin redirects to private IPs
+                let new_url_str = new_url.to_string();
+                let current_url = Url::parse(&current).ok();
+                let is_same_origin = current_url
+                    .as_ref()
+                    .and_then(|c| c.host())
+                    .and_then(|c_host| new_url.host().map(|n_host| hosts_match(c_host, n_host)))
+                    .unwrap_or(false);
+
+                if !is_same_origin {
+                    // Only validate if redirecting to a different origin
+                    if let Err(e) = validate_url_safe(&new_url_str) {
+                        log::warn!(
+                            "Blocked unsafe cross-origin redirect from {} to {}: {}. Stopping redirect chain.",
+                            current,
+                            new_url_str,
+                            e
+                        );
+                        // Break here: we've reached an unsafe redirect
+                        // last_fetched_url is the final URL we actually fetched
+                        break;
+                    }
+                }
 
                 // Check if we've reached max_hops - if so, don't follow the redirect
                 // Return the last URL we actually fetched instead of the Location header URL
@@ -474,6 +514,124 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(result_final, final_url);
+        assert_eq!(chain.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_blocks_private_ip() {
+        // Test that redirects to private IPs are blocked (SSRF protection)
+        let server = Server::run();
+        let start_url = server.url("/").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", "http://127.0.0.1:8080")
+                    .body("Redirect to private IP"),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        // Should stop at the start URL, not follow redirect to private IP
+        assert_eq!(result_final, start_url);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0], start_url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_blocks_localhost() {
+        // Test that redirects to localhost are blocked (SSRF protection)
+        let server = Server::run();
+        let start_url = server.url("/").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", "http://localhost:8080")
+                    .body("Redirect to localhost"),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        // Should stop at the start URL, not follow redirect to localhost
+        assert_eq!(result_final, start_url);
+        assert_eq!(chain.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_blocks_unsafe_scheme() {
+        // Test that redirects to unsafe schemes (file://, etc.) are blocked
+        let server = Server::run();
+        let start_url = server.url("/").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", "file:///etc/passwd")
+                    .body("Redirect to file://"),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        // Should stop at the start URL, not follow redirect to file://
+        assert_eq!(result_final, start_url);
+        assert_eq!(chain.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_allows_public_urls() {
+        // Test that redirects to public URLs are allowed
+        let server = Server::run();
+        let start_url = server.url("/").to_string();
+        let final_url = server.url("/final").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", final_url.as_str())
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .respond_with(status_code(200).body("OK")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        // Should follow redirect to public URL
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
     }
