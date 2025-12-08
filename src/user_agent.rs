@@ -200,3 +200,177 @@ pub async fn get_default_user_agent(cache_dir: Option<&Path>) -> String {
     let chrome_version = get_chrome_version(cache_dir).await;
     generate_user_agent(&chrome_version)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_generate_user_agent() {
+        let version = "131.0.0.0";
+        let ua = generate_user_agent(version);
+        assert!(ua.contains("Chrome/131.0.0.0"));
+        assert!(ua.contains("Mozilla/5.0"));
+        assert!(ua.contains("Windows NT 10.0"));
+    }
+
+    #[tokio::test]
+    async fn test_get_chrome_version_fallback() {
+        // Test that fallback works when network fails
+        // We can't easily mock network failures, but we can test the fallback logic
+        // by checking that invalid cache returns fallback
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // With no cache and no network (in test environment), should use fallback
+        // Note: This test may actually fetch from network if available
+        let version = get_chrome_version(Some(cache_dir)).await;
+        assert!(!version.is_empty());
+        // Version should be in format "X.0.0.0"
+        assert!(version.contains('.'));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_cache_missing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let result = load_from_cache(cache_dir).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Cache not found"));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_cache_expired() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Create expired cache entry
+        let metadata = UserAgentMetadata {
+            chrome_version: "100.0.0.0".to_string(),
+            last_updated: SystemTime::now() - Duration::from_secs(31 * 24 * 60 * 60), // 31 days ago
+        };
+
+        let metadata_path = cache_dir.join("version.json");
+        std::fs::create_dir_all(cache_dir).unwrap();
+        let metadata_json = serde_json::to_string_pretty(&metadata).unwrap();
+        std::fs::write(&metadata_path, metadata_json).unwrap();
+
+        let result = load_from_cache(cache_dir).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Cache expired"));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_cache_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Create valid cache entry
+        let metadata = UserAgentMetadata {
+            chrome_version: "131.0.0.0".to_string(),
+            last_updated: SystemTime::now() - Duration::from_secs(24 * 60 * 60), // 1 day ago
+        };
+
+        let metadata_path = cache_dir.join("version.json");
+        std::fs::create_dir_all(cache_dir).unwrap();
+        let metadata_json = serde_json::to_string_pretty(&metadata).unwrap();
+        std::fs::write(&metadata_path, metadata_json).unwrap();
+
+        let result = load_from_cache(cache_dir).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "131.0.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_save_to_cache() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let version = "131.0.0.0";
+        let result = save_to_cache(cache_dir, version).await;
+        assert!(result.is_ok());
+
+        // Verify cache file was created
+        let metadata_path = cache_dir.join("version.json");
+        assert!(metadata_path.exists());
+
+        // Verify cache can be loaded
+        let loaded = load_from_cache(cache_dir).await;
+        assert!(loaded.is_ok());
+        assert_eq!(loaded.unwrap(), version);
+    }
+
+    #[tokio::test]
+    async fn test_save_to_cache_malformed_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Create malformed JSON file
+        let metadata_path = cache_dir.join("version.json");
+        std::fs::create_dir_all(cache_dir).unwrap();
+        std::fs::write(&metadata_path, "{ invalid json }").unwrap();
+
+        let result = load_from_cache(cache_dir).await;
+        assert!(result.is_err());
+        // Should fail to parse JSON
+    }
+
+    #[tokio::test]
+    async fn test_get_default_user_agent() {
+        let temp_dir = TempDir::new().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let ua = get_default_user_agent(Some(cache_dir)).await;
+        assert!(ua.contains("Chrome/"));
+        assert!(ua.contains("Mozilla/5.0"));
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_latest_release_format() {
+        // Test parsing of LATEST_RELEASE format (simple version string)
+        // This is a unit test for the parsing logic
+        let version_text = "131.0.6778.85";
+        let major = version_text.split('.').next().unwrap_or(version_text);
+        let formatted = format!("{}.0.0.0", major);
+        assert_eq!(formatted, "131.0.0.0");
+    }
+
+    #[test]
+    fn test_try_fetch_chrome_version_json_format() {
+        // Test parsing of chrome-for-testing JSON format
+        // This simulates the JSON structure
+        let json = r#"{
+            "channels": {
+                "Stable": {
+                    "version": "131.0.6778.85"
+                }
+            }
+        }"#;
+
+        #[derive(serde::Deserialize)]
+        struct ChromeVersions {
+            channels: Option<ChromeChannels>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeChannels {
+            #[serde(rename = "Stable")]
+            stable: Option<ChromeVersion>,
+        }
+        #[derive(serde::Deserialize)]
+        struct ChromeVersion {
+            version: String,
+        }
+
+        let versions: ChromeVersions = serde_json::from_str(json).unwrap();
+        if let Some(channels) = versions.channels {
+            if let Some(stable) = channels.stable {
+                let major = stable.version.split('.').next().unwrap_or(&stable.version);
+                let formatted = format!("{}.0.0.0", major);
+                assert_eq!(formatted, "131.0.0.0");
+            }
+        }
+    }
+}

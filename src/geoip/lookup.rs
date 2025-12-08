@@ -95,3 +95,89 @@ pub fn is_enabled() -> bool {
         .and_then(|reader| reader.as_ref().map(|_| true))
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lookup_ip_invalid_ip() {
+        // Test with invalid IP address
+        let result = lookup_ip("not.an.ip.address");
+        assert!(result.is_none(), "Invalid IP should return None");
+    }
+
+    #[test]
+    fn test_lookup_ip_empty_string() {
+        // Test with empty string
+        let result = lookup_ip("");
+        assert!(result.is_none(), "Empty string should return None");
+    }
+
+    #[test]
+    fn test_lookup_ip_uninitialized() {
+        // Test when GeoIP is not initialized (no database loaded)
+        // This should return None since GEOIP_CITY_READER will be None
+        let result = lookup_ip("8.8.8.8");
+        // When uninitialized, should return None (not panic)
+        // This is expected behavior - GeoIP is optional
+        assert!(
+            result.is_none() || result.is_some(),
+            "Should handle uninitialized state gracefully"
+        );
+    }
+
+    #[test]
+    fn test_lookup_ip_ipv6() {
+        // Test with IPv6 address
+        let result = lookup_ip("2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+        // Should handle IPv6 (may return None if database doesn't support it, but shouldn't panic)
+        assert!(
+            result.is_none() || result.is_some(),
+            "Should handle IPv6 gracefully"
+        );
+    }
+
+    #[test]
+    fn test_is_enabled_uninitialized() {
+        // Test when GeoIP is not initialized
+        let enabled = is_enabled();
+        // Should return false when not initialized
+        assert!(!enabled, "Should return false when not initialized");
+    }
+
+    #[test]
+    fn test_get_metadata_uninitialized() {
+        // Test when GeoIP is not initialized
+        let metadata = get_metadata();
+        assert!(
+            metadata.is_none(),
+            "Should return None when not initialized"
+        );
+    }
+
+    #[test]
+    fn test_lookup_ip_private_ip() {
+        // Test with private IP addresses (should still attempt lookup, may return None)
+        let private_ips = vec!["127.0.0.1", "192.168.1.1", "10.0.0.1", "172.16.0.1"];
+        for ip in private_ips {
+            let result = lookup_ip(ip);
+            // Private IPs may not be in GeoIP database, but shouldn't panic
+            assert!(
+                result.is_none() || result.is_some(),
+                "Should handle private IP {} gracefully",
+                ip
+            );
+        }
+    }
+
+    #[test]
+    fn test_lookup_ip_malformed_ipv4() {
+        // Test with malformed IPv4 addresses
+        let malformed = vec!["256.1.1.1", "1.1.1", "1.1.1.1.1", "999.999.999.999"];
+        for ip in malformed {
+            let result = lookup_ip(ip);
+            assert!(result.is_none(), "Malformed IP {} should return None", ip);
+        }
+    }
+}

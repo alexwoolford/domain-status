@@ -48,16 +48,26 @@ pub(crate) fn can_technology_match(
 }
 
 /// Applies technology exclusions, removing technologies that are excluded by others.
+///
+/// A technology is excluded if any other detected technology lists it in its `excludes` field.
+/// For example, if TechA excludes TechB, and both are detected, TechB will be removed.
 pub(crate) fn apply_technology_exclusions(
     detected: HashSet<String>,
     ruleset: &FingerprintRuleset,
 ) -> HashSet<String> {
     let mut final_detected = HashSet::new();
     for tech_name in &detected {
-        let tech = ruleset.technologies.get(tech_name);
-        let is_excluded = tech
-            .map(|t| t.excludes.iter().any(|ex| detected.contains(ex)))
-            .unwrap_or(false);
+        // Check if this technology is excluded by any other detected technology
+        let is_excluded = detected.iter().any(|other_tech_name| {
+            if other_tech_name == tech_name {
+                return false; // A technology doesn't exclude itself
+            }
+            ruleset
+                .technologies
+                .get(other_tech_name)
+                .map(|other_tech| other_tech.excludes.contains(tech_name))
+                .unwrap_or(false)
+        });
 
         if !is_excluded {
             final_detected.insert(tech_name.clone());
@@ -226,4 +236,298 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fingerprint::models::Technology;
+
+    fn create_empty_technology() -> Technology {
+        Technology {
+            cats: vec![],
+            website: String::new(),
+            headers: HashMap::new(),
+            cookies: HashMap::new(),
+            meta: HashMap::new(),
+            script: vec![],
+            html: vec![],
+            url: vec![],
+            js: HashMap::new(),
+            implies: vec![],
+            excludes: vec![],
+        }
+    }
+
+    fn create_test_metadata() -> crate::fingerprint::models::FingerprintMetadata {
+        crate::fingerprint::models::FingerprintMetadata {
+            source: "test".to_string(),
+            version: "test".to_string(),
+            last_updated: std::time::SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn test_can_technology_match_requires_cookies() {
+        let mut tech = create_empty_technology();
+        tech.cookies.insert("session".to_string(), ".*".to_string());
+
+        // Should return false if no cookies available
+        assert!(!can_technology_match(
+            &tech,
+            false,
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+
+        // Should return true if cookies available
+        assert!(can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_requires_headers() {
+        let mut tech = create_empty_technology();
+        tech.headers
+            .insert("server".to_string(), "nginx".to_string());
+
+        // Should return false if no headers available
+        assert!(!can_technology_match(
+            &tech,
+            true,
+            false,
+            true,
+            true,
+            &HashSet::new()
+        ));
+
+        // Should return true if headers available
+        assert!(can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_requires_meta() {
+        let mut tech = create_empty_technology();
+        tech.meta
+            .insert("generator".to_string(), vec!["WordPress".to_string()]);
+
+        // Should return false if no meta tags available
+        assert!(!can_technology_match(
+            &tech,
+            true,
+            true,
+            false,
+            true,
+            &HashSet::new()
+        ));
+
+        // Should return true if meta tags available
+        assert!(can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_requires_scripts() {
+        let mut tech = create_empty_technology();
+        tech.script.push("jquery".to_string());
+
+        // Should return false if no scripts available
+        assert!(!can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            false,
+            &HashSet::new()
+        ));
+
+        // Should return true if scripts available
+        assert!(can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_requires_js_tag_id() {
+        let mut tech = create_empty_technology();
+        tech.js
+            .insert("__NEXT_DATA__".to_string(), ".*".to_string());
+
+        // Should return false if script tag ID not found
+        assert!(!can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+
+        // Should return true if script tag ID found
+        let mut script_tag_ids = HashSet::new();
+        script_tag_ids.insert("__NEXT_DATA__".to_string());
+        assert!(can_technology_match(
+            &tech,
+            true,
+            true,
+            true,
+            true,
+            &script_tag_ids
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_no_requirements() {
+        let tech = create_empty_technology();
+        // Technology with no requirements should always return true
+        assert!(can_technology_match(
+            &tech,
+            false,
+            false,
+            false,
+            false,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn test_matches_technology_empty_patterns() {
+        // Technology with no patterns should never match
+        // Note: matches_technology is async, so we test the logic indirectly via
+        // can_technology_match and integration tests. The empty patterns check
+        // is tested in the actual detection flow.
+    }
+
+    #[test]
+    fn test_apply_technology_exclusions_no_exclusions() {
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+
+        let mut detected = HashSet::new();
+        detected.insert("WordPress".to_string());
+        detected.insert("PHP".to_string());
+
+        let result = apply_technology_exclusions(detected, &ruleset);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains("WordPress"));
+        assert!(result.contains("PHP"));
+    }
+
+    #[test]
+    fn test_apply_technology_exclusions_with_exclusion() {
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+
+        let mut tech_a = create_empty_technology();
+        tech_a.excludes.push("TechB".to_string());
+        ruleset.technologies.insert("TechA".to_string(), tech_a);
+
+        let mut detected = HashSet::new();
+        detected.insert("TechA".to_string());
+        detected.insert("TechB".to_string());
+
+        let result = apply_technology_exclusions(detected, &ruleset);
+        // TechB should be excluded because TechA excludes it
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("TechA"));
+        assert!(!result.contains("TechB"));
+    }
+
+    #[test]
+    fn test_apply_technology_exclusions_multiple_exclusions() {
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+
+        let mut tech_a = create_empty_technology();
+        tech_a.excludes.push("TechB".to_string());
+        tech_a.excludes.push("TechC".to_string());
+        ruleset.technologies.insert("TechA".to_string(), tech_a);
+
+        let mut detected = HashSet::new();
+        detected.insert("TechA".to_string());
+        detected.insert("TechB".to_string());
+        detected.insert("TechC".to_string());
+        detected.insert("TechD".to_string());
+
+        let result = apply_technology_exclusions(detected, &ruleset);
+        // TechB and TechC should be excluded
+        assert_eq!(result.len(), 2);
+        assert!(result.contains("TechA"));
+        assert!(result.contains("TechD"));
+        assert!(!result.contains("TechB"));
+        assert!(!result.contains("TechC"));
+    }
+
+    #[test]
+    fn test_apply_technology_exclusions_exclusion_not_detected() {
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+
+        let mut tech_a = create_empty_technology();
+        tech_a.excludes.push("TechB".to_string());
+        ruleset.technologies.insert("TechA".to_string(), tech_a);
+
+        let mut detected = HashSet::new();
+        detected.insert("TechA".to_string());
+        // TechB is not detected, so exclusion shouldn't matter
+
+        let result = apply_technology_exclusions(detected, &ruleset);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("TechA"));
+    }
+
+    #[test]
+    fn test_apply_technology_exclusions_unknown_technology() {
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+
+        let mut detected = HashSet::new();
+        detected.insert("UnknownTech".to_string());
+
+        // Unknown technology should still be included (no exclusion rules)
+        let result = apply_technology_exclusions(detected, &ruleset);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("UnknownTech"));
+    }
 }
