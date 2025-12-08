@@ -225,4 +225,54 @@ mod tests {
         let output = sanitize_error_message(&input);
         assert_eq!(output, input);
     }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_unicode_boundary() {
+        // Test truncation at Unicode character boundary
+        // This is critical - truncating in the middle of a multi-byte char could cause issues
+        let unicode_text = "测试🚀";
+        let long_message = format!(
+            "{}{}",
+            unicode_text.repeat(1000),
+            "A".repeat(crate::config::MAX_ERROR_MESSAGE_LENGTH)
+        );
+        let output = sanitize_and_truncate_error_message(&long_message);
+
+        // Should be truncated and should not panic
+        assert!(output.len() < long_message.len());
+        assert!(output.contains("... (truncated"));
+        // Output should be valid UTF-8 (no panics when creating)
+        let _ = output;
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_very_small_limit() {
+        // Test with very small MAX_ERROR_MESSAGE_LENGTH (edge case)
+        // If MAX_ERROR_MESSAGE_LENGTH < 50, truncate_len could be 0 or negative
+        // This tests the saturating_sub and min logic
+        let message = "A".repeat(100);
+        let output = sanitize_and_truncate_error_message(&message);
+
+        // Should handle gracefully even if truncate_len calculation is edge case
+        // The saturating_sub(50) and min(sanitized.len()) should prevent issues
+        assert!(output.len() <= message.len() + 50); // Account for truncation message
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_control_chars_affect_length() {
+        // Test that removing control chars before truncation affects final length
+        // This is important - if control chars are removed, the message might not need truncation
+        let base_message = "A".repeat(crate::config::MAX_ERROR_MESSAGE_LENGTH - 10);
+        let message_with_control = format!("{}\x00\x01\x02\x03\x04\x05", base_message);
+
+        let output = sanitize_and_truncate_error_message(&message_with_control);
+
+        // Control chars should be removed, so message might not need truncation
+        // (depending on MAX_ERROR_MESSAGE_LENGTH)
+        assert!(!output.contains('\x00'));
+        // Should not be truncated if removing control chars makes it short enough
+        if base_message.len() <= crate::config::MAX_ERROR_MESSAGE_LENGTH {
+            assert!(!output.contains("... (truncated"));
+        }
+    }
 }

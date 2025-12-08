@@ -481,4 +481,54 @@ mod tests {
             without_cache_time, with_cache_time, speedup
         );
     }
+
+    #[test]
+    fn test_matches_pattern_regex_fallback_edge_cases() {
+        // Test edge cases where regex compilation fails and falls back to substring
+        // These are critical because invalid regex could cause false positives
+
+        // Pattern with regex chars but invalid syntax - should fall back to substring
+        assert!(matches_pattern("[unclosed", "text with [unclosed bracket"));
+        assert!(!matches_pattern("[unclosed", "text without pattern"));
+
+        // Pattern with regex chars but invalid escape - should fall back
+        assert!(matches_pattern("\\invalid", "text with \\invalid"));
+
+        // Pattern with regex chars but unmatched parentheses - should fall back
+        assert!(matches_pattern("(unclosed", "text with (unclosed paren"));
+
+        // Pattern with regex chars but invalid quantifier - should fall back
+        assert!(matches_pattern("test{invalid", "text with test{invalid"));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_malformed_prefix() {
+        // Test edge cases with malformed prefixes
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+
+        // Key with double prefix (should not match)
+        assert!(!check_meta_patterns(
+            "property:property:og:title",
+            &["WordPress".to_string()],
+            &meta_tags
+        ));
+
+        // Key with empty prefix value
+        assert!(!check_meta_patterns(
+            "property:",
+            &["WordPress".to_string()],
+            &meta_tags
+        ));
+    }
+
+    #[test]
+    fn test_check_meta_patterns_empty_key() {
+        // Test with empty key (edge case)
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:".to_string(), "value".to_string());
+
+        // Empty key should not match
+        assert!(!check_meta_patterns("", &["value".to_string()], &meta_tags));
+    }
 }
