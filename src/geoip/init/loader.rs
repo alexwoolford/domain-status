@@ -969,6 +969,8 @@ mod tests {
     async fn test_load_from_url_retry_exponential_backoff() {
         // Test that retry logic uses exponential backoff (lines 85-112)
         // This is critical - retries should back off to avoid overwhelming servers
+        // Note: We test download_geoip_with_size_limit directly since load_from_url
+        // has SSRF protection that blocks httptest's localhost URLs
         use httptest::{matchers::*, responders::*, Expectation, Server};
         use std::time::Instant;
 
@@ -984,6 +986,7 @@ mod tests {
                 .respond_with(status_code(200).body("small response")),
         );
 
+        // Test download_geoip_with_size_limit directly (no SSRF protection)
         let url = server.url("/geoip.mmdb").to_string();
         let start = Instant::now();
         let result = download_geoip_with_size_limit(&url).await;
