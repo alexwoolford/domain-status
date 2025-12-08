@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "domain_status"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum",
