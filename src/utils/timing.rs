@@ -610,4 +610,105 @@ mod tests {
         // Should handle gracefully (may truncate but shouldn't panic)
         assert!(result > 0);
     }
+
+    #[test]
+    fn test_timing_stats_log_summary_zero_total_ms() {
+        // Test that log_summary handles zero total_ms gracefully
+        // This is critical - prevents division by zero in percentage calculations
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 0,
+            total_ms: 0,
+            ..Default::default()
+        };
+        stats.record(&metrics);
+
+        // Should not panic when logging with zero totals
+        // The percentage function at line 181-187 handles total == 0
+        stats.log_summary(None, None);
+    }
+
+    #[test]
+    fn test_timing_stats_log_summary_component_sum_validation() {
+        // Test that component sum doesn't exceed total (with overhead)
+        // This is critical for percentage accuracy
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 1000,
+            dns_forward_ms: 500,
+            dns_reverse_ms: 300,
+            dns_additional_ms: 200,
+            tls_handshake_ms: 400,
+            html_parsing_ms: 100,
+            tech_detection_ms: 50,
+            geoip_lookup_ms: 10,
+            whois_lookup_ms: 5,
+            security_analysis_ms: 2,
+            total_ms: 3000, // Total includes overhead, so sum of components < total
+        };
+
+        stats.record(&metrics);
+        let avg = stats.averages();
+
+        // Verify that sum of components is less than total (overhead exists)
+        let sum = avg.http_request_ms
+            + avg.dns_forward_ms
+            + avg.dns_reverse_ms
+            + avg.dns_additional_ms
+            + avg.tls_handshake_ms
+            + avg.html_parsing_ms
+            + avg.tech_detection_ms
+            + avg.geoip_lookup_ms
+            + avg.whois_lookup_ms
+            + avg.security_analysis_ms;
+
+        assert!(
+            sum < avg.total_ms,
+            "Component sum should be less than total (overhead exists)"
+        );
+    }
+
+    #[test]
+    fn test_timing_stats_format_timing_with_micros_edge_cases() {
+        // Test format_timing_with_micros with edge cases
+        // This tests the logic at line 137-146
+        let result1 = TimingStats::format_timing_with_micros(500, 0, "Test", 0.0);
+        // When avg_ms is 0 but sum_micros > 0, should show microsecond format
+        assert!(result1.contains("μs") || result1.contains("micros"));
+
+        let result2 = TimingStats::format_timing_with_micros(0, 0, "Test", 0.0);
+        // When both are 0, should show normal format
+        assert!(!result2.contains("μs") || result2.contains("0 ms"));
+    }
+
+    #[test]
+    fn test_timing_stats_micros_to_ms_rounding() {
+        // Test that micros_to_ms rounds correctly (line 126-128)
+        // Should round to nearest millisecond
+        assert_eq!(TimingStats::micros_to_ms(0), 0);
+        assert_eq!(TimingStats::micros_to_ms(499), 0); // Rounds down
+        assert_eq!(TimingStats::micros_to_ms(500), 1); // Rounds up
+        assert_eq!(TimingStats::micros_to_ms(1500), 2); // Rounds to nearest
+        assert_eq!(TimingStats::micros_to_ms(1999), 2); // Rounds down
+        assert_eq!(TimingStats::micros_to_ms(2000), 2); // Exact
+    }
+
+    #[test]
+    fn test_timing_stats_other_overhead_calculation() {
+        // Test that "Other/Overhead" calculation is correct (line 317-328)
+        // This is critical - ensures timing breakdown is accurate
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 1000,
+            dns_forward_ms: 500,
+            total_ms: 2000, // 500ms overhead
+            ..Default::default()
+        };
+
+        stats.record(&metrics);
+        // The log_summary calculates other_ms = total - sum of components
+        // This should be 2000 - 1500 = 500ms
+        // We test this implicitly by verifying the calculation doesn't panic
+        stats.log_summary(None, None);
+    }
 }
