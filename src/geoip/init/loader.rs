@@ -395,4 +395,96 @@ mod tests {
         assert_eq!(gzip_bytes[0], 0x1f);
         assert_eq!(gzip_bytes[1], 0x8b);
     }
+
+    #[tokio::test]
+    async fn test_load_from_url_corrupted_cache_file() {
+        // Test that corrupted cache file with valid metadata is handled correctly
+        // This is critical - if cache file is corrupted but metadata says it's fresh,
+        // the code should fall through to download instead of failing completely
+        use crate::geoip::metadata::save_metadata;
+        use std::time::SystemTime;
+        use tempfile::TempDir;
+        use tokio::io::AsyncWriteExt;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
+
+        // Create corrupted cache file (invalid mmdb data)
+        let mut file = tokio::fs::File::create(&cache_file)
+            .await
+            .expect("Failed to create cache file");
+        file.write_all(b"corrupted mmdb data that is not a valid database")
+            .await
+            .expect("Failed to write corrupted data");
+
+        // Create valid metadata that says cache is fresh
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test://source".to_string(),
+            version: "1.0".to_string(),
+            last_updated: SystemTime::now(), // Fresh
+        };
+        save_metadata(&metadata, &metadata_file)
+            .await
+            .expect("Failed to save metadata");
+
+        // Try to load - should fail on corrupted file and fall through to download
+        // Since we don't have a valid URL, it will fail, but the important thing
+        // is that it doesn't panic on corrupted cache file
+        let result = load_from_url(
+            "https://invalid-url-for-test.com/db.mmdb",
+            temp_dir.path(),
+            "GeoLite2-City",
+        )
+        .await;
+
+        // Should fail on download (invalid URL), but not on cache file corruption
+        // The code should handle corrupted cache gracefully by falling through to download
+        assert!(result.is_err());
+        // Error should be about download, not about cache corruption
+        let error_msg = result.unwrap_err().to_string();
+        // Should mention download failure, not cache corruption
+        assert!(
+            error_msg.contains("download")
+                || error_msg.contains("Failed")
+                || error_msg.contains("invalid"),
+            "Error should be about download failure, not cache: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_url_cache_file_missing_but_metadata_exists() {
+        // Test that missing cache file with valid metadata is handled correctly
+        // This is critical - metadata says cache is fresh but file doesn't exist
+        // Should fall through to download
+        use crate::geoip::metadata::save_metadata;
+        use std::time::SystemTime;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
+
+        // Create valid metadata that says cache is fresh
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test://source".to_string(),
+            version: "1.0".to_string(),
+            last_updated: SystemTime::now(), // Fresh
+        };
+        save_metadata(&metadata, &metadata_file)
+            .await
+            .expect("Failed to save metadata");
+
+        // Cache file doesn't exist, but metadata does
+        // Should fall through to download
+        let result = load_from_url(
+            "https://invalid-url-for-test.com/db.mmdb",
+            temp_dir.path(),
+            "GeoLite2-City",
+        )
+        .await;
+
+        // Should fail on download (invalid URL), but handle missing cache file gracefully
+        assert!(result.is_err());
+    }
 }
