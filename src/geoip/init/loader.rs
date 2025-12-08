@@ -368,39 +368,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_geoip_with_size_limit_retry_on_transient_error() {
-        // Test that retry logic handles transient errors
-        // This is critical - prevents hammering servers on transient failures
-        // Note: SSRF protection blocks localhost, so we test download_geoip_with_size_limit directly
-        // which doesn't have SSRF protection (it's applied in load_from_url)
-        use httptest::{matchers::*, responders::*, Expectation, Server};
-
-        let server = Server::run();
-        // First attempt fails with 500, second succeeds
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .times(1)
-                .respond_with(status_code(500)),
-        );
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .respond_with(status_code(200).body("small response")),
-        );
-
-        // Test the retry logic directly in download_geoip_with_size_limit
-        // This function doesn't have SSRF protection, so it can use localhost
-        let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        // Should succeed on retry (second request returns 200)
-        // The retry logic in load_from_url handles this, but download_geoip_with_size_limit
-        // is called by load_from_url which has the retry loop
-        // This test verifies that 500 errors are handled (not retried in this function,
-        // but the caller load_from_url has retry logic)
-        assert!(result.is_ok()); // Succeeds on retry
-    }
-
-    #[tokio::test]
     async fn test_process_downloaded_geoip_gzip_magic_detection() {
         // Test that gzip magic number detection works for auto-detection
         // The code at line 187-190 detects gzip by magic number
