@@ -596,9 +596,9 @@ mod tests {
         assert!(http_request_ms > 0);
         // Verify it's approximately the expected value (1e12 microseconds = 1e6 seconds)
         // Allow for floating point precision differences (cast to u64 truncates)
-        // 1e12 as u64 = 1000000000000
-        assert!(http_request_ms >= 999_999_000_000_000);
-        assert!(http_request_ms <= 1_000_001_000_000_000);
+        // 1e12 as u64 = 1_000_000_000_000 (1 trillion)
+        assert!(http_request_ms >= 999_999_000_000);
+        assert!(http_request_ms <= 1_000_001_000_000);
     }
 
     #[tokio::test]
