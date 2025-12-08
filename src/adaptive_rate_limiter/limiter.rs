@@ -135,10 +135,12 @@ impl AdaptiveRateLimiter {
                                 decreased
                             } else if error_rate < error_threshold * 0.5 {
                                 // Additive increase: increase by 15% (only if errors are low)
-                                // Capped at max_rps (which is 2x initial_rps) to allow adaptation while preventing runaway increases
+                                // Capped at max_rps to allow adaptation while preventing runaway increases
                                 // The cast to u32 is safe because max_rps is already a u32, so the result will never exceed u32::MAX
-                                let increased = ((current as f64 * 1.15).min(max_rps as f64) as u32)
-                                    .max(current.saturating_add(1)); // At least +1, but prevent overflow
+                                let increased_calc = (current as f64 * 1.15) as u32;
+                                let increased = increased_calc
+                                    .max(current.saturating_add(1)) // At least +1, but prevent overflow
+                                    .min(max_rps); // Ensure we never exceed max_rps
                                 if increased > current {
                                     log::info!(
                                         "Adaptive rate limiter: error rate {:.1}% < threshold {:.1}%, increasing RPS {} → {}",
