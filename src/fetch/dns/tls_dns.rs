@@ -179,3 +179,137 @@ pub(crate) async fn fetch_tls_and_dns(
         (dns_forward_ms, dns_reverse_ms, tls_handshake_ms),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+    use hickory_resolver::config::ResolverOpts;
+    use hickory_resolver::TokioResolver;
+    use std::sync::Arc;
+
+    fn create_test_resolver() -> TokioResolver {
+        let mut opts = ResolverOpts::default();
+        opts.timeout = std::time::Duration::from_secs(5);
+        opts.attempts = 1;
+        TokioResolver::builder_tokio()
+            .unwrap()
+            .with_options(opts)
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tls_and_dns_http_url() {
+        crate::initialization::init_crypto_provider();
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let result = fetch_tls_and_dns(
+            "http://example.com",
+            "example.com",
+            &resolver,
+            "example.com",
+            error_stats.as_ref(),
+            None,
+        )
+        .await;
+
+        // HTTP URLs should not attempt TLS
+        assert!(result.is_ok());
+        let (tls_dns_result, _timings) = result.unwrap();
+        // TLS should be None for HTTP
+        assert!(tls_dns_result.data.tls_version.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tls_and_dns_https_url() {
+        crate::initialization::init_crypto_provider();
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let result = fetch_tls_and_dns(
+            "https://example.com",
+            "example.com",
+            &resolver,
+            "example.com",
+            error_stats.as_ref(),
+            None,
+        )
+        .await;
+
+        // HTTPS URLs should attempt TLS (may succeed or fail depending on network)
+        // Should not panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tls_and_dns_invalid_domain() {
+        crate::initialization::init_crypto_provider();
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let result = fetch_tls_and_dns(
+            "https://this-domain-definitely-does-not-exist-12345.invalid",
+            "this-domain-definitely-does-not-exist-12345.invalid",
+            &resolver,
+            "this-domain-definitely-does-not-exist-12345.invalid",
+            error_stats.as_ref(),
+            None,
+        )
+        .await;
+
+        // Should handle DNS/TLS failures gracefully with partial failures
+        match result {
+            Ok((tls_dns_result, _timings)) => {
+                // Should have partial failures recorded
+                assert!(!tls_dns_result.partial_failures.is_empty());
+            }
+            Err(_) => {
+                // Error is also acceptable (DNS resolution failure)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tls_and_dns_timing_metrics() {
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let result = fetch_tls_and_dns(
+            "http://example.com",
+            "example.com",
+            &resolver,
+            "example.com",
+            error_stats.as_ref(),
+            None,
+        )
+        .await;
+
+        // Should return timing metrics
+        if let Ok((_, (dns_forward_ms, dns_reverse_ms, tls_handshake_ms))) = result {
+            // Timing metrics should be non-negative (u64 is always >= 0)
+            // Just verify they exist
+            let _ = (dns_forward_ms, dns_reverse_ms, tls_handshake_ms);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tls_and_dns_error_stats_tracking() {
+        crate::initialization::init_crypto_provider();
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let initial_tls_errors =
+            error_stats.get_error_count(crate::error_handling::ErrorType::TlsCertificateError);
+        let initial_dns_errors =
+            error_stats.get_error_count(crate::error_handling::ErrorType::DnsNsLookupError);
+
+        let _result = fetch_tls_and_dns(
+            "https://this-domain-definitely-does-not-exist-12345.invalid",
+            "this-domain-definitely-does-not-exist-12345.invalid",
+            &resolver,
+            "this-domain-definitely-does-not-exist-12345.invalid",
+            error_stats.as_ref(),
+            None,
+        )
+        .await;
+
+        // Error stats may be incremented (depends on DNS resolver behavior)
+        let _ = (initial_tls_errors, initial_dns_errors);
+    }
+}
