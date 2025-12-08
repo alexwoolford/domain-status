@@ -548,35 +548,39 @@ mod tests {
         // - Empty bytes (should fail gracefully)
         // - Too short for magic number check
         // - Valid gzip magic but invalid tar
-        use httptest::{matchers::*, responders::*, Expectation, Server};
+        // Note: Can't use httptest due to SSRF protection blocking localhost
+        // Instead, test the process_downloaded_geoip function directly with edge cases
         use tempfile::TempDir;
 
-        let server = Server::run();
-
-        // Test with empty response
-        let empty_body: Vec<u8> = vec![];
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/empty"))
-                .respond_with(status_code(200).body(empty_body)),
-        );
-
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let url = server.url("/empty").to_string();
+        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
 
-        let result = load_from_url(&url, temp_dir.path(), "GeoLite2-City").await;
-        // Should fail on empty response
+        // Test with empty bytes
+        let empty_bytes: Vec<u8> = vec![];
+        let result = process_downloaded_geoip(
+            empty_bytes,
+            "https://example.com/db.mmdb",
+            temp_dir.path(),
+            "GeoLite2-City",
+            &cache_file,
+            &metadata_file,
+        )
+        .await;
+        // Should fail on empty bytes (not a valid mmdb or tar.gz)
         assert!(result.is_err());
 
         // Test with single byte (too short for magic number check)
-        let server2 = Server::run();
-        let short_body: Vec<u8> = vec![b'x'];
-        server2.expect(
-            Expectation::matching(request::method_path("GET", "/short"))
-                .respond_with(status_code(200).body(short_body)),
-        );
-
-        let url2 = server2.url("/short").to_string();
-        let result2 = load_from_url(&url2, temp_dir.path(), "GeoLite2-City").await;
+        let short_bytes: Vec<u8> = vec![b'x'];
+        let result2 = process_downloaded_geoip(
+            short_bytes,
+            "https://example.com/db.mmdb",
+            temp_dir.path(),
+            "GeoLite2-City",
+            &cache_file,
+            &metadata_file,
+        )
+        .await;
         // Should fail on invalid format
         assert!(result2.is_err());
     }
