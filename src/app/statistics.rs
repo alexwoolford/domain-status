@@ -11,6 +11,9 @@ use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::utils::TimingStats;
 
 /// Prints final statistics and updates the database with run statistics.
+///
+/// This function is used internally by the library and in tests.
+#[allow(dead_code)] // Used in tests
 pub async fn print_and_save_final_statistics(
     pool: &sqlx::SqlitePool,
     run_id: &str,
@@ -34,9 +37,16 @@ pub async fn print_and_save_final_statistics(
     );
 
     // Update run statistics in database
-    database::update_run_stats(pool, run_id, total_urls, successful_urls, failed_urls_count)
-        .await
-        .context("Failed to update run statistics")?;
+    database::update_run_stats(
+        pool,
+        run_id,
+        total_urls,
+        successful_urls,
+        failed_urls_count,
+        elapsed_seconds,
+    )
+    .await
+    .context("Failed to update run statistics")?;
 
     // Print processing statistics
     print_error_statistics(error_stats);
@@ -56,6 +66,7 @@ pub async fn print_and_save_final_statistics(
 ///
 /// This provides immediate feedback to the user in a concise format.
 /// Works with both plain and JSON log formats (log::info! handles formatting).
+#[allow(dead_code)] // Used internally by print_and_save_final_statistics
 fn print_simple_summary(
     total_urls: i32,
     successful_urls: i32,
@@ -85,6 +96,8 @@ pub fn print_timing_statistics(
 }
 
 /// Prints error, warning, and info statistics to the log.
+///
+/// This function is used internally and in tests.
 pub fn print_error_statistics(error_stats: &ProcessingStats) {
     let total_errors = error_stats.total_errors();
     let total_warnings = error_stats.total_warnings();
@@ -194,11 +207,13 @@ mod tests {
         sqlx::query(
             "CREATE TABLE runs (
                 run_id TEXT PRIMARY KEY,
+                version TEXT,
                 start_time INTEGER NOT NULL,
                 end_time INTEGER,
                 total_urls INTEGER,
                 successful_urls INTEGER,
                 failed_urls INTEGER,
+                elapsed_seconds REAL,
                 fingerprints_source TEXT,
                 fingerprints_version TEXT,
                 geoip_version TEXT
@@ -220,6 +235,7 @@ mod tests {
             &pool,
             run_id,
             chrono::Utc::now().timestamp_millis(),
+            "0.1.4", // Test version
             None,
             None,
             None,
@@ -264,11 +280,13 @@ mod tests {
         sqlx::query(
             "CREATE TABLE runs (
                 run_id TEXT PRIMARY KEY,
+                version TEXT,
                 start_time INTEGER NOT NULL,
                 end_time INTEGER,
                 total_urls INTEGER,
                 successful_urls INTEGER,
                 failed_urls INTEGER,
+                elapsed_seconds REAL,
                 fingerprints_source TEXT,
                 fingerprints_version TEXT,
                 geoip_version TEXT
@@ -290,6 +308,7 @@ mod tests {
             &pool,
             run_id,
             chrono::Utc::now().timestamp_millis(),
+            "0.1.4", // Test version
             None,
             None,
             None,

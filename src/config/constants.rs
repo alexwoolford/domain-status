@@ -10,6 +10,7 @@ use std::time::Duration;
 /// Maximum concurrent requests (semaphore limit)
 /// Increased from 20 to 30 for better throughput while maintaining low bot detection risk
 pub const SEMAPHORE_LIMIT: usize = 30;
+/// Interval in seconds for logging progress updates during URL processing
 pub const LOGGING_INTERVAL: usize = 5;
 /// Per-URL processing timeout in seconds
 /// Set to 35s to allow for slow sites while still being reasonable
@@ -17,6 +18,7 @@ pub const LOGGING_INTERVAL: usize = 5;
 /// Note: DNS timeout reduced to 3s helps fail fast on DNS issues, but overall timeout kept at 35s
 /// to account for enrichment operations (GeoIP, WHOIS, technology detection, etc.)
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(35);
+/// Default database file path
 pub const DB_PATH: &str = "./url_checker.db";
 
 // Network operation timeouts
@@ -108,4 +110,5 @@ pub const RETRY_MAX_ATTEMPTS: usize = 3;
 pub const STATUS_SERVER_LOGGING_INTERVAL_SECS: u64 = 30;
 
 // HTTP status codes (for clarity and consistency)
+/// HTTP status code for "Too Many Requests" (rate limiting)
 pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;

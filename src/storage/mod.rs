@@ -20,9 +20,9 @@ pub mod pool;
 // Re-export commonly used items
 pub use batch::BatchRecord;
 pub use failure::record_url_failure;
-pub use insert::{insert_run_metadata, update_run_stats};
+pub use insert::{insert_run_metadata, query_run_history, update_run_stats, RunSummary};
 pub use migrations::run_migrations;
 pub use models::UrlRecord;
-pub use pool::init_db_pool;
+pub use pool::init_db_pool_with_path;
 
 // Note: insert_geoip_data is used internally by fetch module, not exported here

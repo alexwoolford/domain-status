@@ -15,10 +15,15 @@ use crate::config::constants::DEFAULT_USER_AGENT;
 /// verbose (Trace). Used with the `--log-level` CLI option.
 #[derive(Clone, Debug, ValueEnum)]
 pub enum LogLevel {
+    /// Only error messages
     Error,
+    /// Error and warning messages
     Warn,
+    /// Error, warning, and informational messages
     Info,
+    /// All messages except trace
     Debug,
+    /// All messages including trace
     Trace,
 }
 
@@ -41,7 +46,9 @@ impl From<LogLevel> for log::LevelFilter {
 /// - `Json`: Structured JSON format for machine parsing
 #[derive(Clone, Debug, ValueEnum)]
 pub enum LogFormat {
+    /// Human-readable format with colors (default)
     Plain,
+    /// Structured JSON format for machine parsing
     Json,
 }
 
@@ -62,12 +69,28 @@ pub enum LogFormat {
 /// # With custom database path
 /// domain_status urls.txt --db-path ./custom.db
 /// ```
-#[derive(Debug, Parser)]
+///
+/// # Library Usage
+///
+/// When using as a library, construct `Config` programmatically:
+///
+/// ```no_run
+/// use domain_status::Config;
+/// use std::path::PathBuf;
+///
+/// let config = Config {
+///     file: PathBuf::from("urls.txt"),
+///     max_concurrency: 50,
+///     rate_limit_rps: 20,
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Parser, Clone)]
 #[command(
     name = "domain_status",
     about = "Checks a list of URLs for their status and redirection."
 )]
-pub struct Opt {
+pub struct Config {
     /// File to read
     #[arg(value_parser)]
     pub file: PathBuf,
