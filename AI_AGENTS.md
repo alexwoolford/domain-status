@@ -6,7 +6,7 @@ This document codifies how AI coding agents and contributors should change, test
 
 ### Architecture snapshot
 - HTTP via `reqwest` and async `tokio` runtime
-- DNS via `hickory-resolver` (0.24)
+- DNS via `hickory-resolver` (0.25)
 - HTML parsing via `scraper`
 - TLS info via `tokio-rustls` and `x509-parser`
 - Persistence via `sqlx` (SQLite / WAL)

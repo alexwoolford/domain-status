@@ -10,12 +10,13 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 
 ## Core Components
 
-### 1. Main Orchestrator (`src/main.rs`)
+### 1. Main Orchestrator (`src/lib.rs`)
 - Reads URLs from input file line-by-line
 - Validates and normalizes URLs (adds `https://` if missing)
 - Manages concurrency via semaphore
 - Coordinates initialization and graceful shutdown
 - Tracks progress and statistics
+- **Note**: `src/main.rs` is a thin CLI wrapper that parses arguments and calls the library
 
 ### 2. HTTP Request Handler (`src/fetch/handler/`)
 - **Request Handler** (`request.rs`): Fetches URLs, follows redirects, handles retries
@@ -28,7 +29,7 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 - **HTML Parsing** (`response.rs`): Extracts title, meta tags, structured data, scripts
 - **Technology Detection** (`fingerprint/`): Detects web technologies using Wappalyzer rulesets
   - Runs in parallel with DNS/TLS fetching (independent operations)
-  - Uses JavaScript execution for dynamic detection
+  - Uses pattern matching (headers, cookies, HTML, script URLs) - **does not execute JavaScript**
 - **DNS/TLS** (`dns/`): Fetches DNS records (NS, TXT, MX), TLS certificates
   - Runs in parallel with technology detection
   - DNS forward/reverse and TLS handshake run in parallel
@@ -48,11 +49,12 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 - Records failures in `url_failures` table
 
 ### 6. Rate Limiting (`src/adaptive_rate_limiter/`)
-- Token-bucket algorithm for request rate limiting
+- Token-bucket algorithm for request rate limiting (implemented in `src/initialization/rate_limiter.rs`)
 - Adaptive adjustment based on error rates
 - Monitors 429 errors and timeouts
-- Automatically reduces RPS when error rate exceeds threshold
-- Gradually increases RPS when conditions improve
+- Automatically reduces RPS by 50% when error rate exceeds threshold (default: 20%)
+- Increases RPS by 15% when error rate is below threshold/2 (default: 10%)
+- Maximum RPS capped at 2x initial value
 
 ## Concurrency Model
 
@@ -141,5 +143,5 @@ See [DATABASE.md](DATABASE.md) for complete schema documentation.
 2. **Content Filtering**: Non-HTML responses filtered
 3. **Size Limits**: Response bodies capped at 2MB
 4. **Redirect Limits**: Maximum 10 redirect hops
-5. **JavaScript Execution**: Memory and time limits enforced
+5. **JavaScript Execution**: **Not performed** - uses pattern matching only (matches WappalyzerGo behavior)
 6. **TLS**: Uses `rustls` (no native TLS dependencies)
