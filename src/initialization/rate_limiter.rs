@@ -122,3 +122,137 @@ pub fn init_rate_limiter(
 
     Some((limiter, shutdown))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    #[test]
+    fn test_init_rate_limiter_disabled() {
+        let result = init_rate_limiter(0, 10);
+        assert!(
+            result.is_none(),
+            "Rate limiter should be disabled when RPS is 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_rate_limiter_enabled() {
+        let result = init_rate_limiter(10, 20);
+        assert!(
+            result.is_some(),
+            "Rate limiter should be enabled when RPS > 0"
+        );
+        let (limiter, _shutdown) = result.unwrap();
+        // Give background task a moment to initialize
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(limiter.current_rps(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_acquire_permits() {
+        let (limiter, _shutdown) = init_rate_limiter(10, 5).unwrap();
+
+        // Should be able to acquire permits up to burst capacity
+        for _ in 0..5 {
+            limiter.acquire().await;
+        }
+
+        // Additional acquires should wait (but we can't easily test this without timing)
+        // We verify the function doesn't panic by completing successfully
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_update_rps() {
+        let (limiter, _shutdown) = init_rate_limiter(10, 5).unwrap();
+        assert_eq!(limiter.current_rps(), 10);
+
+        limiter.update_rps(20);
+        assert_eq!(limiter.current_rps(), 20);
+
+        limiter.update_rps(5);
+        assert_eq!(limiter.current_rps(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_token_replenishment() {
+        let (limiter, _shutdown) = init_rate_limiter(10, 1).unwrap();
+
+        // Acquire the single permit
+        limiter.acquire().await;
+
+        // Wait a bit for token replenishment (100ms ticker, so 200ms should give us 2 tokens)
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Should be able to acquire again (token was replenished)
+        let acquire_result = timeout(Duration::from_millis(100), limiter.acquire()).await;
+        assert!(
+            acquire_result.is_ok(),
+            "Should be able to acquire permit after token replenishment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_shutdown() {
+        let (limiter, shutdown) = init_rate_limiter(10, 5).unwrap();
+
+        // Cancel the background task
+        shutdown.cancel();
+
+        // Wait a bit for shutdown to propagate
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Limiter should still work (shutdown just stops token replenishment)
+        // We verify it doesn't panic
+        let _ = timeout(Duration::from_millis(10), limiter.acquire()).await;
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_burst_capacity() {
+        let (limiter, _shutdown) = init_rate_limiter(1, 3).unwrap(); // 1 RPS, burst of 3
+
+        // Should be able to acquire all 3 permits immediately (burst)
+        for _ in 0..3 {
+            let acquire_result = timeout(Duration::from_millis(10), limiter.acquire()).await;
+            assert!(
+                acquire_result.is_ok(),
+                "Should be able to use burst capacity immediately"
+            );
+        }
+
+        // After burst is exhausted, should need to wait
+        // (This is hard to test reliably without flakiness, so we just verify it doesn't panic)
+        let _ = timeout(Duration::from_millis(10), limiter.acquire()).await;
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_dynamic_rps_update() {
+        let (limiter, _shutdown) = init_rate_limiter(1, 1).unwrap();
+
+        // Update to higher RPS
+        limiter.update_rps(10);
+
+        // Wait for token replenishment with new rate
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Should be able to acquire (new rate should replenish faster)
+        let acquire_result = timeout(Duration::from_millis(50), limiter.acquire()).await;
+        // May or may not succeed depending on timing, but shouldn't panic
+        let _ = acquire_result;
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_multiple_instances() {
+        let (limiter1, _shutdown1) = init_rate_limiter(10, 5).unwrap();
+        let (limiter2, _shutdown2) = init_rate_limiter(20, 10).unwrap();
+
+        // Give background tasks a moment to initialize
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Different instances should have different configurations
+        assert_eq!(limiter1.current_rps(), 10);
+        assert_eq!(limiter2.current_rps(), 20);
+    }
+}

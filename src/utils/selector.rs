@@ -53,3 +53,93 @@ pub fn parse_selector_unsafe(selector_str: &str, context: &str) -> Selector {
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_selector_with_fallback_valid() {
+        let selector = parse_selector_with_fallback("div", "test");
+        // Should parse successfully - verify by using it
+        let html = scraper::Html::parse_fragment("<div>test</div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_selector_with_fallback_invalid() {
+        let selector = parse_selector_with_fallback("div[invalid", "test");
+        // Should use fallback selector that matches nothing
+        let html = scraper::Html::parse_fragment("<div>test</div>");
+        // Fallback selector "*:not(*)" should not match anything
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_selector_with_fallback_empty() {
+        let selector = parse_selector_with_fallback("", "test");
+        // Empty selector should fail to parse and use fallback
+        let html = scraper::Html::parse_fragment("<div>test</div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_selector_with_fallback_complex_valid() {
+        let selector = parse_selector_with_fallback("div.container > p:first-child", "test");
+        // Should parse successfully
+        let html =
+            scraper::Html::parse_fragment("<div class='container'><p>first</p><p>second</p></div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_selector_with_fallback_malformed() {
+        // Use a selector that definitely won't parse
+        let selector = parse_selector_with_fallback("div[attr='unclosed[", "test");
+        // Should use fallback (selector that matches nothing)
+        let html = scraper::Html::parse_fragment("<div attr='unclosed'>test</div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_parse_selector_unsafe_invalid() {
+        // Should panic on invalid selector
+        // Use a selector that definitely won't parse (invalid syntax)
+        // Note: Some malformed selectors might actually parse due to scraper's leniency
+        // This test verifies that parse_selector_unsafe panics on parse failure
+        parse_selector_unsafe("[[[", "test");
+    }
+
+    #[test]
+    fn test_parse_selector_unsafe_valid() {
+        let selector = parse_selector_unsafe("div", "test");
+        // Should parse successfully
+        let html = scraper::Html::parse_fragment("<div>test</div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_selector_with_fallback_special_characters() {
+        // Test with various special characters that might appear in selectors
+        let selector = parse_selector_with_fallback("div#id.class[attr='value']", "test");
+        let html =
+            scraper::Html::parse_fragment("<div id='id' class='class' attr='value'>test</div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_selector_with_fallback_pseudo_selectors() {
+        let selector = parse_selector_with_fallback("div:nth-child(2)", "test");
+        let html = scraper::Html::parse_fragment("<div>first</div><div>second</div>");
+        let matches: Vec<_> = html.select(&selector).collect();
+        assert_eq!(matches.len(), 1);
+    }
+}

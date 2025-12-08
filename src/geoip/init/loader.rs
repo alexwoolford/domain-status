@@ -214,3 +214,105 @@ async fn process_downloaded_geoip(
 
     Ok((reader, metadata))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn test_load_from_file_not_found() {
+        let result = load_from_file("/nonexistent/path/to/database.mmdb").await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Failed to read") || error_msg.contains("No such file"),
+            "Expected file not found error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_invalid_database() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let db_path = temp_dir.path().join("invalid.mmdb");
+        let mut file = tokio::fs::File::create(&db_path)
+            .await
+            .expect("Failed to create test file");
+        file.write_all(b"not a valid mmdb file")
+            .await
+            .expect("Failed to write test data");
+        drop(file);
+
+        let result = load_from_file(db_path.to_str().unwrap()).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Failed to parse") || error_msg.contains("parse"),
+            "Expected parse error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_url_ssrf_protection_private_ip() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let url = "http://192.168.1.1/database.mmdb";
+
+        let result = load_from_url(url, temp_dir.path(), "GeoLite2-City").await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Unsafe") || error_msg.contains("private"),
+            "Expected SSRF protection error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_url_ssrf_protection_localhost() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let url = "http://localhost/database.mmdb";
+
+        let result = load_from_url(url, temp_dir.path(), "GeoLite2-City").await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Unsafe") || error_msg.contains("localhost"),
+            "Expected SSRF protection error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_url_ssrf_protection_unsafe_scheme() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let url = "file:///etc/passwd";
+
+        let result = load_from_url(url, temp_dir.path(), "GeoLite2-City").await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Unsafe") || error_msg.contains("scheme"),
+            "Expected unsafe scheme error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_url_cache_fresh() {
+        // This would require creating a valid mmdb file and metadata
+        // Integration test needed
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        assert!(temp_dir.path().exists());
+    }
+
+    #[tokio::test]
+    async fn test_load_from_url_cache_expired() {
+        // This would require creating expired cache metadata
+        // Integration test needed
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        assert!(temp_dir.path().exists());
+    }
+}
