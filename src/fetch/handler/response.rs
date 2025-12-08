@@ -590,9 +590,13 @@ mod tests {
         let http_request_ms: f64 = very_large_elapsed * 1_000_000.0;
         let http_request_ms = http_request_ms.min(u64::MAX as f64).max(0.0) as u64;
         // With protection, should be clamped to u64::MAX (not overflow)
-        // Note: Due to floating point precision, might be slightly less than MAX
-        // The important thing is it doesn't overflow and is a very large value
-        assert!(http_request_ms >= 1_000_000_000_000_000);
+        // Note: 1e6 * 1e6 = 1e12, which is less than u64::MAX (~1.8e19)
+        // So it should be the actual value, not clamped
+        // The important thing is the calculation doesn't overflow
+        assert!(http_request_ms > 0);
+        // Verify it's approximately the expected value (1e12 microseconds = 1e6 seconds)
+        // Allow for floating point precision differences
+        assert!((999_999_000_000_000..=1_000_001_000_000_000).contains(&http_request_ms));
     }
 
     #[tokio::test]
