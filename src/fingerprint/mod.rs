@@ -19,7 +19,7 @@
 //! or fetch external scripts. We only analyze the initial HTML response.
 
 mod detection;
-mod javascript;
+mod js_parsing;
 mod models;
 mod patterns;
 mod ruleset;
@@ -35,7 +35,7 @@ pub use ruleset::{get_ruleset_metadata, init_ruleset};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::javascript::strip_js_comments_and_strings;
+    use crate::fingerprint::js_parsing::strip_js_comments_and_strings;
     use crate::fingerprint::patterns::matches_pattern;
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
     use std::collections::{HashMap, HashSet};

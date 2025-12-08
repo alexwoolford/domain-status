@@ -38,6 +38,7 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 
 ### 4. Database Writer (`src/storage/insert/`)
 - **Direct Writes**: Records written immediately (no batching)
+- **Record Structure**: `BatchRecord` (in `src/storage/record/`) contains all data for a URL and its enrichment - despite the name, records are NOT batched, they're written immediately
 - **Transaction-Based**: Each URL record and its enrichment data written in a single transaction
 - **SQLite WAL Mode**: Enables efficient concurrent writes
 - **UPSERT Semantics**: `UNIQUE (final_domain, timestamp)` prevents duplicates

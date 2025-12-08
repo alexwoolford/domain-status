@@ -1,11 +1,12 @@
-//! JavaScript utility functions.
+//! JavaScript pattern parsing utilities (does NOT execute JavaScript).
 //!
-//! This module provides utility functions for processing JavaScript code.
+//! This module provides utility functions for parsing JavaScript patterns from HTML.
+//! These functions are used for pattern matching only - JavaScript is NOT executed.
 
 /// Strips JavaScript comments and string literals from code to avoid false positives.
 ///
-/// **Note:** This function is only used in tests. Production code relies solely on
-/// JavaScript execution for property detection, which naturally ignores comments and strings.
+/// **Note:** This function is only used in tests. Production code does NOT execute
+/// JavaScript - it only matches patterns against inline script content from HTML.
 ///
 /// Handles:
 /// - Single-line comments (// ...)

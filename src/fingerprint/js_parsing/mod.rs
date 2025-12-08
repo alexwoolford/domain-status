@@ -1,4 +1,8 @@
-//! JavaScript utility functions for technology detection.
+//! JavaScript pattern parsing utilities (does NOT execute JavaScript).
+//!
+//! This module provides utility functions for parsing JavaScript patterns from HTML,
+//! such as stripping comments and strings for pattern matching. It does NOT execute
+//! JavaScript code.
 //!
 //! **Note:** WappalyzerGo does NOT execute JavaScript and does NOT fetch external scripts.
 //! It only analyzes the initial HTML response. We match this behavior:

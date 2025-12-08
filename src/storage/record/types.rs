@@ -1,7 +1,12 @@
-//! Batch record data structure.
+//! Complete record data structure.
 //!
 //! This module defines the BatchRecord type, which contains all data
 //! needed to insert a complete URL record and its enrichment data.
+//!
+//! **Note:** Despite the name "BatchRecord", records are NOT batched.
+//! They are written directly to the database immediately. The name is
+//! historical - it represents a "batch" of related data (URL + enrichment)
+//! that gets inserted together, not a batching optimization.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
