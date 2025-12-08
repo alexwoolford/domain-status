@@ -110,9 +110,11 @@ pub(crate) fn parse_html_content(
         if let Some(id) = element.value().attr("id") {
             script_tag_ids.insert(id.to_string());
         }
-        // Extract script src URLs
+        // Extract script src URLs (skip empty src attributes)
         if let Some(src) = element.value().attr("src") {
-            script_sources.push(src.to_string());
+            if !src.is_empty() {
+                script_sources.push(src.to_string());
+            }
         }
         // Extract inline script content (limited to MAX_SCRIPT_CONTENT_SIZE per script for security)
         // This prevents DoS attacks via large scripts
@@ -168,11 +170,17 @@ pub(crate) fn parse_html_content(
     }
 
     // Extract text content (limited for performance)
-    let html_text: String = document
-        .root_element()
-        .text()
-        .take(crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS)
-        .collect();
+    // Note: Iterator::take() limits the number of items (text nodes), not characters
+    // We need to collect and truncate manually to limit by character count
+    let html_text_full: String = document.root_element().text().collect();
+    let html_text = if html_text_full.len() > crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS {
+        html_text_full
+            .chars()
+            .take(crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS)
+            .collect()
+    } else {
+        html_text_full
+    };
 
     HtmlData {
         title,
@@ -433,5 +441,135 @@ mod tests {
         // Meta tag keys should be lowercased
         assert!(result.meta_tags.contains_key("name:keywords"));
         assert!(result.meta_tags.contains_key("property:og:title"));
+    }
+
+    #[test]
+    fn test_parse_html_content_script_size_limit() {
+        // Test that large inline scripts are truncated to MAX_SCRIPT_CONTENT_SIZE
+        let large_script = "x".repeat(crate::config::MAX_SCRIPT_CONTENT_SIZE + 10000);
+        let html = format!(
+            r#"
+            <html>
+                <head>
+                    <script>{}</script>
+                </head>
+                <body></body>
+            </html>
+            "#,
+            large_script
+        );
+        let stats = test_error_stats();
+        let result = parse_html_content(&html, "example.com", &stats);
+
+        // Script content should be truncated to MAX_SCRIPT_CONTENT_SIZE
+        assert!(result.script_content.len() <= crate::config::MAX_SCRIPT_CONTENT_SIZE + 1);
+        // +1 for newline
+    }
+
+    #[test]
+    fn test_parse_html_content_html_text_limit() {
+        // Test that HTML text extraction is limited to MAX_HTML_TEXT_EXTRACTION_CHARS
+        // Create HTML with large text content
+        let large_text = "x".repeat(crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS + 10000);
+        let html = format!(r#"<html><body><p>{}</p></body></html>"#, large_text);
+        let stats = test_error_stats();
+        let result = parse_html_content(&html, "example.com", &stats);
+
+        // HTML text should be truncated to MAX_HTML_TEXT_EXTRACTION_CHARS
+        // (Note: HTML tags and whitespace also count, so may be slightly over)
+        assert!(
+            result.html_text.len() <= crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS + 100,
+            "HTML text length {} exceeds limit {}",
+            result.html_text.len(),
+            crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS
+        );
+    }
+
+    #[test]
+    fn test_parse_html_content_malformed_html() {
+        // Test that malformed HTML doesn't cause panics
+        let malformed_html = r#"
+            <html>
+                <head>
+                    <title>Test</title>
+                    <meta name="keywords" content="test">
+                    <script src="test.js"></script>
+                    <div>Unclosed div
+                    <p>Unclosed p
+                </head>
+                <body>
+                    <script>var x = <invalid></script>
+                </body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(malformed_html, "example.com", &stats);
+
+        // Should still extract what it can without panicking
+        assert_eq!(result.title, "Test");
+        assert!(result.script_sources.contains(&"test.js".to_string()));
+    }
+
+    #[test]
+    fn test_parse_html_content_multiple_meta_same_key() {
+        // Test that multiple meta tags with same key are handled correctly
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="keywords" content="first">
+                    <meta name="keywords" content="second">
+                    <meta property="og:title" content="First OG">
+                    <meta property="og:title" content="Second OG">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Should extract all meta tags (later ones may overwrite earlier ones)
+        assert!(result.meta_tags.contains_key("name:keywords"));
+        assert!(result.meta_tags.contains_key("property:og:title"));
+    }
+
+    #[test]
+    fn test_parse_html_content_script_with_special_chars() {
+        // Test script extraction with special characters in URLs
+        let html = r#"
+            <html>
+                <head>
+                    <script src="https://example.com/script.js?v=1.0&key=value"></script>
+                    <script src="https://example.com/script.js?param=test&other=data"></script>
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert_eq!(result.script_sources.len(), 2);
+        assert!(result.script_sources.iter().any(|s| s.contains("v=1.0")));
+    }
+
+    #[test]
+    fn test_parse_html_content_empty_script_tags() {
+        // Test handling of empty script tags
+        let html = r#"
+            <html>
+                <head>
+                    <script></script>
+                    <script src=""></script>
+                    <script id="test-id"></script>
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Empty src should not be added to script_sources
+        assert!(result.script_sources.is_empty());
+        // ID should still be extracted
+        assert!(result.script_tag_ids.contains("test-id"));
     }
 }

@@ -224,3 +224,61 @@ pub(crate) async fn fetch_from_github_directory(
     );
     Ok(all_technologies)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::Client;
+
+    fn create_test_client() -> Client {
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("Failed to create test client")
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_github_directory_invalid_url() {
+        let client = create_test_client();
+        let result = fetch_from_github_directory("not-a-valid-url", &client).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_github_directory_short_url() {
+        let client = create_test_client();
+        let result =
+            fetch_from_github_directory("https://raw.githubusercontent.com/owner", &client).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Invalid GitHub URL format"),
+            "Expected invalid URL format error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_github_directory_ssrf_protection() {
+        let client = create_test_client();
+        // Test that SSRF protection blocks private IPs
+        // This would be caught when constructing the API URL
+        let result = fetch_from_github_directory("http://192.168.1.1/path", &client).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Unsafe") || error_msg.contains("private"),
+            "Expected SSRF protection error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_github_directory_nonexistent_repo() {
+        let client = create_test_client();
+        let url = "https://raw.githubusercontent.com/nonexistent/repo/main/path";
+        let result = fetch_from_github_directory(url, &client).await;
+        // Should fail with 404 or similar
+        assert!(result.is_err());
+    }
+}

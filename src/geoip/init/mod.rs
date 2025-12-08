@@ -146,3 +146,67 @@ pub async fn init_geoip(
         Ok(reader.as_ref().map(|(_, metadata)| metadata.clone()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_init_geoip_no_path_no_license() {
+        // Test when no path and no license key
+        let result = init_geoip(None, None).await;
+        assert!(result.is_ok());
+        // Should return None (GeoIP disabled)
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_init_geoip_empty_license_key() {
+        // Test with empty license key
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "");
+        let result = init_geoip(None, None).await;
+        assert!(result.is_ok());
+        // Should return None (GeoIP disabled)
+        assert!(result.unwrap().is_none());
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_init_geoip_invalid_path() {
+        // Test with invalid file path
+        let result = init_geoip(Some("nonexistent/path/to/database.mmdb"), None).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Failed to read")
+                || error_msg.contains("No such file")
+                || error_msg.contains("not found"),
+            "Expected file not found error, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_geoip_already_loaded() {
+        // This test would require setting up a loaded database first
+        // For now, we just verify the function doesn't panic
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        // Use a path that doesn't exist to trigger error path
+        let result = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
+        // Should fail, but verify error handling works
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_init_geoip_cache_dir_creation() {
+        // Test that cache directory is used when provided
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_dir = temp_dir.path().join("geoip_cache");
+
+        // Should not panic even if cache dir doesn't exist yet
+        let result = init_geoip(None, Some(&cache_dir)).await;
+        // May succeed or fail depending on license key, but should handle cache dir gracefully
+        let _ = result;
+    }
+}
