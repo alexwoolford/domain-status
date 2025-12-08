@@ -591,7 +591,8 @@ mod tests {
         let http_request_ms = http_request_ms.min(u64::MAX as f64).max(0.0) as u64;
         // With protection, should be clamped to u64::MAX (not overflow)
         // Note: Due to floating point precision, might be slightly less than MAX
-        assert!(http_request_ms > 1_000_000_000_000_000 || http_request_ms == u64::MAX);
+        // The important thing is it doesn't overflow and is a very large value
+        assert!(http_request_ms >= 1_000_000_000_000_000);
     }
 
     #[tokio::test]
