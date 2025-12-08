@@ -95,7 +95,7 @@ pub async fn update_run_stats(
 /// use sqlx::SqlitePool;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let pool = SqlitePool::connect("sqlite:./url_checker.db").await?;
+/// let pool = SqlitePool::connect("sqlite:./domain_status.db").await?;
 /// let runs = query_run_history(&pool, 10).await?;
 /// for run in runs {
 ///     println!("Run {}: {} URLs ({} succeeded, {} failed) in {:.1}s",

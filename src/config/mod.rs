@@ -3,7 +3,7 @@
 //! This module provides:
 //! - Configuration constants (timeouts, limits, etc.)
 //! - HTTP header name constants
-//! - CLI option types and parsing
+//! - Configuration types (library-only, no CLI dependencies)
 
 mod constants;
 mod headers;

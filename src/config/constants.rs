@@ -19,7 +19,7 @@ pub const LOGGING_INTERVAL: usize = 5;
 /// to account for enrichment operations (GeoIP, WHOIS, technology detection, etc.)
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(35);
 /// Default database file path
-pub const DB_PATH: &str = "./url_checker.db";
+pub const DB_PATH: &str = "./domain_status.db";
 
 // Network operation timeouts
 /// DNS query timeout in seconds

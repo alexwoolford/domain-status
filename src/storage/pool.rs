@@ -20,12 +20,12 @@ use crate::error_handling::DatabaseError;
 /// Creates the database file if it doesn't exist and enables WAL mode
 /// for better concurrent access.
 ///
-/// Uses the `URL_CHECKER_DB_PATH` environment variable if set, otherwise falls back to the default.
+/// Uses the `DOMAIN_STATUS_DB_PATH` environment variable if set, otherwise falls back to the default.
 ///
 /// Note: For library usage, prefer `init_db_pool_with_path` which accepts a path directly.
 #[allow(dead_code)] // Kept for backward compatibility, but prefer init_db_pool_with_path
 pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
-    let db_path = std::env::var("URL_CHECKER_DB_PATH").unwrap_or_else(|_| DB_PATH.to_string());
+    let db_path = std::env::var("DOMAIN_STATUS_DB_PATH").unwrap_or_else(|_| DB_PATH.to_string());
     init_db_pool_with_path(&std::path::PathBuf::from(&db_path)).await
 }
 

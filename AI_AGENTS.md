@@ -146,8 +146,8 @@ cargo build --release
 ./target/release/domain_status urls.txt
 
 # 4) Inspect DB and spot-check records
-sqlite3 url_checker.db "SELECT COUNT(*), MIN(status), MAX(status) FROM url_status;"
-sqlite3 url_checker.db "SELECT id, domain, status, title FROM url_status ORDER BY id DESC LIMIT 5;"
+sqlite3 domain_status.db "SELECT COUNT(*), MIN(status), MAX(status) FROM url_status;"
+sqlite3 domain_status.db "SELECT id, domain, status, title FROM url_status ORDER BY id DESC LIMIT 5;"
 ```
 
 ### Future improvements (backlog hints)
