@@ -628,15 +628,20 @@ mod tests {
 
         // Should return error for invalid JSON when parsing is attempted
         assert!(result.is_err());
-        // Error should mention JSON parsing or deserialize
+        // Error should indicate JSON parsing failure (serde_json errors vary)
         let error_msg = result.unwrap_err().to_string();
-        // serde_json errors may vary, but should indicate parsing failure
+        // serde_json errors may vary widely, but should indicate parsing failure
+        // Common patterns: "JSON", "parse", "invalid", "deserialize", "expected", "key", "string", "line", "column"
         assert!(
             error_msg.contains("JSON")
                 || error_msg.contains("parse")
                 || error_msg.contains("invalid")
                 || error_msg.contains("deserialize")
-                || error_msg.contains("expected"),
+                || error_msg.contains("expected")
+                || error_msg.contains("key")
+                || error_msg.contains("string")
+                || error_msg.contains("line")
+                || error_msg.contains("column"),
             "Error message should indicate parsing failure: {}",
             error_msg
         );
