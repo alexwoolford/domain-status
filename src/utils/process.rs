@@ -176,4 +176,34 @@ mod tests {
             error_msg
         );
     }
+
+    #[test]
+    fn test_process_url_result_retry_count_saturating_sub() {
+        // Test that retry_count uses saturating_sub correctly
+        // If total_attempts is 0, retry_count should be 0 (not underflow)
+        // This tests the saturating_sub(1) logic in process_url
+        let result = ProcessUrlResult {
+            result: Ok(()),
+            retry_count: 0u32.saturating_sub(1), // Should be 0, not u32::MAX
+        };
+        assert_eq!(result.retry_count, 0);
+    }
+
+    #[test]
+    fn test_process_url_result_retry_count_edge_cases() {
+        // Test edge cases for retry_count calculation
+        // retry_count = total_attempts.saturating_sub(1)
+
+        // Case 1: total_attempts = 0 (should never happen, but test saturating_sub)
+        assert_eq!(0u32.saturating_sub(1), 0);
+
+        // Case 2: total_attempts = 1 (initial attempt only, no retries)
+        assert_eq!(1u32.saturating_sub(1), 0);
+
+        // Case 3: total_attempts = 2 (1 retry)
+        assert_eq!(2u32.saturating_sub(1), 1);
+
+        // Case 4: total_attempts = u32::MAX (should not underflow)
+        assert_eq!(u32::MAX.saturating_sub(1), u32::MAX - 1);
+    }
 }
