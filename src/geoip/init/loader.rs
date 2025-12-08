@@ -821,20 +821,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_geoip_with_size_limit_content_length_mismatch() {
-        // Test that content-length header mismatch is caught (security issue)
-        // This is critical - malicious server could claim small size but send large file
+    async fn test_download_geoip_with_size_limit_no_content_length_still_checked() {
+        // Test that actual size is checked even when content-length header is missing
+        // This is critical - servers might not send content-length, but we still need size protection
         // The code at line 158-165 double-checks actual size after download
+        use crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
-        // Server claims 100 bytes but sends file exceeding MAX_GEOIP_DOWNLOAD_SIZE
-        use crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
+        // Server sends file exceeding MAX_GEOIP_DOWNLOAD_SIZE without content-length header
         let large_payload: Vec<u8> = vec![0u8; MAX_GEOIP_DOWNLOAD_SIZE + 1_000_000];
         server.expect(
             Expectation::matching(request::method_path("GET", "/geoip.mmdb")).respond_with(
                 status_code(200)
-                    .append_header("content-length", "100") // Lie about size
+                    // No content-length header - actual size check should catch it
                     .body(large_payload),
             ),
         );
@@ -842,12 +842,12 @@ mod tests {
         let url = server.url("/geoip.mmdb").to_string();
         let result = download_geoip_with_size_limit(&url).await;
 
-        // Should fail on actual size check (line 159), not content-length check
+        // Should fail on actual size check (line 159)
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("too large") || error_msg.contains("bytes"),
-            "Should detect actual size mismatch: {}",
+            "Should detect actual size exceeds limit: {}",
             error_msg
         );
     }
