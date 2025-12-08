@@ -82,19 +82,36 @@ jobs:
           cargo install cargo-tarpaulin --locked
 
       - name: Generate coverage report
+        id: coverage
         run: |
-          cargo tarpaulin --out Xml --output-dir coverage --all-features --all-targets --locked
+          mkdir -p coverage
+          cargo tarpaulin --out Xml --output-dir coverage --all-features --all-targets --locked --timeout 120
         continue-on-error: true
 
-      # Only upload if token is available (fork-friendly)
+      # Only upload if token is available and coverage file was generated (fork-friendly)
       # Skip upload for PRs from forks (secrets not available) or when token is missing
+      - name: Check coverage file exists
+        id: check_coverage
+        if: always() && steps.coverage.outcome == 'success'
+        run: |
+          if [ -f coverage/cobertura.xml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Upload coverage reports to Codecov
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: |
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+          github.event_name != 'schedule' &&
+          steps.check_coverage.outputs.exists == 'true'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: alexwoolford/domain_status
+          files: coverage/cobertura.xml
           fail_ci_if_error: false
+          verbose: true
 
   security:
     name: Security Audit
