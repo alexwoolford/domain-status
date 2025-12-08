@@ -164,3 +164,8 @@ pub async fn prepare_record_for_insertion(
         (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms),
     )
 }
+
+// Note: Tests for prepare_record_for_insertion require complex setup with
+// ProcessingContext, ResponseData, HtmlData, etc. These are better tested via
+// integration tests that exercise the full flow. Unit tests here would require
+// extensive mocking and may not provide significant value over integration tests.
