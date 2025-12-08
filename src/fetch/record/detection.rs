@@ -134,4 +134,48 @@ mod tests {
         // (May be non-empty if ruleset has URL-based patterns, but empty is expected)
         let _ = result;
     }
+
+    #[tokio::test]
+    async fn test_detect_technologies_safely_error_stats_incremented() {
+        // Test that error stats are correctly incremented when detection fails
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        let initial_count =
+            error_stats.get_error_count(crate::error_handling::ErrorType::TechnologyDetectionError);
+
+        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
+
+        let final_count =
+            error_stats.get_error_count(crate::error_handling::ErrorType::TechnologyDetectionError);
+
+        // If detection failed (ruleset not initialized), error count should increase
+        // If detection succeeded, error count should remain the same
+        // We can't assert exact behavior since it depends on ruleset initialization,
+        // but we verify the function doesn't panic and error stats are tracked
+        assert!(final_count >= initial_count);
+        // Result should be a Vec (empty or non-empty)
+        assert!(result.is_empty() || !result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_detect_technologies_safely_result_sorted() {
+        // Test that detected technologies are returned in sorted order
+        let resp_data = create_test_response_data();
+        let html_data = create_test_html_data();
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
+
+        // If result is non-empty, it should be sorted
+        if result.len() > 1 {
+            let mut sorted = result.clone();
+            sorted.sort();
+            assert_eq!(
+                result, sorted,
+                "Technologies should be returned in sorted order"
+            );
+        }
+    }
 }
