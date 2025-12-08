@@ -828,8 +828,9 @@ mod tests {
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
-        // Server claims 100 bytes but sends 10MB (exceeds limit)
-        let large_payload: Vec<u8> = vec![0u8; 10_000_000];
+        // Server claims 100 bytes but sends file exceeding MAX_GEOIP_DOWNLOAD_SIZE
+        use crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
+        let large_payload: Vec<u8> = vec![0u8; MAX_GEOIP_DOWNLOAD_SIZE + 1_000_000];
         server.expect(
             Expectation::matching(request::method_path("GET", "/geoip.mmdb")).respond_with(
                 status_code(200)
