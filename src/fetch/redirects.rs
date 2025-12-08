@@ -710,4 +710,38 @@ mod tests {
         // Should NOT include redirect_url in chain
         assert!(!chain.contains(&redirect_url));
     }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_unparseable_relative_url() {
+        // Test that unparseable relative URLs in Location header are handled correctly
+        // This is critical - malformed redirects could cause crashes or infinite loops
+        let server = Server::run();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/")).respond_with(
+                status_code(302)
+                    .insert_header("Location", "://invalid-url-scheme") // Invalid relative URL
+                    .body("Redirect"),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/").to_string();
+        let result = resolve_redirect_chain(&start_url, 10, &client).await;
+
+        // Should return error because URL can't be parsed or joined
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("parse")
+                || error_msg.contains("invalid")
+                || error_msg.contains("URL"),
+            "Error should mention URL parsing issue: {}",
+            error_msg
+        );
+    }
 }
