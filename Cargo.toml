@@ -12,6 +12,10 @@ documentation = "https://docs.rs/domain_status"
 keywords = ["url", "scraper", "domain", "status", "monitoring"]
 categories = ["web-programming", "command-line-utilities", "development-tools"]
 
+[lib]
+name = "domain_status"
+path = "src/lib.rs"
+
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate"] }

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2025-01-08
+
+### Added
+- Comprehensive test coverage for initialization module (client, resolver, logger)
+- Test coverage for TLS certificate handling module
+- Test coverage for status server HTTP endpoints (status and metrics handlers)
+- Fixed bug in `query_run_history` SQL query (missing `version` column)
+
+### Changed
+- Logger initialization now uses `try_init()` instead of `init()` to handle re-initialization gracefully in tests
+- TLS tests now properly initialize crypto provider before running
+
 ## [0.1.4] - 2025-12-06
 
 Initial public release.

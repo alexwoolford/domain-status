@@ -4,26 +4,63 @@
 [![codecov](https://codecov.io/gh/alexwoolford/domain_status/branch/main/graph/badge.svg)](https://codecov.io/gh/alexwoolford/domain_status)
 [![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
 
-**domain_status** is a concurrent tool for checking URL statuses and redirections. Built with async/await (Tokio), it processes URLs in parallel while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains.
+**domain_status** is a concurrent tool for checking URL statuses and redirections. Built with async/await (Tokio), it processes URLs in parallel while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains. Results are stored in a SQLite database for analysis.
 
 ## Table of Contents
 
 - [Quick Start](#-quick-start)
+- [Installation](#-installation)
 - [Features](#-features)
+- [Use Cases](#-use-cases)
 - [Usage](#-usage)
-- [Configuration](#-configuration)
-- [Data Captured](#-data-captured)
+- [Output & Results](#-output--results)
 - [Database Schema](#-database-schema)
-- [Output](#-output)
-- [Performance](#-performance--scalability)
+- [Monitoring](#-monitoring)
+- [Advanced Topics](#-advanced-topics)
+- [Troubleshooting](#-troubleshooting)
+- [Library Usage](#-library-usage)
 - [Technical Details](#-technical-details)
 - [Architecture](#-architecture)
+- [Security](#-security--secret-management)
 - [Development](#-development)
 - [License](#-license)
 
 ## 🚀 Quick Start
 
-### Installation
+**1. Create a file with URLs (one per line):**
+
+```bash
+cat > urls.txt << EOF
+https://example.com
+https://example.org
+http://old-website.gov
+EOF
+```
+
+**2. Run the scan:**
+
+```bash
+domain_status urls.txt
+```
+
+**3. Query results:**
+
+```bash
+sqlite3 url_checker.db "SELECT domain, status, title FROM url_status;"
+```
+
+**Example output:**
+```
+domain            | status | title
+------------------|--------|--------------------------
+example.com       | 200    | Example Domain
+rust-lang.org     | 200    | Rust Programming Language
+old-website.gov   | 301    | (redirected)
+```
+
+The tool processes URLs concurrently (30 by default), stores all data in SQLite, and provides progress updates. See [Installation](#-installation) below to get started.
+
+## 📦 Installation
 
 **Option 1: Install via Cargo (Recommended for Rust users)**
 
@@ -92,31 +129,44 @@ This creates an executable in `./target/release/domain_status` (or `domain_statu
 
 **Note:** SQLite is bundled in the binary - no system SQLite installation required. The tool is completely self-contained.
 
-### Basic Usage
-
-```bash
-domain_status urls.txt
-```
-
-The tool will:
-- Process URLs from the input file
-- Store results in `./url_checker.db` (SQLite)
-- Display progress and statistics
-- Handle errors gracefully with automatic retries
-
 ## 🌟 Features
 
-* **Concurrent Processing**: Async/await with configurable concurrency limits (default: 30 concurrent requests, 15 RPS)
-* **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, WHOIS registration data, structured data (JSON-LD, Open Graph, Twitter Cards), security warnings, and complete redirect chains
-* **Technology Fingerprinting**: Detects web technologies using community-maintained Wappalyzer rulesets with JavaScript execution for dynamic detection
-* **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (auto-downloads if license key provided)
-* **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
-* **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
-* **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and comprehensive processing statistics
-* **Rate Limiting**: Token-bucket rate limiting with adaptive adjustment based on error rates
-* **Robust Data Storage**: SQLite database with WAL mode, UPSERT semantics, and unique constraints for idempotent processing
-* **Flexible Configuration**: Extensive CLI options for logging, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
-* **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
+### Data Collection
+- **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, WHOIS registration data, structured data (JSON-LD, Open Graph, Twitter Cards), security warnings, and complete redirect chains
+- **Technology Fingerprinting**: Detects web technologies using community-maintained Wappalyzer rulesets via pattern matching (headers, cookies, HTML, script URLs). Does not execute JavaScript.
+- **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
+- **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
+- **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (auto-downloads if license key provided)
+
+### Performance
+- **Concurrent Processing**: Async/await with configurable concurrency limits (default: 30 concurrent requests, 15 RPS)
+- **Adaptive Rate Limiting**: Token-bucket rate limiting with automatic adjustment based on error rates (always enabled)
+- **Resource Efficiency**: Shared HTTP clients, DNS resolver, and HTML parser instances across concurrent tasks
+
+### Reliability
+- **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and comprehensive processing statistics
+- **Robust Data Storage**: SQLite database with WAL mode, UPSERT semantics, and unique constraints for idempotent processing
+- **Timeout Protection**: Per-URL processing timeout (35 seconds) prevents hung requests
+
+### Integration
+- **Flexible Configuration**: Extensive CLI options for logging, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
+- **Library API**: Use as a Rust library in your own projects
+- **Status Server**: Optional HTTP server for monitoring long-running jobs with Prometheus metrics
+- **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
+
+## 💼 Use Cases
+
+**Domain Portfolio Management**: Check status of multiple domains, track redirects, verify SSL certificates, monitor domain expiration dates (with WHOIS enabled).
+
+**Security Audits**: Identify missing security headers (CSP, HSTS, etc.), detect expired certificates, inventory technology stacks to identify potential vulnerabilities.
+
+**Competitive Analysis**: Track technology stacks across competitors, identify analytics tools and tracking IDs, gather structured data (Open Graph, JSON-LD) for comparison.
+
+**Monitoring**: Integrate with Prometheus for ongoing status checks via the status server endpoint, track changes over time by querying run history.
+
+**Research**: Bulk analysis of web technologies, DNS configurations, geographic distribution of infrastructure, technology adoption patterns.
+
+Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many checks in one sweep, ensuring consistency and saving time.
 
 ## 📖 Usage
 
@@ -151,7 +201,187 @@ domain_status urls.txt \
   --status-port 8080
 ```
 
-### Monitoring Long-Running Jobs
+### Environment Variables
+
+- `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
+- `URL_CHECKER_DB_PATH`: Override default database path (alternative to `--db-path`)
+
+### URL Input
+
+- URLs can be provided with or without `http://` or `https://` prefix
+- If no scheme is provided, `https://` is automatically prepended
+- Only `http://` and `https://` URLs are accepted; other schemes are rejected
+- Invalid URLs are skipped with a warning
+
+## 📊 Output & Results
+
+The tool provides detailed logging with progress updates and error summaries:
+
+**Plain format (default):**
+```plaintext
+✔️ domain_status [INFO] Processed 88 lines in 128.61 seconds (~0.68 lines/sec)
+✔️ domain_status [INFO] Run statistics: total=100, successful=88, failed=12
+✔️ domain_status [INFO] Error Counts (21 total):
+✔️ domain_status [INFO]    Bot detection (403 Forbidden): 4
+✔️ domain_status [INFO]    Process URL timeout: 3
+✔️ domain_status [INFO]    DNS NS lookup error: 2
+...
+```
+
+**JSON format (`--log-format json`):**
+```json
+{"ts":1704067200000,"level":"INFO","target":"domain_status","msg":"Processed 88 lines in 128.61 seconds (~0.68 lines/sec)"}
+```
+
+**Performance Analysis (`--show-timing`):**
+
+Use the `--show-timing` flag to display detailed timing metrics:
+
+```bash
+domain_status urls.txt --show-timing
+```
+
+Example output:
+```
+=== Timing Metrics Summary (88 URLs) ===
+Average times per URL:
+  HTTP Request:          1287 ms (40.9%)
+  DNS Forward:            845 ms (26.8%)
+  TLS Handshake:         1035 ms (32.9%)
+  HTML Parsing:            36 ms (1.1%)
+  Tech Detection:        1788 ms (56.8%)
+  Total:                 3148 ms
+```
+
+**Note:** Performance varies significantly based on rate limiting, network conditions, target server behavior, and error handling. Expect 0.5-2 lines/sec with default settings. Higher rates may trigger bot detection.
+
+### Querying Results
+
+All results are stored in the SQLite database. You can query the database while the scan is running (WAL mode allows concurrent reads). Here are some useful queries:
+
+**Basic status overview:**
+```sql
+SELECT domain, status, status_description, response_time
+FROM url_status
+ORDER BY domain;
+```
+
+**Find all failed URLs:**
+```sql
+SELECT domain, status, status_description
+FROM url_status
+WHERE status >= 400 OR status = 0
+ORDER BY status;
+```
+
+**Find all sites using a specific technology:**
+```sql
+SELECT DISTINCT us.domain, us.status
+FROM url_status us
+JOIN url_technologies ut ON us.id = ut.url_status_id
+WHERE ut.technology_name = 'WordPress'
+ORDER BY us.domain;
+```
+
+**Find sites with missing security headers:**
+```sql
+SELECT DISTINCT us.domain
+FROM url_status us
+JOIN url_security_warnings usw ON us.id = usw.url_status_id
+WHERE usw.warning_type LIKE '%missing%'
+ORDER BY us.domain;
+```
+
+**Find all redirects:**
+```sql
+SELECT domain, final_domain, status, redirect_count
+FROM url_status
+WHERE redirect_count > 0
+ORDER BY redirect_count DESC;
+```
+
+**Compare runs by version:**
+```sql
+SELECT version, COUNT(*) as runs,
+       SUM(total_urls) as total_urls,
+       AVG(elapsed_seconds) as avg_time
+FROM runs
+WHERE end_time IS NOT NULL
+GROUP BY version
+ORDER BY version DESC;
+```
+
+**Get all URLs from a specific run:**
+```sql
+SELECT domain, status, title, response_time
+FROM url_status
+WHERE run_id = 'run_1765150444953'
+ORDER BY domain;
+```
+
+## 📊 Database Schema
+
+The database uses a **star schema** design pattern with:
+- **Fact Table**: `url_status` (main URL data)
+- **Dimension Table**: `runs` (run-level metadata including version)
+- **Junction Tables**: Multi-valued fields (technologies, headers, DNS records, etc.)
+- **One-to-One Tables**: `url_geoip`, `url_whois`
+- **Failure Tracking**: `url_failures` with related tables for error context (redirect chains, request/response headers)
+
+**Key Features:**
+- WAL mode for concurrent reads/writes
+- UPSERT semantics: `UNIQUE (final_domain, timestamp)` ensures idempotency
+- Comprehensive indexes for fast queries
+- Normalized structure for efficient storage and analytics
+
+For complete database schema documentation including entity-relationship diagrams, table descriptions, indexes, constraints, and query examples, see [DATABASE.md](DATABASE.md).
+
+### Querying Run History
+
+All scan results are persisted in the database, so you can query past runs even after closing the terminal. The `runs` table stores summary statistics for each scan:
+
+```sql
+-- View all completed runs (most recent first)
+SELECT
+    run_id,
+    version,
+    datetime(start_time/1000, 'unixepoch') as start_time,
+    datetime(end_time/1000, 'unixepoch') as end_time,
+    elapsed_seconds,
+    total_urls,
+    successful_urls,
+    failed_urls,
+    ROUND(100.0 * successful_urls / total_urls, 1) as success_rate
+FROM runs
+WHERE end_time IS NOT NULL
+ORDER BY start_time DESC
+LIMIT 10;
+```
+
+**Example output:**
+```
+run_id              | version | start_time          | end_time            | elapsed_seconds | total_urls | successful_urls | failed_urls | success_rate
+--------------------|---------|---------------------|---------------------|-----------------|------------|-----------------|------------|--------------
+run_1765150444953   | 0.1.4   | 2025-01-07 23:33:59 | 2025-01-07 23:34:52 | 52.1            | 100        | 89              | 11         | 89.0
+```
+
+**Using the library API:**
+
+```rust
+use domain_status::storage::query_run_history;
+use sqlx::SqlitePool;
+
+let pool = SqlitePool::connect("sqlite:./url_checker.db").await?;
+let runs = query_run_history(&pool, Some(10)).await?;
+
+for run in runs {
+    println!("Run {}: {} URLs ({} succeeded, {} failed) in {:.1}s",
+             run.run_id, run.total_urls, run.successful_urls,
+             run.failed_urls, run.elapsed_seconds.unwrap_or(0.0));
+}
+```
+
+## 📈 Monitoring
 
 For long-running jobs, you can monitor progress via an optional HTTP status server:
 
@@ -171,22 +401,6 @@ The status server provides:
 - **Error breakdown**: Detailed counts by error type
 - **Warning/info metrics**: Track missing metadata, redirects, bot detection events
 - **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping
-
-See [Status Endpoint](#status-endpoint-status) and [Metrics Endpoint](#metrics-endpoint-metrics) sections below for detailed API documentation.
-
-### Environment Variables
-
-- `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
-- `URL_CHECKER_DB_PATH`: Override default database path (alternative to `--db-path`)
-
-### URL Input
-
-- URLs can be provided with or without `http://` or `https://` prefix
-- If no scheme is provided, `https://` is automatically prepended
-- Only `http://` and `https://` URLs are accepted; other schemes are rejected
-- Invalid URLs are skipped with a warning
-
-## ⚙️ Configuration
 
 ### Status Endpoint (`/status`)
 
@@ -238,110 +452,153 @@ scrape_configs:
       - targets: ['localhost:8080']
 ```
 
-## 📊 Data Captured
+## 🔧 Advanced Topics
 
-The tool captures comprehensive information for each URL. The database uses a **normalized star schema** with a fact table (`url_status`) and multiple dimension/junction tables for multi-valued fields.
+### GeoIP Setup
 
-**Data Types:**
-- **HTTP/HTTPS**: Status codes, response times, headers (security and general), redirect chains
-- **TLS/SSL**: Certificate details, cipher suite, key algorithm, certificate OIDs, SANs
-- **DNS**: NS, TXT, MX records; SPF and DMARC policies; reverse DNS
-- **HTML**: Title, meta tags, structured data (JSON-LD, Open Graph, Twitter Cards), analytics IDs, social media links
-- **Technology Detection**: CMS, frameworks, analytics tools detected via Wappalyzer rulesets
-- **GeoIP**: Geographic location (country, region, city, coordinates) and network information (ASN)
-- **WHOIS**: Domain registration information (registrar, creation/expiration dates, registrant info)
-- **Security**: Security headers, security warnings, certificate validation
-
-For detailed table descriptions and schema information, see [DATABASE.md](DATABASE.md).
-
-## 📊 Database Schema
-
-The database uses a **star schema** design pattern with:
-- **Fact Table**: `url_status` (main URL data)
-- **Dimension Table**: `runs` (run-level metadata)
-- **Junction Tables**: Multi-valued fields (technologies, headers, DNS records, etc.)
-- **One-to-One Tables**: `url_geoip`, `url_whois`
-- **Failure Tracking**: `url_failures` with related tables for error context (redirect chains, request/response headers)
-
-**Key Features:**
-- WAL mode for concurrent reads/writes
-- UPSERT semantics: `UNIQUE (final_domain, timestamp)` ensures idempotency
-- Comprehensive indexes for fast queries
-- Normalized structure for efficient storage and analytics
-
-For complete database schema documentation including entity-relationship diagrams, table descriptions, indexes, constraints, and query examples, see [DATABASE.md](DATABASE.md).
-
-## 📊 Output
-
-The tool provides detailed logging with progress updates and error summaries:
-
-**Plain format (default):**
-```plaintext
-✔️ domain_status [INFO] Processed 88 lines in 128.61 seconds (~0.68 lines/sec)
-✔️ domain_status [INFO] Run statistics: total=100, successful=88, failed=12
-✔️ domain_status [INFO] Error Counts (21 total):
-✔️ domain_status [INFO]    Bot detection (403 Forbidden): 4
-✔️ domain_status [INFO]    Process URL timeout: 3
-✔️ domain_status [INFO]    DNS NS lookup error: 2
-...
-```
-
-**Performance Analysis (`--show-timing`):**
-
-Use the `--show-timing` flag to display detailed timing metrics:
+To enable GeoIP, set the `MAXMIND_LICENSE_KEY` environment variable and the tool will automatically download the MaxMind GeoLite2 databases on first run:
 
 ```bash
-domain_status urls.txt --show-timing
+export MAXMIND_LICENSE_KEY=your_license_key_here
+domain_status urls.txt
 ```
 
-Example output:
+The databases are cached in `.geoip_cache/` and reused for subsequent runs. Alternatively, download the `.mmdb` files yourself and use `--geoip` to point to them. GeoIP data is stored in the `url_geoip` table with fields for country, region, city, coordinates, and ASN.
+
+If GeoIP fails or no key is provided, the tool safely skips GeoIP lookup with a warning and continues normally.
+
+### WHOIS/RDAP Details
+
+The `--enable-whois` flag performs WHOIS/RDAP queries to fetch domain registration information. This significantly slows down processing (adds approximately 1 second per domain) due to rate limits imposed by registrars.
+
+**Rate Limiting**: WHOIS queries are rate-limited to 0.5 queries/second (1 query per 2 seconds) to respect registrar limits. This is separate from HTTP rate limiting.
+
+**Caching**: WHOIS data is cached in `.whois_cache/` by domain name for 7 days to avoid redundant queries.
+
+**Limitations**: Not all TLDs provide public WHOIS via port 43, and some registrars limit the data returned. RDAP fallback helps but is not universal. If a WHOIS server blocks you, you may see warnings in the logs.
+
+Enable this flag only when you need registrar/expiration information. For faster scans, leave it disabled (default).
+
+### Technology Fingerprinting
+
+Technology detection uses pattern matching against:
+- HTTP headers (Server, X-Powered-By, etc.)
+- Cookies
+- Meta tags (name, property, http-equiv)
+- Script source URLs (from HTML, not fetched)
+- HTML text content
+- URL patterns
+- Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
+
+**Important**: The tool does NOT execute JavaScript or fetch external scripts. It only analyzes the initial HTML response, matching WappalyzerGo's behavior.
+
+The default fingerprint ruleset comes from the HTTP Archive Wappalyzer fork and is cached locally for 7 days. You can update to the latest by pointing `--fingerprints` to a new JSON file (e.g., the official Wappalyzer `technologies.json`). The tool prints the fingerprints source and version (commit hash) in the `runs` table.
+
+If you maintain your own fingerprint file (e.g., for internal technologies), you can use that too.
+
+### Performance Tuning
+
+**Concurrency**: The default is 30 concurrent requests. If you have good bandwidth and target sites can handle it, you can increase `--max-concurrency`. Monitor the `/metrics` endpoint's rate to see actual throughput. Conversely, if you encounter many timeouts or want to be gentle on servers, lower concurrency.
+
+**Rate Limiting**: The default is 15 RPS with adaptive adjustment. The adaptive rate limiter:
+- Starts at initial RPS (default: 15)
+- Monitors 429 errors and timeouts in a sliding window
+- Automatically reduces RPS by 50% when error rate exceeds threshold (default: 20%)
+- Gradually increases RPS by 15% when error rate is below threshold
+- Maximum RPS capped at 2x initial value
+
+**Memory**: Each concurrent task consumes memory for HTML and data. With default settings, memory usage is moderate. If scanning extremely large pages, consider that response bodies are capped at 2MB and HTML text extraction is limited to 50KB.
+
+### Error Handling & Retries
+
+The tool automatically retries failed HTTP requests up to 2 additional times (3 total attempts) with exponential backoff (initial: 500ms, max: 15s). If a domain consistently fails (e.g., DNS not resolved, or all attempts timed out), it will be marked in the `url_failures` table with details. The errors section of the status output counts these. You don't need to re-run for transient errors; they are retried on the fly.
+
+## ❓ Troubleshooting
+
+**Scan is very slow or stuck:**
+- Check if you hit a rate limit. domain_status automatically slows down on high error rate (adaptive rate limiting).
+- Enabling WHOIS adds approximately 1 second per domain due to rate limits.
+- If it's truly stuck, use `RUST_LOG=debug` environment variable (or `--log-level debug`) to see what it's doing.
+
+**I see 'bot_detection_403' in info metrics:**
+- Some sites actively block non-browser agents. Try using `--user-agent` to mimic a different browser or reduce rate with `--rate-limit-rps`.
+
+**Database is locked error:**
+- If you open the DB in another tool while scanning, thanks to WAL mode reads should be fine.
+- However, writing from two domain_status processes to the same DB is not supported (each run uses its own DB by default).
+
+**WHOIS data seems incomplete for some TLDs:**
+- Not all registrars provide the same info; domain_status tries its best.
+- Some ccTLDs don't have public WHOIS via port 43.
+- RDAP fallback helps but is not universal.
+
+**GeoIP shows "unknown" or is empty:**
+- Probably the MaxMind license key wasn't set or the download failed.
+- Ensure internet access for the first run or provide the `.mmdb` files manually with `--geoip`.
+- Check that the license key is valid and has GeoLite2 access enabled.
+
+**Compilation fails (for users building from source):**
+- Make sure Rust is updated to latest stable (1.85 or newer required).
+- If error relates to a crate, run `cargo update`.
+- On Windows, ensure OpenSSL or Schannel is available if reqwest needs it (rare, as we use rustls by default).
+
+**Technology detection seems wrong:**
+- Pattern matching can have false positives. Wappalyzer rules are community-maintained.
+- If you get an obvious false positive, you can verify by visiting the site manually.
+- You can update or customize the fingerprints to tweak this (see Technology Fingerprinting above).
+
+**How do I update the tool?**
+- If using `cargo install`, run `cargo install --force domain_status` to get the latest version.
+- Check the CHANGELOG for any breaking changes in flags or output.
+
+## 📚 Library Usage
+
+You can also use `domain_status` as a Rust library in your own projects. Add it to your `Cargo.toml`:
+
+```toml
+[dependencies]
+domain_status = "0.1.4"
+tokio = { version = "1", features = ["full"] }
 ```
-=== Timing Metrics Summary (88 URLs) ===
-Average times per URL:
-  HTTP Request:          1287 ms (40.9%)
-  DNS Forward:            845 ms (26.8%)
-  TLS Handshake:         1035 ms (32.9%)
-  HTML Parsing:            36 ms (1.1%)
-  Tech Detection:        1788 ms (56.8%)
-  Total:                 3148 ms
+
+Then use it in your code:
+
+```rust
+use domain_status::{Config, run_scan};
+use std::path::PathBuf;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config {
+        file: PathBuf::from("urls.txt"),
+        max_concurrency: 50,
+        rate_limit_rps: 20,
+        enable_whois: false,
+        ..Default::default()
+    };
+
+    let report = run_scan(config).await?;
+    println!("Processed {} URLs: {} succeeded, {} failed",
+             report.total_urls, report.successful, report.failed);
+    println!("Results saved in {}", report.db_path.display());
+
+    Ok(())
+}
 ```
 
-**JSON format (`--log-format json`):**
-```json
-{"ts":1704067200000,"level":"INFO","target":"domain_status","msg":"Processed 88 lines in 128.61 seconds (~0.68 lines/sec)"}
-```
+See the [API documentation](https://docs.rs/domain_status) for details on `Config` options and usage.
 
-**Note:** Performance varies significantly based on rate limiting, network conditions, target server behavior, and error handling. Expect 0.5-2 lines/sec with default settings. Higher rates may trigger bot detection.
-
-## 🚀 Performance & Scalability
-
-- **Concurrent Processing**: Default 30 concurrent requests (configurable via `--max-concurrency`)
-- **Adaptive Rate Limiting**: Automatic RPS adjustment based on error rates (always enabled)
-  - Starts at initial RPS (default: 15)
-  - Monitors 429 errors and timeouts in a sliding window
-  - Automatically reduces RPS by 50% when error rate exceeds threshold (default: 20%)
-  - Gradually increases RPS by 15% when error rate is below threshold
-  - Maximum RPS capped at 2x initial value
-- **Resource Efficiency**: Shared HTTP clients, DNS resolver, and HTML parser instances
-- **Database Optimization**: SQLite WAL mode for concurrent writes, indexed queries
-- **Memory Safety**: Response body size capped at 2MB, redirect chains limited to 10 hops
-- **Timeout Protection**: Per-URL processing timeout (35 seconds) prevents hung requests
-
-**Retry & Error Handling:**
-- **Automatic Retries**: Exponential backoff (initial: 500ms, max: 15s, max attempts: 3)
-- **Error Rate Limiting**: Monitors error rate and automatically throttles when threshold exceeded
-- **Processing Statistics**: Comprehensive tracking with errors, warnings, and info metrics
-- **Graceful Degradation**: Invalid URLs skipped, non-HTML responses filtered, oversized responses truncated
+**Note:** The library requires a Tokio runtime. Use `#[tokio::main]` in your application or ensure you're calling library functions within an async context.
 
 ## 🛠️ Technical Details
 
 **Dependencies:**
 - **HTTP Client**: `reqwest` with `rustls` TLS backend
 - **DNS Resolution**: `hickory-resolver` (async DNS with system config fallback)
-- **Domain Extraction**: `tldextract` for accurate domain parsing (handles multi-part TLDs correctly)
+- **Domain Extraction**: `psl` crate for accurate domain parsing (handles multi-part TLDs correctly)
 - **HTML Parsing**: `scraper` (CSS selector-based extraction)
 - **TLS/Certificates**: `tokio-rustls` and `x509-parser` for certificate analysis
-- **Technology Detection**: Custom implementation using Wappalyzer rulesets with JavaScript execution via `rquickjs`
+- **Technology Detection**: Custom implementation using Wappalyzer rulesets with pattern matching (headers, cookies, HTML, script URLs). Does not execute JavaScript.
 - **WHOIS/RDAP**: `whois-service` crate for domain registration lookups
 - **GeoIP**: `maxminddb` for geographic and network information
 - **Database**: `sqlx` with SQLite (WAL mode enabled)
@@ -407,6 +664,10 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
    - Use environment variables for all secrets
    - Use GitHub Secrets for CI/CD tokens
    - Review gitleaks output if CI fails
+
+## 🔨 Development
+
+See [AI_AGENTS.md](AI_AGENTS.md) for development guidelines and conventions.
 
 ## License
 

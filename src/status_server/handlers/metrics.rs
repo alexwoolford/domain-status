@@ -148,3 +148,101 @@ domain_status_info_total {}
 
     (StatusCode::OK, metrics).into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+    use crate::status_server::StatusState;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn create_test_state() -> StatusState {
+        StatusState {
+            total_urls: Arc::new(AtomicUsize::new(100)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
+            completed_urls: Arc::new(AtomicUsize::new(50)),
+            failed_urls: Arc::new(AtomicUsize::new(10)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_metrics_handler_returns_text() {
+        let state = create_test_state();
+        let response = metrics_handler(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_handler_includes_basic_metrics() {
+        let state = create_test_state();
+        let response = metrics_handler(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Extract body to verify metrics format
+        let (_parts, body) = response.into_parts();
+        let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        // Verify Prometheus format
+        assert!(body_str.contains("domain_status_total_urls"));
+        assert!(body_str.contains("domain_status_completed_urls"));
+        assert!(body_str.contains("domain_status_failed_urls"));
+        assert!(body_str.contains("domain_status_percentage_complete"));
+        assert!(body_str.contains("domain_status_rate_per_second"));
+        assert!(body_str.contains("domain_status_errors_total"));
+        assert!(body_str.contains("domain_status_warnings_total"));
+        assert!(body_str.contains("domain_status_info_total"));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_handler_handles_zero_urls() {
+        let state = StatusState {
+            total_urls: Arc::new(AtomicUsize::new(0)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
+            completed_urls: Arc::new(AtomicUsize::new(0)),
+            failed_urls: Arc::new(AtomicUsize::new(0)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: None,
+        };
+
+        let response = metrics_handler(State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_handler_includes_timing_when_available() {
+        use crate::utils::TimingStats;
+
+        let timing_stats = Arc::new(TimingStats::new());
+        timing_stats.count.store(1, Ordering::Relaxed);
+
+        let state = StatusState {
+            total_urls: Arc::new(AtomicUsize::new(100)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
+            completed_urls: Arc::new(AtomicUsize::new(50)),
+            failed_urls: Arc::new(AtomicUsize::new(10)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: Some(timing_stats),
+        };
+
+        let response = metrics_handler(State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let (_parts, body) = response.into_parts();
+        let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        // Verify timing metrics are included
+        assert!(body_str.contains("domain_status_timing_http_request_ms"));
+        assert!(body_str.contains("domain_status_timing_total_ms"));
+    }
+}

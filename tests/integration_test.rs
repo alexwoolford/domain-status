@@ -1,11 +1,10 @@
 //! Integration tests for the domain_status application.
 //!
-//! These tests verify HTTP client behavior using a mock HTTP server.
+//! These tests verify the library API using a mock HTTP server.
 //! They do not make real network requests, ensuring tests are fast and reliable.
 //!
-//! **Note**: Full pipeline integration tests would require refactoring the crate
-//! to expose a library interface (lib.rs + main.rs structure). The current tests
-//! focus on HTTP client behavior which is the most critical integration point.
+//! With the library + binary structure, we can now test the full pipeline
+//! by calling `run_scan()` directly with controlled inputs.
 
 #[cfg(test)]
 mod tests {
@@ -94,12 +93,81 @@ mod tests {
         // This test just verifies tempfile works
     }
 
-    // Note: Error categorization tests require access to the categorize_reqwest_error
-    // function, which is not accessible from integration tests in a binary crate.
-    // These tests would need to be moved to unit tests or the crate would need
-    // a lib.rs to expose the function. For now, error categorization is tested
-    // through the retry strategy tests in src/error_handling/categorization.rs.
-    //
-    // TODO: Consider refactoring to lib.rs + main.rs structure to enable
-    // integration testing of error categorization with real reqwest::Error instances.
+    /// Test full pipeline using library API with mock server
+    ///
+    /// This test verifies that the library API works end-to-end by:
+    /// 1. Creating a mock HTTP server
+    /// 2. Running a scan via the library API
+    /// 3. Verifying the results are saved to the database
+    ///
+    /// Note: This test may make DNS lookups and fetch fingerprint rulesets,
+    /// so it's more of an integration test than a unit test.
+    #[tokio::test]
+    #[ignore] // Ignore by default - requires network access for DNS/fingerprints
+    async fn test_full_scan_with_mock_server() {
+        use domain_status::{run_scan, Config};
+        use tempfile::TempDir;
+
+        let server = Server::run();
+        let server_url = format!("http://{}/", server.addr());
+
+        // Set up mock responses (allow multiple requests for DNS, fingerprints, etc.)
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/"))
+                .times(..) // Allow multiple requests
+                .respond_with(
+                    status_code(200)
+                        .body(
+                            "<html><head><title>Test Page</title></head><body>Hello</body></html>",
+                        )
+                        .append_header("Server", "nginx/1.18.0"),
+                ),
+        );
+
+        // Create temporary input file
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let input_file = temp_dir.path().join("urls.txt");
+        std::fs::write(&input_file, format!("{}\n", server_url))
+            .expect("Failed to write test file");
+
+        // Create config for library usage
+        let config = Config {
+            file: input_file,
+            db_path: temp_dir.path().join("test.db"),
+            max_concurrency: 1,
+            rate_limit_rps: 0,   // Disable rate limiting for test
+            enable_whois: false, // Disable WHOIS for faster tests
+            show_timing: false,
+            log_level: domain_status::LogLevel::Error, // Reduce log noise in tests
+            log_format: domain_status::LogFormat::Plain,
+            timeout_seconds: 5,
+            user_agent: "domain_status-test/1.0".to_string(),
+            adaptive_error_threshold: 0.2,
+            fingerprints: None, // Use default (will fetch from GitHub)
+            geoip: None,        // Disable GeoIP for test
+            status_port: None,
+        };
+
+        // Run the scan using the library
+        let report = run_scan(config).await.expect("Scan should complete");
+
+        // Verify results
+        assert_eq!(report.total_urls, 1);
+        // Note: URL might fail due to DNS resolution issues with mock server
+        // So we just verify the scan completed and database exists
+        assert!(report.db_path.exists());
+        assert!(report.successful + report.failed == 1);
+
+        // Verify database was created and has the runs table
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+            .await
+            .expect("Failed to connect to test database");
+
+        let run_count: (i32,) = sqlx::query_as("SELECT COUNT(*) FROM runs")
+            .fetch_one(&pool)
+            .await
+            .expect("Failed to query database");
+
+        assert_eq!(run_count.0, 1, "Database should contain 1 run record");
+    }
 }

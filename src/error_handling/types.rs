@@ -138,6 +138,8 @@ impl ErrorType {
 }
 
 impl WarningType {
+    /// Returns a human-readable string representation of the warning type.
+    #[allow(dead_code)] // May be used for future reporting features
     pub fn as_str(&self) -> &'static str {
         match self {
             WarningType::MissingMetaKeywords => "Missing meta keywords",
@@ -148,6 +150,8 @@ impl WarningType {
 }
 
 impl InfoType {
+    /// Returns a human-readable string representation of the info type.
+    #[allow(dead_code)] // May be used for future reporting features
     pub fn as_str(&self) -> &'static str {
         match self {
             InfoType::HttpRedirect => "HTTP redirect",

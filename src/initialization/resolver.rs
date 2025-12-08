@@ -53,3 +53,32 @@ pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
 
     Ok(Arc::new(resolver))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_resolver_success() {
+        let result = init_resolver();
+        assert!(result.is_ok());
+        let resolver = result.unwrap();
+        assert_eq!(Arc::strong_count(&resolver), 1);
+    }
+
+    #[test]
+    fn test_init_resolver_returns_arc() {
+        let resolver1 = init_resolver().unwrap();
+        let resolver2 = Arc::clone(&resolver1);
+        assert_eq!(Arc::strong_count(&resolver1), 2);
+        assert!(Arc::ptr_eq(&resolver1, &resolver2));
+    }
+
+    #[test]
+    fn test_init_resolver_multiple_calls() {
+        let resolver1 = init_resolver().unwrap();
+        let resolver2 = init_resolver().unwrap();
+        // Different instances should be created
+        assert!(!Arc::ptr_eq(&resolver1, &resolver2));
+    }
+}
