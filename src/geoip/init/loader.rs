@@ -223,11 +223,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_from_file_not_found() {
-        let result = load_from_file("/nonexistent/path/to/database.mmdb").await;
+        // Use a platform-agnostic path that definitely doesn't exist
+        let nonexistent_path = std::path::Path::new("nonexistent")
+            .join("path")
+            .join("to")
+            .join("database.mmdb");
+        let result = load_from_file(nonexistent_path.to_str().unwrap()).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("Failed to read") || error_msg.contains("No such file"),
+            error_msg.contains("Failed to read")
+                || error_msg.contains("No such file")
+                || error_msg.contains("not found")
+                || error_msg.contains("The system cannot find"),
             "Expected file not found error, got: {}",
             error_msg
         );

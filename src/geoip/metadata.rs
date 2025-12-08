@@ -51,12 +51,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_metadata_file_not_found() {
-        let metadata_file = PathBuf::from("/nonexistent/metadata.json");
+        // Use a platform-agnostic path that definitely doesn't exist
+        let metadata_file = PathBuf::from("nonexistent").join("metadata.json");
         let result = load_metadata(&metadata_file).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("No such file") || error_msg.contains("not found"),
+            error_msg.contains("No such file")
+                || error_msg.contains("not found")
+                || error_msg.contains("The system cannot find"),
             "Expected file not found error, got: {}",
             error_msg
         );
@@ -116,8 +119,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_metadata_invalid_path() {
-        // Try to save to a path in a non-existent directory
-        let metadata_file = PathBuf::from("/nonexistent/dir/metadata.json");
+        // Try to save to a path in a non-existent directory (platform-agnostic)
+        let metadata_file = PathBuf::from("nonexistent")
+            .join("dir")
+            .join("metadata.json");
         let metadata = GeoIpMetadata {
             source: "test.mmdb".to_string(),
             version: "build_12345".to_string(),
@@ -128,7 +133,10 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("No such file") || error_msg.contains("directory"),
+            error_msg.contains("No such file")
+                || error_msg.contains("directory")
+                || error_msg.contains("not found")
+                || error_msg.contains("The system cannot find"),
             "Expected directory error, got: {}",
             error_msg
         );
