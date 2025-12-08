@@ -111,4 +111,118 @@ mod tests {
         let output = sanitize_error_message(input);
         assert_eq!(output, input);
     }
+
+    #[test]
+    fn test_sanitize_error_message_preserves_carriage_return() {
+        let input = "Error\rmessage\rwith\rcarriage\rreturns";
+        let output = sanitize_error_message(input);
+        assert_eq!(output, "Error\rmessage\rwith\rcarriage\rreturns");
+    }
+
+    #[test]
+    fn test_sanitize_error_message_mixed_control_chars() {
+        let input = "Error\x00\nmessage\x01\twith\x02mixed\x03chars";
+        let output = sanitize_error_message(input);
+        // Should preserve \n and \t, remove \x00, \x01, \x02, \x03
+        assert_eq!(output, "Error\nmessage\twithmixedchars");
+    }
+
+    #[test]
+    fn test_sanitize_error_message_all_control_chars() {
+        // Test all control characters 0x00-0x1F except \t, \n, \r
+        let mut input = String::new();
+        for i in 0..=0x1F {
+            if i != 0x09 && i != 0x0A && i != 0x0D {
+                input.push(char::from_u32(i).unwrap());
+            }
+        }
+        let output = sanitize_error_message(&input);
+        assert_eq!(
+            output, "",
+            "All control chars except \\t, \\n, \\r should be removed"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_error_message_unicode_control_chars() {
+        // Test that non-ASCII characters (including Unicode) are preserved
+        let input = "Error with unicode: 测试 🚀 \u{200B}"; // \u{200B} is zero-width space
+        let output = sanitize_error_message(input);
+        // Unicode characters > 0x7F should be preserved
+        assert!(output.contains("测试"));
+        assert!(output.contains("🚀"));
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_short() {
+        let input = "Short error message";
+        let output = sanitize_and_truncate_error_message(input);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_long() {
+        // Create a message longer than MAX_ERROR_MESSAGE_LENGTH
+        let long_message = "A".repeat(crate::config::MAX_ERROR_MESSAGE_LENGTH + 100);
+        let output = sanitize_and_truncate_error_message(&long_message);
+
+        // Should be truncated
+        assert!(output.len() < long_message.len());
+        assert!(output.contains("... (truncated"));
+        assert!(output.contains("original length:"));
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_exact_length() {
+        // Test message exactly at MAX_ERROR_MESSAGE_LENGTH
+        let exact_message = "A".repeat(crate::config::MAX_ERROR_MESSAGE_LENGTH);
+        let output = sanitize_and_truncate_error_message(&exact_message);
+
+        // Should not be truncated (exactly at limit)
+        assert_eq!(output, exact_message);
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_one_over_limit() {
+        // Test message one character over limit
+        let over_limit = "A".repeat(crate::config::MAX_ERROR_MESSAGE_LENGTH + 1);
+        let output = sanitize_and_truncate_error_message(&over_limit);
+
+        // Should be truncated
+        assert!(output.len() < over_limit.len());
+        assert!(output.contains("... (truncated"));
+    }
+
+    #[test]
+    fn test_sanitize_and_truncate_error_message_with_control_chars() {
+        // Test that sanitization happens before truncation
+        let input = format!(
+            "{}\x00\x01\x02",
+            "A".repeat(crate::config::MAX_ERROR_MESSAGE_LENGTH + 50)
+        );
+        let output = sanitize_and_truncate_error_message(&input);
+
+        // Should have control chars removed AND be truncated
+        assert!(!output.contains('\x00'));
+        assert!(!output.contains('\x01'));
+        assert!(!output.contains('\x02'));
+        assert!(output.contains("... (truncated"));
+    }
+
+    #[test]
+    fn test_sanitize_error_message_boundary_chars() {
+        // Test boundary characters: 0x1F (last control char), 0x20 (first printable)
+        let input = "Before\x1FAfter\x20Space";
+        let output = sanitize_error_message(input);
+        // 0x1F should be removed, 0x20 (space) should be preserved
+        assert_eq!(output, "BeforeAfter Space");
+    }
+
+    #[test]
+    fn test_sanitize_error_message_very_long_unicode() {
+        // Test with very long Unicode string
+        let input = "测试".repeat(1000);
+        let output = sanitize_error_message(&input);
+        assert_eq!(output, input);
+    }
 }

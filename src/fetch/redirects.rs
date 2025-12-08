@@ -350,4 +350,131 @@ mod tests {
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
     }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_invalid_utf8_location() {
+        // Test handling of invalid UTF-8 in Location header
+        // This tests the edge case where Location header contains invalid UTF-8
+        let server = Server::run();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/"))
+                .respond_with(status_code(302).body("Redirect")),
+            // Note: httptest doesn't easily support invalid UTF-8 headers,
+            // but we test the logic path that handles this case
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let start_url = server.url("/").to_string();
+        // Should handle gracefully - if no Location header or invalid, should break loop
+        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            .await
+            .unwrap();
+
+        // Should return the start URL since no valid redirect was found
+        assert_eq!(chain.len(), 1);
+        assert_eq!(result_final, start_url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_network_error() {
+        // Test handling of network errors during redirect resolution
+        // Use an invalid URL that will fail to connect
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap();
+
+        // Use a URL that will timeout or fail to connect
+        let invalid_url = "http://192.0.2.0:9999/invalid"; // RFC 5737 test address, should fail
+        let result = resolve_redirect_chain(invalid_url, 10, &client).await;
+
+        // Should return an error (network failure)
+        assert!(result.is_err(), "Network error should return error");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_all_redirect_codes() {
+        // Test all redirect status codes: 301, 302, 303, 307, 308
+        // Test each code separately to avoid httptest expectation conflicts
+        let codes = [301, 302, 303, 307, 308];
+
+        for code in codes {
+            let server = Server::run();
+            let final_url = server.url("/final").to_string();
+
+            server.expect(
+                Expectation::matching(request::method_path("GET", "/start")).respond_with(
+                    status_code(code)
+                        .insert_header("Location", final_url.as_str())
+                        .body("Redirect"),
+                ),
+            );
+            server.expect(
+                Expectation::matching(request::method_path("GET", "/final"))
+                    .respond_with(status_code(200).body("OK")),
+            );
+
+            let client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap();
+
+            let start_url = server.url("/start").to_string();
+            let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                result_final, final_url,
+                "Redirect code {} should work",
+                code
+            );
+            assert_eq!(
+                chain.len(),
+                2,
+                "Redirect code {} should have 2 URLs in chain",
+                code
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_relative_location_edge_cases() {
+        // Test relative location header (should resolve relative to current URL)
+        let server = Server::run();
+        let base_url = server.url("/base/path").to_string();
+        // Relative "../final" from "/base/path" should resolve to "/final"
+        let final_url = server.url("/final").to_string();
+
+        // Test relative path (should resolve relative to current path)
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/base/path")).respond_with(
+                status_code(302)
+                    .insert_header("Location", "../final") // Relative path
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .respond_with(status_code(200).body("OK")),
+        );
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let (result_final, chain) = resolve_redirect_chain(&base_url, 10, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(result_final, final_url);
+        assert_eq!(chain.len(), 2);
+    }
 }

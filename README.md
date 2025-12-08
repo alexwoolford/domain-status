@@ -288,15 +288,21 @@ ORDER BY us.domain;
 SELECT DISTINCT us.domain
 FROM url_status us
 JOIN url_security_warnings usw ON us.id = usw.url_status_id
-WHERE usw.warning_type LIKE '%missing%'
+WHERE usw.warning_code LIKE '%missing%'
 ORDER BY us.domain;
 ```
 
 **Find all redirects:**
 ```sql
-SELECT domain, final_domain, status, redirect_count
-FROM url_status
-WHERE redirect_count > 0
+SELECT
+    us.domain,
+    us.final_domain,
+    us.status,
+    COUNT(urc.id) as redirect_count
+FROM url_status us
+LEFT JOIN url_redirect_chain urc ON us.id = urc.url_status_id
+GROUP BY us.id, us.domain, us.final_domain, us.status
+HAVING redirect_count > 0
 ORDER BY redirect_count DESC;
 ```
 
@@ -557,7 +563,7 @@ You can also use `domain_status` as a Rust library in your own projects. Add it 
 
 ```toml
 [dependencies]
-domain_status = "0.1.4"
+domain_status = "^0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
