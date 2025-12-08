@@ -607,21 +607,26 @@ mod tests {
     #[tokio::test]
     async fn test_try_fetch_chrome_version_invalid_json() {
         // Test that invalid JSON is handled correctly
+        // Note: If URL doesn't contain "LATEST_RELEASE" or "chrome-for-testing",
+        // the function returns the text as-is (doesn't parse as JSON)
+        // So we need to use a URL that triggers JSON parsing
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
+        // Use a URL that contains "chrome-for-testing" to trigger JSON parsing
+        let url_path = "/chrome-for-testing/invalid";
         server.expect(
-            Expectation::matching(request::method_path("GET", "/invalid")).respond_with(
+            Expectation::matching(request::method_path("GET", url_path)).respond_with(
                 status_code(200)
                     .insert_header("Content-Type", "application/json")
                     .body("{ invalid json }"),
             ),
         );
 
-        let url = server.url("/invalid").to_string();
+        let url = server.url(url_path).to_string();
         let result = try_fetch_chrome_version(&url).await;
 
-        // Should return error for invalid JSON
+        // Should return error for invalid JSON when parsing is attempted
         assert!(result.is_err());
         // Error should mention JSON parsing or deserialize
         let error_msg = result.unwrap_err().to_string();
