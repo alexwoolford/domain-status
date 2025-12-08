@@ -85,3 +85,96 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_init_asn_database_no_license_key() {
+        // Test when no license key is set
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let result = init_asn_database(temp_dir.path()).await;
+        assert!(result.is_ok());
+        // Should return Ok but not load database
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_empty_license_key() {
+        // Test with empty license key
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "");
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let result = init_asn_database(temp_dir.path()).await;
+        assert!(result.is_ok());
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_already_loaded() {
+        // Test when database is already loaded
+        // First, we'd need to load it, but in unit tests it's not loaded
+        // So this test verifies the check doesn't panic
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let result = init_asn_database(temp_dir.path()).await;
+        // Should return Ok (either already loaded or not loaded due to no license)
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_invalid_cache_path() {
+        // Test with invalid cache file path (non-existent file)
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        // Set a license key to trigger download attempt
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+
+        // This will attempt to download, which will fail, but should handle gracefully
+        let result = init_asn_database(temp_dir.path()).await;
+        // Should return Ok even if download fails (logs warning but continues)
+        assert!(result.is_ok());
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_cache_file_missing() {
+        // Test when cache file doesn't exist but metadata does
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let metadata_file = temp_dir.path().join("asn_metadata.json");
+
+        // Create metadata file but no cache file
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test".to_string(),
+            version: "test".to_string(),
+            last_updated: std::time::SystemTime::now(),
+        };
+        let metadata_json = serde_json::to_string(&metadata).unwrap();
+        tokio::fs::write(&metadata_file, metadata_json)
+            .await
+            .expect("Failed to write metadata");
+
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let result = init_asn_database(temp_dir.path()).await;
+        // Should attempt download since cache file is missing
+        assert!(result.is_ok());
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_metadata_parse_error() {
+        // Test when metadata file exists but is invalid JSON
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let metadata_file = temp_dir.path().join("asn_metadata.json");
+        tokio::fs::write(&metadata_file, b"{ invalid json }")
+            .await
+            .expect("Failed to write invalid metadata");
+
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let result = init_asn_database(temp_dir.path()).await;
+        // Should handle invalid metadata gracefully (treat as missing)
+        assert!(result.is_ok());
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+}

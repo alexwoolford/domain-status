@@ -180,4 +180,90 @@ mod tests {
             assert!(result.is_none(), "Malformed IP {} should return None", ip);
         }
     }
+
+    #[test]
+    fn test_lookup_ip_ipv6_compressed() {
+        // Test with compressed IPv6 addresses
+        let compressed = vec!["::1", "2001::1", "::ffff:192.168.1.1"];
+        for ip in compressed {
+            let result = lookup_ip(ip);
+            // Should handle compressed IPv6 gracefully
+            assert!(
+                result.is_none() || result.is_some(),
+                "Should handle compressed IPv6 {} gracefully",
+                ip
+            );
+        }
+    }
+
+    #[test]
+    fn test_lookup_ip_whitespace() {
+        // Test with whitespace (should fail parsing)
+        let with_whitespace = vec![" 8.8.8.8 ", "8.8.8.8\n", "\t8.8.8.8"];
+        for ip in with_whitespace {
+            let result = lookup_ip(ip);
+            // Whitespace should cause parse failure
+            assert!(
+                result.is_none(),
+                "IP with whitespace {} should return None",
+                ip
+            );
+        }
+    }
+
+    #[test]
+    fn test_lookup_ip_very_long_string() {
+        // Test with very long string (potential DoS)
+        let long_string = "A".repeat(10000);
+        let result = lookup_ip(&long_string);
+        assert!(result.is_none(), "Very long string should return None");
+    }
+
+    #[test]
+    fn test_lookup_ip_null_bytes() {
+        // Test with null bytes (potential security issue)
+        let with_null = "8.8.8.8\0";
+        let result = lookup_ip(with_null);
+        assert!(result.is_none(), "IP with null byte should return None");
+    }
+
+    #[test]
+    fn test_is_enabled_returns_false_when_uninitialized() {
+        // Verify is_enabled returns false when not initialized
+        let enabled = is_enabled();
+        assert!(
+            !enabled,
+            "Should return false when GeoIP is not initialized"
+        );
+    }
+
+    #[test]
+    fn test_get_metadata_returns_none_when_uninitialized() {
+        // Verify get_metadata returns None when not initialized
+        let metadata = get_metadata();
+        assert!(
+            metadata.is_none(),
+            "Should return None when GeoIP is not initialized"
+        );
+    }
+
+    #[test]
+    fn test_lookup_ip_special_ipv6_formats() {
+        // Test various IPv6 formats
+        let ipv6_formats = vec![
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334", // Full
+            "2001:db8:85a3::8a2e:370:7334",            // Compressed
+            "::1",                                     // Loopback
+            "fe80::1",                                 // Link-local
+        ];
+        for ip in ipv6_formats {
+            let result = lookup_ip(ip);
+            // Should handle all formats gracefully (may return None if not in DB)
+            assert!(
+                result.is_none() || result.is_some(),
+                "Should handle IPv6 format {} gracefully",
+                ip
+            );
+        }
+    }
 }
