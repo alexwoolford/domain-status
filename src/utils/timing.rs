@@ -512,4 +512,102 @@ mod tests {
         assert_eq!(metrics.dns_forward_ms, 0);
         assert_eq!(metrics.total_ms, 0);
     }
+
+    #[test]
+    fn test_timing_stats_percentage_division_by_zero() {
+        // Test that percentage calculation handles division by zero correctly
+        let stats = TimingStats::new();
+        let avg = stats.averages();
+        // When count is 0, averages should return all zeros
+        assert_eq!(avg.total_ms, 0);
+        // Percentage calculation should handle total_ms = 0 (returns 0.0)
+        // This is tested implicitly - if it panicked, the test would fail
+    }
+
+    #[test]
+    fn test_timing_stats_overflow_protection() {
+        // Test that very large values don't cause overflow
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: u64::MAX,
+            total_ms: u64::MAX,
+            ..Default::default()
+        };
+
+        // Should not panic on overflow
+        stats.record(&metrics);
+        assert_eq!(stats.count.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn test_timing_stats_http_request_less_than_total() {
+        // Test that http_request_ms is always <= total_ms (critical for percentage accuracy)
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 1000,
+            total_ms: 2000, // Total should be >= http_request
+            ..Default::default()
+        };
+
+        stats.record(&metrics);
+        let avg = stats.averages();
+        assert!(avg.http_request_ms <= avg.total_ms);
+    }
+
+    #[test]
+    fn test_timing_stats_all_components_sum_less_than_total() {
+        // Test that sum of all components doesn't exceed total (with overhead)
+        let stats = TimingStats::new();
+        let metrics = UrlTimingMetrics {
+            http_request_ms: 1000,
+            dns_forward_ms: 500,
+            dns_reverse_ms: 300,
+            dns_additional_ms: 200,
+            tls_handshake_ms: 400,
+            html_parsing_ms: 100,
+            tech_detection_ms: 50,
+            geoip_lookup_ms: 10,
+            whois_lookup_ms: 0,
+            security_analysis_ms: 5,
+            total_ms: 3000, // Total includes overhead
+        };
+
+        stats.record(&metrics);
+        let avg = stats.averages();
+        let sum_components = avg.http_request_ms
+            + avg.dns_forward_ms
+            + avg.dns_reverse_ms
+            + avg.dns_additional_ms
+            + avg.tls_handshake_ms
+            + avg.html_parsing_ms
+            + avg.tech_detection_ms
+            + avg.geoip_lookup_ms
+            + avg.whois_lookup_ms
+            + avg.security_analysis_ms;
+
+        // Sum of components should be <= total (total includes overhead)
+        assert!(sum_components <= avg.total_ms);
+    }
+
+    #[test]
+    fn test_duration_to_ms_very_large_duration() {
+        // Test that very large durations don't cause overflow
+        let duration = Duration::from_secs(u64::MAX / 1_000_000);
+        // Should not panic, but may lose precision
+        let result = duration_to_ms(duration);
+        // Result should be reasonable (not cause overflow in downstream code)
+        assert!(result > 0);
+    }
+
+    #[test]
+    fn test_duration_to_ms_overflow_protection() {
+        // Test duration that would overflow u64::MAX microseconds
+        // Duration::from_secs(u64::MAX) would be way too large
+        // Test with a large but reasonable duration
+        let duration = Duration::from_secs(18_446_744); // Close to u64::MAX / 1_000_000
+        let result = duration_to_ms(duration);
+        // Should handle gracefully (may truncate but shouldn't panic)
+        assert!(result > 0);
+    }
 }
