@@ -5,6 +5,14 @@
 //!
 //! With the library + binary structure, we can now test the full pipeline
 //! by calling `run_scan()` directly with controlled inputs.
+//!
+//! ## Test Categories
+//!
+//! - **Unit tests**: Fast, no network access, run in all CI jobs
+//! - **Integration tests with mock server**: Use `httptest` for HTTP mocking, run in all CI jobs
+//! - **End-to-end tests** (marked `#[ignore]`): Require network access for DNS/fingerprints/TLS.
+//!   These are run separately in CI via `cargo test -- --ignored` in the `e2e` job.
+//!   To run locally: `cargo test -- --ignored`
 
 #[cfg(test)]
 mod tests {
@@ -104,6 +112,7 @@ mod tests {
     /// so it's more of an integration test than a unit test.
     #[tokio::test]
     #[ignore] // Ignore by default - requires network access for DNS/fingerprints
+              // Run with `cargo test -- --ignored` or in CI e2e job
     async fn test_full_scan_with_mock_server() {
         use domain_status::{run_scan, Config};
         use tempfile::TempDir;

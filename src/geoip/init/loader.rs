@@ -5,10 +5,12 @@ use maxminddb::Reader;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::config::{MAX_GEOIP_DOWNLOAD_SIZE, MAX_NETWORK_DOWNLOAD_RETRIES};
 use crate::geoip::extract::extract_mmdb_from_tar_gz;
 use crate::geoip::metadata::{extract_metadata, load_metadata, save_metadata};
 use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self};
+use crate::security::validate_url_safe;
 
 /// Loads GeoIP database from a local file path
 pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
@@ -73,13 +75,59 @@ pub(crate) async fn load_from_url(
         }
     }
 
-    // Download database
+    // SSRF protection: validate URL before downloading
+    validate_url_safe(url).with_context(|| format!("Unsafe GeoIP URL rejected: {}", url))?;
+
+    // Download database with retries and size limits
     log::info!("Downloading GeoIP database from: {}", url);
+
+    let mut last_error = None;
+    for attempt in 1..=MAX_NETWORK_DOWNLOAD_RETRIES {
+        match download_geoip_with_size_limit(url).await {
+            Ok(bytes) => {
+                return process_downloaded_geoip(
+                    bytes,
+                    url,
+                    cache_dir,
+                    db_name,
+                    &cache_file,
+                    &metadata_file,
+                )
+                .await;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_NETWORK_DOWNLOAD_RETRIES {
+                    log::warn!(
+                        "Failed to download GeoIP database from {} (attempt {}/{}), retrying...",
+                        url,
+                        attempt,
+                        MAX_NETWORK_DOWNLOAD_RETRIES
+                    );
+                    // Exponential backoff: 2s, 4s, 8s (longer for large files)
+                    tokio::time::sleep(Duration::from_secs(2 << (attempt - 1))).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to download GeoIP database from {} after {} attempts",
+            url,
+            MAX_NETWORK_DOWNLOAD_RETRIES
+        )
+    }))
+}
+
+/// Downloads GeoIP database with size limit enforcement
+async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300)) // 5 minutes for large file
         .build()?;
 
     let response = client.get(url).send().await?;
+
     if !response.status().is_success() {
         let status = response.status();
         let error_body = response
@@ -94,8 +142,40 @@ pub(crate) async fn load_from_url(
         ));
     }
 
+    // Check content-length header if available
+    if let Some(content_length) = response.content_length() {
+        if content_length > MAX_GEOIP_DOWNLOAD_SIZE as u64 {
+            return Err(anyhow::anyhow!(
+                "GeoIP database too large: {} bytes (max: {} bytes)",
+                content_length,
+                MAX_GEOIP_DOWNLOAD_SIZE
+            ));
+        }
+    }
+
     let downloaded_bytes = response.bytes().await?.to_vec();
 
+    // Double-check size after download (in case content-length was missing or wrong)
+    if downloaded_bytes.len() > MAX_GEOIP_DOWNLOAD_SIZE {
+        return Err(anyhow::anyhow!(
+            "GeoIP database too large: {} bytes (max: {} bytes)",
+            downloaded_bytes.len(),
+            MAX_GEOIP_DOWNLOAD_SIZE
+        ));
+    }
+
+    Ok(downloaded_bytes)
+}
+
+/// Processes downloaded GeoIP bytes (extraction, caching, metadata)
+async fn process_downloaded_geoip(
+    downloaded_bytes: Vec<u8>,
+    url: &str,
+    _cache_dir: &Path,
+    db_name: &str,
+    cache_file: &Path,
+    metadata_file: &Path,
+) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
     // Extract .mmdb file from tar.gz if needed, or use directly if it's already .mmdb
     let db_bytes = if url.ends_with(".tar.gz") || url.contains("suffix=tar.gz") {
         extract_mmdb_from_tar_gz(&downloaded_bytes, db_name)?
@@ -115,7 +195,7 @@ pub(crate) async fn load_from_url(
     };
 
     // Save to cache
-    tokio::fs::write(&cache_file, &db_bytes)
+    tokio::fs::write(cache_file, &db_bytes)
         .await
         .with_context(|| format!("Failed to write cache file: {:?}", cache_file))?;
 
@@ -130,7 +210,7 @@ pub(crate) async fn load_from_url(
         .with_context(|| "Failed to create owned reader from downloaded database")?;
 
     // Save metadata
-    save_metadata(&metadata, &metadata_file).await?;
+    save_metadata(&metadata, metadata_file).await?;
 
     Ok((reader, metadata))
 }

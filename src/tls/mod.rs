@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access
+    #[ignore] // Requires network access - run with `cargo test -- --ignored`
     async fn test_get_ssl_certificate_info_valid_domain() {
         init_crypto_for_test();
         // Test with a well-known domain that should have a valid certificate

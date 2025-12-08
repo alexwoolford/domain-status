@@ -112,3 +112,13 @@ pub const STATUS_SERVER_LOGGING_INTERVAL_SECS: u64 = 30;
 // HTTP status codes (for clarity and consistency)
 /// HTTP status code for "Too Many Requests" (rate limiting)
 pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;
+
+// Network download limits (for remote rulesets and GeoIP)
+/// Maximum size for fingerprint ruleset downloads in bytes (10MB)
+/// Prevents DoS attacks via extremely large ruleset files
+pub const MAX_RULESET_DOWNLOAD_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum size for GeoIP database downloads in bytes (100MB)
+/// GeoIP databases are large but should not exceed this limit
+pub const MAX_GEOIP_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024;
+/// Maximum number of retries for network downloads (rulesets, GeoIP)
+pub const MAX_NETWORK_DOWNLOAD_RETRIES: usize = 3;

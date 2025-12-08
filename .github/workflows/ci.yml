@@ -1,5 +1,13 @@
 name: CI
 
+# This workflow ensures code quality and security:
+# - Formatting: cargo fmt --check (Ubuntu only, platform-agnostic)
+# - Linting: cargo clippy with -D warnings (Ubuntu only, platform-agnostic)
+# - Security: cargo audit (all platforms)
+# - Tests: All unit and integration tests (all platforms)
+# - E2E: Ignored tests requiring network access (Ubuntu only, see e2e job)
+# - Coverage: Code coverage via cargo-tarpaulin (uploaded to Codecov)
+
 on:
   push:
     branches: [ main, develop ]
@@ -43,18 +51,25 @@ jobs:
           workspaces: '.'
           cache-on-failure: true
 
+      # Code Quality Checks (platform-agnostic, so only run on Ubuntu to save CI time)
       - name: Check formatting
         run: cargo fmt --check
-        # Format check only on Ubuntu to save CI time
+        # Formatting is platform-agnostic, so we only check on Ubuntu
+        # All platforms still run tests and build to ensure cross-platform compatibility
         if: matrix.os == 'ubuntu-latest'
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
-        # Clippy only on Ubuntu to save CI time (most issues are platform-agnostic)
+        # Clippy checks are platform-agnostic, so we only run on Ubuntu
+        # All platforms still run tests and build to ensure cross-platform compatibility
+        # This enforces: unused code warnings, unsafe code, performance issues, etc.
         if: matrix.os == 'ubuntu-latest'
 
       - name: Run tests
         run: cargo test --all-features --all-targets --locked
+        # Note: Tests marked with #[ignore] are skipped by default
+        # They require network access and are run separately in the e2e job below
+        # This runs: all unit tests + integration tests with mock servers
 
       - name: Build release
         run: cargo build --release --locked
@@ -116,7 +131,8 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    # Run on push/PR and also on weekly schedule
+    # Security checks run on push/PR and weekly schedule
+    # This job runs: cargo audit (dependency vulnerabilities) + gitleaks (secret scanning)
     if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -134,6 +150,7 @@ jobs:
           cargo install cargo-audit --features=fix --locked
 
       # .cargo/audit.toml will be automatically detected by cargo-audit
+      # This checks for known vulnerabilities in dependencies (CVE database)
       - name: Run security audit
         run: cargo audit
         # Removed continue-on-error since config is now correctly placed
@@ -150,3 +167,36 @@ jobs:
           exit-code: 1
           verbose: true
           redact: true
+
+  e2e:
+    name: End-to-End Tests (Network Required)
+    runs-on: ubuntu-latest
+    # Run ignored tests that require network access
+    # These are true end-to-end tests that verify the full pipeline:
+    # - Full scan with real DNS/TLS/fingerprint fetching (tests/integration_test.rs)
+    # - TLS certificate fetching from real domains (src/tls/mod.rs)
+    # Tests are marked #[ignore] to avoid network calls in regular test runs
+    # Run locally with: cargo test -- --ignored
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '.'
+          cache-on-failure: true
+
+      - name: Run ignored tests (requires network)
+        run: cargo test --all-features --all-targets --locked -- --ignored
+        # These tests verify:
+        # - Full end-to-end scan pipeline (tests/integration_test.rs)
+        # - TLS certificate fetching from real domains (src/tls/mod.rs)
+        # They are marked #[ignore] to avoid network calls in regular test runs
+        continue-on-error: true  # Allow failures due to network issues

@@ -667,6 +667,12 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 
 See [AI_AGENTS.md](AI_AGENTS.md) for development guidelines and conventions.
 
+See [TESTING.md](TESTING.md) for detailed information about:
+- Test structure (unit, integration, e2e)
+- Running tests locally
+- Code quality checks (fmt, clippy, audit)
+- CI test coverage
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
