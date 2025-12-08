@@ -5,7 +5,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::config::MAX_RULESET_DOWNLOAD_SIZE;
 use crate::fingerprint::models::Technology;
+use crate::security::validate_url_safe;
 
 /// Fetches all JSON files from a GitHub directory and merges them
 pub(crate) async fn fetch_from_github_directory(
@@ -15,24 +17,32 @@ pub(crate) async fn fetch_from_github_directory(
     // Convert raw.githubusercontent.com URL to GitHub API URL
     // e.g., https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
     // -> https://api.github.com/repos/HTTPArchive/wappalyzer/contents/src/technologies
-    let api_url = if dir_url.contains("raw.githubusercontent.com") {
+    let (api_url, branch) = if dir_url.contains("raw.githubusercontent.com") {
         // Extract: owner/repo/branch/path
         // e.g., raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
         let parts: Vec<&str> = dir_url.split('/').collect();
         if parts.len() >= 7 {
             let owner = parts[3];
             let repo = parts[4];
+            let branch = parts.get(5).copied().unwrap_or("main"); // Extract branch, default to "main"
             let path = parts[6..].join("/");
-            format!(
+            let constructed_url = format!(
                 "https://api.github.com/repos/{}/{}/contents/{}",
                 owner, repo, path
-            )
+            );
+            // Validate constructed URL (defense in depth)
+            validate_url_safe(&constructed_url).with_context(|| {
+                format!("Unsafe GitHub API URL constructed: {}", constructed_url)
+            })?;
+            (constructed_url, branch)
         } else {
             return Err(anyhow::anyhow!("Invalid GitHub URL format: {}", dir_url));
         }
     } else {
-        // Already an API URL or different format
-        dir_url.to_string()
+        // Already an API URL or different format - validate it
+        validate_url_safe(dir_url)
+            .with_context(|| format!("Unsafe GitHub API URL: {}", dir_url))?;
+        (dir_url.to_string(), "main") // Default branch if not specified
     };
 
     log::info!(
@@ -40,9 +50,13 @@ pub(crate) async fn fetch_from_github_directory(
         api_url
     );
 
-    // Fetch directory listing
-    let api_url_with_ref = format!("{}?ref=main", api_url);
-    log::debug!("Fetching directory listing from: {}", api_url_with_ref);
+    // Fetch directory listing with branch reference
+    let api_url_with_ref = format!("{}?ref={}", api_url, branch);
+    log::debug!(
+        "Fetching directory listing from: {} (branch: {})",
+        api_url_with_ref,
+        branch
+    );
 
     // Build request with optional GitHub token for authentication
     let mut request = client
@@ -113,17 +127,61 @@ pub(crate) async fn fetch_from_github_directory(
 
     log::info!("Found {} JSON files to fetch", json_files.len());
 
-    // Fetch all JSON files in parallel
+    // Fetch all JSON files in parallel with SSRF protection and size limits
     let mut tasks = Vec::new();
     for file in json_files {
         if let Some(download_url) = file.download_url {
+            // SSRF protection: validate download URL from GitHub API
+            // GitHub API should only return raw.githubusercontent.com URLs, but validate to be safe
+            if let Err(e) = validate_url_safe(&download_url) {
+                log::warn!(
+                    "Skipping unsafe download URL from GitHub API: {} - {}",
+                    download_url,
+                    e
+                );
+                continue;
+            }
+
+            // Additional check: ensure it's actually a GitHub URL (defense in depth)
+            if !download_url.starts_with("https://raw.githubusercontent.com/") {
+                log::warn!(
+                    "Suspicious download URL from GitHub API (not raw.githubusercontent.com): {}",
+                    download_url
+                );
+                continue;
+            }
+
             let client = client.clone();
             tasks.push(tokio::spawn(async move {
                 match client.get(&download_url).send().await {
                     Ok(resp) => {
                         if resp.status().is_success() {
+                            // Check content-length header if available
+                            if let Some(content_length) = resp.content_length() {
+                                if content_length > MAX_RULESET_DOWNLOAD_SIZE as u64 {
+                                    log::warn!(
+                                        "File {} too large ({} bytes, max: {}), skipping",
+                                        download_url,
+                                        content_length,
+                                        MAX_RULESET_DOWNLOAD_SIZE
+                                    );
+                                    return None;
+                                }
+                            }
+
                             match resp.text().await {
                                 Ok(text) => {
+                                    // Double-check size after download (in case content-length was missing/wrong)
+                                    if text.len() > MAX_RULESET_DOWNLOAD_SIZE {
+                                        log::warn!(
+                                            "File {} too large after download ({} bytes, max: {}), skipping",
+                                            download_url,
+                                            text.len(),
+                                            MAX_RULESET_DOWNLOAD_SIZE
+                                        );
+                                        return None;
+                                    }
+
                                     match serde_json::from_str::<HashMap<String, Technology>>(&text)
                                     {
                                         Ok(techs) => Some(techs),
