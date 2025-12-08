@@ -819,4 +819,95 @@ mod tests {
         // Should fail on download, but handle cache load failure gracefully
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_download_geoip_with_size_limit_content_length_mismatch() {
+        // Test that content-length header mismatch is caught (security issue)
+        // This is critical - malicious server could claim small size but send large file
+        // The code at line 158-165 double-checks actual size after download
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        // Server claims 100 bytes but sends 10MB (exceeds limit)
+        let large_payload: Vec<u8> = vec![0u8; 10_000_000];
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/geoip.mmdb")).respond_with(
+                status_code(200)
+                    .append_header("content-length", "100") // Lie about size
+                    .body(large_payload),
+            ),
+        );
+
+        let url = server.url("/geoip.mmdb").to_string();
+        let result = download_geoip_with_size_limit(&url).await;
+
+        // Should fail on actual size check (line 159), not content-length check
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("too large") || error_msg.contains("bytes"),
+            "Should detect actual size mismatch: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_geoip_with_size_limit_error_body_truncation() {
+        // Test that error body extraction failures don't hide real errors
+        // This is critical - if .text().await fails, we should still report the HTTP status
+        // The code at line 136 uses unwrap_or_else to handle text() failures
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        // Return 500 with invalid UTF-8 body (will fail on .text())
+        let invalid_utf8: Vec<u8> = vec![0xFF, 0xFE, 0xFD];
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
+                .respond_with(status_code(500).body(invalid_utf8)),
+        );
+
+        let url = server.url("/geoip.mmdb").to_string();
+        let result = download_geoip_with_size_limit(&url).await;
+
+        // Should fail with HTTP error, even if error body can't be read
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("500") || error_msg.contains("Failed to download"),
+            "Should report HTTP status even if error body fails: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_partial_read_failure() {
+        // Test that partial file reads are handled correctly
+        // This is critical - if file is being written or truncated during read,
+        // we should get a proper error, not corrupted data
+        use tempfile::TempDir;
+        use tokio::io::AsyncWriteExt;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let db_path = temp_dir.path().join("partial.mmdb");
+
+        // Create a file that looks like it might be valid but is too short
+        // (simulates file being written/truncated)
+        let mut file = tokio::fs::File::create(&db_path)
+            .await
+            .expect("Failed to create test file");
+        // Write minimal data (not enough for valid mmdb)
+        file.write_all(&[0u8; 100])
+            .await
+            .expect("Failed to write test data");
+
+        let result = load_from_file(db_path.to_str().unwrap()).await;
+        // Should fail on parse (file too short/invalid)
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("parse") || error_msg.contains("Failed"),
+            "Should detect invalid/partial file: {}",
+            error_msg
+        );
+    }
 }
