@@ -37,7 +37,7 @@ cargo install domain_status
 echo -e "https://example.com\nhttps://example.org" > urls.txt && domain_status urls.txt
 
 # 3. View results
-sqlite3 url_checker.db "SELECT domain, status, title FROM url_status;"
+sqlite3 domain_status.db "SELECT domain, status, title FROM url_status;"
 ```
 
 **Example output:**
@@ -167,7 +167,7 @@ Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many
 **Common Options:**
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
 - `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
-- `--db-path <PATH>`: SQLite database file path (default: `./url_checker.db`)
+- `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
 - `--max-concurrency <N>`: Maximum concurrent requests (default: 30)
 - `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 35 seconds.
 - `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 15)
@@ -196,7 +196,7 @@ domain_status urls.txt \
 ### Environment Variables
 
 - `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
-- `URL_CHECKER_DB_PATH`: Override default database path (alternative to `--db-path`)
+- `DOMAIN_STATUS_DB_PATH`: Override default database path (alternative to `--db-path`)
 
 ### URL Input
 
@@ -369,7 +369,7 @@ run_1765150444953   | 0.1.4   | 2025-01-07 23:33:59 | 2025-01-07 23:34:52 | 52.1
 use domain_status::storage::query_run_history;
 use sqlx::SqlitePool;
 
-let pool = SqlitePool::connect("sqlite:./url_checker.db").await?;
+let pool = SqlitePool::connect("sqlite:./domain_status.db").await?;
 let runs = query_run_history(&pool, Some(10)).await?;
 
 for run in runs {
