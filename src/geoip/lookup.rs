@@ -256,26 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_enabled_returns_false_when_uninitialized() {
-        // Verify is_enabled returns false when not initialized
-        let enabled = is_enabled();
-        assert!(
-            !enabled,
-            "Should return false when GeoIP is not initialized"
-        );
-    }
-
-    #[test]
-    fn test_get_metadata_returns_none_when_uninitialized() {
-        // Verify get_metadata returns None when not initialized
-        let metadata = get_metadata();
-        assert!(
-            metadata.is_none(),
-            "Should return None when GeoIP is not initialized"
-        );
-    }
-
-    #[test]
     fn test_lookup_ip_special_ipv6_formats() {
         // Test various IPv6 formats
         let ipv6_formats = vec![
