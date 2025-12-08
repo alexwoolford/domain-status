@@ -253,4 +253,38 @@ mod tests {
             .unwrap()
             .contains("script-src"));
     }
+
+    #[test]
+    fn test_extract_security_headers_empty_value() {
+        // Test that empty header values are handled correctly
+        // This is critical - empty values should still be extracted
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_SECURITY_POLICY,
+            "".parse().unwrap(),
+        );
+
+        let extracted = extract_security_headers(&headers);
+        // Should extract even empty values
+        assert!(extracted.contains_key("Content-Security-Policy"));
+        assert_eq!(
+            extracted.get("Content-Security-Policy"),
+            Some(&"".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_http_headers_empty_value() {
+        // Test that empty HTTP header values are handled correctly
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::HeaderName::from_static("server"),
+            "".parse().unwrap(),
+        );
+
+        let extracted = extract_http_headers(&headers);
+        // Should extract even empty values
+        assert!(extracted.contains_key("Server"));
+        assert_eq!(extracted.get("Server"), Some(&"".to_string()));
+    }
 }

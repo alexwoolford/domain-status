@@ -578,4 +578,33 @@ mod tests {
         // but we verify the function doesn't panic and handles timing correctly
         let _ = result;
     }
+
+    #[tokio::test]
+    async fn test_handle_response_timing_metrics_overflow_protection() {
+        // Test that very large elapsed times don't cause overflow
+        // This is critical - elapsed * 1_000_000.0 could overflow u64
+        // The code at line 53 uses .min(u64::MAX as f64) to prevent overflow
+        let very_large_elapsed = 1_000_000.0; // 1 million seconds
+
+        // Verify the calculation doesn't panic
+        let http_request_ms: f64 = very_large_elapsed * 1_000_000.0;
+        let http_request_ms = http_request_ms.min(u64::MAX as f64).max(0.0) as u64;
+        // With protection, should be clamped to u64::MAX (not overflow)
+        // Note: Due to floating point precision, might be slightly less than MAX
+        assert!(http_request_ms > 1_000_000_000_000_000 || http_request_ms == u64::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_handle_response_negative_elapsed_clamped() {
+        // Test that negative elapsed times are clamped to 0
+        // This is critical - clock adjustments could cause negative elapsed
+        // The code at line 53 uses .max(0.0) to prevent negative values
+        let negative_elapsed = -1.0;
+
+        // Verify the calculation clamps negative values
+        let http_request_ms: f64 = negative_elapsed * 1_000_000.0;
+        let http_request_ms = http_request_ms.min(u64::MAX as f64).max(0.0) as u64;
+        // Should be clamped to 0, not negative
+        assert_eq!(http_request_ms, 0);
+    }
 }

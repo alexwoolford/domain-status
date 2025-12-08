@@ -165,7 +165,281 @@ pub async fn prepare_record_for_insertion(
     )
 }
 
-// Note: Tests for prepare_record_for_insertion require complex setup with
-// ProcessingContext, ResponseData, HtmlData, etc. These are better tested via
-// integration tests that exercise the full flow. Unit tests here would require
-// extensive mocking and may not provide significant value over integration tests.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+    use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
+    use crate::fetch::response::{HtmlData, ResponseData};
+    use crate::fetch::ProcessingContext;
+    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
+    use crate::utils::TimingStats;
+    use hickory_resolver::config::ResolverOpts;
+    use hickory_resolver::TokioResolver;
+    use std::sync::Arc;
+
+    async fn create_test_context() -> ProcessingContext {
+        let client = Arc::new(
+            reqwest::Client::builder()
+                .build()
+                .expect("Failed to create HTTP client"),
+        );
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("Failed to create redirect client"),
+        );
+        let extractor = Arc::new(psl::List);
+        let resolver = Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+        let error_stats = Arc::new(ProcessingStats::new());
+        let timing_stats = Arc::new(TimingStats::new());
+        let run_id = Some("test-run".to_string());
+        let enable_whois = false; // Disable WHOIS for faster tests
+        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
+        let pool = Arc::new(
+            sqlx::SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("Failed to create test pool"),
+        );
+
+        ProcessingContext::new(
+            client,
+            redirect_client,
+            extractor,
+            resolver,
+            error_stats,
+            run_id,
+            enable_whois,
+            db_circuit_breaker,
+            pool,
+            timing_stats,
+        )
+    }
+
+    fn create_minimal_resp_data() -> ResponseData {
+        ResponseData {
+            final_url: "https://example.com".to_string(),
+            initial_domain: "example.com".to_string(),
+            final_domain: "example.com".to_string(),
+            host: "example.com".to_string(),
+            status: 200,
+            status_desc: "OK".to_string(),
+            headers: reqwest::header::HeaderMap::new(),
+            security_headers: std::collections::HashMap::new(),
+            http_headers: std::collections::HashMap::new(),
+            body: "<html><body>Test</body></html>".to_string(),
+        }
+    }
+
+    fn create_minimal_html_data() -> HtmlData {
+        HtmlData {
+            title: "Test".to_string(),
+            keywords_str: None,
+            description: None,
+            is_mobile_friendly: false,
+            structured_data: crate::parse::StructuredData::default(),
+            social_media_links: Vec::new(),
+            analytics_ids: Vec::new(),
+            meta_tags: std::collections::HashMap::new(),
+            script_sources: Vec::new(),
+            script_content: String::new(),
+            script_tag_ids: std::collections::HashSet::new(),
+            html_text: "Test".to_string(),
+        }
+    }
+
+    fn create_minimal_tls_dns_data() -> TlsDnsData {
+        TlsDnsData {
+            ip_address: "8.8.8.8".to_string(),
+            tls_version: None,
+            subject: None,
+            issuer: None,
+            valid_from: None,
+            valid_to: None,
+            oids: None,
+            cipher_suite: None,
+            key_algorithm: None,
+            subject_alternative_names: None,
+            reverse_dns_name: None,
+        }
+    }
+
+    fn create_minimal_additional_dns_data() -> AdditionalDnsData {
+        AdditionalDnsData {
+            nameservers: None,
+            txt_records: None,
+            mx_records: None,
+            spf_record: None,
+            dmarc_record: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prepare_record_for_insertion_basic_success() {
+        // Test that prepare_record_for_insertion works with minimal valid data
+        // This is critical - verifies the orchestration doesn't panic
+        let ctx = create_test_context().await;
+        let resp_data = create_minimal_resp_data();
+        let html_data = create_minimal_html_data();
+        let tls_dns_data = create_minimal_tls_dns_data();
+        let additional_dns = create_minimal_additional_dns_data();
+
+        let (batch_record, (geoip_ms, whois_ms, security_ms)) =
+            prepare_record_for_insertion(RecordPreparationParams {
+                resp_data: &resp_data,
+                html_data: &html_data,
+                tls_dns_data: &tls_dns_data,
+                additional_dns: &additional_dns,
+                technologies_vec: Vec::new(),
+                partial_failures: Vec::new(),
+                redirect_chain: Vec::new(),
+                elapsed: 1.0,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+                ctx: &ctx,
+            })
+            .await;
+
+        // Should succeed without panicking
+        assert_eq!(batch_record.url_record.final_domain, resp_data.final_domain);
+        // Timing metrics should be reasonable
+        assert!(geoip_ms < 1000); // GeoIP should be fast
+        assert_eq!(whois_ms, 0); // WHOIS disabled in test context
+        assert!(security_ms < 1000); // Security analysis should be fast
+    }
+
+    #[tokio::test]
+    async fn test_prepare_record_for_insertion_geoip_lookup_failure_handled() {
+        // Test that GeoIP lookup failures don't prevent record creation
+        // This is critical - GeoIP is optional, failures shouldn't break the flow
+        let ctx = create_test_context().await;
+        let resp_data = create_minimal_resp_data();
+        let html_data = create_minimal_html_data();
+        let mut tls_dns_data = create_minimal_tls_dns_data();
+        // Use invalid IP to trigger GeoIP lookup failure
+        tls_dns_data.ip_address = "invalid.ip.address".to_string();
+        let additional_dns = create_minimal_additional_dns_data();
+
+        let (batch_record, (geoip_ms, _whois_ms, _security_ms)) =
+            prepare_record_for_insertion(RecordPreparationParams {
+                resp_data: &resp_data,
+                html_data: &html_data,
+                tls_dns_data: &tls_dns_data,
+                additional_dns: &additional_dns,
+                technologies_vec: Vec::new(),
+                partial_failures: Vec::new(),
+                redirect_chain: Vec::new(),
+                elapsed: 1.0,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+                ctx: &ctx,
+            })
+            .await;
+
+        // Should succeed even with invalid IP (GeoIP lookup returns None)
+        assert_eq!(batch_record.url_record.final_domain, resp_data.final_domain);
+        // GeoIP lookup should complete quickly (returns None for invalid IP)
+        assert!(geoip_ms < 1000);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_record_for_insertion_parallel_tasks_complete() {
+        // Test that parallel tasks (GeoIP, security, WHOIS) complete correctly
+        // This is critical - tokio::join! should handle all tasks even if some fail
+        let ctx = create_test_context().await;
+        let resp_data = create_minimal_resp_data();
+        let html_data = create_minimal_html_data();
+        let tls_dns_data = create_minimal_tls_dns_data();
+        let additional_dns = create_minimal_additional_dns_data();
+
+        let start = std::time::Instant::now();
+        let (batch_record, (geoip_ms, whois_ms, security_ms)) =
+            prepare_record_for_insertion(RecordPreparationParams {
+                resp_data: &resp_data,
+                html_data: &html_data,
+                tls_dns_data: &tls_dns_data,
+                additional_dns: &additional_dns,
+                technologies_vec: Vec::new(),
+                partial_failures: Vec::new(),
+                redirect_chain: Vec::new(),
+                elapsed: 1.0,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+                ctx: &ctx,
+            })
+            .await;
+        let elapsed = start.elapsed();
+
+        // All tasks should complete
+        assert_eq!(batch_record.url_record.final_domain, resp_data.final_domain);
+        // Timing should be reasonable (parallel execution)
+        assert!(elapsed.as_millis() < 1000); // Should complete quickly
+        assert!(geoip_ms < 1000);
+        assert_eq!(whois_ms, 0); // WHOIS disabled
+        assert!(security_ms < 1000);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_record_for_insertion_with_technologies() {
+        // Test that technologies are correctly passed through
+        // This is critical - technology detection results must be preserved
+        let ctx = create_test_context().await;
+        let resp_data = create_minimal_resp_data();
+        let html_data = create_minimal_html_data();
+        let tls_dns_data = create_minimal_tls_dns_data();
+        let additional_dns = create_minimal_additional_dns_data();
+        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+
+        let (batch_record, _) = prepare_record_for_insertion(RecordPreparationParams {
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            additional_dns: &additional_dns,
+            technologies_vec: technologies.clone(),
+            partial_failures: Vec::new(),
+            redirect_chain: Vec::new(),
+            elapsed: 1.0,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            ctx: &ctx,
+        })
+        .await;
+
+        // Technologies should be preserved
+        assert_eq!(batch_record.technologies.len(), technologies.len());
+    }
+
+    #[tokio::test]
+    async fn test_prepare_record_for_insertion_with_partial_failures() {
+        // Test that partial failures are correctly passed through
+        // This is critical - DNS/TLS failures shouldn't prevent record creation
+        let ctx = create_test_context().await;
+        let resp_data = create_minimal_resp_data();
+        let html_data = create_minimal_html_data();
+        let tls_dns_data = create_minimal_tls_dns_data();
+        let additional_dns = create_minimal_additional_dns_data();
+        let partial_failures = vec![(
+            crate::error_handling::ErrorType::HttpRequestOtherError,
+            "DNS lookup failed".to_string(),
+        )];
+
+        let (batch_record, _) = prepare_record_for_insertion(RecordPreparationParams {
+            resp_data: &resp_data,
+            html_data: &html_data,
+            tls_dns_data: &tls_dns_data,
+            additional_dns: &additional_dns,
+            technologies_vec: Vec::new(),
+            partial_failures: partial_failures.clone(),
+            redirect_chain: Vec::new(),
+            elapsed: 1.0,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            ctx: &ctx,
+        })
+        .await;
+
+        // Partial failures should be preserved
+        assert_eq!(batch_record.partial_failures.len(), partial_failures.len());
+    }
+}
