@@ -11,6 +11,8 @@ mod record;
 pub use context::{
     attach_failure_context, extract_failure_context, FailureContext, FailureContextError,
 };
+#[allow(unused_imports)] // Used in tests
+pub use error::extract_http_status;
 pub use record::{record_url_failure, FailureRecordParams};
 
 #[cfg(test)]

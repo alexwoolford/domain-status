@@ -97,7 +97,15 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
 }
 
 /// Extracts HTTP status code from an error chain.
-pub(crate) fn extract_http_status(error: &Error) -> Option<u16> {
+pub fn extract_http_status(error: &Error) -> Option<u16> {
+    // First try to downcast the error itself
+    if let Some(reqwest_err) = error.downcast_ref::<ReqwestError>() {
+        if let Some(status) = reqwest_err.status() {
+            return Some(status.as_u16());
+        }
+    }
+
+    // Then check the chain - iterate through sources
     for cause in error.chain() {
         if let Some(reqwest_err) = cause.downcast_ref::<ReqwestError>() {
             if let Some(status) = reqwest_err.status() {
@@ -105,6 +113,22 @@ pub(crate) fn extract_http_status(error: &Error) -> Option<u16> {
             }
         }
     }
+
+    // If we can't find it via downcast, try to extract from the source chain
+    // by recursively checking if any source is an anyhow::Error containing reqwest::Error
+    let mut current: Option<&dyn std::error::Error> = error.source();
+    while let Some(err) = current {
+        // Try to get the underlying anyhow::Error if this is wrapped
+        // We can't directly downcast &dyn Error, but we can check if it's an anyhow error
+        // by attempting to access it through the chain
+        if let Some(reqwest_err) = err.downcast_ref::<ReqwestError>() {
+            if let Some(status) = reqwest_err.status() {
+                return Some(status.as_u16());
+            }
+        }
+        current = err.source();
+    }
+
     None
 }
 
