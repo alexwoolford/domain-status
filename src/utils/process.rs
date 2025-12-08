@@ -137,4 +137,43 @@ mod tests {
     // - Complex ProcessingContext setup
     // These are better suited for integration_test.rs
     // Here we focus on testing the ProcessUrlResult structure
+
+    #[test]
+    fn test_process_url_result_retry_count_zero() {
+        // Test that retry_count is 0 when no retries occur
+        let result = ProcessUrlResult {
+            result: Ok(()),
+            retry_count: 0,
+        };
+        assert_eq!(result.retry_count, 0);
+        assert!(result.result.is_ok());
+    }
+
+    #[test]
+    fn test_process_url_result_retry_count_max() {
+        // Test that retry_count can handle maximum retry attempts
+        let result = ProcessUrlResult {
+            result: Err(anyhow::anyhow!("Max retries exceeded")),
+            retry_count: 10,
+        };
+        assert_eq!(result.retry_count, 10);
+        assert!(result.result.is_err());
+    }
+
+    #[test]
+    fn test_process_url_result_error_preservation() {
+        // Test that error information is preserved
+        let error = anyhow::anyhow!("Test error with context").context("Additional context");
+        let result = ProcessUrlResult {
+            result: Err(error),
+            retry_count: 2,
+        };
+        assert!(result.result.is_err());
+        let error_msg = result.result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Test error") || error_msg.contains("Additional context"),
+            "Error should preserve context, got: {}",
+            error_msg
+        );
+    }
 }

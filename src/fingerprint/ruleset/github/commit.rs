@@ -118,3 +118,40 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_invalid_url() {
+        // Test with invalid URL format
+        let result = get_latest_commit_sha("not-a-github-url").await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_short_url() {
+        // Test with URL that doesn't have enough parts
+        let result = get_latest_commit_sha("https://raw.githubusercontent.com/owner").await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_valid_format() {
+        // Test with valid URL format (may or may not succeed depending on network)
+        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies";
+        let result = get_latest_commit_sha(url).await;
+        // May succeed or fail depending on network, but should not panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_nonexistent_repo() {
+        // Test with non-existent repository
+        let url = "https://raw.githubusercontent.com/nonexistent/repo/main/path";
+        let result = get_latest_commit_sha(url).await;
+        // Should return None for non-existent repos
+        assert_eq!(result, None);
+    }
+}
