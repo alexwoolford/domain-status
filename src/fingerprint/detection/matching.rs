@@ -530,4 +530,83 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(result.contains("UnknownTech"));
     }
+
+    #[test]
+    fn test_apply_technology_exclusions_missing_technology_in_ruleset() {
+        // Test that missing technology in ruleset doesn't cause panic
+        // This is critical - if a technology is detected but not in ruleset, exclusion check should handle it
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+
+        // Add one technology that excludes another
+        let mut tech_a = create_empty_technology();
+        tech_a.excludes.push("TechB".to_string());
+        ruleset.technologies.insert("TechA".to_string(), tech_a);
+
+        // Detect TechA and TechB, but TechB is not in ruleset
+        let mut detected = HashSet::new();
+        detected.insert("TechA".to_string());
+        detected.insert("TechB".to_string()); // Not in ruleset
+
+        let result = apply_technology_exclusions(detected, &ruleset);
+        // TechB should be excluded by TechA (even though TechB is not in ruleset)
+        // The exclusion check uses .unwrap_or(false), so missing tech = no exclusion
+        // But TechA.excludes contains "TechB", so TechB should be excluded
+        assert!(result.contains("TechA"));
+        // TechB should be excluded because TechA.excludes contains "TechB"
+        assert!(!result.contains("TechB"));
+    }
+
+    #[test]
+    fn test_matches_technology_all_empty_patterns() {
+        // Test technology with all empty patterns (should not match)
+        let tech = create_empty_technology();
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &HashMap::new(),
+            cookies: &HashMap::new(),
+            meta_tags: &HashMap::new(),
+            script_sources: &[],
+            html_text: "some content",
+            url: "https://example.com",
+            script_tag_ids: &HashSet::new(),
+        };
+
+        // Technology with no patterns should not match (tested in matches_technology function)
+        // This is a critical edge case - empty technology should never match
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        assert!(
+            !result,
+            "Technology with all empty patterns should not match"
+        );
+    }
+
+    #[test]
+    fn test_matches_technology_js_empty_but_has_js_field() {
+        // Test that JS field matching only works via script_tag_ids
+        // If js field is not empty but no matching script_tag_ids, should not match
+        let mut tech = create_empty_technology();
+        tech.js
+            .insert("__NEXT_DATA__".to_string(), ".*".to_string());
+
+        let params = TechnologyMatchParams {
+            tech: &tech,
+            headers: &HashMap::new(),
+            cookies: &HashMap::new(),
+            meta_tags: &HashMap::new(),
+            script_sources: &[],
+            html_text: "",
+            url: "https://example.com",
+            script_tag_ids: &HashSet::new(), // No matching script tag ID
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(matches_technology(params));
+        // Should not match because script_tag_ids doesn't contain "__NEXT_DATA__"
+        assert!(!result);
+    }
 }
