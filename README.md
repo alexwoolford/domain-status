@@ -9,7 +9,13 @@
 [![codecov](https://codecov.io/gh/alexwoolford/domain_status/branch/main/graph/badge.svg)](https://codecov.io/gh/alexwoolford/domain_status)
 [![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
 
-**domain_status** is a concurrent tool for checking URL statuses and redirections. Built with async/await (Tokio), it processes URLs in parallel while capturing comprehensive metadata including TLS certificates, HTML content, DNS information, technology fingerprints, and redirect chains. Results are stored in a SQLite database for analysis.
+**domain_status** is a domain intelligence scanner.
+
+Give it a list of URLs or domains → it fetches HTTP, TLS, DNS, WHOIS, GeoIP, and tech fingerprints in one pass → and stores everything in SQLite for analysis.
+
+It's for security reviewers, infra teams, and analysts who need a repeatable inventory of what's really running behind a set of domains.
+
+Built with async/await (Tokio) for high-performance concurrent processing, domain_status consolidates many checks in one sweep, ensuring consistency and saving time compared to single-purpose tools.
 
 ## Table of Contents
 
