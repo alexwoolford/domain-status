@@ -173,12 +173,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          config-path: .gitleaks.toml
-          no-git: false
-          exit-code: 1
-          verbose: true
-          redact: true
+        # Note: gitleaks-action@v2 doesn't support 'with' inputs
+        # The .gitleaks.toml file in the repo root will be automatically detected
+        # Default behavior: scans for secrets, exits with code 1 if found, redacts output
 
   e2e:
     name: End-to-End Tests (Network Required)
