@@ -47,19 +47,26 @@ pub struct BatchRecord {
 
 ## Serialization Format Comparison
 
-### 1. JSONL (JSON Lines) - **RECOMMENDED**
+### 1. JSONL (JSON Lines) - **For Programmatic Access**
 
 **Pros:**
 - Native support for nested structures
 - One record per line (streamable)
 - Human-readable
-- Widely supported (pandas, jq, etc.)
+- Widely supported by data tools (pandas, jq, etc.)
 - No data loss or duplication
 - Easy to parse incrementally
 
 **Cons:**
+- **Excel/Sheets don't handle nested JSON well** - requires Power Query or conversion
 - Larger file size than binary formats
 - Not as efficient for analytics as Parquet
+- Requires denormalization (joining all database tables)
+
+**Excel Compatibility:**
+- Excel can import JSON, but nested structures become complex
+- Would need Power Query to flatten, or convert to CSV first
+- **Not ideal for Excel users** - CSV is better for that use case
 
 **Example Structure:**
 ```json
@@ -182,27 +189,43 @@ pub struct BatchRecord {
 }
 ```
 
-### 2. CSV - **NOT RECOMMENDED for full export**
+### 2. CSV - **RECOMMENDED for Excel/Sheets Users**
 
 **Pros:**
-- Universal compatibility (Excel, Google Sheets)
+- **Excel/Google Sheets native support** - opens directly
+- Universal compatibility (most BI tools)
 - Human-readable
 - Small file size
+- Familiar format for non-technical users
+- No conversion needed
 
 **Cons:**
-- Requires flattening nested data (data loss or duplication)
-- Multiple strategies needed:
-  - **Strategy A**: Separate files (urls.csv, redirects.csv, technologies.csv) - requires joins
-  - **Strategy B**: Denormalized (one row per URL, arrays as JSON strings) - loses structure
-  - **Strategy C**: Repeated rows (one row per URL+technology combination) - data duplication
+- **Cannot preserve nested structure** - requires flattening
+- Arrays must be serialized (comma-separated or JSON strings)
+- Nested objects must be flattened (prefix-based columns)
+- Some relationships lost (e.g., redirect sequence, technology categories)
+- Requires denormalization (joining all database tables) - same complexity as JSONL
 
-**Example (Strategy B - Denormalized):**
+**Use Cases:**
+- Excel/Sheets analysis (primary use case)
+- Quick reporting
+- Sharing with non-technical users
+- When you only need top-level fields
+- When nested data isn't critical
+
+**Flattening Strategy:**
+- Nested objects → prefixed columns (`geoip_country_code`, `geoip_city`, `tls_cert_subject`)
+- Arrays → comma-separated strings (`technologies: "nginx,PHP"`)
+- Counts for arrays (`redirect_count: 2`, `technology_count: 2`)
+- One row per URL (no duplication)
+
+**Example:**
 ```csv
-url,status,technologies_json,redirects_json,geoip_country
-https://example.com,200,"[""nginx"",""PHP""]","[""https://example.com"",""https://www.example.com""]","US"
+url,status,technologies,redirect_count,geoip_country_code,geoip_city,tls_version
+https://example.com,200,"nginx,PHP",2,US,Boston,TLSv1.3
 ```
 
-**Recommendation**: Only provide CSV for simplified/flattened views (e.g., `--format csv --flatten`)
+**Recommendation**: **CSV is more valuable than initially thought** - Excel users need it. Provide as `--format csv` with clear documentation about what's included/excluded.
 
 ### 3. Parquet - **RECOMMENDED for analytics**
 
@@ -224,7 +247,73 @@ https://example.com,200,"[""nginx"",""PHP""]","[""https://example.com"",""https:
 
 ## Recommended Implementation Strategy
 
-### Phase 1: JSONL Export (High Priority)
+### User Personas and Format Selection
+
+1. **Business Users (Non-Technical)** → CSV
+   - Need Excel/Sheets compatibility
+   - Won't run CLI themselves, but tech team will export for them
+   - CSV export empowers tech users to satisfy non-tech stakeholders easily
+
+2. **Developers/Data Engineers** → JSONL
+   - Programmatic access (pandas, jq, data pipelines)
+   - Saves them from writing SQL to assemble data
+   - Preserves all nested data
+
+3. **Data Scientists (Large-Scale)** → Parquet
+   - Millions of records, data lake environments
+   - Performance and compression matter
+   - Advanced analytics workflows
+
+4. **Power Users (Complex Queries)** → SQLite
+   - Use the database directly with SQL
+   - Maximum flexibility for custom analysis
+   - No denormalization needed
+
+**All export formats require denormalization** - joining all the normalized tables into a single record per URL. The complexity is the same for CSV, JSONL, and Parquet.
+
+### Phase 1: CSV Export (HIGH PRIORITY)
+
+**Rationale**: Excel doesn't handle nested JSON well. Business users need CSV, and tech users need an easy way to export for them.
+
+1. **Flattened CSV Export**
+   - Query all normalized tables and join (denormalization)
+   - Flatten nested objects with prefixes (`geoip_country_code`, `geoip_city`)
+   - Arrays as comma-separated strings (`technologies: "nginx,PHP"`)
+   - Include counts for arrays (`redirect_count`, `technology_count`)
+   - One row per URL (no duplication)
+   - **Document what's included/excluded** - CSV is a simplified view
+
+2. **Fields to Include in CSV:**
+   - Core: `url`, `status`, `status_description`, `response_time_ms`
+   - Redirects: `redirect_count`, `final_url` (last redirect)
+   - Technologies: `technologies` (comma-separated), `technology_count`
+   - TLS: `tls_version`, `ssl_cert_subject`, `ssl_cert_issuer`, `ssl_cert_valid_to`
+   - DNS: `nameserver_count`, `txt_record_count`, `mx_record_count`
+   - GeoIP: `geoip_country_code`, `geoip_city`, `geoip_asn`
+   - WHOIS: `whois_registrar`, `whois_creation_date`, `whois_expiration_date`
+   - HTML: `title`, `description`, `is_mobile_friendly`
+   - Timestamps: `timestamp`, `run_id`
+
+3. **Fields to Exclude from CSV:**
+   - Full structured data (too complex to flatten)
+   - Complete redirect chains (just count and final URL)
+   - All DNS record details (just counts)
+   - Full security headers (maybe just key ones)
+   - Partial failures (too detailed for CSV)
+
+4. **CLI Command**
+   ```bash
+   domain_status export --db domain_status.db --format csv --output results.csv
+   ```
+
+5. **Streaming Implementation**
+   - Use cursor-based queries to avoid loading all data in memory
+   - Process one URL at a time: query → join → flatten → write CSV line
+   - Handle millions of records efficiently
+
+### Phase 2: JSONL Export (MEDIUM PRIORITY)
+
+**Rationale**: Developers and data engineers need programmatic access without writing SQL.
 
 1. **Create `src/export/` module**
    - `mod.rs` - Public API
@@ -264,29 +353,56 @@ https://example.com,200,"[""nginx"",""PHP""]","[""https://example.com"",""https:
    domain_status export --db domain_status.db --format jsonl --output results.jsonl
    ```
 
-### Phase 2: CSV Export (Simplified View)
+### Phase 3: Parquet Export (LOWER PRIORITY)
 
-1. **Flattened CSV Export**
-   - Only top-level fields
-   - Arrays as JSON strings or comma-separated
-   - Nested objects flattened with prefixes (e.g., `geoip_country_code`, `geoip_city`)
-
-2. **CLI Command**
-   ```bash
-   domain_status export --db domain_status.db --format csv --flatten --output results.csv
-   ```
-
-### Phase 3: Parquet Export (Analytics)
+**Rationale**: Advanced analytics at scale. Nice-to-have for data science workflows.
 
 1. **Parquet Serialization**
    - Use `parquet` crate or `arrow` crate
-   - Preserve nested structure
+   - Preserve nested structure (same as JSONL)
    - Support schema evolution
+   - Columnar format for efficient analytics
 
 2. **CLI Command**
    ```bash
    domain_status export --db domain_status.db --format parquet --output results.parquet
    ```
+
+## Empty Arrays vs Nulls in JSON
+
+**Important consideration**: JSON serialization needs to handle empty collections carefully.
+
+**Options:**
+1. **Always include arrays** (even if empty): `"technologies": []` vs `"technologies": null`
+2. **Omit empty arrays**: Use `#[serde(skip_serializing_if = "Vec::is_empty")]`
+3. **Use null for missing data**: `"geoip": null` vs `"geoip": {}`
+
+**Recommendation**:
+- Use `Option<T>` for truly optional data (GeoIP, WHOIS) → serialize as `null` if missing
+- Use `Vec<T>` for collections → serialize as `[]` if empty (not null)
+- Use `#[serde(skip_serializing_if)]` to omit empty arrays if desired (cleaner JSON)
+
+**Example:**
+```json
+{
+  "technologies": [],           // Empty array (not null)
+  "redirects": [],              // Empty array (not null)
+  "geoip": null,                // Null (optional, not present)
+  "whois": null                 // Null (optional, not present)
+}
+```
+
+vs (with skip_serializing_if):
+```json
+{
+  // technologies omitted if empty
+  // redirects omitted if empty
+  "geoip": null,
+  "whois": null
+}
+```
+
+**My recommendation**: Include empty arrays as `[]` for consistency and to make it clear the field exists but is empty. Use `null` only for truly optional nested objects (GeoIP, WHOIS, structured_data).
 
 ## Schema Versioning
 
@@ -305,13 +421,10 @@ All export formats should include:
 ## Example Usage
 
 ```bash
-# JSONL export (recommended for most use cases)
+# JSONL export (recommended for most use cases - preserves all nested data)
 domain_status export --db domain_status.db --format jsonl > results.jsonl
 
-# CSV export (simplified, flattened)
-domain_status export --db domain_status.db --format csv --flatten > results.csv
-
-# Parquet export (for analytics)
+# Parquet export (for analytics/data science - preserves all nested data, columnar format)
 domain_status export --db domain_status.db --format parquet --output results.parquet
 
 # Filtered export
@@ -319,4 +432,54 @@ domain_status export --db domain_status.db --format jsonl --run-id run_123456789
 
 # Incremental export
 domain_status export --db domain_status.db --format jsonl --since 2024-01-01T00:00:00Z
+
+# CSV export (optional, simplified view - only if implemented)
+# domain_status export --db domain_status.db --format csv --simplified > results.csv
 ```
+
+## Final Recommendation
+
+### Implementation Priority
+
+1. **CSV Export** - **HIGH PRIORITY**
+   - Excel/Sheets users need this
+   - Tech users need easy way to export for business stakeholders
+   - Simpler than JSONL (no nested structure to serialize)
+   - Same denormalization complexity as JSONL
+
+2. **JSONL Export** - **MEDIUM PRIORITY**
+   - Developers and data engineers need programmatic access
+   - Saves them from writing SQL to assemble data
+   - Preserves all nested data
+   - Same denormalization complexity as CSV
+
+3. **Parquet Export** - **LOWER PRIORITY**
+   - Advanced analytics at scale
+   - Nice-to-have for data science workflows
+   - Can defer until after CSV/JSONL are done
+   - More complex implementation (Arrow/Parquet libraries)
+
+### Keep SQLite as Core Storage
+
+- **Don't remove or change SQLite** - it remains valuable
+- SQL queries are the best way to work with normalized data
+- Export formats are complementary, not replacements
+- Power users can continue using SQLite directly
+- Document SQL query examples in `QUERIES.md`
+
+### Key Insights from Analysis
+
+1. **Excel compatibility is critical**: Excel doesn't handle nested JSON well, making CSV essential
+2. **Business users won't run CLI**: But tech users will export CSV for them - this empowers tech users
+3. **All formats require denormalization**: Same complexity for CSV, JSONL, and Parquet (joining all tables)
+4. **Streaming is essential**: Must handle millions of domains without memory issues
+5. **SQLite remains powerful**: For complex queries, SQL on the normalized database is best
+
+### Documentation Requirements
+
+For each export format, document:
+- What fields are included/excluded (especially for CSV)
+- Limitations (e.g., CSV is simplified view)
+- Use cases and target audience
+- How to handle large datasets (streaming, compression)
+- Schema versioning approach
