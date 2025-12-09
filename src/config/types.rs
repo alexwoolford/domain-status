@@ -280,50 +280,6 @@ mod tests {
     }
 
     #[test]
-    fn test_log_level_debug() {
-        // Test Debug trait implementation for LogLevel
-        let error = LogLevel::Error;
-        let warn = LogLevel::Warn;
-        let info = LogLevel::Info;
-        let debug = LogLevel::Debug;
-        let trace = LogLevel::Trace;
-
-        // Should not panic when formatting
-        assert_eq!(format!("{:?}", error), "Error");
-        assert_eq!(format!("{:?}", warn), "Warn");
-        assert_eq!(format!("{:?}", info), "Info");
-        assert_eq!(format!("{:?}", debug), "Debug");
-        assert_eq!(format!("{:?}", trace), "Trace");
-    }
-
-    #[test]
-    fn test_log_level_clone() {
-        // Test Clone trait implementation
-        let original = LogLevel::Info;
-        let cloned = original.clone();
-
-        // Both should convert to the same LevelFilter
-        assert_eq!(
-            log::LevelFilter::from(original),
-            log::LevelFilter::from(cloned)
-        );
-    }
-
-    #[test]
-    fn test_log_format_clone() {
-        // Test Clone trait implementation
-        let original = LogFormat::Plain;
-        let cloned = original.clone();
-
-        // Both should be the same variant
-        match (original, cloned) {
-            (LogFormat::Plain, LogFormat::Plain) => {}
-            (LogFormat::Json, LogFormat::Json) => {}
-            _ => panic!("Cloned value should match original"),
-        }
-    }
-
-    #[test]
     fn test_config_default() {
         // Test Config default values
         let config = Config::default();

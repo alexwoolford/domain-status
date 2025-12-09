@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process;
 
 use domain_status::config::{FailOn, LogFormat, LogLevel, DEFAULT_USER_AGENT};
+use domain_status::export::export_csv;
 use domain_status::initialization::{init_crypto_provider, init_logger_with};
 use domain_status::{run_scan, Config};
 
@@ -24,9 +25,20 @@ use domain_status::{run_scan, Config};
 #[derive(Debug, Parser, Clone)]
 #[command(
     name = "domain_status",
-    about = "Checks a list of URLs for their status and redirection."
+    about = "Domain intelligence scanner - scan URLs and export results.",
+    subcommand_required = true
 )]
-struct CliConfig {
+enum CliCommand {
+    /// Scan URLs and store results in SQLite database
+    #[command(name = "scan")]
+    Scan(ScanCommand),
+    /// Export data from SQLite database to various formats
+    #[command(name = "export")]
+    Export(ExportCommand),
+}
+
+#[derive(Debug, Parser, Clone)]
+struct ScanCommand {
     /// File to read
     #[arg(value_parser)]
     file: PathBuf,
@@ -171,8 +183,46 @@ struct CliConfig {
     fail_on_pct_threshold: u8,
 }
 
-impl From<CliConfig> for Config {
-    fn from(cli: CliConfig) -> Self {
+#[derive(Debug, Parser, Clone)]
+struct ExportCommand {
+    /// Database path (SQLite file)
+    #[arg(long, value_parser, default_value = "./domain_status.db")]
+    db_path: PathBuf,
+
+    /// Export format: csv|jsonl|parquet
+    #[arg(long, value_enum, default_value = "csv")]
+    format: ExportFormat,
+
+    /// Output file path (or stdout if not specified)
+    #[arg(long, value_parser)]
+    output: Option<PathBuf>,
+
+    /// Filter by run ID
+    #[arg(long)]
+    run_id: Option<String>,
+
+    /// Filter by domain (matches initial or final domain)
+    #[arg(long)]
+    domain: Option<String>,
+
+    /// Filter by HTTP status code
+    #[arg(long)]
+    status: Option<u16>,
+
+    /// Filter by timestamp (export records after this timestamp, in milliseconds since epoch)
+    #[arg(long)]
+    since: Option<i64>,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum ExportFormat {
+    Csv,
+    Jsonl,
+    Parquet,
+}
+
+impl From<ScanCommand> for Config {
+    fn from(cli: ScanCommand) -> Self {
         Self {
             file: cli.file,
             log_level: cli.log_level,
@@ -211,43 +261,83 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Parse command-line arguments into CliConfig, then convert to library Config
-    let cli_config = CliConfig::parse();
-    let config: Config = cli_config.into();
+    // Parse command-line arguments
+    let cli_command = CliCommand::parse();
 
-    // Initialize logger based on config
-    let log_level = config.log_level.clone();
-    let log_format = config.log_format.clone();
-    init_logger_with(log_level.into(), log_format).context("Failed to initialize logger")?;
+    match cli_command {
+        CliCommand::Scan(scan_cmd) => {
+            let config: Config = scan_cmd.into();
 
-    // Initialize crypto provider for TLS operations
-    init_crypto_provider();
+            // Initialize logger based on config
+            let log_level = config.log_level.clone();
+            let log_format = config.log_format.clone();
+            init_logger_with(log_level.into(), log_format)
+                .context("Failed to initialize logger")?;
 
-    // Run the scan using the library
-    match run_scan(config.clone()).await {
-        Ok(report) => {
-            // Print user-friendly summary
-            println!(
-                "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
-                report.total_urls,
-                if report.total_urls == 1 { "" } else { "s" },
-                report.successful,
-                report.failed,
-                report.elapsed_seconds
-            );
-            println!("Results saved in {}", report.db_path.display());
+            // Initialize crypto provider for TLS operations
+            init_crypto_provider();
 
-            // Evaluate exit code based on --fail-on policy
-            let exit_code =
-                evaluate_exit_code(&config.fail_on, config.fail_on_pct_threshold, &report);
-            if exit_code != 0 {
-                process::exit(exit_code);
+            // Run the scan using the library
+            match run_scan(config.clone()).await {
+                Ok(report) => {
+                    // Print user-friendly summary
+                    println!(
+                        "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+                        report.total_urls,
+                        if report.total_urls == 1 { "" } else { "s" },
+                        report.successful,
+                        report.failed,
+                        report.elapsed_seconds
+                    );
+                    println!("Results saved in {}", report.db_path.display());
+
+                    // Evaluate exit code based on --fail-on policy
+                    let exit_code =
+                        evaluate_exit_code(&config.fail_on, config.fail_on_pct_threshold, &report);
+                    if exit_code != 0 {
+                        process::exit(exit_code);
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("domain_status error: {:#}", e);
+                    process::exit(1); // Configuration error or scan initialization failure
+                }
             }
-            Ok(())
         }
-        Err(e) => {
-            eprintln!("domain_status error: {:#}", e);
-            process::exit(1); // Configuration error or scan initialization failure
+        CliCommand::Export(export_cmd) => {
+            // Handle export command
+            // Initialize logger for export command
+            let log_level = LogLevel::Info;
+            let log_format = LogFormat::Plain;
+            init_logger_with(log_level.into(), log_format)
+                .context("Failed to initialize logger")?;
+
+            // Handle export format
+            match export_cmd.format {
+                ExportFormat::Csv => {
+                    let count = export_csv(
+                        &export_cmd.db_path,
+                        export_cmd.output.as_ref(),
+                        export_cmd.run_id.as_deref(),
+                        export_cmd.domain.as_deref(),
+                        export_cmd.status,
+                        export_cmd.since,
+                    )
+                    .await
+                    .context("Failed to export CSV")?;
+                    println!("✅ Exported {} records to CSV", count);
+                    Ok(())
+                }
+                ExportFormat::Jsonl => {
+                    eprintln!("JSONL export not yet implemented");
+                    process::exit(1);
+                }
+                ExportFormat::Parquet => {
+                    eprintln!("Parquet export not yet implemented");
+                    process::exit(1);
+                }
+            }
         }
     }
 }

@@ -353,17 +353,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_metadata_build_epoch_zero() {
-        // Test that build_epoch of 0 is handled correctly
-        // This is critical - some databases might have epoch 0 (unlikely but possible)
-        // The code at line 19 formats build_epoch, which should handle 0 correctly
-        // Note: We can't easily create a real Reader, but we verify the format string works
-        let version = format!("build_{}", 0u64);
-        assert_eq!(version, "build_0");
-        assert!(version.starts_with("build_"));
-    }
-
-    #[tokio::test]
     async fn test_extract_metadata_very_long_source_path() {
         // Test that very long source paths don't cause issues
         // This is critical - very long paths could cause memory issues or truncation

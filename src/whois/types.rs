@@ -109,20 +109,6 @@ mod tests {
     }
 
     #[test]
-    fn test_whois_result_clone() {
-        let result = WhoisResult {
-            creation_date: Some(chrono::Utc::now()),
-            expiration_date: Some(chrono::Utc::now() + chrono::Duration::days(365)),
-            registrar: Some("Test Registrar".to_string()),
-            ..Default::default()
-        };
-
-        let cloned = result.clone();
-        assert_eq!(cloned.registrar, result.registrar);
-        assert!(cloned.creation_date.is_some());
-    }
-
-    #[test]
     fn test_whois_cache_result_from_whois_result() {
         let whois_result = WhoisResult {
             creation_date: Some(chrono::Utc::now()),

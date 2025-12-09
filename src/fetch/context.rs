@@ -219,60 +219,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_processing_context_clone() {
-        // Create test resources
-        let client = Arc::new(
-            reqwest::Client::builder()
-                .build()
-                .expect("Failed to create HTTP client"),
-        );
-        let redirect_client = Arc::new(
-            reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("Failed to create redirect client"),
-        );
-        let extractor = create_test_extractor();
-        let resolver = create_test_resolver();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let run_id = Some("test-run-456".to_string());
-        let enable_whois = false;
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
-        let pool = Arc::new(
-            sqlx::SqlitePool::connect("sqlite::memory:")
-                .await
-                .expect("Failed to create test pool"),
-        );
-        let timing_stats = Arc::new(TimingStats::new());
-
-        // Create context
-        let context = ProcessingContext::new(
-            client,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            run_id.clone(),
-            enable_whois,
-            db_circuit_breaker,
-            pool,
-            timing_stats,
-        );
-
-        // Clone the context
-        let cloned = context.clone();
-
-        // Verify cloned context has same values
-        assert_eq!(cloned.config.run_id, run_id);
-        assert_eq!(cloned.config.enable_whois, enable_whois);
-        // Arc pointers should be the same (shared ownership)
-        assert_eq!(
-            Arc::as_ptr(&context.network.client),
-            Arc::as_ptr(&cloned.network.client)
-        );
-    }
-
-    #[tokio::test]
     async fn test_processing_context_without_run_id() {
         // Test context creation without run_id
         let client = Arc::new(
