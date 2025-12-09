@@ -966,65 +966,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_load_from_url_retry_exponential_backoff() {
-        // Test that retry logic uses exponential backoff (lines 85-112)
-        // This is critical - retries should back off to avoid overwhelming servers
-        // Note: We test download_geoip_with_size_limit directly since load_from_url
-        // has SSRF protection that blocks httptest's localhost URLs
+    async fn test_download_geoip_with_size_limit_handles_http_errors() {
+        // Test that download_geoip_with_size_limit handles HTTP errors correctly
+        // This is critical - HTTP errors should be properly reported
+        // Note: The retry logic is in load_from_url (lines 85-112), but we can't easily
+        // test it with httptest due to SSRF protection. This test verifies the underlying
+        // download function handles errors correctly, which is what gets retried
+        // in the actual retry loop (lines 85-112 in load_from_url)
         use httptest::{matchers::*, responders::*, Expectation, Server};
-        use std::time::Instant;
 
         let server = Server::run();
-        // First two attempts fail, third succeeds
         server.expect(
             Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .times(2)
                 .respond_with(status_code(500)),
         );
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .respond_with(status_code(200).body("small response")),
-        );
 
-        // Test download_geoip_with_size_limit directly (no SSRF protection)
         let url = server.url("/geoip.mmdb").to_string();
-        let start = Instant::now();
         let result = download_geoip_with_size_limit(&url).await;
 
-        // Should succeed on retry
-        assert!(result.is_ok());
-        // Should have taken time for retries (at least 2s + 4s = 6s for first two attempts)
-        // But we don't assert exact timing as it may vary
-        let _elapsed = start.elapsed();
-        // Verify retry logic was exercised (result is Ok after retries)
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_retry_all_attempts_fail() {
-        // Test that all retry attempts failing returns last error (lines 114-120)
-        // This is critical - should return meaningful error after all retries exhausted
-        use httptest::{matchers::*, responders::*, Expectation, Server};
-
-        let server = Server::run();
-        // All attempts fail
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .times(crate::config::MAX_NETWORK_DOWNLOAD_RETRIES)
-                .respond_with(status_code(500)),
-        );
-
-        let url = server.url("/geoip.mmdb").to_string();
-        let result = load_from_url(&url, std::path::Path::new("/tmp"), "GeoLite2-City").await;
-
-        // Should fail after all retries
+        // Should fail on HTTP error (retry logic in load_from_url would retry this)
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("Failed to download")
-                || error_msg.contains("500")
-                || error_msg.contains("attempts")
-                || !error_msg.is_empty(),
-            "Error should indicate retry exhaustion: {}",
+            error_msg.contains("500") || error_msg.contains("Failed to download"),
+            "Error should indicate HTTP failure: {}",
             error_msg
         );
     }
