@@ -40,6 +40,7 @@ mod database;
 mod dns;
 mod domain;
 mod error_handling;
+pub mod export;
 mod fetch;
 mod fingerprint;
 mod geoip;
@@ -57,7 +58,7 @@ mod whois;
 // Re-export public API
 pub use config::{Config, FailOn, LogFormat, LogLevel};
 pub use run::{run_scan, ScanReport};
-pub use storage::{query_run_history, RunSummary};
+pub use storage::{query_run_history, run_migrations, RunSummary};
 
 // Internal run module (contains the main scanning logic)
 mod run {

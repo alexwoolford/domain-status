@@ -45,7 +45,7 @@ Built with async/await (Tokio) for high-performance concurrent processing, domai
 cargo install domain_status
 
 # 2. Create URLs file and run scan
-echo -e "https://example.com\nhttps://example.org" > urls.txt && domain_status urls.txt
+echo -e "https://example.com\nhttps://example.org" > urls.txt && domain_status scan urls.txt
 
 # 3. View results
 sqlite3 domain_status.db "SELECT domain, status, title FROM url_status;"
@@ -104,7 +104,7 @@ Download the latest release from the [Releases page](https://github.com/alexwool
 wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-linux-x86_64.tar.gz
 tar xzf domain_status-linux-x86_64.tar.gz
 chmod +x domain_status
-./domain_status urls.txt
+./domain_status scan urls.txt
 
 # macOS (Intel)
 wget https://github.com/alexwoolford/domain_status/releases/latest/download/domain_status-macos-x86_64.tar.gz
@@ -121,7 +121,7 @@ chmod +x domain_status
 # Option 2: Run this command to remove the quarantine attribute:
 xattr -d com.apple.quarantine domain_status 2>/dev/null || true
 
-./domain_status urls.txt
+./domain_status scan urls.txt
 
 # Windows
 # Download domain_status-windows-x86_64.exe.zip and extract
@@ -185,7 +185,19 @@ Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many
 
 ## 📖 Usage
 
-### Command-Line Options
+### Command Structure
+
+The tool uses a subcommand-based interface:
+
+- **`domain_status scan <file>`** - Scan URLs and store results in SQLite database
+- **`domain_status export`** - Export data from SQLite database to various formats (CSV, JSONL, Parquet)
+
+### Scan Command
+
+**Usage:**
+```bash
+domain_status scan <file> [OPTIONS]
+```
 
 **Common Options:**
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
@@ -205,7 +217,7 @@ Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many
 
 **Example:**
 ```bash
-domain_status urls.txt \
+domain_status scan urls.txt \
   --db-path ./results.db \
   --max-concurrency 100 \
   --timeout-seconds 15 \
@@ -215,6 +227,42 @@ domain_status urls.txt \
   --show-timing \
   --status-port 8080
 ```
+
+### Export Command
+
+**Usage:**
+```bash
+domain_status export [OPTIONS]
+```
+
+**Options:**
+- `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
+- `--format <FORMAT>`: Export format: `csv`, `jsonl`, or `parquet` (default: `csv`)
+- `--output <PATH>`: Output file path (or stdout if not specified)
+- `--run-id <ID>`: Filter by run ID
+- `--domain <DOMAIN>`: Filter by domain (matches initial or final domain)
+- `--status <CODE>`: Filter by HTTP status code
+- `--since <TIMESTAMP>`: Filter by timestamp (milliseconds since epoch)
+
+**Examples:**
+```bash
+# Export all data to CSV
+domain_status export --format csv --output results.csv
+
+# Export to stdout (pipe to another command)
+domain_status export --format csv | head -20
+
+# Export only records from a specific run
+domain_status export --format csv --run-id run_1765150444953 --output run_results.csv
+
+# Export only successful URLs (status 200)
+domain_status export --format csv --status 200 --output successful.csv
+
+# Export records from a specific domain
+domain_status export --format csv --domain example.com --output example.csv
+```
+
+**Note:** JSONL and Parquet export formats are planned for future releases. Currently, only CSV export is available.
 
 ### Environment Variables
 
@@ -272,7 +320,7 @@ The tool provides detailed logging with progress updates and error summaries:
 Use the `--show-timing` flag to display detailed timing metrics:
 
 ```bash
-domain_status urls.txt --show-timing
+domain_status scan urls.txt --show-timing
 ```
 
 Example output:
@@ -427,7 +475,8 @@ For long-running jobs, you can monitor progress via an optional HTTP status serv
 
 ```bash
 # Start with status server on port 8080
-domain_status urls.txt --status-port 8080
+domain_status scan urls.txt --status-port 8080
+```
 
 # In another terminal, check progress:
 curl http://127.0.0.1:8080/status | jq
@@ -500,7 +549,7 @@ To enable GeoIP, set the `MAXMIND_LICENSE_KEY` environment variable and the tool
 
 ```bash
 export MAXMIND_LICENSE_KEY=your_license_key_here
-domain_status urls.txt
+domain_status scan urls.txt
 ```
 
 The databases are cached in `.geoip_cache/` and reused for subsequent runs. Alternatively, download the `.mmdb` files yourself and use `--geoip` to point to them. GeoIP data is stored in the `url_geoip` table with fields for country, region, city, coordinates, and ASN.
@@ -621,6 +670,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Processed {} URLs: {} succeeded, {} failed",
              report.total_urls, report.successful, report.failed);
     println!("Results saved in {}", report.db_path.display());
+
+    // Export to CSV using the library API
+    use domain_status::export::export_csv;
+    export_csv(&report.db_path, Some(&PathBuf::from("results.csv")), None, None, None, None)
+        .await?;
+    println!("Exported results to results.csv");
 
     Ok(())
 }
