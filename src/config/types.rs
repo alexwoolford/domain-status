@@ -210,6 +210,28 @@ mod tests {
     }
 
     #[test]
+    fn test_fail_on_enum() {
+        // Test that FailOn enum variants are accessible
+        let never = FailOn::Never;
+        let any_failure = FailOn::AnyFailure;
+        let pct = FailOn::PctGreaterThan;
+        let errors_only = FailOn::ErrorsOnly;
+
+        // Just verify they can be created
+        assert_eq!(never, FailOn::Never);
+        assert_eq!(any_failure, FailOn::AnyFailure);
+        assert_eq!(pct, FailOn::PctGreaterThan);
+        assert_eq!(errors_only, FailOn::ErrorsOnly);
+    }
+
+    #[test]
+    fn test_config_default_includes_fail_on() {
+        let config = Config::default();
+        assert_eq!(config.fail_on, FailOn::Never);
+        assert_eq!(config.fail_on_pct_threshold, 10);
+    }
+
+    #[test]
     fn test_log_level_ordering() {
         // Verify that log levels are ordered correctly (Error < Warn < Info < Debug < Trace)
         let error = log::LevelFilter::from(LogLevel::Error);
