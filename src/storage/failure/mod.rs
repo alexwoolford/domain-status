@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_http_status_no_status() {
+    fn test_failure_mod_extract_http_status_no_status() {
         // Error without HTTP status
         let error = anyhow::anyhow!("Connection error");
 

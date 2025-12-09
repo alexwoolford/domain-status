@@ -17,9 +17,5 @@ fn test_is_retriable_error_url_parse() {
     assert!(!is_retriable_error(&error));
 }
 
-#[test]
-fn test_is_retriable_error_database() {
-    // Database errors should NOT be retriable
-    // This would require creating a sqlx::Error
-    // which is complex without a real database connection
-}
+// Note: test_is_retriable_error_database is tested in src/utils/retry.rs
+// This test was removed to avoid duplication

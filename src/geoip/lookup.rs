@@ -122,20 +122,21 @@ mod tests {
         // When uninitialized, should return None (not panic)
         // This is expected behavior - GeoIP is optional
         assert!(
-            result.is_none() || result.is_some(),
-            "Should handle uninitialized state gracefully"
+            result.is_none(),
+            "Should return None when GeoIP is uninitialized, got: {:?}",
+            result
         );
     }
 
     #[test]
     fn test_lookup_ip_ipv6() {
         // Test with IPv6 address
+        // When uninitialized, should return None
+        // When initialized, may return None if database doesn't support IPv6, or Some with data
         let result = lookup_ip("2001:0db8:85a3:0000:0000:8a2e:0370:7334");
-        // Should handle IPv6 (may return None if database doesn't support it, but shouldn't panic)
-        assert!(
-            result.is_none() || result.is_some(),
-            "Should handle IPv6 gracefully"
-        );
+        // Should not panic - either None (uninitialized or not in DB) or Some (found in DB)
+        // This test verifies the function doesn't panic on IPv6 addresses
+        let _ = result; // Can't assert specific value without initializing GeoIP
     }
 
     #[test]
@@ -161,21 +162,18 @@ mod tests {
         // Test with private IP address
         let result = lookup_ip("192.168.1.1");
         // Private IPs may not be in GeoIP database, but shouldn't panic
-        // Result can be None or Some - both are acceptable
-        let _ = result;
+        // When uninitialized, should return None
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
     fn test_lookup_ip_partial_data_extraction() {
         // Test that partial data extraction works correctly
         // If city lookup succeeds but ASN fails, should still return city data
-        // This is tested implicitly - if city lookup returns data, it should be in result
-        // even if ASN lookup fails
-        let result = lookup_ip("8.8.8.8");
         // When uninitialized, returns None
-        // When initialized, may return partial data (city but no ASN, or vice versa)
+        let result = lookup_ip("8.8.8.8");
         // The key is that it doesn't panic on partial failures
-        let _ = result;
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -184,8 +182,8 @@ mod tests {
         // The code checks !city_result.subdivisions.is_empty() before accessing
         // This test verifies that empty array doesn't cause issues
         let result = lookup_ip("8.8.8.8");
-        // Should handle gracefully (returns None if uninitialized, or Some with empty region)
-        let _ = result;
+        // Should handle gracefully (returns None if uninitialized)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -287,9 +285,9 @@ mod tests {
         // The code uses .read().ok()? which returns None on lock poisoning
         // This test verifies that the pattern works correctly
         let result = lookup_ip("8.8.8.8");
-        // Should return None if uninitialized or lock poisoned, not panic
-        // This is tested implicitly - if lock is poisoned, .ok()? returns None
-        assert!(result.is_none() || result.is_some());
+        // Should return None if uninitialized (can't test lock poisoning without initialization)
+        // This test verifies the function doesn't panic
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -300,9 +298,8 @@ mod tests {
         // The code at line 66-78 handles ASN lookup failure gracefully
         let result = lookup_ip("8.8.8.8");
         // When uninitialized, returns None
-        // When initialized, should return city data even if ASN lookup fails
-        // This is tested implicitly - ASN lookup failure doesn't affect city result
-        assert!(result.is_none() || result.is_some());
+        // This test verifies the function doesn't panic (can't test ASN failure without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -313,7 +310,8 @@ mod tests {
         // But we should verify it doesn't panic
         let result = lookup_ip("8.8.8.8");
         // Should handle decode failures gracefully (returns None, doesn't panic)
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -334,7 +332,8 @@ mod tests {
         // All should succeed (or return None if uninitialized)
         for handle in handles {
             let result = handle.join().expect("Thread panicked");
-            assert!(result.is_none() || result.is_some());
+            // When uninitialized, all should return None
+            assert!(result.is_none(), "Should return None when uninitialized");
         }
     }
 
@@ -346,9 +345,8 @@ mod tests {
         // The code at line 70 handles decode failures gracefully
         let result = lookup_ip("8.8.8.8");
         // When uninitialized, returns None
-        // When initialized, should return city data even if ASN decode fails
-        // This is tested implicitly - ASN decode failure doesn't affect city result
-        assert!(result.is_none() || result.is_some());
+        // This test verifies the function doesn't panic (can't test ASN decode failure without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -357,8 +355,9 @@ mod tests {
         // This is critical - ASN is optional, failures shouldn't affect city results
         // The code at line 68 uses if let Ok, so errors are ignored
         let result = lookup_ip("8.8.8.8");
-        // Should return city data even if ASN lookup fails
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic (can't test ASN lookup error without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -367,9 +366,9 @@ mod tests {
         // This is critical - some IPs might not have city data, should return partial result
         // The code extracts fields with .map(), so None values are preserved
         let result = lookup_ip("8.8.8.8");
-        // Should return Some(GeoIpResult) even if all fields are None
-        // or None if uninitialized
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic
+        assert!(result.is_none(), "Should return None when uninitialized");
         if let Some(geo_result) = result {
             // All fields might be None, which is valid
             let _ = geo_result;
@@ -382,8 +381,9 @@ mod tests {
         // The code at line 46 checks !city_result.subdivisions.is_empty()
         // This test verifies empty array doesn't cause issues
         let result = lookup_ip("8.8.8.8");
-        // Should handle empty subdivisions gracefully
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -394,8 +394,8 @@ mod tests {
         // When uninitialized, lock read succeeds but as_ref() returns None
         // This test verifies the pattern works
         let result = lookup_ip("8.8.8.8");
-        // Should return None if lock fails or uninitialized
-        assert!(result.is_none() || result.is_some());
+        // Should return None if uninitialized
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -404,7 +404,7 @@ mod tests {
         // This is critical - uninitialized state should return None
         let result = lookup_ip("8.8.8.8");
         // When uninitialized, as_ref() returns None, so function returns None
-        assert!(result.is_none() || result.is_some());
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -424,8 +424,8 @@ mod tests {
         // This is critical - lookup failures should be handled gracefully
         // When uninitialized, lookup will fail, so we test the error path
         let result = lookup_ip("8.8.8.8");
-        // Should return None if lookup fails
-        assert!(result.is_none() || result.is_some());
+        // Should return None if uninitialized or lookup fails
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -433,8 +433,8 @@ mod tests {
         // Test that has_data() returning false returns None (line 29-30)
         // This is critical - IPs not in database should return None
         let result = lookup_ip("8.8.8.8");
-        // Should return None if no data (or if uninitialized)
-        assert!(result.is_none() || result.is_some());
+        // Should return None if uninitialized or no data
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -442,8 +442,8 @@ mod tests {
         // Test that decode returning Ok(None) returns None (line 35)
         // This is critical - decode failures should be handled gracefully
         let result = lookup_ip("8.8.8.8");
-        // Should return None if decode returns None
-        assert!(result.is_none() || result.is_some());
+        // Should return None if uninitialized or decode returns None
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -451,8 +451,8 @@ mod tests {
         // Test that decode errors return None (line 36)
         // This is critical - decode errors should be handled gracefully
         let result = lookup_ip("8.8.8.8");
-        // Should return None if decode fails
-        assert!(result.is_none() || result.is_some());
+        // Should return None if uninitialized or decode fails
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -514,8 +514,9 @@ mod tests {
         // Test that ASN reader being None skips ASN lookup (line 67)
         // This is critical - ASN is optional, should not break city lookup
         let result = lookup_ip("8.8.8.8");
-        // Should return city data even if ASN reader is None
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic (can't test ASN reader None without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -523,8 +524,9 @@ mod tests {
         // Test that ASN has_data() returning false skips decode (line 69)
         // This is critical - ASN lookup without data should not break city lookup
         let result = lookup_ip("8.8.8.8");
-        // Should return city data even if ASN has no data
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic (can't test ASN no data without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -532,8 +534,9 @@ mod tests {
         // Test that ASN decode returning Ok(None) skips extraction (line 70)
         // This is critical - ASN decode failures should not break city lookup
         let result = lookup_ip("8.8.8.8");
-        // Should return city data even if ASN decode returns None
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic (can't test ASN decode None without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -541,8 +544,9 @@ mod tests {
         // Test that ASN decode errors skip extraction (line 70)
         // This is critical - ASN decode errors should not break city lookup
         let result = lookup_ip("8.8.8.8");
-        // Should return city data even if ASN decode fails
-        assert!(result.is_none() || result.is_some());
+        // When uninitialized, returns None
+        // This test verifies the function doesn't panic (can't test ASN decode error without initialization)
+        assert!(result.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -565,8 +569,8 @@ mod tests {
         // Test that get_metadata handles lock errors gracefully (line 86)
         // This is critical - lock errors should return None, not panic
         let metadata = get_metadata();
-        // Should return None if lock fails or uninitialized
-        assert!(metadata.is_none() || metadata.is_some());
+        // Should return None if uninitialized
+        assert!(metadata.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
@@ -575,7 +579,7 @@ mod tests {
         // This is critical - uninitialized state should return None
         let metadata = get_metadata();
         // When uninitialized, should return None
-        assert!(metadata.is_none() || metadata.is_some());
+        assert!(metadata.is_none(), "Should return None when uninitialized");
     }
 
     #[test]
