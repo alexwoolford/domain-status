@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2025-01-09
+
+### Added
+- **Subcommand-based CLI**: Switched to subcommand-style interface (`domain_status scan` and `domain_status export`)
+- **CSV Export**: New `export` subcommand to export scan results to CSV format with comprehensive filtering options
+- **Exit Code Policies**: New `--fail-on` option to control application exit codes based on scan results (`never`, `any-failure`, `pct>`, `errors-only`)
+- **Stdin Input Support**: Can now read URLs from standard input using `-` as filename
+- **SQL Query Examples**: Added `QUERIES.md` with 26 common SQL queries for analyzing scan results
+- Comprehensive test coverage: 20+ new high-value tests for CSV export, CLI parsing, exit codes, stdin input, and input parsing
+- Export module with CSV export functionality supporting filtering by run_id, domain, status, and timestamp
+
+### Changed
+- **BREAKING**: CLI now requires explicit subcommands (`scan` or `export`). Backward compatibility removed.
+- Removed 7 low-value tests that only tested Rust derive macros (Debug, Clone, Default)
+- Improved test quality: removed coverage padding, focused on genuinely valuable test cases
+- Updated README.md to reflect new subcommand structure
+
+### Fixed
+- Fixed clippy warnings (use `&Path` instead of `&PathBuf`, remove needless borrows, use arrays instead of `vec!`)
+- Fixed test compilation errors and improved test reliability
+
 ## [0.1.5] - 2025-01-08
 
 ### Added
@@ -46,5 +67,7 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/alexwoolford/domain_status/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/alexwoolford/domain_status/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/alexwoolford/domain_status/releases/tag/v0.1.4
