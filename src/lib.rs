@@ -55,7 +55,7 @@ mod utils;
 mod whois;
 
 // Re-export public API
-pub use config::{Config, LogFormat, LogLevel};
+pub use config::{Config, FailOn, LogFormat, LogLevel};
 pub use run::{run_scan, ScanReport};
 pub use storage::{query_run_history, RunSummary};
 
@@ -150,26 +150,46 @@ mod run {
             log::debug!("Using auto-updated User-Agent: {}", config.user_agent);
         }
 
-        // Count total lines in file for accurate progress tracking
-        let total_lines = {
+        // Open input source (file or stdin) and count lines
+        let (total_lines, is_stdin) = if config.file.as_os_str() == "-" {
+            // Read from stdin - can't count ahead, will track as we process
+            info!("Reading URLs from stdin");
+            (0, true)
+        } else {
+            // Read from file - count lines first for progress tracking
             let file_for_counting = tokio::fs::File::open(&config.file)
                 .await
                 .context("Failed to open input file for line counting")?;
             let reader = BufReader::new(file_for_counting);
             let mut count = 0usize;
-            let mut lines = reader.lines();
-            while let Ok(Some(_)) = lines.next_line().await {
-                count += 1;
+            let mut counting_lines = reader.lines();
+            while let Ok(Some(line)) = counting_lines.next_line().await {
+                // Skip comments and blank lines when counting
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    count += 1;
+                }
             }
-            count
+            info!("Total URLs in file: {}", count);
+            (count, false)
         };
-        info!("Total URLs in file: {}", total_lines);
 
-        let file = tokio::fs::File::open(&config.file)
-            .await
-            .context("Failed to open input file")?;
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
+        // Open input source for reading
+        let mut stdin_lines = if is_stdin {
+            use tokio::io::stdin;
+            Some(BufReader::new(stdin()).lines())
+        } else {
+            None
+        };
+
+        let mut file_lines = if !is_stdin {
+            let file = tokio::fs::File::open(&config.file)
+                .await
+                .context("Failed to open input file")?;
+            Some(BufReader::new(file).lines())
+        } else {
+            None
+        };
 
         let mut tasks = FuturesUnordered::new();
 
@@ -319,17 +339,27 @@ mod run {
         ));
 
         loop {
-            let line_result = lines.next_line().await;
+            let line_result = if is_stdin {
+                stdin_lines.as_mut().unwrap().next_line().await
+            } else {
+                file_lines.as_mut().unwrap().next_line().await
+            };
             let line = match line_result {
                 Ok(Some(line)) => line,
                 Ok(None) => break,
                 Err(e) => {
-                    warn!("Failed to read line from input file: {e}");
+                    warn!("Failed to read line from input: {e}");
                     continue;
                 }
             };
 
-            let Some(url) = validate_and_normalize_url(&line) else {
+            // Skip comments (lines starting with #) and blank lines
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            let Some(url) = validate_and_normalize_url(trimmed) else {
                 continue;
             };
 

@@ -13,7 +13,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::process;
 
-use domain_status::config::{LogFormat, LogLevel, DEFAULT_USER_AGENT};
+use domain_status::config::{FailOn, LogFormat, LogLevel, DEFAULT_USER_AGENT};
 use domain_status::initialization::{init_crypto_provider, init_logger_with};
 use domain_status::{run_scan, Config};
 
@@ -141,6 +141,34 @@ struct CliConfig {
     /// Disabled by default to reduce output noise.
     #[arg(long)]
     show_timing: bool,
+
+    /// Exit code policy for handling failures
+    ///
+    /// Controls when the CLI should exit with a non-zero code:
+    /// - `never`: Always return 0 (useful for monitoring/logging)
+    /// - `any-failure`: Exit with code 2 if any URL failed (strict CI mode)
+    /// - `pct>X`: Exit with code 2 if failure percentage exceeds X (e.g., `pct>10`)
+    /// - `errors-only`: Exit only on critical errors (future enhancement)
+    ///
+    /// Default: `never` (backward compatible)
+    ///
+    /// Exit codes:
+    /// - 0: Success (or failures ignored by policy)
+    /// - 1: Configuration error or scan initialization failure
+    /// - 2: Failures exceeded threshold (based on --fail-on policy)
+    /// - 3: Partial success (some URLs processed, but scan incomplete)
+    #[arg(long, value_enum, default_value_t = FailOn::Never)]
+    fail_on: FailOn,
+
+    /// Failure percentage threshold for `--fail-on pct>X`
+    ///
+    /// A number between 0 and 100. Only used when `--fail-on pct>X` is specified.
+    /// Example: `--fail-on pct>10 --fail-on-pct-threshold 15` means exit with error
+    /// if more than 15% of URLs failed.
+    ///
+    /// Default: 10
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(0..=100))]
+    fail_on_pct_threshold: u8,
 }
 
 impl From<CliConfig> for Config {
@@ -160,6 +188,8 @@ impl From<CliConfig> for Config {
             status_port: cli.status_port,
             enable_whois: cli.enable_whois,
             show_timing: cli.show_timing,
+            fail_on: cli.fail_on,
+            fail_on_pct_threshold: cli.fail_on_pct_threshold,
         }
     }
 }
@@ -194,7 +224,7 @@ async fn main() -> Result<()> {
     init_crypto_provider();
 
     // Run the scan using the library
-    match run_scan(config).await {
+    match run_scan(config.clone()).await {
         Ok(report) => {
             // Print user-friendly summary
             println!(
@@ -206,11 +236,62 @@ async fn main() -> Result<()> {
                 report.elapsed_seconds
             );
             println!("Results saved in {}", report.db_path.display());
+
+            // Evaluate exit code based on --fail-on policy
+            let exit_code =
+                evaluate_exit_code(&config.fail_on, config.fail_on_pct_threshold, &report);
+            if exit_code != 0 {
+                process::exit(exit_code);
+            }
             Ok(())
         }
         Err(e) => {
             eprintln!("domain_status error: {:#}", e);
-            process::exit(1);
+            process::exit(1); // Configuration error or scan initialization failure
+        }
+    }
+}
+
+/// Evaluates the exit code based on the failure policy and scan results.
+///
+/// Returns:
+/// - 0: Success (or failures ignored by policy)
+/// - 2: Failures exceeded threshold (based on --fail-on policy)
+/// - 3: Partial success (some URLs processed, but scan incomplete)
+fn evaluate_exit_code(
+    fail_on: &FailOn,
+    pct_threshold: u8,
+    report: &domain_status::ScanReport,
+) -> i32 {
+    match fail_on {
+        FailOn::Never => 0,
+        FailOn::AnyFailure => {
+            if report.failed > 0 {
+                2
+            } else {
+                0
+            }
+        }
+        FailOn::PctGreaterThan => {
+            if report.total_urls == 0 {
+                // No URLs processed - this is a configuration/input issue
+                return 3;
+            }
+            let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
+            if failure_pct > pct_threshold as f64 {
+                2
+            } else {
+                0
+            }
+        }
+        FailOn::ErrorsOnly => {
+            // Future enhancement: distinguish between critical errors and warnings
+            // For now, behave like AnyFailure
+            if report.failed > 0 {
+                2
+            } else {
+                0
+            }
         }
     }
 }
