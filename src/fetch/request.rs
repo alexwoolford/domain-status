@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_security_headers_empty_value() {
+    fn test_request_extract_security_headers_empty_value() {
         // Test that empty header values are handled correctly
         // This is critical - empty values should still be extracted
         let mut headers = HeaderMap::new();

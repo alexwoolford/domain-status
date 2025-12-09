@@ -137,25 +137,10 @@ mod tests {
     // - Or use real certificate DER bytes from well-known sites
     // - Or create test fixtures with pre-generated certificates
 
-    #[test]
-    fn test_extract_certificate_oids_returns_result() {
-        // This test verifies the function signature and basic structure
-        // Full testing requires actual certificate DER bytes
-        // The function should:
-        // - Return Ok(Vec<String>) for valid certificates
-        // - Extract extension OIDs
-        // - Extract OIDs from Certificate Policies
-        // - Extract OIDs from Extended Key Usage
-        // - Map Extended Key Usage flags to OIDs correctly
-
-        // Verify OID constants are correct
-        assert_eq!("1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.1"); // Server Auth
-        assert_eq!("1.3.6.1.5.5.7.3.2", "1.3.6.1.5.5.7.3.2"); // Client Auth
-        assert_eq!("1.3.6.1.5.5.7.3.3", "1.3.6.1.5.5.7.3.3"); // Code Signing
-        assert_eq!("1.3.6.1.5.5.7.3.4", "1.3.6.1.5.5.7.3.4"); // Email Protection
-        assert_eq!("1.3.6.1.5.5.7.3.8", "1.3.6.1.5.5.7.3.8"); // Time Stamping
-        assert_eq!("1.3.6.1.5.5.7.3.9", "1.3.6.1.5.5.7.3.9"); // OCSP Signing
-    }
+    // Note: test_extract_certificate_oids_returns_result was removed
+    // The test only asserted constants equal themselves, which is useless.
+    // Full testing requires actual certificate DER bytes, which is better
+    // handled in integration tests with real certificates.
 
     #[test]
     fn test_extract_certificate_sans_returns_result() {
