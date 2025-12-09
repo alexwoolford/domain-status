@@ -69,6 +69,8 @@ mod tests {
     use crate::config::Config;
     use std::path::PathBuf;
 
+    use crate::config::FailOn;
+
     fn create_test_config() -> Config {
         // Create Config manually with required fields
         Config {
@@ -77,6 +79,8 @@ mod tests {
             timeout_seconds: 10,
             db_path: PathBuf::from("./test.db"),
             max_concurrency: 30,
+            fail_on: FailOn::Never,
+            fail_on_pct_threshold: 10,
             rate_limit_rps: 15,
             log_level: crate::config::LogLevel::Info,
             log_format: crate::config::LogFormat::Plain,

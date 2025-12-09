@@ -9,6 +9,39 @@ use clap::ValueEnum;
 
 use crate::config::constants::DEFAULT_USER_AGENT;
 
+/// Exit code policy for handling failures.
+///
+/// Controls when the CLI should exit with a non-zero code based on scan results.
+#[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
+pub enum FailOn {
+    /// Never exit with error code (always return 0)
+    ///
+    /// Useful for monitoring scenarios where you want to log failures but not
+    /// trigger alerts. The scan may have failures, but the command succeeds.
+    Never,
+
+    /// Exit with error if any URL failed
+    ///
+    /// Strict mode: any failure causes exit code 2. Useful for CI pipelines
+    /// where any failure should be treated as a build failure.
+    AnyFailure,
+
+    /// Exit with error if failure percentage exceeds threshold
+    ///
+    /// Format: `pct>X` where X is a number between 0 and 100.
+    /// Example: `pct>10` means exit with error if more than 10% of URLs failed.
+    /// Useful for large scans where some failures are expected but excessive
+    /// failures indicate a problem.
+    #[value(name = "pct>")]
+    PctGreaterThan,
+
+    /// Exit with error only on critical errors (timeouts, DNS failures, etc.)
+    ///
+    /// Warnings and non-critical failures (like 404s) don't trigger exit codes.
+    /// This is a future enhancement - currently behaves like `AnyFailure`.
+    ErrorsOnly,
+}
+
 /// Logging level for the application.
 ///
 /// Controls the verbosity of log output, from most restrictive (Error) to most
@@ -113,6 +146,15 @@ pub struct Config {
 
     /// Show detailed timing metrics at the end of the run
     pub show_timing: bool,
+
+    /// Exit code policy for handling failures
+    pub fail_on: FailOn,
+
+    /// Failure percentage threshold (used with `fail_on: FailOn::PctGreaterThan`)
+    ///
+    /// A number between 0 and 100. If failure percentage exceeds this value,
+    /// exit with code 2. Only used when `fail_on` is `PctGreaterThan`.
+    pub fail_on_pct_threshold: u8,
 }
 
 impl Default for Config {
@@ -132,6 +174,8 @@ impl Default for Config {
             status_port: None,
             enable_whois: false,
             show_timing: false,
+            fail_on: FailOn::Never,
+            fail_on_pct_threshold: 10,
         }
     }
 }

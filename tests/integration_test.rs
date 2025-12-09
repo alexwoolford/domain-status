@@ -155,6 +155,8 @@ mod tests {
             fingerprints: None, // Use default (will fetch from GitHub)
             geoip: None,        // Disable GeoIP for test
             status_port: None,
+            fail_on: domain_status::FailOn::Never,
+            fail_on_pct_threshold: 10,
         };
 
         // Run the scan using the library
