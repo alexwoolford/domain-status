@@ -65,5 +65,7 @@ default_*.profraw
 
 # Temporary test files
 test_*.rs
+!src/storage/test_helpers.rs
+!tests/helpers.rs
 test_*
 check_psl*
