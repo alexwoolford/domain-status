@@ -135,29 +135,29 @@ mod run {
     ///
     /// ```no_run
     /// use domain_status::{Config, run_scan};
+    /// use std::path::PathBuf;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = Config::parse_from(["domain_status", "urls.txt"]);
+    /// let config = Config {
+    ///     file: PathBuf::from("urls.txt"),
+    ///     ..Default::default()
+    /// };
     /// let report = run_scan(config).await?;
     /// println!("Processed {} URLs", report.total_urls);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn run_scan(mut config: Config) -> Result<ScanReport> {
-        // Auto-update User-Agent if user didn't override it
         if config.user_agent == DEFAULT_USER_AGENT {
             let updated_ua = crate::user_agent::get_default_user_agent(None).await;
             config.user_agent = updated_ua;
             log::debug!("Using auto-updated User-Agent: {}", config.user_agent);
         }
 
-        // Open input source (file or stdin) and count lines
         let (total_lines, is_stdin) = if config.file.as_os_str() == "-" {
-            // Read from stdin - can't count ahead, will track as we process
             info!("Reading URLs from stdin");
             (0, true)
         } else {
-            // Read from file - count lines first for progress tracking
             let file_for_counting = tokio::fs::File::open(&config.file)
                 .await
                 .context("Failed to open input file for line counting")?;
@@ -165,7 +165,6 @@ mod run {
             let mut count = 0usize;
             let mut counting_lines = reader.lines();
             while let Ok(Some(line)) = counting_lines.next_line().await {
-                // Skip comments and blank lines when counting
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with('#') {
                     count += 1;
@@ -175,7 +174,6 @@ mod run {
             (count, false)
         };
 
-        // Open input source for reading
         let mut stdin_lines = if is_stdin {
             use tokio::io::stdin;
             Some(BufReader::new(stdin()).lines())
@@ -195,7 +193,6 @@ mod run {
         let mut tasks = FuturesUnordered::new();
 
         let semaphore = init_semaphore(config.max_concurrency);
-        // Calculate burst capacity: cap at min(concurrency, rps * 2) to prevent excessive queuing
         let rate_burst = if config.rate_limit_rps > 0 {
             let rps_doubled = config.rate_limit_rps.saturating_mul(2);
             std::cmp::min(config.max_concurrency, rps_doubled as usize)
@@ -208,7 +205,6 @@ mod run {
                 None => (None, None),
             };
 
-        // Initialize adaptive rate limiter (always enabled when rate limiting is on)
         let adaptive_limiter = if config.rate_limit_rps > 0 {
             let max_rps = config.rate_limit_rps.saturating_mul(2);
             let adaptive = Arc::new(AdaptiveRateLimiter::new(
@@ -235,7 +231,6 @@ mod run {
             None
         };
 
-        // Initialize database pool (pass path directly instead of using env var)
         let pool = init_db_pool_with_path(&config.db_path)
             .await
             .context("Failed to initialize database pool")?;
@@ -307,7 +302,6 @@ mod run {
         let total_urls_attempted = Arc::new(AtomicUsize::new(0));
         let total_urls_in_file = Arc::new(AtomicUsize::new(total_lines));
 
-        // Start status server if requested
         if let Some(port) = config.status_port {
             let status_state = crate::status_server::StatusState {
                 total_urls: Arc::clone(&total_urls_in_file),
@@ -341,9 +335,17 @@ mod run {
 
         loop {
             let line_result = if is_stdin {
-                stdin_lines.as_mut().unwrap().next_line().await
+                stdin_lines
+                    .as_mut()
+                    .expect("stdin_lines should be Some when is_stdin is true")
+                    .next_line()
+                    .await
             } else {
-                file_lines.as_mut().unwrap().next_line().await
+                file_lines
+                    .as_mut()
+                    .expect("file_lines should be Some when is_stdin is false")
+                    .next_line()
+                    .await
             };
             let line = match line_result {
                 Ok(Some(line)) => line,
@@ -354,7 +356,6 @@ mod run {
                 }
             };
 
-            // Skip comments (lines starting with #) and blank lines
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
@@ -560,7 +561,6 @@ mod run {
 
         let elapsed_seconds = start_time.elapsed().as_secs_f64();
 
-        // Save final statistics to database (but don't print - let caller decide)
         let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
         let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
         let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
@@ -576,10 +576,18 @@ mod run {
         .await
         .context("Failed to update run statistics")?;
 
-        // Print error/warning/info statistics (always logged for visibility)
+        if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(pool.as_ref())
+            .await
+        {
+            log::warn!(
+                "Failed to checkpoint WAL file (this is non-critical): {}",
+                e
+            );
+        }
+
         print_error_statistics(&error_stats);
 
-        // Print timing statistics if enabled (this is informational, not part of report)
         if config.show_timing {
             let geoip_enabled = crate::geoip::is_enabled();
             print_timing_statistics(

@@ -142,20 +142,6 @@ mod tests {
     // Full testing requires actual certificate DER bytes, which is better
     // handled in integration tests with real certificates.
 
-    #[test]
-    fn test_extract_certificate_sans_returns_result() {
-        // This test verifies the function signature and basic structure
-        // Full testing requires actual certificate DER bytes with SAN extensions
-        // The function should:
-        // - Return Ok(Vec<String>) for valid certificates
-        // - Only extract DNS names (not IP addresses, emails, etc.)
-        // - Return empty vector for certificates without SAN extension
-
-        // Verify the function filters correctly (DNS only, not IP/email)
-        // This is tested via code review - the match on GeneralName::DNSName
-        // ensures only DNS names are extracted
-    }
-
     // Integration note: These functions are tested in practice via:
     // - Real TLS connections in src/tls/mod.rs::get_ssl_certificate_info()
     // - The functions are called with real certificates from HTTPS connections

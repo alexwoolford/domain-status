@@ -239,19 +239,10 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), a
 mod tests {
     use super::*;
     use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
-    use crate::storage::migrations::run_migrations;
-    use sqlx::{Row, SqlitePool};
+    use sqlx::Row;
     use std::sync::Arc;
 
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("Failed to create test database pool");
-        run_migrations(&pool)
-            .await
-            .expect("Failed to run migrations");
-        pool
-    }
+    use crate::storage::test_helpers::create_test_pool;
 
     #[tokio::test]
     async fn test_record_url_failure_circuit_breaker_open() {

@@ -164,22 +164,13 @@ mod tests {
     use crate::geoip::GeoIpResult;
     use crate::parse::{AnalyticsId, SocialMediaLink, StructuredData};
     use crate::security::SecurityWarning;
-    use crate::storage::migrations::run_migrations;
     use crate::storage::models::UrlRecord;
     use crate::whois::WhoisResult;
     use chrono::{DateTime, NaiveDate};
-    use sqlx::{Row, SqlitePool};
+    use sqlx::Row;
     use std::collections::{HashMap, HashSet};
 
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("Failed to create test database pool");
-        run_migrations(&pool)
-            .await
-            .expect("Failed to run migrations");
-        pool
-    }
+    use crate::storage::test_helpers::create_test_pool;
 
     fn create_test_url_record() -> UrlRecord {
         UrlRecord {

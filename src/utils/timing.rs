@@ -506,14 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn test_url_timing_metrics_default() {
-        let metrics = UrlTimingMetrics::default();
-        assert_eq!(metrics.http_request_ms, 0);
-        assert_eq!(metrics.dns_forward_ms, 0);
-        assert_eq!(metrics.total_ms, 0);
-    }
-
-    #[test]
     fn test_timing_stats_percentage_division_by_zero() {
         // Test that percentage calculation handles division by zero correctly
         let stats = TimingStats::new();

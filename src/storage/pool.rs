@@ -15,6 +15,10 @@ use sqlx::{Pool, Sqlite, SqlitePool};
 use crate::config::DB_PATH;
 use crate::error_handling::DatabaseError;
 
+/// Type alias for database connection pool.
+/// Used throughout the codebase for consistency.
+pub type DbPool = Arc<Pool<Sqlite>>;
+
 /// Initializes and returns a database connection pool.
 ///
 /// Creates the database file if it doesn't exist and enables WAL mode
@@ -24,7 +28,7 @@ use crate::error_handling::DatabaseError;
 ///
 /// Note: For library usage, prefer `init_db_pool_with_path` which accepts a path directly.
 #[allow(dead_code)] // Kept for backward compatibility, but prefer init_db_pool_with_path
-pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
+pub async fn init_db_pool() -> Result<DbPool, DatabaseError> {
     let db_path = std::env::var("DOMAIN_STATUS_DB_PATH").unwrap_or_else(|_| DB_PATH.to_string());
     init_db_pool_with_path(&std::path::PathBuf::from(&db_path)).await
 }
@@ -36,9 +40,7 @@ pub async fn init_db_pool() -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
 ///
 /// This version accepts a path directly, making it suitable for library usage
 /// where configuration is passed explicitly rather than via environment variables.
-pub async fn init_db_pool_with_path(
-    db_path: &std::path::Path,
-) -> Result<Arc<Pool<Sqlite>>, DatabaseError> {
+pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool, DatabaseError> {
     let db_path_str = db_path.to_string_lossy().to_string();
     match OpenOptions::new()
         .read(true)

@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::error_handling::ProcessingStats;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
+use crate::storage::DbPool;
 use crate::utils::TimingStats;
-use sqlx::SqlitePool;
 
 /// Network-related resources (HTTP clients, DNS resolver, domain extractor).
 #[derive(Clone)]
@@ -28,7 +28,7 @@ pub struct NetworkContext {
 #[derive(Clone)]
 pub struct DatabaseContext {
     /// Database connection pool (for failure recording)
-    pub pool: Arc<SqlitePool>,
+    pub pool: DbPool,
     /// Circuit breaker for database write operations
     pub circuit_breaker: Arc<DbWriteCircuitBreaker>,
 }
@@ -79,7 +79,7 @@ impl NetworkContext {
 
 impl DatabaseContext {
     /// Creates a new `DatabaseContext` with the given resources.
-    pub fn new(pool: Arc<SqlitePool>, circuit_breaker: Arc<DbWriteCircuitBreaker>) -> Self {
+    pub fn new(pool: DbPool, circuit_breaker: Arc<DbWriteCircuitBreaker>) -> Self {
         Self {
             pool,
             circuit_breaker,
@@ -116,7 +116,7 @@ impl ProcessingContext {
         run_id: Option<String>,
         enable_whois: bool,
         db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
-        pool: Arc<SqlitePool>,
+        pool: DbPool,
         timing_stats: Arc<TimingStats>,
     ) -> Self {
         Self {

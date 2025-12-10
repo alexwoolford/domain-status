@@ -288,32 +288,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_init_ruleset_already_loaded() {
-        // Test that calling init_ruleset twice returns the same cached instance
-        // This is tested implicitly - if it panics or returns different instances, test fails
-        // First call would require actual network access, so we test the cache check path
-        // The RULESET is private, so we can't directly test it, but we verify the function
-        // handles the already-loaded case correctly
-        // This test verifies the early return path when ruleset is already loaded
-    }
-
-    #[tokio::test]
-    async fn test_init_ruleset_empty_sources_fallback() {
-        // Test that empty sources list uses fallback cache key
-        // This tests the defensive check at line 76-79
-        // Note: This is hard to test directly since DEFAULT_FINGERPRINTS_URLS is never empty
-        // But the code path exists for defensive programming
-    }
-
-    #[tokio::test]
-    async fn test_init_ruleset_cache_key_generation() {
-        // Test cache key generation for single vs multiple sources
-        // Single source should use source URL as key
-        // Multiple sources should use "merged:source1+source2" format
-        // This is tested implicitly through the init_ruleset function
-    }
-
-    #[tokio::test]
     async fn test_fetch_ruleset_from_multiple_sources_all_fail() {
         // Test error handling when all sources fail
         // This is a critical path - should return a helpful error message

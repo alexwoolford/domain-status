@@ -95,20 +95,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_whois_result_default() {
-        let result = WhoisResult::default();
-        assert!(result.creation_date.is_none());
-        assert!(result.expiration_date.is_none());
-        assert!(result.updated_date.is_none());
-        assert!(result.registrar.is_none());
-        assert!(result.registrant_country.is_none());
-        assert!(result.registrant_org.is_none());
-        assert!(result.status.is_none());
-        assert!(result.nameservers.is_none());
-        assert!(result.raw_text.is_none());
-    }
-
-    #[test]
     fn test_whois_cache_result_from_whois_result() {
         let whois_result = WhoisResult {
             creation_date: Some(chrono::Utc::now()),

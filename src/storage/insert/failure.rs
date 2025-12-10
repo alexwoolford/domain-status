@@ -176,52 +176,17 @@ pub async fn insert_url_partial_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::migrations::run_migrations;
     use crate::storage::models::{UrlFailureRecord, UrlPartialFailureRecord};
-    use sqlx::{Row, SqlitePool};
+    use sqlx::Row;
 
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("Failed to create test database pool");
-        run_migrations(&pool)
-            .await
-            .expect("Failed to run migrations");
-        pool
-    }
-
-    async fn create_test_run(pool: &SqlitePool, run_id: &str) {
-        sqlx::query("INSERT INTO runs (run_id, start_time) VALUES (?, ?)")
-            .bind(run_id)
-            .bind(1704067200000i64)
-            .execute(pool)
-            .await
-            .expect("Failed to insert test run");
-    }
-
-    async fn create_test_url_status(pool: &SqlitePool) -> i64 {
-        sqlx::query(
-            "INSERT INTO url_status (domain, final_domain, ip_address, status, status_description, response_time, title, timestamp, is_mobile_friendly) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-        )
-        .bind("example.com")
-        .bind("example.com")
-        .bind("93.184.216.34")
-        .bind(200i64)
-        .bind("OK")
-        .bind(0.123f64)
-        .bind("Test Page")
-        .bind(1704067200000i64)
-        .bind(true)
-        .fetch_one(pool)
-        .await
-        .expect("Failed to insert test URL status")
-        .get::<i64, _>(0)
-    }
+    use crate::storage::test_helpers::{
+        create_test_pool, create_test_run, create_test_url_status_default,
+    };
 
     #[tokio::test]
     async fn test_insert_url_failure_basic() {
         let pool = create_test_pool().await;
-        create_test_run(&pool, "test-run-123").await;
+        create_test_run(&pool, "test-run-123", 1704067200000i64).await;
 
         let failure = UrlFailureRecord {
             url: "http://example.com".to_string(),
@@ -325,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_failure_with_headers() {
         let pool = create_test_pool().await;
-        create_test_run(&pool, "test-run-456").await;
+        create_test_run(&pool, "test-run-456", 1704067200000i64).await;
 
         let failure = UrlFailureRecord {
             url: "http://example.com".to_string(),
@@ -427,8 +392,8 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_partial_failure_basic() {
         let pool = create_test_pool().await;
-        create_test_run(&pool, "test-run-789").await;
-        let url_status_id = create_test_url_status(&pool).await;
+        create_test_run(&pool, "test-run-789", 1704067200000i64).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         let partial_failure = UrlPartialFailureRecord {
             url_status_id,
@@ -464,7 +429,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_partial_failure_without_run_id() {
         let pool = create_test_pool().await;
-        let url_status_id = create_test_url_status(&pool).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         let partial_failure = UrlPartialFailureRecord {
             url_status_id,
@@ -499,7 +464,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_partial_failure_multiple() {
         let pool = create_test_pool().await;
-        let url_status_id = create_test_url_status(&pool).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         // Insert multiple partial failures for the same URL status
         let failure1 = UrlPartialFailureRecord {
