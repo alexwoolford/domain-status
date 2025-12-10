@@ -64,8 +64,9 @@ wappalyzergo/
 default_*.profraw
 
 # Temporary test files
-test_*.rs
+# Exceptions: legitimate test helper files (must come before test_* pattern)
 !src/storage/test_helpers.rs
 !tests/helpers.rs
+test_*.rs
 test_*
 check_psl*
