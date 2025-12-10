@@ -36,13 +36,13 @@ use log::LevelFilter;
 ///
 /// ```bash
 /// # Use RUST_LOG for quick debugging (no CLI args needed)
-/// RUST_LOG=debug domain_status urls.txt
+/// RUST_LOG=debug domain_status scan urls.txt
 ///
 /// # Override with CLI args (takes precedence)
-/// RUST_LOG=debug domain_status urls.txt --log-level info
+/// RUST_LOG=debug domain_status scan urls.txt --log-level info
 ///
 /// # Per-module filtering via RUST_LOG
-/// RUST_LOG=domain_status=debug,reqwest=info domain_status urls.txt
+/// RUST_LOG=domain_status=debug,reqwest=info domain_status scan urls.txt
 /// ```
 pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), InitializationError> {
     colored::control::set_override(true);

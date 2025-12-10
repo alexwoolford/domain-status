@@ -406,8 +406,8 @@ SELECT * FROM url_records WHERE http_status = 200;
 EOF
 ```
 
-Or use the `--fail-on` flag and export subcommand (when implemented):
+Or use the export subcommand to export filtered results:
 
 ```bash
-domain_status export --db domain_status.db --format csv --query "SELECT * FROM url_records"
+domain_status export --db-path domain_status.db --format csv --status 200 --output successful.csv
 ```

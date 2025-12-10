@@ -41,41 +41,14 @@ pub async fn insert_analytics_ids(
 mod tests {
     use super::*;
     use crate::parse::AnalyticsId;
-    use crate::storage::migrations::run_migrations;
-    use sqlx::{Row, SqlitePool};
+    use sqlx::Row;
 
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("Failed to create test database pool");
-        run_migrations(&pool)
-            .await
-            .expect("Failed to run migrations");
-        pool
-    }
-
-    async fn create_test_url_status(pool: &SqlitePool) -> i64 {
-        sqlx::query(
-            "INSERT INTO url_status (domain, final_domain, ip_address, status, status_description, response_time, title, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-        )
-        .bind("example.com")
-        .bind("example.com")
-        .bind("93.184.216.34")
-        .bind(200i64)
-        .bind("OK")
-        .bind(0.123f64)
-        .bind("Test Page")
-        .bind(1704067200000i64)
-        .fetch_one(pool)
-        .await
-        .expect("Failed to insert test URL status")
-        .get::<i64, _>(0)
-    }
+    use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     #[tokio::test]
     async fn test_insert_analytics_ids_basic() {
         let pool = create_test_pool().await;
-        let url_status_id = create_test_url_status(&pool).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         let analytics_ids = vec![
             AnalyticsId {
@@ -110,7 +83,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_analytics_ids_empty() {
         let pool = create_test_pool().await;
-        let url_status_id = create_test_url_status(&pool).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         let analytics_ids = vec![];
 
@@ -131,7 +104,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_analytics_ids_duplicate() {
         let pool = create_test_pool().await;
-        let url_status_id = create_test_url_status(&pool).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         let analytics_ids = vec![AnalyticsId {
             provider: "Google Analytics".to_string(),
@@ -160,7 +133,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_analytics_ids_multiple_providers() {
         let pool = create_test_pool().await;
-        let url_status_id = create_test_url_status(&pool).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
 
         let analytics_ids = vec![
             AnalyticsId {

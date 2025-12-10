@@ -1,39 +1,13 @@
 //! Tests for CSV export functionality.
 
 use domain_status::export::export_csv;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use tempfile::TempDir;
 
-/// Creates a test URL status record and returns its ID.
-async fn create_test_url_status(
-    pool: &SqlitePool,
-    domain: &str,
-    final_domain: &str,
-    status: i64,
-    run_id: Option<&str>,
-    timestamp: i64,
-) -> i64 {
-    sqlx::query(
-        "INSERT INTO url_status (
-            domain, final_domain, ip_address, status, status_description,
-            response_time, title, timestamp, run_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        RETURNING id",
-    )
-    .bind(domain)
-    .bind(final_domain)
-    .bind("192.0.2.1")
-    .bind(status)
-    .bind("OK")
-    .bind(1.5f64)
-    .bind("Test Page")
-    .bind(timestamp)
-    .bind(run_id)
-    .fetch_one(pool)
-    .await
-    .expect("Failed to insert test URL status")
-    .get::<i64, _>(0)
-}
+#[path = "helpers.rs"]
+mod helpers;
+
+use helpers::{create_test_pool_with_path, create_test_url_status};
 
 /// Creates test data: URL with technologies, GeoIP, WHOIS, etc.
 async fn create_test_url_with_enrichment(
@@ -165,16 +139,8 @@ async fn test_export_csv_basic() {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).expect("Failed to create parent directory");
     }
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create test data
     create_test_url_with_enrichment(&pool, "example.com", Some("test_run_1")).await;
@@ -225,16 +191,8 @@ async fn test_export_csv_filter_by_run_id() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create data with different run_ids
     create_test_url_status(
@@ -289,16 +247,8 @@ async fn test_export_csv_filter_by_domain() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     create_test_url_status(
         &pool,
@@ -344,16 +294,8 @@ async fn test_export_csv_filter_by_status() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     create_test_url_status(&pool, "ok.com", "ok.com", 200, None, 1704067200000).await;
     create_test_url_status(&pool, "error.com", "error.com", 404, None, 1704067200000).await;
@@ -382,16 +324,8 @@ async fn test_export_csv_empty_database() {
     let output_path = temp_dir.path().join("output.csv");
 
     // Create empty database
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
     drop(pool);
 
     // Export from empty database
@@ -414,16 +348,8 @@ async fn test_export_csv_missing_relationships() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create URL with NO enrichment data (no GeoIP, no WHOIS, no technologies)
     create_test_url_status(&pool, "bare.com", "bare.com", 200, None, 1704067200000).await;
@@ -451,16 +377,8 @@ async fn test_export_csv_all_enrichment_data() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create URL with all enrichment data
     create_test_url_with_enrichment(&pool, "full.com", None).await;
@@ -508,16 +426,8 @@ async fn test_export_csv_filter_combinations() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create data with different attributes
     create_test_url_status(
@@ -588,16 +498,8 @@ async fn test_export_csv_filter_by_since() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create data with different timestamps
     create_test_url_status(&pool, "old.com", "old.com", 200, None, 1609459200000).await; // 2021-01-01
@@ -636,16 +538,8 @@ async fn test_export_csv_stdout() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let db_path = temp_dir.path().join("test_export.db");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     create_test_url_status(&pool, "stdout.com", "stdout.com", 200, None, 1704067200000).await;
 
@@ -666,16 +560,8 @@ async fn test_export_csv_date_formatting() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     let url_id =
         create_test_url_status(&pool, "date.com", "date.com", 200, None, 1704067200000).await;
@@ -728,16 +614,8 @@ async fn test_export_csv_comma_separated_lists() {
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
 
-    // Create the database file first (SQLite requires the file to exist or be created)
-    std::fs::File::create(&db_path).expect("Failed to create database file");
-    // Use the same format as init_db_pool_with_path
-    let db_path_str = db_path.to_string_lossy().to_string();
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path_str))
-        .await
-        .expect("Failed to create test database");
-    domain_status::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    // Create test database with migrations
+    let pool = create_test_pool_with_path(&db_path).await;
 
     let url_id =
         create_test_url_status(&pool, "list.com", "list.com", 200, None, 1704067200000).await;
@@ -800,4 +678,438 @@ async fn test_export_csv_comma_separated_lists() {
         tech_line.contains("Google Analytics") || tech_line.contains("UA-111-1"),
         "CSV should contain analytics IDs"
     );
+}
+
+#[tokio::test]
+async fn test_export_csv_all_columns_present() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+    create_test_url_with_enrichment(&pool, "full.com", None).await;
+    drop(pool);
+
+    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
+        .await
+        .expect("Export should succeed");
+
+    assert_eq!(count, 1, "Should export 1 record");
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+    let lines: Vec<&str> = csv_content.lines().collect();
+    assert!(lines.len() >= 2, "Should have header + at least 1 data row");
+
+    // Verify all 58 expected columns are present in header
+    let header = lines[0];
+    let expected_columns = [
+        "url",
+        "initial_domain",
+        "final_domain",
+        "ip_address",
+        "reverse_dns",
+        "status",
+        "status_description",
+        "response_time_ms",
+        "title",
+        "keywords",
+        "description",
+        "is_mobile_friendly",
+        "redirect_count",
+        "final_redirect_url",
+        "technologies",
+        "technology_count",
+        "tls_version",
+        "ssl_cert_subject",
+        "ssl_cert_issuer",
+        "ssl_cert_valid_to",
+        "cipher_suite",
+        "key_algorithm",
+        "certificate_sans",
+        "certificate_san_count",
+        "oids",
+        "oid_count",
+        "nameserver_count",
+        "txt_record_count",
+        "mx_record_count",
+        "spf_record",
+        "dmarc_record",
+        "analytics_ids",
+        "analytics_count",
+        "social_media_links",
+        "social_media_count",
+        "security_warnings",
+        "security_warning_count",
+        "structured_data_types",
+        "structured_data_count",
+        "http_headers",
+        "http_header_count",
+        "security_headers",
+        "security_header_count",
+        "geoip_country_code",
+        "geoip_country_name",
+        "geoip_region",
+        "geoip_city",
+        "geoip_latitude",
+        "geoip_longitude",
+        "geoip_asn",
+        "geoip_asn_org",
+        "whois_registrar",
+        "whois_creation_date",
+        "whois_expiration_date",
+        "whois_registrant_country",
+        "timestamp",
+        "run_id",
+    ];
+
+    for column in &expected_columns {
+        assert!(
+            header.contains(column),
+            "Header should contain column: {}",
+            column
+        );
+    }
+
+    // Verify data row has correct number of fields (should match header)
+    // Use CSV parser to properly handle quoted fields with commas
+    use csv::ReaderBuilder;
+    let mut header_reader = ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(header.as_bytes());
+    let header_record = header_reader
+        .records()
+        .next()
+        .expect("Should read header")
+        .expect("Should parse header");
+    let header_field_count = header_record.len();
+
+    let mut data_reader = ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(lines[1].as_bytes());
+    let data_record = data_reader
+        .records()
+        .next()
+        .expect("Should read data row")
+        .expect("Should parse data row");
+    let data_field_count = data_record.len();
+
+    assert_eq!(
+        header_field_count, data_field_count,
+        "Data row should have same number of fields as header ({} vs {})",
+        header_field_count, data_field_count
+    );
+}
+
+#[tokio::test]
+async fn test_export_csv_null_handling() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+
+    // Create URL with many NULL/empty fields
+    let url_id = create_test_url_status(
+        &pool,
+        "nulltest.com",
+        "nulltest.com",
+        200,
+        None,
+        1704067200000,
+    )
+    .await;
+
+    // Explicitly set some fields to NULL
+    sqlx::query("UPDATE url_status SET reverse_dns_name = NULL, keywords = NULL, description = NULL, tls_version = NULL WHERE id = ?")
+        .bind(url_id)
+        .execute(&pool)
+        .await
+        .expect("Failed to update with NULLs");
+
+    drop(pool);
+
+    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
+        .await
+        .expect("Export should handle NULL values");
+
+    assert_eq!(count, 1, "Should export 1 record");
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+    let lines: Vec<&str> = csv_content.lines().collect();
+    let data_row = lines[1];
+
+    // NULL values should be exported as empty strings, not crash
+    assert!(
+        data_row.contains("nulltest.com"),
+        "CSV should contain domain even with NULL fields"
+    );
+    // Verify row is valid CSV (has correct number of fields)
+    // Use CSV parser to properly handle quoted fields
+    use csv::ReaderBuilder;
+    let mut reader = ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(data_row.as_bytes());
+    let record = reader
+        .records()
+        .next()
+        .expect("Should read data row")
+        .expect("Should parse data row");
+    assert!(
+        record.len() >= 50,
+        "Data row should have all fields even with NULLs (got {})",
+        record.len()
+    );
+}
+
+#[tokio::test]
+async fn test_export_csv_redirect_chain_edge_cases() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+    let _url_id = create_test_url_status(
+        &pool,
+        "redirect.com",
+        "final.com",
+        200,
+        None,
+        1704067200000i64,
+    )
+    .await;
+
+    // No redirects (should use final_domain as final_redirect_url)
+    drop(pool);
+
+    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
+        .await
+        .expect("Export should handle no redirects");
+
+    assert_eq!(count, 1, "Should export 1 record");
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+    assert!(
+        csv_content.contains("final.com"),
+        "CSV should contain final_domain when no redirects"
+    );
+
+    // Test with multiple redirects (reuse same database)
+    let pool2 = create_test_pool_with_path(&db_path).await;
+    let url_id2 =
+        create_test_url_status(&pool2, "start.com", "end.com", 200, None, 1704067300000i64).await;
+
+    for (i, url) in ["https://start.com", "https://middle.com", "https://end.com"]
+        .iter()
+        .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO url_redirect_chain (url_status_id, sequence_order, url) VALUES (?, ?, ?)",
+        )
+        .bind(url_id2)
+        .bind(i as i64)
+        .bind(*url)
+        .execute(&pool2)
+        .await
+        .expect("Failed to insert redirect");
+    }
+
+    drop(pool2);
+
+    let output_path2 = temp_dir.path().join("output2.csv");
+    let count = export_csv(&db_path, Some(&output_path2), None, None, None, None)
+        .await
+        .expect("Export should handle multiple redirects");
+
+    assert_eq!(count, 2, "Should export 2 records");
+
+    let csv_content = std::fs::read_to_string(&output_path2).expect("Should read CSV file");
+    // Should contain final redirect URL
+    assert!(
+        csv_content.contains("https://end.com"),
+        "CSV should contain final redirect URL"
+    );
+    // Redirect count should be 3
+    // Use CSV parser to properly extract the redirect_count field
+    use csv::ReaderBuilder;
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(csv_content.as_bytes());
+    let mut found_start = false;
+    for result in reader.records() {
+        let record = result.expect("Should parse CSV record");
+        // Check if this row is for start.com (could be in url, initial_domain, or final_domain fields)
+        let url = record.get(0).unwrap_or("");
+        let initial_domain = record.get(1).unwrap_or("");
+        let final_domain = record.get(2).unwrap_or("");
+        if url.contains("start.com")
+            || initial_domain.contains("start.com")
+            || final_domain.contains("start.com")
+        {
+            // redirect_count is at index 12 (after url, initial_domain, final_domain, etc.)
+            let redirect_count = record.get(12).expect("Should have redirect_count field");
+            assert_eq!(
+                redirect_count, "3",
+                "CSV should show redirect count of 3 for start.com"
+            );
+            found_start = true;
+        }
+    }
+    assert!(found_start, "Should find start.com in CSV");
+}
+
+#[tokio::test]
+async fn test_export_csv_header_filtering() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+    let url_id = create_test_url_status(
+        &pool,
+        "headers.com",
+        "headers.com",
+        200,
+        None,
+        1704067200000,
+    )
+    .await;
+
+    // Insert both filtered and unfiltered HTTP headers
+    sqlx::query(
+        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind("Content-Type")
+    .bind("text/html; charset=utf-8")
+    .execute(&pool)
+    .await
+    .expect("Failed to insert header");
+
+    sqlx::query(
+        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind("Server")
+    .bind("nginx/1.18.0")
+    .execute(&pool)
+    .await
+    .expect("Failed to insert header");
+
+    sqlx::query(
+        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind("X-Custom-Header")
+    .bind("should-not-appear")
+    .execute(&pool)
+    .await
+    .expect("Failed to insert header");
+
+    // Insert security headers
+    sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
+        .bind(url_id)
+        .bind("Content-Security-Policy")
+        .bind("default-src 'self'")
+        .execute(&pool)
+        .await
+        .expect("Failed to insert security header");
+
+    sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
+        .bind(url_id)
+        .bind("X-Frame-Options")
+        .bind("DENY")
+        .execute(&pool)
+        .await
+        .expect("Failed to insert security header");
+
+    sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
+        .bind(url_id)
+        .bind("X-Other-Header")
+        .bind("should-not-appear")
+        .execute(&pool)
+        .await
+        .expect("Failed to insert security header");
+
+    drop(pool);
+
+    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
+        .await
+        .expect("Export should filter headers");
+
+    assert_eq!(count, 1, "Should export 1 record");
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+    let data_line = csv_content.lines().nth(1).expect("Should have data row");
+
+    // Should contain filtered headers
+    assert!(
+        data_line.contains("Content-Type") || data_line.contains("text/html"),
+        "CSV should contain filtered HTTP header"
+    );
+    assert!(
+        data_line.contains("Server") || data_line.contains("nginx"),
+        "CSV should contain filtered HTTP header"
+    );
+    assert!(
+        data_line.contains("Content-Security-Policy") || data_line.contains("default-src"),
+        "CSV should contain filtered security header"
+    );
+    assert!(
+        data_line.contains("X-Frame-Options") || data_line.contains("DENY"),
+        "CSV should contain filtered security header"
+    );
+
+    // Should NOT contain unfiltered headers (but this is hard to verify without parsing CSV properly)
+    // The header_count should reflect total count, not filtered count
+}
+
+#[tokio::test]
+async fn test_export_csv_unicode_and_special_chars() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+    let url_id = create_test_url_status(
+        &pool,
+        "unicode.com",
+        "unicode.com",
+        200,
+        None,
+        1704067200000,
+    )
+    .await;
+
+    // Insert data with unicode and special characters
+    sqlx::query("UPDATE url_status SET title = ? WHERE id = ?")
+        .bind("Test Title with émojis 🚀 and \"quotes\"")
+        .bind(url_id)
+        .execute(&pool)
+        .await
+        .expect("Failed to update title");
+
+    sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name) VALUES (?, ?)")
+        .bind(url_id)
+        .bind("Tech with, commas & \"quotes\"")
+        .execute(&pool)
+        .await
+        .expect("Failed to insert technology");
+
+    drop(pool);
+
+    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
+        .await
+        .expect("Export should handle unicode and special chars");
+
+    assert_eq!(count, 1, "Should export 1 record");
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+
+    // CSV library should properly escape special characters
+    assert!(
+        csv_content.contains("unicode.com"),
+        "CSV should contain domain"
+    );
+    // Note: CSV library handles escaping, so we just verify it doesn't crash
+    // The exact format depends on csv crate's escaping rules
 }

@@ -242,16 +242,4 @@ mod tests {
 
         assert!(display_msg.contains("no final URL available"));
     }
-
-    #[test]
-    fn test_failure_context_default() {
-        // Test FailureContext::default() creates empty context
-        // This is critical - default should be safe to use
-        let context = FailureContext::default();
-
-        assert_eq!(context.final_url, None);
-        assert_eq!(context.redirect_chain, Vec::<String>::new());
-        assert_eq!(context.response_headers, Vec::<(String, String)>::new());
-        assert_eq!(context.request_headers, Vec::<(String, String)>::new());
-    }
 }

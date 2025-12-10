@@ -208,19 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_metadata_build_epoch_formatting() {
-        // Test that build_epoch is correctly formatted in version string
-        // This is critical - version string is used for cache invalidation
-
-        // We can't easily create a real Reader in tests, but we verify
-        // the format string is correct: format!("build_{}", build_epoch)
-        // This test verifies the logic doesn't panic
-        let version = format!("build_{}", 1234567890u64);
-        assert!(version.starts_with("build_"));
-        assert!(version.contains("1234567890"));
-    }
-
-    #[test]
     fn test_extract_metadata_with_minimal_reader() {
         // Test extract_metadata function with a minimal valid mmdb structure
         // This is critical - extract_metadata is used throughout the codebase

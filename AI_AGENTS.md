@@ -143,7 +143,7 @@ cargo audit
 
 # 3) Smoke run on a small input
 cargo build --release
-./target/release/domain_status urls.txt
+./target/release/domain_status scan urls.txt
 
 # 4) Inspect DB and spot-check records
 sqlite3 domain_status.db "SELECT COUNT(*), MIN(status), MAX(status) FROM url_status;"

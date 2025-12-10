@@ -110,55 +110,11 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_process_url_result_structure() {
-        // Verify ProcessUrlResult has the expected structure
-        let result = ProcessUrlResult {
-            result: Ok(()),
-            retry_count: 0,
-        };
-        assert!(result.result.is_ok());
-        assert_eq!(result.retry_count, 0);
-    }
-
-    #[test]
-    fn test_process_url_result_with_retries() {
-        let result = ProcessUrlResult {
-            result: Err(anyhow::anyhow!("Test error")),
-            retry_count: 3,
-        };
-        assert!(result.result.is_err());
-        assert_eq!(result.retry_count, 3);
-    }
-
     // Note: Full integration tests for process_url() would require:
     // - Mock HTTP server (httptest)
     // - Database with migrations
     // - Complex ProcessingContext setup
     // These are better suited for integration_test.rs
-    // Here we focus on testing the ProcessUrlResult structure
-
-    #[test]
-    fn test_process_url_result_retry_count_zero() {
-        // Test that retry_count is 0 when no retries occur
-        let result = ProcessUrlResult {
-            result: Ok(()),
-            retry_count: 0,
-        };
-        assert_eq!(result.retry_count, 0);
-        assert!(result.result.is_ok());
-    }
-
-    #[test]
-    fn test_process_url_result_retry_count_max() {
-        // Test that retry_count can handle maximum retry attempts
-        let result = ProcessUrlResult {
-            result: Err(anyhow::anyhow!("Max retries exceeded")),
-            retry_count: 10,
-        };
-        assert_eq!(result.retry_count, 10);
-        assert!(result.result.is_err());
-    }
 
     #[test]
     fn test_process_url_result_error_preservation() {

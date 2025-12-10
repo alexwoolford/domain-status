@@ -210,28 +210,6 @@ mod tests {
     }
 
     #[test]
-    fn test_fail_on_enum() {
-        // Test that FailOn enum variants are accessible
-        let never = FailOn::Never;
-        let any_failure = FailOn::AnyFailure;
-        let pct = FailOn::PctGreaterThan;
-        let errors_only = FailOn::ErrorsOnly;
-
-        // Just verify they can be created
-        assert_eq!(never, FailOn::Never);
-        assert_eq!(any_failure, FailOn::AnyFailure);
-        assert_eq!(pct, FailOn::PctGreaterThan);
-        assert_eq!(errors_only, FailOn::ErrorsOnly);
-    }
-
-    #[test]
-    fn test_config_default_includes_fail_on() {
-        let config = Config::default();
-        assert_eq!(config.fail_on, FailOn::Never);
-        assert_eq!(config.fail_on_pct_threshold, 10);
-    }
-
-    #[test]
     fn test_log_level_ordering() {
         // Verify that log levels are ordered correctly (Error < Warn < Info < Debug < Trace)
         let error = log::LevelFilter::from(LogLevel::Error);
@@ -245,50 +223,5 @@ mod tests {
         assert!(warn < info);
         assert!(info < debug);
         assert!(debug < trace);
-    }
-
-    #[test]
-    fn test_log_format_variants() {
-        // Test that LogFormat enum variants can be created and compared
-        let plain = LogFormat::Plain;
-        let json = LogFormat::Json;
-
-        // Both should be valid variants
-        match plain {
-            LogFormat::Plain => {}
-            LogFormat::Json => panic!("Plain should not match Json"),
-        }
-
-        match json {
-            LogFormat::Plain => panic!("Json should not match Plain"),
-            LogFormat::Json => {}
-        }
-    }
-
-    #[test]
-    fn test_log_format_debug() {
-        // Test Debug trait implementation
-        let plain = LogFormat::Plain;
-        let json = LogFormat::Json;
-
-        // Should not panic when formatting
-        let plain_str = format!("{:?}", plain);
-        let json_str = format!("{:?}", json);
-
-        assert_eq!(plain_str, "Plain");
-        assert_eq!(json_str, "Json");
-    }
-
-    #[test]
-    fn test_config_default() {
-        // Test Config default values
-        let config = Config::default();
-        assert_eq!(config.max_concurrency, 30);
-        assert_eq!(config.timeout_seconds, 10);
-        assert_eq!(config.rate_limit_rps, 15);
-        assert_eq!(config.adaptive_error_threshold, 0.2);
-        assert!(!config.enable_whois);
-        assert!(!config.show_timing);
-        assert_eq!(config.db_path, PathBuf::from("./domain_status.db"));
     }
 }

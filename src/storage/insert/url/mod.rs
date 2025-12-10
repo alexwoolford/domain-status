@@ -161,10 +161,11 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::migrations::run_migrations;
     use chrono::NaiveDate;
-    use sqlx::{Row, SqlitePool};
+    use sqlx::Row;
     use std::collections::{HashMap, HashSet};
+
+    use crate::storage::migrations::run_migrations;
 
     /// Creates an in-memory SQLite database pool for testing
     async fn create_test_pool() -> SqlitePool {
