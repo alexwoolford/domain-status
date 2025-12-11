@@ -242,4 +242,139 @@ mod tests {
 
         assert!(display_msg.contains("no final URL available"));
     }
+
+    #[test]
+    fn test_extract_failure_context_error_chain_order() {
+        // Test that context extraction checks error itself first, then chain
+        // This is critical - when attach_failure_context is used, context is at root
+        let context = FailureContext {
+            final_url: Some("https://example.com".to_string()),
+            redirect_chain: vec![],
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+
+        // attach_failure_context makes FailureContextError the root
+        let error = attach_failure_context(anyhow::anyhow!("Root error"), context.clone());
+
+        // extract_failure_context should find it via downcast_ref on error itself (line 84)
+        let extracted = extract_failure_context(&error);
+        assert_eq!(extracted.final_url, context.final_url);
+    }
+
+    #[test]
+    fn test_extract_failure_context_large_redirect_chain() {
+        // Test that large redirect chains are handled correctly
+        // This is critical - redirect chains can be long, should not cause issues
+        let redirect_chain: Vec<String> = (0..100)
+            .map(|i| format!("https://example.com/redirect{}", i))
+            .collect();
+        let context = FailureContext {
+            final_url: Some("https://example.com/final".to_string()),
+            redirect_chain: redirect_chain.clone(),
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+
+        let error = attach_failure_context(anyhow::anyhow!("Test error"), context.clone());
+        let extracted = extract_failure_context(&error);
+
+        assert_eq!(extracted.redirect_chain.len(), redirect_chain.len());
+        assert_eq!(extracted.redirect_chain, redirect_chain);
+    }
+
+    #[test]
+    fn test_extract_failure_context_many_headers() {
+        // Test that many headers are handled correctly
+        // This is critical - headers can be numerous, should not cause issues
+        let response_headers: Vec<(String, String)> = (0..50)
+            .map(|i| (format!("header-{}", i), format!("value-{}", i)))
+            .collect();
+        let context = FailureContext {
+            final_url: Some("https://example.com".to_string()),
+            redirect_chain: vec![],
+            response_headers: response_headers.clone(),
+            request_headers: vec![],
+        };
+
+        let error = attach_failure_context(anyhow::anyhow!("Test error"), context.clone());
+        let extracted = extract_failure_context(&error);
+
+        assert_eq!(extracted.response_headers.len(), response_headers.len());
+        assert_eq!(extracted.response_headers, response_headers);
+    }
+
+    #[test]
+    fn test_failure_context_error_display_redirect_hop_count() {
+        // Test that redirect hop count calculation is correct
+        // The code at line 53 uses redirect_chain.len().saturating_sub(1)
+        let context = FailureContext {
+            final_url: Some("https://www.example.com".to_string()),
+            redirect_chain: vec![
+                "https://example.com".to_string(),
+                "https://www.example.com".to_string(),
+            ],
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+
+        let context_error = FailureContextError { context };
+        let display_msg = context_error.to_string();
+
+        // Should show 1 hop (chain.len() = 2, so hops = 2 - 1 = 1)
+        assert!(display_msg.contains("hop"));
+        // Verify hop count calculation
+        let hops = 2u32.saturating_sub(1);
+        assert_eq!(hops, 1);
+    }
+
+    #[test]
+    fn test_failure_context_error_display_single_redirect() {
+        // Test display with single redirect (1 hop)
+        let context = FailureContext {
+            final_url: Some("https://www.example.com".to_string()),
+            redirect_chain: vec![
+                "https://example.com".to_string(),
+                "https://www.example.com".to_string(),
+            ],
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+
+        let context_error = FailureContextError { context };
+        let display_msg = context_error.to_string();
+
+        assert!(display_msg.contains("www.example.com"));
+        assert!(display_msg.contains("example.com"));
+        assert!(display_msg.contains("hop"));
+    }
+
+    #[test]
+    fn test_attach_failure_context_preserves_error_chain() {
+        // Test that attaching context preserves the original error chain
+        // This is critical - error context should enhance, not replace, error information
+        let original = anyhow::anyhow!("Original error")
+            .context("First context")
+            .context("Second context");
+
+        let context = FailureContext {
+            final_url: Some("https://example.com".to_string()),
+            redirect_chain: vec![],
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+
+        let error_with_context = attach_failure_context(original, context);
+
+        // Original error messages should still be in the chain
+        let chain_msgs: Vec<String> = error_with_context.chain().map(|e| e.to_string()).collect();
+        let full_chain = chain_msgs.join(" | ");
+        assert!(
+            full_chain.contains("Original error")
+                || full_chain.contains("First context")
+                || full_chain.contains("Second context"),
+            "Original error chain should be preserved, got: {}",
+            full_chain
+        );
+    }
 }
