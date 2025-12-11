@@ -189,6 +189,17 @@ async fn fetch_ruleset_from_multiple_sources(
             }
             tech.cookies = normalized_cookies;
 
+            // Normalize script patterns to lowercase (matching wappalyzergo update-fingerprints: strings.ToLower(pat))
+            // wappalyzergo normalizes scriptSrc patterns during update: output.ScriptSrc = append(output.ScriptSrc, strings.ToLower(pat))
+            tech.script = tech.script.iter().map(|s| s.to_lowercase()).collect();
+
+            // Normalize HTML patterns to lowercase (matching wappalyzergo update-fingerprints: strings.ToLower(pat))
+            // wappalyzergo normalizes HTML patterns during update: output.HTML = append(output.HTML, strings.ToLower(pat))
+            tech.html = tech.html.iter().map(|s| s.to_lowercase()).collect();
+
+            // Note: We don't normalize URL patterns - wappalyzergo doesn't normalize them either
+            // URL patterns are matched against the actual URL which may have case-sensitive paths
+
             all_technologies.insert(tech_name, tech);
         }
 
