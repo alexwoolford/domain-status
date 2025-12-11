@@ -11,11 +11,12 @@ use crate::utils::TimingStats;
 /// Shared state for the status server
 #[derive(Clone)]
 pub struct StatusState {
-    /// Total lines in the input file (includes invalid URLs that will be skipped)
-    /// Kept for reference, but progress calculations use `total_urls_attempted` instead
-    #[allow(dead_code)]
+    /// Total lines in the input file (non-empty, non-comment lines)
+    /// This is used for progress calculations to show progress against all URLs in the file
     pub total_urls: Arc<AtomicUsize>,
     /// Total URLs that have been attempted (valid URLs that passed validation)
+    /// Used in lib.rs for logging and statistics, but not in status server handlers
+    #[allow(dead_code)]
     pub total_urls_attempted: Arc<AtomicUsize>,
     pub completed_urls: Arc<AtomicUsize>,
     pub failed_urls: Arc<AtomicUsize>,
