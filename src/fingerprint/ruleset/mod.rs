@@ -11,6 +11,7 @@ mod categories;
 mod fetch;
 mod github;
 mod local;
+mod wappalyzergo;
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -26,6 +27,7 @@ use categories::{fetch_categories_from_url, load_categories_from_path};
 use fetch::fetch_from_url;
 use github::get_latest_commit_sha;
 use local::load_from_path;
+use wappalyzergo::load_wappalyzergo_format;
 
 /// Default URLs for fingerprint sources (merged, matching Go implementation)
 /// The Go implementation fetches from both sources and merges them
@@ -44,7 +46,11 @@ static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
 /// Initializes the fingerprint ruleset from URL or local path.
 ///
 /// Rules are cached locally and refreshed if older than 7 days.
-/// If `fingerprints_source` is None, uses the default HTTP Archive URL.
+/// If `fingerprints_source` is None, uses wappalyzergo's fingerprints_data.json for exact parity.
+///
+/// Special handling:
+/// - If source is "wappalyzergo" or path to wappalyzergo/fingerprints_data.json, loads wappalyzergo format
+/// - Otherwise, uses standard format (GitHub sources or local files)
 pub async fn init_ruleset(
     fingerprints_source: Option<&str>,
     cache_dir: Option<&Path>,
@@ -55,6 +61,98 @@ pub async fn init_ruleset(
         if let Some(ref cached) = *ruleset {
             return Ok(cached.clone());
         }
+    }
+
+    // Check if we should use wappalyzergo's format for exact parity
+    let use_wappalyzergo = fingerprints_source
+        .map(|s| {
+            s == "wappalyzergo"
+                || s.ends_with("fingerprints_data.json")
+                || s.contains("wappalyzergo/fingerprints_data.json")
+        })
+        .unwrap_or(true); // Default to wappalyzergo format for exact parity
+
+    if use_wappalyzergo {
+        // Use wappalyzergo's fingerprints_data.json for exact parity
+        // Default path: wappalyzergo/fingerprints_data.json (relative to project root)
+        let wapp_path = fingerprints_source
+            .filter(|s| *s != "wappalyzergo")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                // Default to wappalyzergo/fingerprints_data.json in project root
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("wappalyzergo")
+                    .join("fingerprints_data.json")
+            });
+
+        // Load directly from wappalyzergo format (no caching needed, it's static)
+        log::info!(
+            "Loading fingerprints from wappalyzergo format: {}",
+            wapp_path.display()
+        );
+        let technologies = load_wappalyzergo_format(&wapp_path).await?;
+
+        // Load categories (wappalyzergo uses categories_data.json)
+        // Try categories_data.json first (wappalyzergo format), then categories.json (standard format)
+        let categories_path = wapp_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("categories_data.json");
+        let categories = if categories_path.exists() {
+            // Load categories_data.json directly (wappalyzergo format)
+            let content = tokio::fs::read_to_string(&categories_path)
+                .await
+                .unwrap_or_default();
+            let categories_map: HashMap<String, serde_json::Value> =
+                serde_json::from_str(&content).unwrap_or_default();
+            let mut result = HashMap::new();
+            for (id_str, category_obj) in categories_map {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    if let Some(name) = category_obj.get("name").and_then(|n| n.as_str()) {
+                        result.insert(id, name.to_string());
+                    }
+                }
+            }
+            log::info!(
+                "Loaded {} categories from {}",
+                result.len(),
+                categories_path.display()
+            );
+            result
+        } else {
+            // Fallback to categories.json if categories_data.json doesn't exist
+            let fallback_path = wapp_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("categories.json");
+            load_categories_from_path(&fallback_path)
+                .await
+                .unwrap_or_else(|e| {
+                    log::warn!(
+                        "Failed to load categories from {}: {}. Using empty categories.",
+                        fallback_path.display(),
+                        e
+                    );
+                    HashMap::new()
+                })
+        };
+
+        let metadata = FingerprintMetadata {
+            source: format!("wappalyzergo:{}", wapp_path.display()),
+            version: "embedded".to_string(),
+            last_updated: SystemTime::now(),
+        };
+
+        let ruleset = FingerprintRuleset {
+            technologies,
+            categories,
+            metadata,
+        };
+
+        let ruleset_arc = Arc::new(ruleset);
+        *RULESET.write().await = Some(ruleset_arc.clone());
+        return Ok(ruleset_arc);
     }
 
     let sources = if let Some(source) = fingerprints_source {
