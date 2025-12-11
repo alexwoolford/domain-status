@@ -45,7 +45,7 @@ pub(crate) fn check_meta_patterns(
     let check_patterns = |meta_value: &str| -> bool {
         patterns
             .iter()
-            .any(|pattern| matches_pattern(pattern, meta_value))
+            .any(|pattern| matches_pattern(pattern, meta_value).matched)
     };
 
     // Check if key already has a prefix (property: or http-equiv:)
@@ -88,15 +88,27 @@ pub(crate) fn check_meta_patterns(
     false
 }
 
+/// Pattern matching result with optional version extraction.
+#[derive(Debug, Clone)]
+pub(crate) struct PatternMatchResult {
+    pub matched: bool,
+    pub version: Option<String>,
+}
+
 /// Pattern matching supporting Wappalyzer pattern syntax
 /// Patterns can be:
 /// - Simple strings (substring match)
 /// - Regex patterns (if they start with ^ or contain regex special chars)
 /// - Patterns with version extraction (e.g., "version:\\1")
-pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
+///
+/// Returns PatternMatchResult with match status and extracted version (if any).
+pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
     // Handle empty pattern (matches anything)
     if pattern.is_empty() {
-        return true;
+        return PatternMatchResult {
+            matched: true,
+            version: None,
+        };
     }
 
     // Check if pattern contains regex-like syntax
@@ -111,44 +123,227 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> bool {
         || pattern.contains('+')
         || pattern.contains('?');
 
+    // Parse pattern for version extraction (e.g., "pattern\\;version:\\1")
+    // wappalyzergo uses "\\;" (escaped semicolon) in JSON, which becomes "\;" in the string
+    // We need to look for "\;" (backslash followed by semicolon)
+    let (pattern_for_match, version_template) = if let Some(semicolon_pos) = pattern.find("\\;") {
+        let (pat, version_part) = pattern.split_at(semicolon_pos);
+        let version_template = version_part.strip_prefix("\\;").unwrap_or("");
+        (pat.trim(), Some(version_template))
+    } else if let Some(semicolon_pos) = pattern.find(";") {
+        // Also check for unescaped semicolon (some patterns might use it)
+        let (pat, version_part) = pattern.split_at(semicolon_pos);
+        let version_template = version_part.strip_prefix(";").unwrap_or("");
+        (pat.trim(), Some(version_template))
+    } else {
+        (pattern, None)
+    };
+
     if is_regex {
         // Try to compile as regex (with caching)
-        // Remove version extraction syntax (e.g., ";version:\\1") for matching
-        let pattern_for_match = pattern.split(';').next().unwrap_or(pattern).trim();
+        // Check cache first (use case-insensitive pattern for cache key)
+        // wappalyzergo uses case-insensitive matching: regexp.Compile("(?i)" + regexPattern)
+        // We need to match this behavior for parity
+        let case_insensitive_pattern = format!("(?i){}", pattern_for_match);
+        let cache_key = pattern_for_match.to_string(); // Cache key is the original pattern
 
-        // Check cache first
         // Handle mutex poisoning gracefully - if poisoned, recover by getting the inner value
         let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(cached_re) = cache.get(pattern_for_match) {
-            return cached_re.is_match(text);
-        }
+        let cached_re = cache.get(&cache_key).cloned();
         drop(cache); // Release lock before compilation
 
-        // Compile regex (this is expensive, so we cache it)
-        match regex::Regex::new(pattern_for_match) {
-            Ok(re) => {
-                // Cache the compiled regex
-                // Handle mutex poisoning gracefully
-                let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-                // Check again in case another thread compiled it while we were waiting
-                if let Some(cached_re) = cache.get(pattern_for_match) {
-                    cached_re.is_match(text)
-                } else {
-                    // Store in cache and use it
-                    let result = re.is_match(text);
-                    cache.insert(pattern_for_match.to_string(), re);
-                    result
+        let re = if let Some(cached) = cached_re {
+            cached
+        } else {
+            // Compile regex (this is expensive, so we cache it)
+            match regex::Regex::new(&case_insensitive_pattern) {
+                Ok(re) => {
+                    // Cache the compiled regex
+                    let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+                    // Check again in case another thread compiled it while we were waiting
+                    if let Some(cached) = cache.get(&cache_key) {
+                        cached.clone()
+                    } else {
+                        let re_clone = re.clone();
+                        cache.insert(cache_key, re);
+                        re_clone
+                    }
+                }
+                Err(_) => {
+                    // If regex compilation fails, fall back to substring
+                    // This handles cases where the pattern looks like regex but isn't valid
+                    return PatternMatchResult {
+                        matched: text
+                            .to_lowercase()
+                            .contains(&pattern_for_match.to_lowercase()),
+                        version: None,
+                    };
                 }
             }
-            Err(_) => {
-                // If regex compilation fails, fall back to substring
-                // This handles cases where the pattern looks like regex but isn't valid
-                text.contains(pattern)
+        };
+
+        // Match and extract version
+        if let Some(captures) = re.captures(text) {
+            let version = if let Some(template) = version_template {
+                extract_version_from_template(template, &captures)
+            } else {
+                None
+            };
+            PatternMatchResult {
+                matched: true,
+                version,
+            }
+        } else {
+            PatternMatchResult {
+                matched: false,
+                version: None,
             }
         }
     } else {
-        // Simple substring match
-        text.contains(pattern)
+        // Simple substring match - wappalyzergo does case-insensitive substring matching
+        // We need to match this behavior for parity
+        let matched = text
+            .to_lowercase()
+            .contains(&pattern_for_match.to_lowercase());
+        PatternMatchResult {
+            matched,
+            version: None, // No version extraction for simple substring patterns
+        }
+    }
+}
+
+/// Extracts version from template using regex capture groups.
+/// Template format: "version:\\1" where \\1 refers to capture group 1
+fn extract_version_from_template(template: &str, captures: &regex::Captures) -> Option<String> {
+    if !template.starts_with("version:") {
+        return None;
+    }
+
+    let version_expr = template.strip_prefix("version:").unwrap_or("").trim();
+    if version_expr.is_empty() {
+        return None;
+    }
+
+    // Replace \1, \2, etc. with actual capture group values
+    // In the template string, \1 is stored as a single backslash followed by 1
+    // We need to match both \\1 (escaped in Rust string) and \1 (from JSON)
+    let mut result = version_expr.to_string();
+    for i in 1..captures.len() {
+        if let Some(cap_value) = captures.get(i) {
+            // Try both \\1 (double backslash - Rust string literal) and \1 (single backslash - from JSON)
+            let placeholder_double = format!("\\\\{}", i);
+            let placeholder_single = format!("\\{}", i);
+            result = result.replace(&placeholder_double, cap_value.as_str());
+            result = result.replace(&placeholder_single, cap_value.as_str());
+        }
+    }
+
+    // Remove any remaining placeholders (unmatched groups)
+    // This handles cases where template has \3 but only \1 and \2 matched
+    // Match both \\\d+ (escaped) and \\d+ (from JSON)
+    let re_placeholder = regex::Regex::new(r"\\\d+").ok()?;
+    result = re_placeholder.replace_all(&result, "").to_string();
+
+    // Handle ternary expressions (e.g., "\\1?\\1:\\2")
+    // wappalyzergo evaluates these: if submatches exist, use first part, else use second part
+    result = evaluate_version_ternary(&result, captures);
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result.trim().to_string())
+    }
+}
+
+/// Evaluates ternary expressions in version strings (matching wappalyzergo's evaluateVersionExpression).
+/// Format: "value1?value1:value2" - evaluates based on submatches
+/// Logic matches wappalyzergo's evaluateVersionExpression exactly (patterns.go lines 122-151)
+///
+/// In wappalyzergo, `submatches` refers to capture groups AFTER the full match (submatches[1:] in extractVersion).
+/// So `len(submatches) == 0` means no capture groups matched.
+fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> String {
+    if !expression.contains('?') {
+        return expression.to_string();
+    }
+
+    let parts: Vec<&str> = expression.splitn(2, '?').collect();
+    if parts.len() != 2 {
+        return expression.to_string(); // Invalid ternary, return as-is
+    }
+
+    let true_false_parts: Vec<&str> = parts[1].splitn(2, ':').collect();
+    if true_false_parts.len() != 2 {
+        return expression.to_string(); // Invalid ternary, return as-is
+    }
+
+    let true_part = true_false_parts[0];
+    let false_part = true_false_parts[1];
+
+    // wappalyzergo logic (from patterns.go lines 135-147):
+    // if trueFalseParts[0] != "" { // Simple existence check
+    //     if len(submatches) == 0 {
+    //         return trueFalseParts[1], nil
+    //     }
+    //     return trueFalseParts[0], nil
+    // }
+    // if trueFalseParts[1] == "" {
+    //     if len(submatches) == 0 {
+    //         return "", nil
+    //     }
+    //     return trueFalseParts[0], nil
+    // }
+    // return trueFalseParts[1], nil
+
+    // In wappalyzergo, submatches is the capture groups (excluding full match)
+    // So len(submatches) == 0 means captures.len() <= 1 (only full match, no groups)
+    let has_capture_groups = captures.len() > 1;
+
+    if !true_part.is_empty() {
+        // true_part is non-empty
+        if !has_capture_groups {
+            // No capture groups, use false_part
+            // But false_part might have placeholders, replace them
+            let mut result = false_part.to_string();
+            for i in 1..captures.len() {
+                if let Some(cap_value) = captures.get(i) {
+                    let placeholder_double = format!("\\\\{}", i);
+                    let placeholder_single = format!("\\{}", i);
+                    result = result.replace(&placeholder_double, cap_value.as_str());
+                    result = result.replace(&placeholder_single, cap_value.as_str());
+                }
+            }
+            result
+        } else {
+            // We have capture groups, use true_part (replace placeholders)
+            let mut result = true_part.to_string();
+            for i in 1..captures.len() {
+                if let Some(cap_value) = captures.get(i) {
+                    let placeholder_double = format!("\\\\{}", i);
+                    let placeholder_single = format!("\\{}", i);
+                    result = result.replace(&placeholder_double, cap_value.as_str());
+                    result = result.replace(&placeholder_single, cap_value.as_str());
+                }
+            }
+            result
+        }
+    } else {
+        // true_part is empty
+        if false_part.is_empty() {
+            // Both parts empty - return empty regardless of capture groups
+            String::new()
+        } else {
+            // false_part is non-empty, use it (replace placeholders)
+            let mut result = false_part.to_string();
+            for i in 1..captures.len() {
+                if let Some(cap_value) = captures.get(i) {
+                    let placeholder_double = format!("\\\\{}", i);
+                    let placeholder_single = format!("\\{}", i);
+                    result = result.replace(&placeholder_double, cap_value.as_str());
+                    result = result.replace(&placeholder_single, cap_value.as_str());
+                }
+            }
+            result
+        }
     }
 }
 
@@ -166,56 +361,65 @@ mod tests {
     #[test]
     fn test_matches_pattern_empty_pattern() {
         // Empty pattern matches anything
-        assert!(matches_pattern("", "anything"));
-        assert!(matches_pattern("", ""));
-        assert!(matches_pattern("", "test string"));
+        assert!(matches_pattern("", "anything").matched);
+        assert!(matches_pattern("", "").matched);
+        assert!(matches_pattern("", "test string").matched);
     }
 
     #[test]
     fn test_matches_pattern_simple_substring() {
-        // Simple substring matching (case-sensitive)
-        assert!(matches_pattern("nginx", "nginx/1.18.0"));
-        assert!(matches_pattern("WordPress", "Powered by WordPress")); // Case must match
-        assert!(!matches_pattern("wordpress", "Powered by WordPress")); // Case-sensitive
-        assert!(!matches_pattern("apache", "nginx/1.18.0"));
-        assert!(!matches_pattern("nginx", "apache/2.4"));
+        // Simple substring matching (case-insensitive to match wappalyzergo)
+        // wappalyzergo normalizes everything to lowercase: normalizedBody := bytes.ToLower(body)
+        assert!(matches_pattern("nginx", "nginx/1.18.0").matched);
+        assert!(matches_pattern("WordPress", "Powered by WordPress").matched); // Case-insensitive
+        assert!(matches_pattern("wordpress", "Powered by WordPress").matched); // Case-insensitive
+        assert!(matches_pattern("WORDPRESS", "Powered by WordPress").matched); // Case-insensitive
+        assert!(!matches_pattern("apache", "nginx/1.18.0").matched);
+        assert!(!matches_pattern("nginx", "apache/2.4").matched);
     }
 
     #[test]
     fn test_matches_pattern_regex_starts_with_caret() {
         // Regex pattern starting with ^
-        assert!(matches_pattern("^nginx", "nginx/1.18.0"));
-        assert!(!matches_pattern("^nginx", "server: nginx/1.18.0"));
+        assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
+        assert!(!matches_pattern("^nginx", "server: nginx/1.18.0").matched);
     }
 
     #[test]
     fn test_matches_pattern_regex_ends_with_dollar() {
         // Regex pattern ending with $
-        assert!(matches_pattern("nginx$", "nginx"));
-        assert!(!matches_pattern("nginx$", "nginx/1.18.0"));
+        assert!(matches_pattern("nginx$", "nginx").matched);
+        assert!(!matches_pattern("nginx$", "nginx/1.18.0").matched);
     }
 
     #[test]
     fn test_matches_pattern_regex_special_chars() {
         // Regex patterns with special characters
-        assert!(matches_pattern("nginx.*", "nginx/1.18.0"));
-        assert!(matches_pattern("wordpress\\+", "wordpress+"));
-        assert!(matches_pattern("test\\?", "test?"));
-        assert!(matches_pattern("[0-9]+", "version 123"));
+        assert!(matches_pattern("nginx.*", "nginx/1.18.0").matched);
+        assert!(matches_pattern("wordpress\\+", "wordpress+").matched);
+        assert!(matches_pattern("test\\?", "test?").matched);
+        assert!(matches_pattern("[0-9]+", "version 123").matched);
     }
 
     #[test]
     fn test_matches_pattern_invalid_regex_falls_back() {
         // Invalid regex should fall back to substring
-        assert!(matches_pattern("[invalid", "text with [invalid"));
-        assert!(!matches_pattern("[invalid", "text without pattern"));
+        assert!(matches_pattern("[invalid", "text with [invalid").matched);
+        assert!(!matches_pattern("[invalid", "text without pattern").matched);
     }
 
     #[test]
     fn test_matches_pattern_version_extraction() {
         // Patterns with version extraction syntax
-        assert!(matches_pattern("nginx;version:\\1", "nginx/1.18.0"));
-        assert!(matches_pattern("^wordpress;version:\\1$", "wordpress"));
+        let result1 = matches_pattern(
+            "jquery(?:-(\\d+\\.\\d+\\.\\d+))[/.-]\\;version:\\1",
+            "jquery-3.6.0.min.js",
+        );
+        assert!(result1.matched);
+        assert_eq!(result1.version, Some("3.6.0".to_string()));
+
+        let result2 = matches_pattern("^wordpress\\;version:\\1$", "wordpress");
+        assert!(result2.matched);
     }
 
     #[test]
@@ -346,12 +550,12 @@ mod tests {
 
         // First call should compile and cache
         let start = std::time::Instant::now();
-        assert!(matches_pattern("^nginx", "nginx/1.18.0"));
+        assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
         let first_call_time = start.elapsed();
 
         // Second call should use cache (much faster)
         let start = std::time::Instant::now();
-        assert!(matches_pattern("^nginx", "nginx/1.18.0"));
+        assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
         let second_call_time = start.elapsed();
 
         // Cached call should be significantly faster (at least 2x, often 10-100x)
@@ -390,7 +594,7 @@ mod tests {
         for (i, pattern) in patterns.iter().enumerate() {
             let text = format!("{}{}value", test_prefix, i);
             assert!(
-                matches_pattern(pattern, &text),
+                matches_pattern(pattern, &text).matched,
                 "Pattern '{}' should match text '{}'",
                 pattern,
                 text
@@ -411,7 +615,7 @@ mod tests {
                     let result2 = matches_pattern(&pattern_clone, &text);
                     // Both calls should return the same result
                     assert_eq!(
-                        result1, result2,
+                        result1.matched, result2.matched,
                         "Cached and uncached calls should return same result"
                     );
                     result1
@@ -425,7 +629,7 @@ mod tests {
         // proves the cache is thread-safe.
         for handle in handles {
             assert!(
-                handle.join().unwrap(),
+                handle.join().unwrap().matched,
                 "Thread should return true for pattern match"
             );
         }
@@ -450,7 +654,7 @@ mod tests {
         let start = std::time::Instant::now();
         for _ in 0..1000 {
             clear_regex_cache();
-            matches_pattern(pattern, text);
+            let _ = matches_pattern(pattern, text);
         }
         let without_cache_time = start.elapsed();
 
@@ -458,7 +662,7 @@ mod tests {
         clear_regex_cache();
         let start = std::time::Instant::now();
         for _ in 0..1000 {
-            matches_pattern(pattern, text);
+            let _ = matches_pattern(pattern, text);
         }
         let with_cache_time = start.elapsed();
 
@@ -488,17 +692,17 @@ mod tests {
         // These are critical because invalid regex could cause false positives
 
         // Pattern with regex chars but invalid syntax - should fall back to substring
-        assert!(matches_pattern("[unclosed", "text with [unclosed bracket"));
-        assert!(!matches_pattern("[unclosed", "text without pattern"));
+        assert!(matches_pattern("[unclosed", "text with [unclosed bracket").matched);
+        assert!(!matches_pattern("[unclosed", "text without pattern").matched);
 
         // Pattern with regex chars but invalid escape - should fall back
-        assert!(matches_pattern("\\invalid", "text with \\invalid"));
+        assert!(matches_pattern("\\invalid", "text with \\invalid").matched);
 
         // Pattern with regex chars but unmatched parentheses - should fall back
-        assert!(matches_pattern("(unclosed", "text with (unclosed paren"));
+        assert!(matches_pattern("(unclosed", "text with (unclosed paren").matched);
 
         // Pattern with regex chars but invalid quantifier - should fall back
-        assert!(matches_pattern("test{invalid", "text with test{invalid"));
+        assert!(matches_pattern("test{invalid", "text with test{invalid").matched);
     }
 
     #[test]
@@ -545,7 +749,10 @@ mod tests {
 
         // Should handle very long strings without panicking or excessive memory usage
         let result = matches_pattern(pattern, &very_long_text);
-        assert!(!result, "Pattern should not match in very long string");
+        assert!(
+            !result.matched,
+            "Pattern should not match in very long string"
+        );
     }
 
     #[test]
@@ -555,9 +762,9 @@ mod tests {
         let text = "test[pattern]with(special)chars";
 
         // Patterns without ^ or other regex indicators should be substring matches
-        assert!(matches_pattern("[pattern]", text));
-        assert!(matches_pattern("(special)", text));
-        assert!(matches_pattern("chars", text));
+        assert!(matches_pattern("[pattern]", text).matched);
+        assert!(matches_pattern("(special)", text).matched);
+        assert!(matches_pattern("chars", text).matched);
     }
 
     #[test]
@@ -567,20 +774,22 @@ mod tests {
         let pattern = "^nginx/(\\d+\\.\\d+);version:\\1";
         let text = "nginx/1.18.0";
 
-        // Should match the pattern part (before ;) and ignore version extraction
-        assert!(matches_pattern(pattern, text));
+        // Should match the pattern part (before ;) and extract version
+        let result = matches_pattern(pattern, text);
+        assert!(result.matched);
+        assert_eq!(result.version, Some("1.18".to_string()));
     }
 
     #[test]
     fn test_matches_pattern_regex_anchors_edge_cases() {
         // Test regex anchors with edge cases
         // ^ at start, $ at end
-        assert!(matches_pattern("^start", "start of text"));
-        assert!(!matches_pattern("^start", "text with start"));
-        assert!(matches_pattern("end$", "text with end"));
-        assert!(!matches_pattern("end$", "end of text with more"));
-        assert!(matches_pattern("^exact$", "exact"));
-        assert!(!matches_pattern("^exact$", "not exact"));
+        assert!(matches_pattern("^start", "start of text").matched);
+        assert!(!matches_pattern("^start", "text with start").matched);
+        assert!(matches_pattern("end$", "text with end").matched);
+        assert!(!matches_pattern("end$", "end of text with more").matched);
+        assert!(matches_pattern("^exact$", "exact").matched);
+        assert!(!matches_pattern("^exact$", "not exact").matched);
     }
 
     #[test]

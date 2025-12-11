@@ -56,9 +56,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_pattern_matching() {
-        assert!(matches_pattern("nginx", "nginx/1.18.0"));
-        assert!(matches_pattern("", "anything"));
-        assert!(!matches_pattern("apache", "nginx/1.18.0"));
+        assert!(matches_pattern("nginx", "nginx/1.18.0").matched);
+        assert!(matches_pattern("", "anything").matched);
+        assert!(!matches_pattern("apache", "nginx/1.18.0").matched);
     }
 
     #[test]
@@ -98,11 +98,12 @@ mod tests {
 
         // Without ruleset, this will fail - that's expected
         let script_tag_ids = HashSet::new();
+        let normalized_body = html_text.to_lowercase(); // Normalize for HTML pattern matching
         let result = detect_technologies(
             &meta_tags,
             &script_sources,
             script_content,
-            html_text,
+            &normalized_body, // Use normalized body
             &headers,
             url,
             &script_tag_ids,
