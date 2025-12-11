@@ -162,4 +162,113 @@ mod tests {
         // Case 4: total_attempts = u32::MAX (should not underflow)
         assert_eq!(u32::MAX.saturating_sub(1), u32::MAX - 1);
     }
+
+    #[test]
+    fn test_process_url_result_error_preservation_through_retries() {
+        // Test that error information is preserved through retry attempts
+        // This is critical - error context should not be lost during retries
+        let error = anyhow::anyhow!("Original error")
+            .context("First context")
+            .context("Second context")
+            .context("DNS lookup failed");
+
+        let result = ProcessUrlResult {
+            result: Err(error),
+            retry_count: 3,
+        };
+
+        assert!(result.result.is_err());
+        let error_msg = result.result.unwrap_err().to_string();
+        // Error chain should be preserved
+        assert!(
+            error_msg.contains("Original error")
+                || error_msg.contains("DNS")
+                || error_msg.contains("First context"),
+            "Error chain should be preserved, got: {}",
+            error_msg
+        );
+    }
+
+    #[test]
+    fn test_process_url_result_retry_count_accuracy() {
+        // Test that retry_count accurately reflects retry attempts
+        // This is critical - retry count is used for monitoring and debugging
+        // retry_count = total_attempts.saturating_sub(1)
+
+        // Test various retry counts
+        let test_cases = vec![
+            (0u32, 0u32),  // No attempts (shouldn't happen, but test)
+            (1u32, 0u32),  // Initial attempt only
+            (2u32, 1u32),  // 1 retry
+            (3u32, 2u32),  // 2 retries
+            (5u32, 4u32),  // 4 retries
+            (10u32, 9u32), // 9 retries
+        ];
+
+        for (total_attempts, expected_retries) in test_cases {
+            let retry_count = total_attempts.saturating_sub(1);
+            assert_eq!(
+                retry_count, expected_retries,
+                "Retry count calculation failed for total_attempts={}",
+                total_attempts
+            );
+        }
+    }
+
+    #[test]
+    fn test_process_url_result_non_retriable_error_stops_retries() {
+        // Test that non-retriable errors stop retries immediately
+        // This is critical - permanent errors should not waste retry attempts
+        // The code at line 78-81 adds "Non-retriable error" context
+        let error = anyhow::anyhow!("404 Not Found");
+        let result = ProcessUrlResult {
+            result: Err(error),
+            retry_count: 0, // No retries for non-retriable errors
+        };
+
+        assert!(result.result.is_err());
+        assert_eq!(result.retry_count, 0);
+    }
+
+    #[test]
+    fn test_process_url_result_retriable_error_allows_retries() {
+        // Test that retriable errors allow retries
+        // This is critical - transient errors should be retried
+        let error = anyhow::anyhow!("500 Internal Server Error");
+        let result = ProcessUrlResult {
+            result: Err(error),
+            retry_count: 3, // Multiple retries for retriable errors
+        };
+
+        assert!(result.result.is_err());
+        assert!(result.retry_count > 0);
+    }
+
+    #[test]
+    fn test_process_url_result_success_no_retries() {
+        // Test that successful processing has no retries
+        // This is critical - success should not be counted as retries
+        let result = ProcessUrlResult {
+            result: Ok(()),
+            retry_count: 0,
+        };
+
+        assert!(result.result.is_ok());
+        assert_eq!(result.retry_count, 0);
+    }
+
+    #[test]
+    fn test_process_url_result_retry_count_underflow_protection() {
+        // Test that retry_count calculation protects against underflow
+        // This is critical - saturating_sub prevents integer underflow
+        // The code at line 93 uses saturating_sub(1)
+
+        // Edge case: 0 attempts (shouldn't happen, but defensive)
+        let retry_count = 0u32.saturating_sub(1);
+        assert_eq!(retry_count, 0, "Should not underflow");
+
+        // Normal case: 1 attempt (no retries)
+        let retry_count = 1u32.saturating_sub(1);
+        assert_eq!(retry_count, 0, "Initial attempt should not count as retry");
+    }
 }

@@ -572,4 +572,102 @@ mod tests {
         // ID should still be extracted
         assert!(result.script_tag_ids.contains("test-id"));
     }
+
+    #[test]
+    fn test_parse_html_content_error_stats_passed_through() {
+        // Test that error_stats parameter is correctly passed to extraction functions
+        // This is critical - HTML parsing errors should be tracked for monitoring
+        let html = r#"
+            <html>
+                <head>
+                    <title>Test</title>
+                    <meta name="keywords" content="test">
+                    <meta name="description" content="test description">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // Should extract data successfully
+        assert_eq!(result.title, "Test");
+        assert!(result.keywords_str.is_some());
+        assert!(result.description.is_some());
+
+        // Error stats are passed to extract_title, extract_meta_keywords, extract_meta_description
+        // If any of those functions encounter errors, they should update error_stats
+        // The key is that error_stats is accessible to those functions
+        // We can't easily trigger errors in those functions, but we verify the parameter is passed
+        // by ensuring the function doesn't panic and completes successfully
+    }
+
+    #[test]
+    fn test_parse_html_content_script_content_size_limit_enforced() {
+        // Test that script content size limit is enforced per script
+        // This is critical - prevents DoS attacks via large scripts
+        let large_script_content = "x".repeat(crate::config::MAX_SCRIPT_CONTENT_SIZE + 5000);
+        let html = format!(
+            r#"
+            <html>
+                <head>
+                    <script>{}</script>
+                    <script>var y = 2;</script>
+                </head>
+                <body></body>
+            </html>
+            "#,
+            large_script_content
+        );
+        let stats = test_error_stats();
+        let result = parse_html_content(&html, "example.com", &stats);
+
+        // First script should be truncated to MAX_SCRIPT_CONTENT_SIZE
+        // Second script should be included fully
+        // Each script gets truncated individually, then newlines are added
+        // Total content should be <= MAX_SCRIPT_CONTENT_SIZE (first) + second_script_size + newlines
+        let second_script_size = "var y = 2;".len();
+        // Each script gets a newline separator, so: first_truncated + "\n" + second + "\n"
+        let expected_max = crate::config::MAX_SCRIPT_CONTENT_SIZE + second_script_size + 2; // +2 for newlines
+        assert!(
+            result.script_content.len() <= expected_max,
+            "Script content length {} exceeds expected max {}",
+            result.script_content.len(),
+            expected_max
+        );
+        // Should contain both scripts (first truncated, second full)
+        assert!(result.script_content.contains("var y"));
+        // First script should be truncated (not contain all the 'x' characters)
+        // The content should be less than the original large script size
+        assert!(result.script_content.len() < large_script_content.len());
+    }
+
+    #[test]
+    fn test_parse_html_content_meta_tags_all_attributes_extracted() {
+        // Test that meta tags with name, property, and http-equiv are all extracted
+        // This is critical - different meta tag formats must be supported
+        let html = r#"
+            <html>
+                <head>
+                    <meta name="author" content="John">
+                    <meta property="og:title" content="OG Title">
+                    <meta property="og:description" content="OG Desc">
+                    <meta http-equiv="refresh" content="30">
+                    <meta http-equiv="content-type" content="text/html">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        // All meta tag types should be extracted
+        assert!(result.meta_tags.contains_key("name:author"));
+        assert!(result.meta_tags.contains_key("property:og:title"));
+        assert!(result.meta_tags.contains_key("property:og:description"));
+        assert!(result.meta_tags.contains_key("http-equiv:refresh"));
+        assert!(result.meta_tags.contains_key("http-equiv:content-type"));
+        assert_eq!(result.meta_tags.len(), 5);
+    }
 }

@@ -341,4 +341,146 @@ mod tests {
         let extracted_status = extract_http_status(&error);
         assert_eq!(extracted_status, Some(status.as_u16()));
     }
+
+    #[test]
+    fn test_extract_error_type_dns_ns_specific() {
+        // Test that NS-specific DNS errors are detected correctly
+        // This is critical - NS lookup errors should be distinguished
+        let error = anyhow::anyhow!("DNS nameserver lookup failed");
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::DnsNsLookupError);
+    }
+
+    #[test]
+    fn test_extract_error_type_dns_generic_falls_back_to_ns() {
+        // Test that generic DNS errors fall back to NS lookup error
+        // This is critical - default DNS error type should be NS
+        let error = anyhow::anyhow!("DNS lookup failed");
+        let error_type = extract_error_type(&error);
+        // Generic DNS errors default to NS lookup error (line 83)
+        assert_eq!(error_type, ErrorType::DnsNsLookupError);
+    }
+
+    #[test]
+    fn test_extract_error_type_timeout_in_request_error() {
+        // Test that timeout detection works for request errors
+        // This is critical - timeouts should be detected even when wrapped in request errors
+        // The code at line 50-54 checks for timeout in request/connect errors
+        let error = anyhow::anyhow!("HTTP request error: timeout after 30 seconds");
+        let error_type = extract_error_type(&error);
+        // Should detect timeout from message
+        assert_eq!(error_type, ErrorType::HttpRequestTimeoutError);
+    }
+
+    #[test]
+    fn test_extract_error_type_tls_certificate_variations() {
+        // Test that various TLS/SSL error messages are detected
+        // This is critical - TLS errors can be described in multiple ways
+        let variations = vec![
+            "TLS handshake failed",
+            "SSL certificate error",
+            "Certificate validation failed",
+            "TLS certificate expired",
+        ];
+
+        for msg in variations {
+            let error = anyhow::anyhow!(msg);
+            let error_type = extract_error_type(&error);
+            assert_eq!(
+                error_type,
+                ErrorType::TlsCertificateError,
+                "Failed to detect TLS error in: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_error_type_http_timeout_vs_process_timeout() {
+        // Test that HTTP timeouts are distinguished from process timeouts
+        // This is critical - different timeout types should be categorized correctly
+        // The code at line 65 checks for "request timeout" or "http" + "timeout"
+        let http_timeout = anyhow::anyhow!("HTTP request timeout");
+        let process_timeout = anyhow::anyhow!("Process URL timeout after 45 seconds");
+
+        let http_type = extract_error_type(&http_timeout);
+        let process_type = extract_error_type(&process_timeout);
+
+        assert_eq!(http_type, ErrorType::HttpRequestTimeoutError);
+        assert_eq!(process_type, ErrorType::ProcessUrlTimeout);
+    }
+
+    #[test]
+    fn test_extract_error_type_message_case_insensitive() {
+        // Test that error message matching is case-insensitive
+        // This is critical - error messages can be in any case
+        let variations = vec![
+            "DNS lookup failed",
+            "dns lookup failed",
+            "DNS LOOKUP FAILED",
+            "DnS lOoKuP fAiLeD",
+        ];
+
+        for msg in variations {
+            let error = anyhow::anyhow!(msg);
+            let error_type = extract_error_type(&error);
+            // All should detect DNS error (case-insensitive matching via to_lowercase)
+            assert!(
+                matches!(
+                    error_type,
+                    ErrorType::DnsNsLookupError
+                        | ErrorType::DnsTxtLookupError
+                        | ErrorType::DnsMxLookupError
+                ),
+                "Failed to detect DNS error (case-insensitive) in: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_error_type_unknown_fallback_to_other() {
+        // Test that unknown errors fall back to HttpRequestOtherError
+        // This is critical - unknown errors should not cause panics
+        let error = anyhow::anyhow!("Some completely unknown error type");
+        let error_type = extract_error_type(&error);
+        assert_eq!(error_type, ErrorType::HttpRequestOtherError);
+    }
+
+    #[tokio::test]
+    async fn test_extract_http_status_from_error_itself() {
+        // Test that HTTP status is extracted from error itself first (line 102-105)
+        // This is critical - direct reqwest errors should be handled efficiently
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/503"))
+                .respond_with(status_code(503).body("Service Unavailable")),
+        );
+
+        let client = reqwest::Client::new();
+        let url = server.url("/503").to_string();
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("Failed to create test request");
+        let status = response.status();
+        let reqwest_err = response.error_for_status().unwrap_err();
+        let error: anyhow::Error = reqwest_err.into();
+
+        // Should extract status from error itself (not just chain)
+        let extracted_status = extract_http_status(&error);
+        assert_eq!(extracted_status, Some(status.as_u16()));
+    }
+
+    #[test]
+    fn test_extract_http_status_no_reqwest_error() {
+        // Test that non-reqwest errors return None
+        // This is critical - should handle non-HTTP errors gracefully
+        let error = anyhow::anyhow!("Database connection error");
+        let extracted_status = extract_http_status(&error);
+        assert_eq!(extracted_status, None);
+    }
 }
