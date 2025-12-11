@@ -290,6 +290,7 @@ async fn main() -> Result<()> {
                         report.elapsed_seconds
                     );
                     println!("Results saved in {}", report.db_path.display());
+                    println!("💡 Tip: Use `domain_status export --format csv` to export data, or query the database directly.");
 
                     // Evaluate exit code based on --fail-on policy
                     let exit_code =
