@@ -58,7 +58,7 @@ mod whois;
 // Re-export public API
 pub use config::{Config, FailOn, LogFormat, LogLevel};
 pub use run::{run_scan, ScanReport};
-pub use storage::{query_run_history, run_migrations, RunSummary};
+pub use storage::{init_db_pool_with_path, query_run_history, run_migrations, RunSummary};
 
 // Internal run module (contains the main scanning logic)
 mod run {

@@ -181,4 +181,106 @@ mod tests {
         let result = load_from_cache(cache_path, domain);
         assert!(result.is_err(), "Should error on invalid JSON");
     }
+
+    #[test]
+    fn test_cache_expired_deletes_file() {
+        // Test that expired cache files are deleted (critical for disk space management)
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_path = temp_dir.path();
+        let domain = "example.com";
+        let result = create_test_whois_result();
+
+        // Save to cache
+        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+        let cache_file = cache_path.join("example_com.json");
+        assert!(cache_file.exists(), "Cache file should exist");
+
+        // Manually create expired cache entry
+        let expired_entry = WhoisCacheEntry {
+            result: (&result).into(),
+            cached_at: SystemTime::now() - Duration::from_secs(CACHE_TTL_SECS + 1),
+            domain: domain.to_string(),
+        };
+        let content = serde_json::to_string_pretty(&expired_entry).expect("Should serialize");
+        std::fs::write(&cache_file, content).expect("Should write file");
+
+        // Load should return None AND delete the expired file
+        let cached = load_from_cache(cache_path, domain).expect("Should handle expired cache");
+        assert!(cached.is_none(), "Should return None for expired cache");
+        assert!(
+            !cache_file.exists(),
+            "Expired cache file should be deleted to free disk space"
+        );
+    }
+
+    #[test]
+    fn test_cache_missing_fields_handles_gracefully() {
+        // Test that cache files with missing required fields are handled gracefully
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_path = temp_dir.path();
+        let domain = "example.com";
+
+        // Create cache file with missing cached_at field
+        let cache_file = cache_path.join("example_com.json");
+        std::fs::create_dir_all(cache_path).expect("Should create directory");
+        std::fs::write(&cache_file, r#"{"domain": "example.com", "result": {}}"#)
+            .expect("Should write file");
+
+        // Load should return error (missing required field)
+        let result = load_from_cache(cache_path, domain);
+        assert!(result.is_err(), "Should error on missing required fields");
+    }
+
+    #[test]
+    fn test_cache_fresh_returns_data() {
+        // Test that fresh cache (within TTL) returns data correctly
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_path = temp_dir.path();
+        let domain = "example.com";
+        let result = create_test_whois_result();
+
+        // Save to cache
+        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+
+        // Load immediately (should be fresh)
+        let cached = load_from_cache(cache_path, domain).expect("Should load from cache");
+        assert!(cached.is_some(), "Should return cached data when fresh");
+
+        let entry = cached.unwrap();
+        assert_eq!(entry.domain, domain, "Cached domain should match");
+        // Verify data integrity
+        let whois_result: WhoisResult = entry.result.into();
+        assert_eq!(
+            whois_result.registrar,
+            Some("Test Registrar".to_string()),
+            "Cached registrar should match"
+        );
+    }
+
+    #[test]
+    fn test_cache_near_expiration_still_valid() {
+        // Test that cache just before expiration is still valid
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_path = temp_dir.path();
+        let domain = "example.com";
+        let result = create_test_whois_result();
+
+        // Create cache entry that's just before expiration (1 second before TTL)
+        let cache_file = cache_path.join("example_com.json");
+        let near_expired_entry = WhoisCacheEntry {
+            result: (&result).into(),
+            cached_at: SystemTime::now() - Duration::from_secs(CACHE_TTL_SECS - 1),
+            domain: domain.to_string(),
+        };
+        std::fs::create_dir_all(cache_path).expect("Should create directory");
+        let content = serde_json::to_string_pretty(&near_expired_entry).expect("Should serialize");
+        std::fs::write(&cache_file, content).expect("Should write file");
+
+        // Load should return cached data (still valid)
+        let cached = load_from_cache(cache_path, domain).expect("Should load from cache");
+        assert!(
+            cached.is_some(),
+            "Should return cached data when just before expiration"
+        );
+    }
 }

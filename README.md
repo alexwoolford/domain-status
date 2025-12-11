@@ -9,13 +9,16 @@
 [![codecov](https://codecov.io/gh/alexwoolford/domain_status/branch/main/graph/badge.svg)](https://codecov.io/gh/alexwoolford/domain_status)
 [![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
 
-**domain_status** is a domain intelligence scanner.
+**domain_status** is a fast, concurrent website scanner for bulk analysis of URLs and domains.
 
-Give it a list of URLs or domains → it fetches HTTP, TLS, DNS, WHOIS, GeoIP, and tech fingerprints in one pass → and stores everything in SQLite for analysis.
+Give it a list of URLs → it fetches HTTP status, TLS certificates, DNS records, WHOIS data, GeoIP information, and technology fingerprints in one pass → stores everything in SQLite for analysis.
 
-It's for security reviewers, infra teams, and analysts who need a repeatable inventory of what's really running behind a set of domains.
+**Who it's for:**
+- **DevOps/SRE teams**: Monitor uptime, certificate expiration, and site health across portfolios
+- **Security analysts**: Identify outdated software, missing security headers, and configuration issues
+- **Domain managers**: Track registration status, DNS configuration, and site metadata for large portfolios
 
-Built with async/await (Tokio) for high-performance concurrent processing, domain_status consolidates many checks in one sweep, ensuring consistency and saving time compared to single-purpose tools.
+**Why domain_status?** Unlike single-purpose tools (curl for status, whois for domain info, Wappalyzer for tech detection), domain_status consolidates all checks in one tool. Built with async Rust (Tokio) for high-performance concurrent processing, it efficiently handles hundreds or thousands of URLs while maintaining reliability through adaptive rate limiting and comprehensive error handling.
 
 ## Table of Contents
 
@@ -296,6 +299,20 @@ GITHUB_TOKEN=your_github_token_here
 - Invalid URLs are skipped with a warning
 
 ## 📊 Output & Results
+
+After a scan completes, all data is stored in the SQLite database. Use `domain_status export` to export data in CSV/JSON format, or query the database directly.
+
+### Duplicate Domain Handling
+
+The database uses a `UNIQUE (final_domain, timestamp)` constraint to ensure idempotency. This means:
+
+- **Same domain, same run**: If you include the same domain multiple times in one input file, only one record will be stored (the last one processed). This is by design to avoid duplicate data.
+- **Same domain, different runs**: Each run creates a new record with a different timestamp, so you can track changes over time.
+- **Different paths on same domain**: If you include both `https://example.com/` and `https://example.com/page`, both will be processed, but they will resolve to the same `final_domain` after following redirects. The database stores the final domain after redirects, so only one record per final domain per timestamp is kept.
+
+**Best practice:** Include each domain only once per input file. If you need to check multiple paths on the same domain, they should be separate URLs (e.g., `https://example.com/` and `https://example.com/about`), but be aware that redirects may cause them to resolve to the same final domain.
+
+### Logging Output
 
 The tool provides detailed logging with progress updates and error summaries:
 
