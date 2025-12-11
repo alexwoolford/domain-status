@@ -11,7 +11,7 @@ use super::super::types::StatusState;
 
 /// Prometheus-compatible metrics endpoint
 pub async fn metrics_handler(State(state): State<StatusState>) -> Response {
-    let total_attempted = state.total_urls_attempted.load(Ordering::SeqCst);
+    let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
@@ -131,11 +131,11 @@ domain_status_warnings_total {}
 # TYPE domain_status_info_total counter
 domain_status_info_total {}
 {}"#,
-        total_attempted,
+        total_urls_in_file,
         completed,
         failed,
-        if total_attempted > 0 {
-            ((completed + failed) as f64 / total_attempted as f64) * 100.0
+        if total_urls_in_file > 0 {
+            ((completed + failed) as f64 / total_urls_in_file as f64) * 100.0
         } else {
             0.0
         },

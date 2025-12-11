@@ -15,7 +15,7 @@ use crate::error_handling::{ErrorType, InfoType, WarningType};
 
 /// JSON status endpoint with detailed progress information
 pub async fn status_handler(State(state): State<StatusState>) -> Response {
-    let total_attempted = state.total_urls_attempted.load(Ordering::SeqCst);
+    let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
@@ -25,22 +25,23 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
         0.0
     };
 
-    // Calculate percentage based on attempted URLs (completed + failed out of attempted)
-    // This shows progress through URLs that will actually be processed, not total lines
-    let attempted = completed + failed;
-    let percentage = if total_attempted > 0 {
-        (attempted as f64 / total_attempted as f64) * 100.0
+    // Calculate percentage based on total URLs in file (completed + failed out of total)
+    // This shows progress through all URLs in the file, not just attempted ones
+    let processed = completed + failed;
+    let percentage = if total_urls_in_file > 0 {
+        (processed as f64 / total_urls_in_file as f64) * 100.0
     } else {
         0.0
     };
 
-    // Pending URLs = attempted URLs that haven't completed or failed yet
-    let pending_urls = total_attempted
+    // Pending URLs = total URLs in file that haven't completed or failed yet
+    // This includes both URLs that are currently being processed and URLs that haven't been read yet
+    let pending_urls = total_urls_in_file
         .saturating_sub(completed)
         .saturating_sub(failed);
 
     let response = StatusResponse {
-        total_urls: total_attempted, // Use attempted URLs, not total lines
+        total_urls: total_urls_in_file, // Use total URLs in file, not just attempted
         completed_urls: completed,
         failed_urls: failed,
         pending_urls: Some(pending_urls),
