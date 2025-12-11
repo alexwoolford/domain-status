@@ -17,7 +17,7 @@ pub(crate) fn can_technology_match(
     has_headers: bool,
     has_meta: bool,
     has_scripts: bool,
-    script_tag_ids: &HashSet<String>,
+    _script_tag_ids: &HashSet<String>,
 ) -> bool {
     // If technology requires cookies but we have none, skip it
     if !tech.cookies.is_empty() && !has_cookies {
@@ -35,13 +35,21 @@ pub(crate) fn can_technology_match(
     if !tech.script.is_empty() && !has_scripts {
         return false;
     }
-    // If technology requires JS patterns but we can't match via script tag IDs, skip it
-    // We only match JS patterns via script tag IDs (e.g., __NEXT_DATA__), not via script content
+    // JS patterns are disabled to match wappalyzergo behavior (wappalyzergo doesn't check JS patterns)
+    // If technology ONLY has JS patterns (no other patterns), skip it since we can't match JS
     if !tech.js.is_empty() {
-        let can_match_via_tag_id = tech.js.keys().any(|prop| script_tag_ids.contains(prop));
-        if !can_match_via_tag_id {
+        let has_other_patterns = !tech.headers.is_empty()
+            || !tech.cookies.is_empty()
+            || !tech.meta.is_empty()
+            || !tech.script.is_empty()
+            || !tech.html.is_empty()
+            || !tech.url.is_empty();
+
+        // If JS is the ONLY pattern type, skip it (we don't check JS patterns)
+        if !has_other_patterns {
             return false;
         }
+        // If technology has JS patterns AND other patterns, we still check it (via other patterns)
     }
 
     true
@@ -51,21 +59,41 @@ pub(crate) fn can_technology_match(
 ///
 /// A technology is excluded if any other detected technology lists it in its `excludes` field.
 /// For example, if TechA excludes TechB, and both are detected, TechB will be removed.
+/// Extracts base technology name from formatted name (strips version if present).
+/// "jQuery:3.6.0" -> "jQuery", "WordPress" -> "WordPress"
+fn extract_base_tech_name(formatted_name: &str) -> &str {
+    if let Some(colon_pos) = formatted_name.find(':') {
+        &formatted_name[..colon_pos]
+    } else {
+        formatted_name
+    }
+}
+
 pub(crate) fn apply_technology_exclusions(
     detected: HashSet<String>,
     ruleset: &FingerprintRuleset,
 ) -> HashSet<String> {
     let mut final_detected = HashSet::new();
     for tech_name in &detected {
+        let base_tech_name = extract_base_tech_name(tech_name);
+
         // Check if this technology is excluded by any other detected technology
         let is_excluded = detected.iter().any(|other_tech_name| {
             if other_tech_name == tech_name {
                 return false; // A technology doesn't exclude itself
             }
+            let other_base_name = extract_base_tech_name(other_tech_name);
+
+            // Check if the other technology excludes this one
             ruleset
                 .technologies
-                .get(other_tech_name)
-                .map(|other_tech| other_tech.excludes.contains(tech_name))
+                .get(other_base_name)
+                .map(|other_tech| {
+                    other_tech
+                        .excludes
+                        .iter()
+                        .any(|excluded| excluded == base_tech_name)
+                })
                 .unwrap_or(false)
         });
 
@@ -96,7 +124,15 @@ pub struct TechnologyMatchParams<'a> {
     /// The URL being checked
     pub url: &'a str,
     /// Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
-    pub script_tag_ids: &'a HashSet<String>,
+    #[allow(dead_code)]
+    // JS pattern matching is disabled to match wappalyzergo, but kept for potential future use
+    pub script_tag_ids: &'a HashSet<String>, // Used for JS pattern matching (currently disabled)
+}
+
+/// Result of technology matching with optional version
+pub struct TechnologyMatchResult {
+    pub matched: bool,
+    pub version: Option<String>,
 }
 
 /// Checks if a technology matches based on its patterns.
@@ -105,12 +141,16 @@ pub struct TechnologyMatchParams<'a> {
 ///
 /// * `params` - Parameters for technology matching
 ///
+/// # Returns
+///
+/// TechnologyMatchResult with match status and extracted version (if any)
+///
 /// # Note
 ///
 /// Technologies with no patterns (empty script, html, js, headers, cookies, meta, url)
 /// will never match. This is by design - if a technology has no detection patterns,
 /// it cannot be detected.
-pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> bool {
+pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> TechnologyMatchResult {
     // If technology has no patterns at all, it cannot match
     // This handles cases like Brightcove which has empty patterns in the ruleset
     if params.tech.script.is_empty()
@@ -121,19 +161,26 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
         && params.tech.meta.is_empty()
         && params.tech.url.is_empty()
     {
-        return false;
+        return TechnologyMatchResult {
+            matched: false,
+            version: None,
+        };
     }
     // Match headers (header_name is already normalized to lowercase in ruleset)
     for (header_name, pattern) in &params.tech.headers {
         if let Some(header_value) = params.headers.get(header_name) {
-            if matches_pattern(pattern, header_value) {
+            let result = matches_pattern(pattern, header_value);
+            if result.matched {
                 log::debug!(
                     "Technology matched via header: {}='{}' matched pattern '{}'",
                     header_name,
                     header_value,
                     pattern
                 );
-                return true;
+                return TechnologyMatchResult {
+                    matched: true,
+                    version: result.version,
+                };
             }
         }
     }
@@ -141,14 +188,24 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
     // Match cookies (cookie_name is already normalized to lowercase in ruleset)
     for (cookie_name, pattern) in &params.tech.cookies {
         if let Some(cookie_value) = params.cookies.get(cookie_name) {
-            if pattern.is_empty() || matches_pattern(pattern, cookie_value) {
+            if pattern.is_empty() {
+                return TechnologyMatchResult {
+                    matched: true,
+                    version: None,
+                };
+            }
+            let result = matches_pattern(pattern, cookie_value);
+            if result.matched {
                 log::debug!(
                     "Technology matched via cookie: {}='{}' matched pattern '{}'",
                     cookie_name,
                     cookie_value,
                     pattern
                 );
-                return true;
+                return TechnologyMatchResult {
+                    matched: true,
+                    version: result.version,
+                };
             }
         }
     }
@@ -159,16 +216,24 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
     // - Prefixed: "property:og:title" -> matches meta property="og:title"
     // - Prefixed: "http-equiv:content-type" -> matches meta http-equiv="content-type"
     // Note: meta values are now Vec<String> to handle both string and array formats (from enthec source)
+    // Note: meta patterns don't support version extraction in wappalyzergo
     for (meta_key, patterns) in &params.tech.meta {
         if check_meta_patterns(meta_key, patterns, params.meta_tags) {
-            return true;
+            return TechnologyMatchResult {
+                matched: true,
+                version: None,
+            };
         }
     }
 
-    // Match script sources
+    // Match script sources (this is where version extraction often happens)
+    // wappalyzergo checks ALL patterns and takes the first version found
+    // We need to do the same - check all patterns, collect versions, return first one
+    let mut matched_version: Option<String> = None;
+    let mut has_match = false;
     for pattern in &params.tech.script {
         for script_src in params.script_sources {
-            let matched = matches_pattern(pattern, script_src);
+            let result = matches_pattern(pattern, script_src);
             // Log attempts for high-value technologies to debug why they're not matching
             let high_value_patterns = [
                 "brightcove",
@@ -177,65 +242,83 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> boo
                 "salesforce",
                 "adobe",
                 "omniture",
+                "baidu",
             ];
             if high_value_patterns
                 .iter()
                 .any(|p| pattern.to_lowercase().contains(p))
             {
                 log::debug!(
-                    "Script pattern check: pattern '{}' vs script '{}' -> {}",
+                    "Script pattern check: pattern '{}' vs script '{}' -> {} (version: {:?})",
                     pattern,
                     script_src,
-                    matched
+                    result.matched,
+                    result.version
                 );
             }
-            if matched {
+            if result.matched {
+                has_match = true;
                 log::debug!(
-                    "Technology matched via script src: pattern '{}' matched '{}'",
+                    "Technology matched via script src: pattern '{}' matched '{}' (version: {:?})",
                     pattern,
-                    script_src
+                    script_src,
+                    result.version
                 );
-                return true;
+                // wappalyzergo behavior: if version == "" && versionString != "", use versionString
+                // So we take the first version we find, but keep checking other patterns
+                if matched_version.is_none() && result.version.is_some() {
+                    matched_version = result.version.clone();
+                }
+                // Don't return early - check all patterns to find best version
             }
         }
+    }
+    if has_match {
+        return TechnologyMatchResult {
+            matched: true,
+            version: matched_version,
+        };
     }
 
     // Match HTML text
     for pattern in &params.tech.html {
-        if matches_pattern(pattern, params.html_text) {
+        let result = matches_pattern(pattern, params.html_text);
+        if result.matched {
             log::debug!(
                 "Technology matched via HTML pattern: '{}' matched in HTML text",
                 pattern
             );
-            return true;
+            return TechnologyMatchResult {
+                matched: true,
+                version: result.version,
+            };
         }
     }
 
     // Match URL patterns (can be multiple patterns)
     for url_pattern in &params.tech.url {
-        if matches_pattern(url_pattern, params.url) {
-            return true;
+        let result = matches_pattern(url_pattern, params.url);
+        if result.matched {
+            return TechnologyMatchResult {
+                matched: true,
+                version: result.version,
+            };
         }
     }
 
-    // Match JavaScript patterns (js field) - only via script tag IDs
-    // WappalyzerGo does NOT execute JavaScript and does NOT match JS properties in source code
-    // It only checks script tag IDs (e.g., <script id="__NEXT_DATA__"> for Next.js)
-    // This matches WappalyzerGo's behavior exactly
-    if params.tech.js.is_empty() {
-        return false;
-    }
+    // Match JavaScript patterns (js field) - DISABLED to match wappalyzergo behavior
+    // wappalyzergo does NOT check JS patterns at all (commented out in fingerprint_body.go lines 50-57)
+    // The TODO comment says: "JS requires a running VM, for checking properties. Only possible with headless for now :("
+    // Therefore, we also disable JS pattern matching to achieve parity with wappalyzergo
+    //
+    // NOTE: This means technologies that ONLY have JS patterns (and no other patterns) will never be detected
+    // This matches wappalyzergo's behavior exactly
 
-    // Check if any JS property matches a script tag ID
-    // This is how Next.js and similar technologies are detected
-    for js_property in params.tech.js.keys() {
-        if params.script_tag_ids.contains(js_property) {
-            log::debug!("Technology matched via script tag ID '{}'", js_property);
-            return true;
-        }
+    // JS patterns are disabled - return false (no match via JS)
+    TechnologyMatchResult {
+        matched: false,
+        version: None,
     }
-
-    false
 }
 
 #[cfg(test)]
@@ -374,12 +457,13 @@ mod tests {
     }
 
     #[test]
-    fn test_can_technology_match_requires_js_tag_id() {
+    fn test_can_technology_match_js_only_patterns_skipped() {
+        // Test that technologies with ONLY JS patterns are skipped (JS patterns are disabled)
         let mut tech = create_empty_technology();
         tech.js
             .insert("__NEXT_DATA__".to_string(), ".*".to_string());
 
-        // Should return false if script tag ID not found
+        // If JS is the ONLY pattern type, should return false (we don't check JS patterns)
         assert!(!can_technology_match(
             &tech,
             true,
@@ -389,16 +473,58 @@ mod tests {
             &HashSet::new()
         ));
 
-        // Should return true if script tag ID found
-        let mut script_tag_ids = HashSet::new();
-        script_tag_ids.insert("__NEXT_DATA__".to_string());
-        assert!(can_technology_match(
+        // Even if script tag ID exists, should still return false (JS patterns are disabled)
+        let mut _script_tag_ids = HashSet::new();
+        _script_tag_ids.insert("__NEXT_DATA__".to_string());
+        assert!(!can_technology_match(
             &tech,
             true,
             true,
             true,
             true,
-            &script_tag_ids
+            &_script_tag_ids
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_js_with_other_patterns() {
+        // Test that technologies with JS patterns AND other patterns are still checked
+        let mut tech = create_empty_technology();
+        tech.js
+            .insert("__NEXT_DATA__".to_string(), ".*".to_string());
+        tech.headers
+            .insert("x-powered-by".to_string(), "next.js".to_string());
+
+        // Should return true because it has header patterns (even though JS patterns are disabled)
+        assert!(can_technology_match(
+            &tech,
+            true, // has_headers
+            true,
+            true,
+            true,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn test_can_technology_match_js_with_other_patterns_shopify() {
+        // Test that technologies with JS patterns AND other patterns (like Shopify)
+        // are not skipped even if JS can't match
+        let mut tech = create_empty_technology();
+        tech.js.insert("Shopify".to_string(), ".*".to_string());
+        tech.headers
+            .insert("powered-by".to_string(), "shopify".to_string());
+        tech.cookies
+            .insert("_shopify_y".to_string(), "".to_string());
+
+        // Should return true even if script tag ID not found, because headers/cookies exist
+        assert!(can_technology_match(
+            &tech,
+            true, // has_cookies
+            true, // has_headers
+            true,
+            true,
+            &HashSet::new() // No script tag IDs
         ));
     }
 
@@ -580,7 +706,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(matches_technology(params));
         assert!(
-            !result,
+            !result.matched,
             "Technology with all empty patterns should not match"
         );
     }
@@ -607,7 +733,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(matches_technology(params));
         // Should not match because script_tag_ids doesn't contain "__NEXT_DATA__"
-        assert!(!result);
+        assert!(!result.matched);
     }
 
     #[test]
@@ -633,7 +759,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(matches_technology(params));
         // Empty pattern should match any cookie value
-        assert!(result);
+        assert!(result.matched);
     }
 
     #[test]
@@ -660,11 +786,11 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(matches_technology(params));
-        // Pattern matching is case-sensitive, so "nginx" won't match "NGINX"
-        // This tests the actual behavior (case-sensitive pattern matching)
+        // Pattern matching is case-insensitive now (to match wappalyzergo), so "nginx" will match "NGINX"
+        // Headers are normalized to lowercase, so this should match
         assert!(
-            !result,
-            "Case-sensitive pattern 'nginx' should not match 'NGINX'"
+            result.matched,
+            "Case-insensitive pattern 'nginx' should match 'NGINX' (normalized)"
         );
     }
 
@@ -688,7 +814,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(matches_technology(params));
         // Escaped dot should match literal dot
-        assert!(result);
+        assert!(result.matched);
     }
 
     #[test]
@@ -716,7 +842,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(matches_technology(params));
         // Should match script sources containing "jquery"
-        assert!(result);
+        assert!(result.matched);
     }
 
     #[test]
@@ -743,7 +869,7 @@ mod tests {
         let result = rt.block_on(matches_technology(params));
         // Should handle very long text without panicking
         assert!(
-            !result,
+            !result.matched,
             "Should not match 'WordPress' in long text without that word"
         );
     }

@@ -10,11 +10,14 @@ pub(crate) async fn detect_technologies_safely(
     resp_data: &ResponseData,
     error_stats: &crate::error_handling::ProcessingStats,
 ) -> Vec<String> {
+    // wappalyzergo normalizes body to lowercase: normalizedBody := bytes.ToLower(body)
+    // HTML patterns match against the entire normalized body, not just extracted text
+    let normalized_body = resp_data.body.to_lowercase();
     match crate::fingerprint::detect_technologies(
         &html_data.meta_tags,
         &html_data.script_sources,
         &html_data.script_content,
-        &html_data.html_text,
+        &normalized_body, // Pass full normalized body for HTML pattern matching
         &resp_data.headers,
         &resp_data.final_url,
         &html_data.script_tag_ids,

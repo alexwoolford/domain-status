@@ -59,6 +59,9 @@ TEST_COVERAGE_ANALYSIS.md
 
 wappalyzergo/
 
+# Compiled Go binaries
+compare_detection
+
 # Profiling data
 *.profraw
 default_*.profraw
@@ -70,3 +73,4 @@ default_*.profraw
 test_*.rs
 test_*
 check_psl*
+compare_detection

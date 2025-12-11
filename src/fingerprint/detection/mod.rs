@@ -32,7 +32,8 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 /// * `meta_tags` - Map of meta tag name/property/http-equiv -> content
 /// * `script_sources` - Vector of script src URLs
 /// * `script_content` - Inline script content for js field detection
-/// * `html_text` - HTML text content (first 50KB)
+/// * `html_text` - HTML text content (first 50KB) - DEPRECATED, use html_body instead
+/// * `html_body` - Full HTML body normalized to lowercase (for HTML pattern matching, matching wappalyzergo)
 /// * `headers` - HTTP response headers
 /// * `url` - The URL being analyzed
 /// * `script_tag_ids` - Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
@@ -40,7 +41,7 @@ pub async fn detect_technologies(
     meta_tags: &HashMap<String, String>,
     script_sources: &[String],
     script_content: &str,
-    html_text: &str,
+    html_body: &str, // Full normalized body for HTML pattern matching (wappalyzergo behavior)
     headers: &HeaderMap,
     url: &str,
     script_tag_ids: &HashSet<String>,
@@ -73,8 +74,9 @@ pub async fn detect_technologies(
     // Script source patterns match against URLs from HTML, not fetched content
 
     // Match each technology (now using batch JS results)
-    // Pre-allocate HashSet with estimated capacity (most sites have 5-20 technologies)
-    let mut detected = HashSet::with_capacity(32);
+    // Pre-allocate HashMap to store technologies with versions
+    // Format: "Technology:version" or just "Technology" if no version
+    let mut detected: HashMap<String, Option<String>> = HashMap::with_capacity(32);
     let mut checked_count = 0;
     let mut skipped_count = 0;
     for (tech_name, tech) in &ruleset.technologies {
@@ -115,32 +117,62 @@ pub async fn detect_technologies(
             );
         }
 
-        if matches_technology(matching::TechnologyMatchParams {
+        let match_result = matches_technology(matching::TechnologyMatchParams {
             tech,
             headers: &header_map,
             cookies: &cookies,
             meta_tags,
             script_sources,
-            html_text,
+            html_text: html_body, // Use full normalized body for HTML pattern matching
             url,
             script_tag_ids,
         })
-        .await
-        {
-            detected.insert(tech_name.clone());
-            log::debug!("Detected technology: {}", tech_name);
+        .await;
 
-            // Add implied technologies
+        if match_result.matched {
+            // Store technology with version (if any)
+            // wappalyzergo behavior: if version already exists, keep it; if not, use new version
+            // This means we check all patterns and take the first version we find
+            detected
+                .entry(tech_name.clone())
+                .and_modify(|existing_version| {
+                    // If we already have a version, keep it (first one wins)
+                    // If we don't have a version but new match has one, use it
+                    if existing_version.is_none() && match_result.version.is_some() {
+                        *existing_version = match_result.version.clone();
+                    }
+                })
+                .or_insert(match_result.version.clone());
+
+            let tech_display = if let Some(ref version) = match_result.version {
+                format!("{}:{}", tech_name, version)
+            } else {
+                tech_name.clone()
+            };
+            log::debug!("Detected technology: {}", tech_display);
+
+            // Add implied technologies (without versions, as wappalyzergo does)
             for implied in &tech.implies {
-                detected.insert(implied.clone());
+                detected.entry(implied.clone()).or_insert(None);
                 log::debug!("Added implied technology: {} (from {})", implied, tech_name);
             }
         }
     }
 
+    // Convert HashMap to HashSet with formatted names (Technology:version or Technology)
+    let mut detected_formatted = HashSet::with_capacity(detected.len());
+    for (tech_name, version) in &detected {
+        let formatted_name = if let Some(ref ver) = version {
+            format!("{}:{}", tech_name, ver)
+        } else {
+            tech_name.clone()
+        };
+        detected_formatted.insert(formatted_name);
+    }
+
     // Remove excluded technologies
-    let detected_count = detected.len();
-    let final_detected = apply_technology_exclusions(detected, &ruleset);
+    let detected_count = detected_formatted.len();
+    let final_detected = apply_technology_exclusions(detected_formatted, &ruleset);
     let final_count = final_detected.len();
 
     log::debug!(
