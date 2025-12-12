@@ -114,6 +114,10 @@ pub(crate) fn parse_html_content(
         if let Some(src) = element.value().attr("src") {
             if !src.is_empty() {
                 script_sources.push(src.to_string());
+                // Debug: log jsDelivr scripts
+                if src.to_lowercase().contains("jsdelivr") {
+                    log::debug!("[DEBUG] Found jsDelivr script: {}", src);
+                }
             }
         }
         // Extract inline script content (limited to MAX_SCRIPT_CONTENT_SIZE per script for security)
@@ -132,13 +136,77 @@ pub(crate) fn parse_html_content(
             }
         }
     }
+    // Fallback: Use regex to extract script sources that scraper might have missed
+    // This is a safety net for edge cases where the HTML parser might miss script tags
+    use regex::Regex;
+    // Try multiple regex patterns to catch different script tag formats
+    let script_src_regex = match Regex::new(r#"(?i)<script[^>]*src\s*=\s*["']([^"']+)["']"#) {
+        Ok(re) => re,
+        Err(e) => {
+            log::warn!("[DEBUG] Failed to compile script src regex: {}", e);
+            Regex::new(r#"<script[^>]*src=["']([^"']+)["']"#).unwrap() // Fallback to simpler pattern
+        }
+    };
+
+    let regex_extracted_scripts: Vec<String> = script_src_regex
+        .captures_iter(body)
+        .map(|cap| cap.get(1).unwrap().as_str().to_string())
+        .collect();
+
     log::debug!(
-        "Extracted {} inline scripts ({} bytes) and {} external script sources for {}",
+        "[DEBUG] Regex fallback found {} script sources",
+        regex_extracted_scripts.len()
+    );
+
+    let scraper_count = script_sources.len();
+    let mut regex_added = 0;
+
+    // Merge regex-extracted scripts with scraper-extracted ones (avoid duplicates)
+    for regex_script in &regex_extracted_scripts {
+        if !script_sources.contains(regex_script) {
+            script_sources.push(regex_script.clone());
+            regex_added += 1;
+            // Debug: log jsDelivr scripts found via regex fallback
+            if regex_script.to_lowercase().contains("jsdelivr") {
+                log::info!(
+                    "[DEBUG] ✓ Found jsDelivr script via regex fallback: {}",
+                    regex_script
+                );
+            }
+        }
+    }
+
+    let regex_added_count = regex_added;
+
+    log::debug!(
+        "Extracted {} inline scripts ({} bytes) and {} external script sources for {} ({} from scraper, {} added via regex fallback)",
         inline_script_count,
         script_content.len(),
         script_sources.len(),
-        final_domain
+        final_domain,
+        scraper_count,
+        regex_added_count
     );
+
+    // Debug: check if jsDelivr script is in the extracted sources
+    let has_jsdelivr = script_sources
+        .iter()
+        .any(|s| s.to_lowercase().contains("jsdelivr"));
+    if has_jsdelivr {
+        log::debug!("[DEBUG] jsDelivr script found in extracted sources");
+        for src in script_sources
+            .iter()
+            .filter(|s| s.to_lowercase().contains("jsdelivr"))
+        {
+            log::debug!("[DEBUG]   jsDelivr script: {}", src);
+        }
+    } else {
+        log::warn!("[DEBUG] jsDelivr script NOT found in extracted sources (expected: https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js)");
+        log::debug!(
+            "[DEBUG] First 5 script sources: {:?}",
+            script_sources.iter().take(5).collect::<Vec<_>>()
+        );
+    }
 
     // Log all script sources for debugging (helpful to see what we're working with)
     // Also identify which scripts might set jQuery/React/etc.

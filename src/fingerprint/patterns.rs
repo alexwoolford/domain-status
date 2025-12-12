@@ -16,6 +16,13 @@ use std::sync::{Arc, Mutex};
 static REGEX_CACHE: Lazy<Arc<Mutex<HashMap<String, regex::Regex>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+/// Result of meta pattern matching with optional version
+#[derive(Debug, Clone)]
+pub(crate) struct MetaMatchResult {
+    pub matched: bool,
+    pub version: Option<String>,
+}
+
 /// Checks if meta tag patterns match any meta tag values.
 ///
 /// Wappalyzer meta patterns can be:
@@ -33,59 +40,118 @@ static REGEX_CACHE: Lazy<Arc<Mutex<HashMap<String, regex::Regex>>>> =
 ///
 /// # Returns
 ///
-/// `true` if any pattern matches any meta tag value, `false` otherwise.
+/// `MetaMatchResult` with match status and extracted version (if any).
 pub(crate) fn check_meta_patterns(
     meta_key: &str,
     patterns: &[String],
     meta_tags: &HashMap<String, String>,
-) -> bool {
+) -> MetaMatchResult {
+    // wappalyzergo normalizes meta keys to lowercase during update (update-fingerprints/main.go line 271)
+    // But when matching, it compares lowercase fingerprint key against raw HTML name (case-sensitive comparison)
+    // However, since fingerprint keys are lowercase and we normalize HTML names to lowercase when extracting,
+    // we can match directly. But we need to handle the case where meta_key might have a prefix.
     let meta_key_lower = meta_key.to_lowercase();
 
-    // Helper to check patterns against a meta value
-    let check_patterns = |meta_value: &str| -> bool {
-        patterns
-            .iter()
-            .any(|pattern| matches_pattern(pattern, meta_value).matched)
+    // Helper to check patterns against a meta value and extract version
+    // wappalyzergo passes raw content value to pattern.Evaluate (which uses case-insensitive regex)
+    // We pass raw content, which is correct
+    let check_patterns = |meta_value: &str| -> MetaMatchResult {
+        let mut matched_version: Option<String> = None;
+        let mut has_match = false;
+
+        for pattern in patterns {
+            let result = matches_pattern(pattern, meta_value);
+            if result.matched {
+                has_match = true;
+                // Take the first version found (matching wappalyzergo behavior)
+                if matched_version.is_none() && result.version.is_some() {
+                    matched_version = result.version.clone();
+                }
+            }
+        }
+
+        MetaMatchResult {
+            matched: has_match,
+            version: matched_version,
+        }
     };
+
+    // wappalyzergo's matchKeyValueString does: if data != key { continue }
+    // where data is the fingerprint meta key (lowercase) and key is the raw HTML meta name
+    // Since fingerprint keys are lowercase and we normalize HTML names to lowercase,
+    // we can match directly. But we need to handle prefixes correctly.
 
     // Check if key already has a prefix (property: or http-equiv:)
     if meta_key_lower.starts_with("property:") {
         let key_without_prefix = meta_key_lower
             .strip_prefix("property:")
             .unwrap_or(&meta_key_lower);
+        // Try exact match first (normalized key)
         if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
-            return check_patterns(meta_value);
+            let result = check_patterns(meta_value);
+            if result.matched {
+                return result;
+            }
+        }
+        // Also try case-insensitive match (in case HTML has different case)
+        for (stored_key, meta_value) in meta_tags.iter() {
+            if stored_key.to_lowercase() == format!("property:{}", key_without_prefix) {
+                let result = check_patterns(meta_value);
+                if result.matched {
+                    return result;
+                }
+            }
         }
     } else if meta_key_lower.starts_with("http-equiv:") {
         let key_without_prefix = meta_key_lower
             .strip_prefix("http-equiv:")
             .unwrap_or(&meta_key_lower);
         if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
-            return check_patterns(meta_value);
+            let result = check_patterns(meta_value);
+            if result.matched {
+                return result;
+            }
+        }
+        // Also try case-insensitive match
+        for (stored_key, meta_value) in meta_tags.iter() {
+            if stored_key.to_lowercase() == format!("http-equiv:{}", key_without_prefix) {
+                let result = check_patterns(meta_value);
+                if result.matched {
+                    return result;
+                }
+            }
         }
     } else {
         // Simple key (like "generator") - try all three attribute types
+        // wappalyzergo matches against raw HTML name (case-sensitive), but fingerprint key is lowercase
+        // Since we normalize HTML names to lowercase, we can match directly
         // Try name: prefix (most common)
         if let Some(meta_value) = meta_tags.get(&format!("name:{}", meta_key_lower)) {
-            if check_patterns(meta_value) {
-                return true;
+            let result = check_patterns(meta_value);
+            if result.matched {
+                return result;
             }
         }
         // Try property: prefix (Open Graph, etc.)
         if let Some(meta_value) = meta_tags.get(&format!("property:{}", meta_key_lower)) {
-            if check_patterns(meta_value) {
-                return true;
+            let result = check_patterns(meta_value);
+            if result.matched {
+                return result;
             }
         }
         // Try http-equiv: prefix
         if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", meta_key_lower)) {
-            if check_patterns(meta_value) {
-                return true;
+            let result = check_patterns(meta_value);
+            if result.matched {
+                return result;
             }
         }
     }
 
-    false
+    MetaMatchResult {
+        matched: false,
+        version: None,
+    }
 }
 
 /// Pattern matching result with optional version extraction.
@@ -103,26 +169,6 @@ pub(crate) struct PatternMatchResult {
 ///
 /// Returns PatternMatchResult with match status and extracted version (if any).
 pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
-    // Handle empty pattern (matches anything)
-    if pattern.is_empty() {
-        return PatternMatchResult {
-            matched: true,
-            version: None,
-        };
-    }
-
-    // Check if pattern contains regex-like syntax
-    // Wappalyzer patterns often use regex but we'll try to be smart about it
-    // Patterns starting with ^ or containing regex special chars are likely regex
-    let is_regex = pattern.starts_with('^')
-        || pattern.contains('$')
-        || pattern.contains('\\')
-        || pattern.contains('[')
-        || pattern.contains('(')
-        || pattern.contains('*')
-        || pattern.contains('+')
-        || pattern.contains('?');
-
     // Parse pattern for version extraction (e.g., "pattern\\;version:\\1")
     // wappalyzergo uses "\\;" (escaped semicolon) in JSON, which becomes "\;" in the string
     // We need to look for "\;" (backslash followed by semicolon)
@@ -138,6 +184,53 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
     } else {
         (pattern, None)
     };
+
+    // Handle empty pattern (matches anything)
+    // If there's a version template, extract version even without a pattern match
+    if pattern_for_match.is_empty() {
+        let version = if let Some(template) = version_template {
+            // For empty patterns with version templates (e.g., "\;version:ga4"),
+            // extract the literal version from the template
+            if template.starts_with("version:") {
+                let version_str = template.strip_prefix("version:").unwrap_or("").trim();
+                if !version_str.is_empty() {
+                    // Check if it's a literal (no capture groups like \1, \2)
+                    if !version_str.contains('\\')
+                        || !version_str.chars().any(|c| c.is_ascii_digit())
+                    {
+                        // It's a literal version string (e.g., "ga4", "ua")
+                        Some(version_str.to_string())
+                    } else {
+                        // It has capture groups, but we have no captures for an empty pattern
+                        // This shouldn't happen for empty patterns, but handle it gracefully
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        return PatternMatchResult {
+            matched: true,
+            version,
+        };
+    }
+
+    // Check if pattern contains regex-like syntax
+    // Wappalyzer patterns often use regex but we'll try to be smart about it
+    // Patterns starting with ^ or containing regex special chars are likely regex
+    let is_regex = pattern_for_match.starts_with('^')
+        || pattern_for_match.contains('$')
+        || pattern_for_match.contains('\\')
+        || pattern_for_match.contains('[')
+        || pattern_for_match.contains('(')
+        || pattern_for_match.contains('*')
+        || pattern_for_match.contains('+')
+        || pattern_for_match.contains('?');
 
     if is_regex {
         // Try to compile as regex (with caching)
@@ -200,14 +293,52 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
             }
         }
     } else {
-        // Simple substring match - wappalyzergo does case-insensitive substring matching
-        // We need to match this behavior for parity
-        let matched = text
-            .to_lowercase()
-            .contains(&pattern_for_match.to_lowercase());
+        // Simple string pattern - wappalyzergo compiles ALL patterns as regex, even simple strings
+        // For a simple string like "jquery", wappalyzergo compiles it as "(?i)jquery" which matches
+        // "jquery" anywhere in the string (case-insensitive). We need to match this behavior.
+        // However, wappalyzergo may have additional logic that prevents matching in certain contexts
+        // to avoid false positives. Based on testing, wappalyzergo detects jQuery for some domains
+        // (like 1liberty.com) but not others (like 163.com), even though the pattern matches.
+        // This suggests there may be additional filtering based on pattern order, confidence, or
+        // other factors. For now, we'll compile simple strings as regex to match wappalyzergo's
+        // basic behavior, but we may need to add additional logic later.
+        let case_insensitive_pattern = format!("(?i){}", regex::escape(pattern_for_match));
+        let cache_key = pattern_for_match.to_string();
+
+        let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let cached_re = cache.get(&cache_key).cloned();
+        drop(cache);
+
+        let re = if let Some(cached) = cached_re {
+            cached
+        } else {
+            match regex::Regex::new(&case_insensitive_pattern) {
+                Ok(re) => {
+                    let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(cached) = cache.get(&cache_key) {
+                        cached.clone()
+                    } else {
+                        let re_clone = re.clone();
+                        cache.insert(cache_key, re);
+                        re_clone
+                    }
+                }
+                Err(_) => {
+                    // If regex compilation fails, fall back to substring match
+                    let pattern_lower = pattern_for_match.to_lowercase();
+                    let text_lower = text.to_lowercase();
+                    return PatternMatchResult {
+                        matched: text_lower.contains(&pattern_lower),
+                        version: None,
+                    };
+                }
+            }
+        };
+
+        // Match using regex (like wappalyzergo does)
         PatternMatchResult {
-            matched,
-            version: None, // No version extraction for simple substring patterns
+            matched: re.is_match(text),
+            version: None,
         }
     }
 }
@@ -427,16 +558,8 @@ mod tests {
         let mut meta_tags = HashMap::new();
         meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
 
-        assert!(check_meta_patterns(
-            "generator",
-            &["WordPress".to_string()],
-            &meta_tags
-        ));
-        assert!(!check_meta_patterns(
-            "generator",
-            &["Drupal".to_string()],
-            &meta_tags
-        ));
+        assert!(check_meta_patterns("generator", &["WordPress".to_string()], &meta_tags).matched);
+        assert!(!check_meta_patterns("generator", &["Drupal".to_string()], &meta_tags).matched);
     }
 
     #[test]
@@ -444,16 +567,17 @@ mod tests {
         let mut meta_tags = HashMap::new();
         meta_tags.insert("property:og:title".to_string(), "My Title".to_string());
 
-        assert!(check_meta_patterns(
-            "property:og:title",
-            &["My Title".to_string()],
-            &meta_tags
-        ));
-        assert!(!check_meta_patterns(
-            "property:og:title",
-            &["Other Title".to_string()],
-            &meta_tags
-        ));
+        assert!(
+            check_meta_patterns("property:og:title", &["My Title".to_string()], &meta_tags).matched
+        );
+        assert!(
+            !check_meta_patterns(
+                "property:og:title",
+                &["Other Title".to_string()],
+                &meta_tags
+            )
+            .matched
+        );
     }
 
     #[test]
@@ -464,11 +588,14 @@ mod tests {
             "text/html".to_string(),
         );
 
-        assert!(check_meta_patterns(
-            "http-equiv:content-type",
-            &["text/html".to_string()],
-            &meta_tags
-        ));
+        assert!(
+            check_meta_patterns(
+                "http-equiv:content-type",
+                &["text/html".to_string()],
+                &meta_tags
+            )
+            .matched
+        );
     }
 
     #[test]
@@ -478,11 +605,7 @@ mod tests {
         meta_tags.insert("property:generator".to_string(), "WordPress".to_string());
 
         // Should find it via property: prefix
-        assert!(check_meta_patterns(
-            "generator",
-            &["WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(check_meta_patterns("generator", &["WordPress".to_string()], &meta_tags).matched);
     }
 
     #[test]
@@ -492,11 +615,7 @@ mod tests {
         meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
 
         // Key should be lowercased when looking up
-        assert!(check_meta_patterns(
-            "GENERATOR",
-            &["WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(check_meta_patterns("GENERATOR", &["WordPress".to_string()], &meta_tags).matched);
     }
 
     #[test]
@@ -505,21 +624,20 @@ mod tests {
         meta_tags.insert("name:generator".to_string(), "WordPress 5.0".to_string());
 
         // Should match if any pattern matches
-        assert!(check_meta_patterns(
-            "generator",
-            &["Drupal".to_string(), "WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(
+            check_meta_patterns(
+                "generator",
+                &["Drupal".to_string(), "WordPress".to_string()],
+                &meta_tags
+            )
+            .matched
+        );
     }
 
     #[test]
     fn test_check_meta_patterns_empty_meta_tags() {
         let meta_tags = HashMap::new();
-        assert!(!check_meta_patterns(
-            "generator",
-            &["WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(!check_meta_patterns("generator", &["WordPress".to_string()], &meta_tags).matched);
     }
 
     #[test]
@@ -528,7 +646,7 @@ mod tests {
         meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
 
         // Empty patterns should not match
-        assert!(!check_meta_patterns("generator", &[], &meta_tags));
+        assert!(!check_meta_patterns("generator", &[], &meta_tags).matched);
     }
 
     #[test]
@@ -537,11 +655,7 @@ mod tests {
         meta_tags.insert("name:generator".to_string(), "WordPress 5.0".to_string());
 
         // Patterns can contain regex
-        assert!(check_meta_patterns(
-            "generator",
-            &["^WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(check_meta_patterns("generator", &["^WordPress".to_string()], &meta_tags).matched);
     }
 
     #[test]
@@ -712,18 +826,17 @@ mod tests {
         meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
 
         // Key with double prefix (should not match)
-        assert!(!check_meta_patterns(
-            "property:property:og:title",
-            &["WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(
+            !check_meta_patterns(
+                "property:property:og:title",
+                &["WordPress".to_string()],
+                &meta_tags
+            )
+            .matched
+        );
 
         // Key with empty prefix value
-        assert!(!check_meta_patterns(
-            "property:",
-            &["WordPress".to_string()],
-            &meta_tags
-        ));
+        assert!(!check_meta_patterns("property:", &["WordPress".to_string()], &meta_tags).matched);
     }
 
     #[test]
@@ -799,7 +912,7 @@ mod tests {
         meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
 
         // Empty patterns should not match
-        assert!(!check_meta_patterns("generator", &[], &meta_tags));
+        assert!(!check_meta_patterns("generator", &[], &meta_tags).matched);
     }
 
     #[test]
@@ -811,20 +924,31 @@ mod tests {
         meta_tags.insert("http-equiv:test".to_string(), "value3".to_string());
 
         // Should match if any prefix matches
-        assert!(check_meta_patterns(
-            "test",
-            &["value1".to_string()],
-            &meta_tags
-        ));
-        assert!(check_meta_patterns(
-            "test",
-            &["value2".to_string()],
-            &meta_tags
-        ));
-        assert!(check_meta_patterns(
-            "test",
-            &["value3".to_string()],
-            &meta_tags
-        ));
+        assert!(check_meta_patterns("test", &["value1".to_string()], &meta_tags).matched);
+        assert!(check_meta_patterns("test", &["value2".to_string()], &meta_tags).matched);
+        assert!(check_meta_patterns("test", &["value3".to_string()], &meta_tags).matched);
+    }
+
+    #[test]
+    fn test_check_meta_patterns_wordpress_version_extraction() {
+        // Test WordPress version extraction from generator meta tag
+        // Pattern: ^wordpress(?: ([\d.]+))?\;version:\1
+        // Content: WordPress 6.8.3
+        // Should extract version: 6.8.3
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), "WordPress 6.8.3".to_string());
+
+        let result = check_meta_patterns(
+            "generator",
+            &[r"^wordpress(?: ([\d.]+))?\;version:\1".to_string()],
+            &meta_tags,
+        );
+
+        assert!(result.matched, "Should match WordPress generator meta tag");
+        assert_eq!(
+            result.version,
+            Some("6.8.3".to_string()),
+            "Should extract WordPress version 6.8.3"
+        );
     }
 }
