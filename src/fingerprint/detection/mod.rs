@@ -80,15 +80,34 @@ pub async fn detect_technologies(
     let mut checked_count = 0;
     let mut skipped_count = 0;
     for (tech_name, tech) in &ruleset.technologies {
+        // Debug: log if we're checking jsDelivr
+        if tech_name.eq_ignore_ascii_case("jsdelivr") {
+            log::info!(
+                "[DEBUG] Found jsDelivr in ruleset: script patterns={}, can_match check starting...",
+                tech.script.len()
+            );
+        }
+
         // Early exit: skip technologies that can't match
-        if !can_technology_match(
+        let can_match = can_technology_match(
             tech,
             has_cookies,
             has_headers,
             has_meta,
             has_scripts,
             script_tag_ids,
-        ) {
+        );
+
+        if tech_name.eq_ignore_ascii_case("jsdelivr") {
+            log::info!(
+                "[DEBUG] jsDelivr can_technology_match result: {} (has_scripts={}, tech.script.len()={})",
+                can_match,
+                has_scripts,
+                tech.script.len()
+            );
+        }
+
+        if !can_match {
             skipped_count += 1;
             continue;
         }
@@ -103,6 +122,9 @@ pub async fn detect_technologies(
             "Adobe DTM",
             "Omniture",
             "Brightcove",
+            "WordPress",
+            "Drupal",
+            "jsDelivr",
         ];
         if high_value_techs.contains(&tech_name.as_str()) {
             log::debug!(
@@ -119,6 +141,7 @@ pub async fn detect_technologies(
 
         let match_result = matches_technology(matching::TechnologyMatchParams {
             tech,
+            tech_name,
             headers: &header_map,
             cookies: &cookies,
             meta_tags,
@@ -133,6 +156,9 @@ pub async fn detect_technologies(
             // Store technology with version (if any)
             // wappalyzergo behavior: if version already exists, keep it; if not, use new version
             // This means we check all patterns and take the first version we find
+            if tech_name.eq_ignore_ascii_case("jsdelivr") {
+                log::info!("[DEBUG] jsDelivr matched! Storing in detected HashMap");
+            }
             detected
                 .entry(tech_name.clone())
                 .and_modify(|existing_version| {
@@ -143,6 +169,13 @@ pub async fn detect_technologies(
                     }
                 })
                 .or_insert(match_result.version.clone());
+
+            if tech_name.eq_ignore_ascii_case("jsdelivr") {
+                log::info!(
+                    "[DEBUG] jsDelivr stored in detected HashMap: {:?}",
+                    detected.get(tech_name)
+                );
+            }
 
             let tech_display = if let Some(ref version) = match_result.version {
                 format!("{}:{}", tech_name, version)
@@ -155,6 +188,15 @@ pub async fn detect_technologies(
             for implied in &tech.implies {
                 detected.entry(implied.clone()).or_insert(None);
                 log::debug!("Added implied technology: {} (from {})", implied, tech_name);
+            }
+
+            // Special case: "All in One SEO" and "All in One SEO Pack" are detected together by wappalyzergo
+            // When "All in One SEO" is detected, also detect "All in One SEO Pack" with the same version
+            if tech_name == "All in One SEO" {
+                detected
+                    .entry("All in One SEO Pack".to_string())
+                    .or_insert(match_result.version.clone());
+                log::debug!("Added All in One SEO Pack (same version as All in One SEO)");
             }
         }
     }
@@ -172,7 +214,26 @@ pub async fn detect_technologies(
 
     // Remove excluded technologies
     let detected_count = detected_formatted.len();
+    let has_jsdelivr_before = detected_formatted
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("jsdelivr"));
+    if has_jsdelivr_before {
+        log::info!(
+            "[DEBUG] jsDelivr in detected_formatted before exclusions: {:?}",
+            detected_formatted
+                .iter()
+                .find(|t| t.eq_ignore_ascii_case("jsdelivr"))
+        );
+    }
     let final_detected = apply_technology_exclusions(detected_formatted, &ruleset);
+    let has_jsdelivr_after = final_detected
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("jsdelivr"));
+    if has_jsdelivr_before && !has_jsdelivr_after {
+        log::warn!("[DEBUG] jsDelivr was excluded by another technology!");
+    } else if has_jsdelivr_after {
+        log::info!("[DEBUG] jsDelivr in final_detected after exclusions");
+    }
     let final_count = final_detected.len();
 
     log::debug!(
