@@ -67,7 +67,10 @@ pub(crate) fn parse_html_content(
     );
 
     // Extract data needed for technology detection (to avoid double-parsing)
-    let mut meta_tags = HashMap::new();
+    // Note: We store ALL meta tags, not just the last one for each key
+    // This matches wappalyzergo behavior - it checks each meta tag as it's encountered
+    // We use Vec<String> to store multiple values for the same key (e.g., multiple generator tags)
+    let mut meta_tags: HashMap<String, Vec<String>> = HashMap::new();
     let meta_selector = crate::utils::parse_selector_with_fallback("meta", "meta tag extraction");
     for element in document.select(&meta_selector) {
         // Check name attribute (standard meta tags)
@@ -75,27 +78,24 @@ pub(crate) fn parse_html_content(
             element.value().attr("name"),
             element.value().attr("content"),
         ) {
-            meta_tags.insert(format!("name:{}", name.to_lowercase()), content.to_string());
+            let key = format!("name:{}", name.to_lowercase());
+            meta_tags.entry(key).or_default().push(content.to_string());
         }
         // Check property attribute (Open Graph, etc.)
         if let (Some(property), Some(content)) = (
             element.value().attr("property"),
             element.value().attr("content"),
         ) {
-            meta_tags.insert(
-                format!("property:{}", property.to_lowercase()),
-                content.to_string(),
-            );
+            let key = format!("property:{}", property.to_lowercase());
+            meta_tags.entry(key).or_default().push(content.to_string());
         }
         // Check http-equiv attribute
         if let (Some(http_equiv), Some(content)) = (
             element.value().attr("http-equiv"),
             element.value().attr("content"),
         ) {
-            meta_tags.insert(
-                format!("http-equiv:{}", http_equiv.to_lowercase()),
-                content.to_string(),
-            );
+            let key = format!("http-equiv:{}", http_equiv.to_lowercase());
+            meta_tags.entry(key).or_default().push(content.to_string());
         }
     }
 
@@ -114,10 +114,6 @@ pub(crate) fn parse_html_content(
         if let Some(src) = element.value().attr("src") {
             if !src.is_empty() {
                 script_sources.push(src.to_string());
-                // Debug: log jsDelivr scripts
-                if src.to_lowercase().contains("jsdelivr") {
-                    log::debug!("[DEBUG] Found jsDelivr script: {}", src);
-                }
             }
         }
         // Extract inline script content (limited to MAX_SCRIPT_CONTENT_SIZE per script for security)
@@ -142,8 +138,7 @@ pub(crate) fn parse_html_content(
     // Try multiple regex patterns to catch different script tag formats
     let script_src_regex = match Regex::new(r#"(?i)<script[^>]*src\s*=\s*["']([^"']+)["']"#) {
         Ok(re) => re,
-        Err(e) => {
-            log::warn!("[DEBUG] Failed to compile script src regex: {}", e);
+        Err(_) => {
             Regex::new(r#"<script[^>]*src=["']([^"']+)["']"#).unwrap() // Fallback to simpler pattern
         }
     };
@@ -153,11 +148,6 @@ pub(crate) fn parse_html_content(
         .map(|cap| cap.get(1).unwrap().as_str().to_string())
         .collect();
 
-    log::debug!(
-        "[DEBUG] Regex fallback found {} script sources",
-        regex_extracted_scripts.len()
-    );
-
     let scraper_count = script_sources.len();
     let mut regex_added = 0;
 
@@ -166,17 +156,8 @@ pub(crate) fn parse_html_content(
         if !script_sources.contains(regex_script) {
             script_sources.push(regex_script.clone());
             regex_added += 1;
-            // Debug: log jsDelivr scripts found via regex fallback
-            if regex_script.to_lowercase().contains("jsdelivr") {
-                log::info!(
-                    "[DEBUG] ✓ Found jsDelivr script via regex fallback: {}",
-                    regex_script
-                );
-            }
         }
     }
-
-    let regex_added_count = regex_added;
 
     log::debug!(
         "Extracted {} inline scripts ({} bytes) and {} external script sources for {} ({} from scraper, {} added via regex fallback)",
@@ -185,28 +166,8 @@ pub(crate) fn parse_html_content(
         script_sources.len(),
         final_domain,
         scraper_count,
-        regex_added_count
+        regex_added
     );
-
-    // Debug: check if jsDelivr script is in the extracted sources
-    let has_jsdelivr = script_sources
-        .iter()
-        .any(|s| s.to_lowercase().contains("jsdelivr"));
-    if has_jsdelivr {
-        log::debug!("[DEBUG] jsDelivr script found in extracted sources");
-        for src in script_sources
-            .iter()
-            .filter(|s| s.to_lowercase().contains("jsdelivr"))
-        {
-            log::debug!("[DEBUG]   jsDelivr script: {}", src);
-        }
-    } else {
-        log::warn!("[DEBUG] jsDelivr script NOT found in extracted sources (expected: https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js)");
-        log::debug!(
-            "[DEBUG] First 5 script sources: {:?}",
-            script_sources.iter().take(5).collect::<Vec<_>>()
-        );
-    }
 
     // Log all script sources for debugging (helpful to see what we're working with)
     // Also identify which scripts might set jQuery/React/etc.
@@ -317,17 +278,17 @@ mod tests {
         assert!(result.meta_tags.contains_key("name:author"));
         assert_eq!(
             result.meta_tags.get("name:author"),
-            Some(&"John Doe".to_string())
+            Some(&vec!["John Doe".to_string()])
         );
         assert!(result.meta_tags.contains_key("property:og:title"));
         assert_eq!(
             result.meta_tags.get("property:og:title"),
-            Some(&"OG Title".to_string())
+            Some(&vec!["OG Title".to_string()])
         );
         assert!(result.meta_tags.contains_key("http-equiv:refresh"));
         assert_eq!(
             result.meta_tags.get("http-equiv:refresh"),
-            Some(&"30".to_string())
+            Some(&vec!["30".to_string()])
         );
     }
 

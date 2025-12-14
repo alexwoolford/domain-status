@@ -44,7 +44,7 @@ pub(crate) struct MetaMatchResult {
 pub(crate) fn check_meta_patterns(
     meta_key: &str,
     patterns: &[String],
-    meta_tags: &HashMap<String, String>,
+    meta_tags: &HashMap<String, Vec<String>>,
 ) -> MetaMatchResult {
     // wappalyzergo normalizes meta keys to lowercase during update (update-fingerprints/main.go line 271)
     // But when matching, it compares lowercase fingerprint key against raw HTML name (case-sensitive comparison)
@@ -52,21 +52,33 @@ pub(crate) fn check_meta_patterns(
     // we can match directly. But we need to handle the case where meta_key might have a prefix.
     let meta_key_lower = meta_key.to_lowercase();
 
-    // Helper to check patterns against a meta value and extract version
+    // Helper to check patterns against meta values and extract version
     // wappalyzergo passes raw content value to pattern.Evaluate (which uses case-insensitive regex)
     // We pass raw content, which is correct
-    let check_patterns = |meta_value: &str| -> MetaMatchResult {
+    // meta_values is a Vec<String> because there can be multiple meta tags with the same name
+    let check_patterns = |meta_values: &Vec<String>| -> MetaMatchResult {
         let mut matched_version: Option<String> = None;
         let mut has_match = false;
 
-        for pattern in patterns {
-            let result = matches_pattern(pattern, meta_value);
-            if result.matched {
-                has_match = true;
-                // Take the first version found (matching wappalyzergo behavior)
-                if matched_version.is_none() && result.version.is_some() {
-                    matched_version = result.version.clone();
+        // Check all meta values (there can be multiple meta tags with the same name)
+        for meta_value in meta_values {
+            for pattern in patterns {
+                let result = matches_pattern(pattern, meta_value);
+                if result.matched {
+                    has_match = true;
+                    // Take the first version found (matching wappalyzergo behavior)
+                    if matched_version.is_none() && result.version.is_some() {
+                        matched_version = result.version.clone();
+                    }
+                    // If we found a version, we can stop checking patterns for this meta value
+                    if matched_version.is_some() {
+                        break;
+                    }
                 }
+            }
+            // If we found a version, we can stop checking other meta values
+            if matched_version.is_some() {
+                break;
             }
         }
 
@@ -169,21 +181,37 @@ pub(crate) struct PatternMatchResult {
 ///
 /// Returns PatternMatchResult with match status and extracted version (if any).
 pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
-    // Parse pattern for version extraction (e.g., "pattern\\;version:\\1")
-    // wappalyzergo uses "\\;" (escaped semicolon) in JSON, which becomes "\;" in the string
-    // We need to look for "\;" (backslash followed by semicolon)
-    let (pattern_for_match, version_template) = if let Some(semicolon_pos) = pattern.find("\\;") {
-        let (pat, version_part) = pattern.split_at(semicolon_pos);
-        let version_template = version_part.strip_prefix("\\;").unwrap_or("");
-        (pat.trim(), Some(version_template))
-    } else if let Some(semicolon_pos) = pattern.find(";") {
-        // Also check for unescaped semicolon (some patterns might use it)
-        let (pat, version_part) = pattern.split_at(semicolon_pos);
-        let version_template = version_part.strip_prefix(";").unwrap_or("");
-        (pat.trim(), Some(version_template))
-    } else {
-        (pattern, None)
-    };
+    // Match wappalyzergo's ParsePattern exactly:
+    // 1. Split on "\;" to get parts
+    // 2. First part (i==0) is the regex pattern
+    // 3. For parts after first (i>0), split on ":" to get key-value pairs
+    // 4. If key is "version", store value in p.Version
+    // 5. If key is "confidence", parse as int and store in p.Confidence (we ignore this)
+
+    let parts: Vec<&str> = pattern.split("\\;").collect();
+    let pattern_for_match = parts[0].trim();
+
+    // Find version template by looking for "version:" key in subsequent parts
+    let mut version_template: Option<&str> = None;
+    for part in parts.iter().skip(1) {
+        if let Some(colon_pos) = part.find(':') {
+            let key = &part[..colon_pos];
+            let value = &part[colon_pos + 1..];
+
+            match key {
+                "version" => {
+                    version_template = Some(value);
+                    break; // wappalyzergo processes parts in order, first "version:" wins
+                }
+                "confidence" => {
+                    // Ignore confidence - we don't use it
+                }
+                _ => {
+                    // Unknown key, ignore
+                }
+            }
+        }
+    }
 
     // Handle empty pattern (matches anything)
     // If there's a version template, extract version even without a pattern match
@@ -278,7 +306,9 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
         // Match and extract version
         if let Some(captures) = re.captures(text) {
             let version = if let Some(template) = version_template {
-                extract_version_from_template(template, &captures)
+                // template is already the value after "version:" (e.g., "\1" or "\1?next:")
+                // extract_version_from_template expects "version:..." format
+                extract_version_from_template(&format!("version:{}", template), &captures)
             } else {
                 None
             };
@@ -299,7 +329,7 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
         // However, wappalyzergo may have additional logic that prevents matching in certain contexts
         // to avoid false positives. Based on testing, wappalyzergo detects jQuery for some domains
         // (like 1liberty.com) but not others (like 163.com), even though the pattern matches.
-        // This suggests there may be additional filtering based on pattern order, confidence, or
+        // This suggests there may be additional filtering based on pattern order or
         // other factors. For now, we'll compile simple strings as regex to match wappalyzergo's
         // basic behavior, but we may need to add additional logic later.
         let case_insensitive_pattern = format!("(?i){}", regex::escape(pattern_for_match));
@@ -345,7 +375,11 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
 
 /// Extracts version from template using regex capture groups.
 /// Template format: "version:\\1" where \\1 refers to capture group 1
-fn extract_version_from_template(template: &str, captures: &regex::Captures) -> Option<String> {
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn extract_version_from_template(
+    template: &str,
+    captures: &regex::Captures,
+) -> Option<String> {
     if !template.starts_with("version:") {
         return None;
     }
@@ -358,14 +392,30 @@ fn extract_version_from_template(template: &str, captures: &regex::Captures) -> 
     // Replace \1, \2, etc. with actual capture group values
     // In the template string, \1 is stored as a single backslash followed by 1
     // We need to match both \\1 (escaped in Rust string) and \1 (from JSON)
+    // IMPORTANT: Only replace placeholders that actually exist in the template
+    // Replace in reverse order (highest first) to avoid partial matches (e.g., \10 vs \1)
     let mut result = version_expr.to_string();
-    for i in 1..captures.len() {
-        if let Some(cap_value) = captures.get(i) {
-            // Try both \\1 (double backslash - Rust string literal) and \1 (single backslash - from JSON)
-            let placeholder_double = format!("\\\\{}", i);
-            let placeholder_single = format!("\\{}", i);
-            result = result.replace(&placeholder_double, cap_value.as_str());
-            result = result.replace(&placeholder_single, cap_value.as_str());
+
+    // Find which placeholders are actually in the template (check \1 through \9)
+    let mut placeholders_in_template = std::collections::HashSet::new();
+    for i in 1..=9 {
+        let placeholder_double = format!("\\\\{}", i);
+        let placeholder_single = format!("\\{}", i);
+        if result.contains(&placeholder_double) || result.contains(&placeholder_single) {
+            placeholders_in_template.insert(i);
+        }
+    }
+
+    // Replace placeholders in reverse order (highest first) to avoid partial matches
+    for i in (1..captures.len()).rev() {
+        if placeholders_in_template.contains(&i) {
+            if let Some(cap_value) = captures.get(i) {
+                // Try both \\1 (double backslash - Rust string literal) and \1 (single backslash - from JSON)
+                let placeholder_double = format!("\\\\{}", i);
+                let placeholder_single = format!("\\{}", i);
+                result = result.replace(&placeholder_double, cap_value.as_str());
+                result = result.replace(&placeholder_single, cap_value.as_str());
+            }
         }
     }
 
@@ -382,7 +432,23 @@ fn extract_version_from_template(template: &str, captures: &regex::Captures) -> 
     if result.is_empty() {
         None
     } else {
-        Some(result.trim().to_string())
+        let trimmed = result.trim().to_string();
+
+        // Sanity check: if version contains semicolon and we only had \1 in template,
+        // something went wrong. Take only the first part before semicolon.
+        // This prevents issues like "64;5.3" when template was just "\1"
+        if trimmed.contains(';') {
+            // Check if template had multiple placeholders (like \1;\2) - if so, semicolon is intentional
+            let has_multiple_placeholders = version_expr.matches(r"\d+").count() > 1;
+            if !has_multiple_placeholders {
+                // Template only had one placeholder, but we got semicolon - take first part only
+                let first_part = trimmed.split(';').next().unwrap_or(&trimmed).trim();
+                if !first_part.is_empty() {
+                    return Some(first_part.to_string());
+                }
+            }
+        }
+        Some(trimmed)
     }
 }
 
@@ -556,7 +622,7 @@ mod tests {
     #[test]
     fn test_check_meta_patterns_simple_name() {
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+        meta_tags.insert("name:generator".to_string(), vec!["WordPress".to_string()]);
 
         assert!(check_meta_patterns("generator", &["WordPress".to_string()], &meta_tags).matched);
         assert!(!check_meta_patterns("generator", &["Drupal".to_string()], &meta_tags).matched);
@@ -565,7 +631,10 @@ mod tests {
     #[test]
     fn test_check_meta_patterns_property_prefix() {
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("property:og:title".to_string(), "My Title".to_string());
+        meta_tags.insert(
+            "property:og:title".to_string(),
+            vec!["My Title".to_string()],
+        );
 
         assert!(
             check_meta_patterns("property:og:title", &["My Title".to_string()], &meta_tags).matched
@@ -585,7 +654,7 @@ mod tests {
         let mut meta_tags = HashMap::new();
         meta_tags.insert(
             "http-equiv:content-type".to_string(),
-            "text/html".to_string(),
+            vec!["text/html".to_string()],
         );
 
         assert!(
@@ -602,7 +671,10 @@ mod tests {
     fn test_check_meta_patterns_tries_all_prefixes() {
         // Simple key should try name:, property:, and http-equiv:
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("property:generator".to_string(), "WordPress".to_string());
+        meta_tags.insert(
+            "property:generator".to_string(),
+            vec!["WordPress".to_string()],
+        );
 
         // Should find it via property: prefix
         assert!(check_meta_patterns("generator", &["WordPress".to_string()], &meta_tags).matched);
@@ -612,7 +684,7 @@ mod tests {
     fn test_check_meta_patterns_case_insensitive_key() {
         let mut meta_tags = HashMap::new();
         // Key is lowercased in the function, so we need to use lowercase in the map
-        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+        meta_tags.insert("name:generator".to_string(), vec!["WordPress".to_string()]);
 
         // Key should be lowercased when looking up
         assert!(check_meta_patterns("GENERATOR", &["WordPress".to_string()], &meta_tags).matched);
@@ -621,7 +693,10 @@ mod tests {
     #[test]
     fn test_check_meta_patterns_multiple_patterns() {
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress 5.0".to_string());
+        meta_tags.insert(
+            "name:generator".to_string(),
+            vec!["WordPress 5.0".to_string()],
+        );
 
         // Should match if any pattern matches
         assert!(
@@ -643,7 +718,7 @@ mod tests {
     #[test]
     fn test_check_meta_patterns_empty_patterns() {
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+        meta_tags.insert("name:generator".to_string(), vec!["WordPress".to_string()]);
 
         // Empty patterns should not match
         assert!(!check_meta_patterns("generator", &[], &meta_tags).matched);
@@ -652,7 +727,10 @@ mod tests {
     #[test]
     fn test_check_meta_patterns_regex_in_patterns() {
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress 5.0".to_string());
+        meta_tags.insert(
+            "name:generator".to_string(),
+            vec!["WordPress 5.0".to_string()],
+        );
 
         // Patterns can contain regex
         assert!(check_meta_patterns("generator", &["^WordPress".to_string()], &meta_tags).matched);
@@ -823,7 +901,7 @@ mod tests {
     fn test_check_meta_patterns_malformed_prefix() {
         // Test edge cases with malformed prefixes
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+        meta_tags.insert("name:generator".to_string(), vec!["WordPress".to_string()]);
 
         // Key with double prefix (should not match)
         assert!(
@@ -844,7 +922,7 @@ mod tests {
         // Test with empty key (edge case)
         // Empty key will try to match "name:", "property:", "http-equiv:" prefixes
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:".to_string(), "value".to_string());
+        meta_tags.insert("name:".to_string(), vec!["value".to_string()]);
 
         // Empty key will try "name:" which exists, so it will check patterns
         // This is actually valid behavior - empty key matches "name:" meta tag
@@ -909,7 +987,7 @@ mod tests {
     fn test_check_meta_patterns_empty_patterns_vector() {
         // Test with empty patterns vector (edge case)
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress".to_string());
+        meta_tags.insert("name:generator".to_string(), vec!["WordPress".to_string()]);
 
         // Empty patterns should not match
         assert!(!check_meta_patterns("generator", &[], &meta_tags).matched);
@@ -919,9 +997,9 @@ mod tests {
     fn test_check_meta_patterns_multiple_prefixes_same_key() {
         // Test that simple key tries all prefixes correctly
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:test".to_string(), "value1".to_string());
-        meta_tags.insert("property:test".to_string(), "value2".to_string());
-        meta_tags.insert("http-equiv:test".to_string(), "value3".to_string());
+        meta_tags.insert("name:test".to_string(), vec!["value1".to_string()]);
+        meta_tags.insert("property:test".to_string(), vec!["value2".to_string()]);
+        meta_tags.insert("http-equiv:test".to_string(), vec!["value3".to_string()]);
 
         // Should match if any prefix matches
         assert!(check_meta_patterns("test", &["value1".to_string()], &meta_tags).matched);
@@ -936,7 +1014,10 @@ mod tests {
         // Content: WordPress 6.8.3
         // Should extract version: 6.8.3
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress 6.8.3".to_string());
+        meta_tags.insert(
+            "name:generator".to_string(),
+            vec!["WordPress 6.8.3".to_string()],
+        );
 
         let result = check_meta_patterns(
             "generator",
@@ -949,6 +1030,37 @@ mod tests {
             result.version,
             Some("6.8.3".to_string()),
             "Should extract WordPress version 6.8.3"
+        );
+    }
+
+    #[test]
+    fn test_matches_pattern_with_version_template() {
+        // Test pattern with version template
+        let pattern = r"^version ([\d.]+)\;version:\1";
+        let text = "version 5.0";
+
+        let result = matches_pattern(pattern, text);
+
+        assert!(result.matched, "Should match pattern");
+        assert_eq!(
+            result.version,
+            Some("5.0".to_string()),
+            "Should extract version 5.0"
+        );
+    }
+
+    #[test]
+    fn test_matches_pattern_ignores_non_version_template() {
+        // Test that patterns with metadata (not starting with "version:") are ignored
+        let pattern = r"^test\;metadata:value";
+        let text = "test";
+
+        let result = matches_pattern(pattern, text);
+
+        assert!(result.matched, "Should match pattern");
+        assert_eq!(
+            result.version, None,
+            "Should not extract version when template doesn't start with 'version:'"
         );
     }
 }

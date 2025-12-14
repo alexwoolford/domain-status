@@ -3,14 +3,22 @@
 //! This module provides functions to check if technologies match based on
 //! their patterns and available data.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::fingerprint::models::{FingerprintRuleset, Technology};
+use crate::fingerprint::models::FingerprintRuleset;
+#[cfg(test)]
+use crate::fingerprint::models::Technology;
+#[cfg(test)]
 use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
 
 /// Checks if a technology can potentially match based on available data.
 ///
 /// Returns `false` if the technology requires data that we don't have, allowing early exit.
+///
+/// # Note
+/// This function is currently only used in tests. The main detection flow uses
+/// `check_headers`, `check_cookies`, and `check_body` instead.
+#[cfg(test)]
 pub(crate) fn can_technology_match(
     tech: &Technology,
     has_cookies: bool,
@@ -131,17 +139,23 @@ pub(crate) fn apply_technology_exclusions(
 ///
 /// This struct groups all parameters needed to match a technology, reducing
 /// function argument count and improving maintainability.
+///
+/// # Note
+/// This struct is currently only used in tests. The main detection flow uses
+/// `check_headers`, `check_cookies`, and `check_body` instead.
+#[cfg(test)]
 pub struct TechnologyMatchParams<'a> {
     /// The technology to match
     pub tech: &'a Technology,
     /// The technology name (for exclusions and special cases)
+    #[allow(dead_code)]
     pub tech_name: &'a str,
     /// HTTP headers (normalized to lowercase)
-    pub headers: &'a HashMap<String, String>,
+    pub headers: &'a std::collections::HashMap<String, String>,
     /// HTTP cookies (normalized to lowercase)
-    pub cookies: &'a HashMap<String, String>,
+    pub cookies: &'a std::collections::HashMap<String, String>,
     /// HTML meta tags
-    pub meta_tags: &'a HashMap<String, String>,
+    pub meta_tags: &'a std::collections::HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name
     /// Script source URLs
     pub script_sources: &'a [String],
     /// HTML text content
@@ -155,6 +169,11 @@ pub struct TechnologyMatchParams<'a> {
 }
 
 /// Result of technology matching with optional version
+///
+/// # Note
+/// This struct is currently only used in tests. The main detection flow uses
+/// `HeaderMatchResult`, `CookieMatchResult`, and `BodyMatchResult` instead.
+#[cfg(test)]
 pub struct TechnologyMatchResult {
     pub matched: bool,
     pub version: Option<String>,
@@ -175,6 +194,11 @@ pub struct TechnologyMatchResult {
 /// Technologies with no patterns (empty script, html, js, headers, cookies, meta, url)
 /// will never match. This is by design - if a technology has no detection patterns,
 /// it cannot be detected.
+///
+/// # Note
+/// This function is currently only used in tests. The main detection flow uses
+/// `check_headers`, `check_cookies`, and `check_body` instead.
+#[cfg(test)]
 pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> TechnologyMatchResult {
     // If technology has no patterns at all, it cannot match
     // This handles cases like Brightcove which has empty patterns in the ruleset
@@ -199,6 +223,7 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> Tec
     // (meta) to find a version, as wappalyzergo takes the first version found across all patterns
     let mut header_matched = false;
     let mut header_version: Option<String> = None;
+
     for (header_name, pattern) in &params.tech.headers {
         if let Some(header_value) = params.headers.get(header_name) {
             if pattern.is_empty() {
@@ -340,133 +365,37 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> Tec
     let mut matched_version: Option<String> = None;
     let mut has_match = false;
 
-    // Detailed logging for debugging - trace exact execution path
-    let is_jquery = params.tech_name.eq_ignore_ascii_case("jquery");
-    let is_jsdelivr = params.tech_name.eq_ignore_ascii_case("jsdelivr");
-    if is_jquery || is_jsdelivr {
-        log::info!(
-            "[TRACE] Checking {}: {} script sources, {} script patterns",
-            params.tech_name,
-            params.script_sources.len(),
-            params.tech.script.len()
-        );
-        for (idx, pattern) in params.tech.script.iter().enumerate() {
-            log::info!("[TRACE]   Pattern {}: '{}'", idx, pattern);
-        }
-    }
-
     // Iterate through scripts first (matching wappalyzergo's behavior)
-    for (script_idx, script_src) in params.script_sources.iter().enumerate() {
-        if is_jquery || is_jsdelivr {
-            log::info!("[TRACE] Checking script {}: '{}'", script_idx, script_src);
-        }
+    for script_src in params.script_sources {
         // For each script, check all patterns and take the first version found
-        for (pattern_idx, pattern) in params.tech.script.iter().enumerate() {
+        for pattern in &params.tech.script {
             let result = matches_pattern(pattern, script_src);
-
-            // Always log for jQuery/jsDelivr to trace execution
-            if is_jquery || is_jsdelivr {
-                log::info!(
-                    "[TRACE]   Pattern {} '{}' vs script '{}' -> matched={}, version={:?}",
-                    pattern_idx,
-                    pattern,
-                    script_src,
-                    result.matched,
-                    result.version
-                );
-            } else {
-                // Log attempts for other high-value technologies
-                let high_value_patterns = [
-                    "brightcove",
-                    "react",
-                    "salesforce",
-                    "adobe",
-                    "omniture",
-                    "baidu",
-                    "google",
-                    "gtag",
-                    "analytics",
-                    "wp-content",
-                    "wp-includes",
-                    "wordpress",
-                ];
-                if high_value_patterns
-                    .iter()
-                    .any(|p| pattern.to_lowercase().contains(p))
-                {
-                    log::debug!(
-                        "Script pattern check: pattern '{}' vs script '{}' -> {} (version: {:?})",
-                        pattern,
-                        script_src,
-                        result.matched,
-                        result.version
-                    );
-                }
-            }
 
             if result.matched {
                 has_match = true;
-                if is_jquery || is_jsdelivr {
-                    log::info!(
-                        "[TRACE]   ✓ MATCHED! Pattern {} '{}' matched script '{}' (version: {:?})",
-                        pattern_idx,
-                        pattern,
-                        script_src,
-                        result.version
-                    );
-                } else {
-                    log::debug!(
-                        "Technology matched via script src: pattern '{}' matched '{}' (version: {:?})",
-                        pattern,
-                        script_src,
-                        result.version
-                    );
-                }
+                log::debug!(
+                    "Technology matched via script src: pattern '{}' matched '{}' (version: {:?})",
+                    pattern,
+                    script_src,
+                    result.version
+                );
                 // wappalyzergo behavior: take the first version found (from first script that matches)
                 // Once we have a version from this script, we can stop checking other patterns for this script
                 if matched_version.is_none() && result.version.is_some() {
                     matched_version = result.version.clone();
-                    if is_jquery || is_jsdelivr {
-                        log::info!("[TRACE]   Set version to: {:?}", matched_version);
-                    }
                 }
                 // If we already have a version, we can break (first version wins)
-                // But we still need to check if any pattern matches (for has_match flag)
                 if matched_version.is_some() {
-                    if is_jquery || is_jsdelivr {
-                        log::info!("[TRACE]   Breaking pattern loop - version found");
-                    }
                     break; // Found version from this script, move to next script
-                } else if is_jquery || is_jsdelivr {
-                    log::info!(
-                        "[TRACE]   Pattern matched without version, continuing to check other patterns"
-                    );
-                } else {
-                    log::debug!(
-                        "Script pattern matched without version, will continue checking other patterns for version"
-                    );
                 }
             }
         }
         // If we found a match with a version, we can return early (first version wins)
-        // But we still need to check all scripts to see if any match (for has_match flag)
-        // Actually, wappalyzergo takes the first version found, so we can return once we have it
         if has_match && matched_version.is_some() {
-            if is_jquery || is_jsdelivr {
-                log::info!("[TRACE] Breaking script loop - match with version found");
-            }
             break; // Found first version, stop checking other scripts
         }
     }
 
-    if is_jquery || is_jsdelivr {
-        log::info!(
-            "[TRACE] Final result for {}: has_match={}, version={:?}",
-            params.tech_name,
-            has_match,
-            matched_version
-        );
-    }
     if has_match {
         // If we found a version from script patterns, return it
         if matched_version.is_some() {
@@ -566,6 +495,7 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> Tec
 mod tests {
     use super::*;
     use crate::fingerprint::models::Technology;
+    use std::collections::HashMap;
 
     fn create_empty_technology() -> Technology {
         Technology {
@@ -715,15 +645,15 @@ mod tests {
         ));
 
         // Even if script tag ID exists, should still return false (JS patterns are disabled)
-        let mut _script_tag_ids = HashSet::new();
-        _script_tag_ids.insert("__NEXT_DATA__".to_string());
+        let mut script_tag_ids = HashSet::new();
+        script_tag_ids.insert("__NEXT_DATA__".to_string());
         assert!(!can_technology_match(
             &tech,
             true,
             true,
             true,
             true,
-            &_script_tag_ids
+            &script_tag_ids
         ));
     }
 
@@ -1240,7 +1170,10 @@ mod tests {
         ); // Meta pattern with version
 
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:generator".to_string(), "WordPress 6.8.3".to_string());
+        meta_tags.insert(
+            "name:generator".to_string(),
+            vec!["WordPress 6.8.3".to_string()],
+        );
 
         let params = TechnologyMatchParams {
             tech: &tech,

@@ -779,7 +779,7 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 
 ## 🔨 Development
 
-See [AI_AGENTS.md](AI_AGENTS.md) for development guidelines and conventions.
+See [AGENTS.md](AGENTS.md) for development guidelines and conventions.
 
 See [TESTING.md](TESTING.md) for detailed information about:
 - Test structure (unit, integration, e2e)

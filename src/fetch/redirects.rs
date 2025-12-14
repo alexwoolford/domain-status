@@ -48,9 +48,10 @@ fn is_redirect_status(status_code: u16) -> bool {
 ///
 /// # Returns
 ///
-/// A tuple of (final_url, redirect_chain) where:
+/// A tuple of (final_url, redirect_chain, alt_svc_header) where:
 /// - `final_url` is the final URL after all redirects
 /// - `redirect_chain` is a vector of all URLs in the chain (including final URL)
+/// - `alt_svc_header` is the alt-svc header from the first response (for HTTP/3 detection)
 ///
 /// # Errors
 ///
@@ -59,7 +60,7 @@ pub async fn resolve_redirect_chain(
     start_url: &str,
     max_hops: usize,
     client: &reqwest::Client,
-) -> Result<(String, Vec<String>), Error> {
+) -> Result<(String, Vec<String>, Option<String>), Error> {
     // Validate max_hops
     if max_hops == 0 {
         return Err(anyhow::anyhow!("max_hops must be > 0"));
@@ -69,6 +70,9 @@ pub async fn resolve_redirect_chain(
     let mut chain: Vec<String> = Vec::with_capacity(max_hops + 1);
     let mut current = start_url.to_string();
     let mut last_fetched_url = start_url.to_string(); // Track the last URL we actually fetched
+    let mut alt_svc_header: Option<String> = None; // Capture alt-svc from any response in redirect chain (for HTTP/3 detection)
+                                                   // Note: Go's http.Client automatically follows redirects and exposes alt-svc in the final response
+                                                   // We manually follow redirects, so we need to check ALL responses in the chain for alt-svc
 
     for hop_num in 0..max_hops {
         // Clone current URL into chain (necessary since we'll modify current)
@@ -84,6 +88,25 @@ pub async fn resolve_redirect_chain(
         let resp = RequestHeaders::apply_to_request_builder(client.get(&current))
             .send()
             .await?;
+
+        // Capture alt-svc header from ANY response in the redirect chain (for HTTP/3 detection)
+        // Go's http.Client exposes alt-svc in the final response after automatic redirect following
+        // We need to check all responses and use the last one found (matching Go's behavior)
+        // Check this response for alt-svc (case-insensitive)
+        for (name, value) in resp.headers().iter() {
+            if name.as_str().eq_ignore_ascii_case("alt-svc") {
+                if let Ok(alt_svc_str) = value.to_str() {
+                    alt_svc_header = Some(alt_svc_str.to_string());
+                    log::debug!(
+                        "[HTTP/3 DEBUG] ✓ Captured alt-svc header from response {}: {} = {}",
+                        hop_num,
+                        name.as_str(),
+                        alt_svc_str
+                    );
+                    break;
+                }
+            }
+        }
 
         // Only follow redirects if the status code indicates a redirect AND there's a Location header
         let status = resp.status();
@@ -180,7 +203,7 @@ pub async fn resolve_redirect_chain(
         chain.push(final_url.clone());
     }
 
-    Ok((final_url, chain))
+    Ok((final_url, chain, alt_svc_header))
 }
 
 #[cfg(test)]
@@ -202,7 +225,7 @@ mod tests {
             .unwrap();
 
         let url = server.url("/").to_string();
-        let (final_url, chain) = resolve_redirect_chain(&url, 10, &client).await.unwrap();
+        let (final_url, chain, _alt_svc) = resolve_redirect_chain(&url, 10, &client).await.unwrap();
 
         assert_eq!(final_url, url);
         assert_eq!(chain.len(), 1);
@@ -232,7 +255,7 @@ mod tests {
             .unwrap();
 
         let start_url = server.url("/").to_string();
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -274,7 +297,7 @@ mod tests {
         // Iteration 1: Add url1, request, redirect to url2, but we're at max_hops-1, so we break
         // Result: chain has 2 URLs (start_url, url1), final = url1 (the last URL we actually fetched)
         // We do NOT return url2 because we never fetched it - we hit the redirect limit
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 2, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 2, &client)
             .await
             .unwrap();
 
@@ -323,7 +346,7 @@ mod tests {
             .unwrap();
 
         let start_url = server.url("/start").to_string();
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -349,7 +372,7 @@ mod tests {
 
         let start_url = server.url("/").to_string();
         // Should break out of loop when redirect status but no Location header
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -383,7 +406,7 @@ mod tests {
             .unwrap();
 
         let start_url = server.url("/301").to_string();
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -411,7 +434,7 @@ mod tests {
 
         let start_url = server.url("/").to_string();
         // Should handle gracefully - if no Location header or invalid, should break loop
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -466,7 +489,7 @@ mod tests {
                 .unwrap();
 
             let start_url = server.url("/start").to_string();
-            let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+            let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
                 .await
                 .unwrap();
 
@@ -510,7 +533,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain) = resolve_redirect_chain(&base_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&base_url, 10, &client)
             .await
             .unwrap();
 
@@ -537,7 +560,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -566,7 +589,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -594,7 +617,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -627,7 +650,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 10, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 10, &client)
             .await
             .unwrap();
 
@@ -671,7 +694,8 @@ mod tests {
             .unwrap();
 
         // With max_hops=5, should stop after 5 hops (A -> B -> A -> B -> A)
-        let (result_final, chain) = resolve_redirect_chain(&url_a, 5, &client).await.unwrap();
+        let (result_final, chain, _alt_svc) =
+            resolve_redirect_chain(&url_a, 5, &client).await.unwrap();
 
         // Should stop at max_hops, not loop infinitely
         // Chain should contain: [A, B, A, B, A] (5 hops)
@@ -700,7 +724,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain) = resolve_redirect_chain(&start_url, 1, &client)
+        let (result_final, chain, _alt_svc) = resolve_redirect_chain(&start_url, 1, &client)
             .await
             .unwrap();
 
@@ -746,7 +770,7 @@ mod tests {
         // contains invalid UTF-8, to_str() at line 96 will fail and break the chain
         // This test verifies the redirect resolution works correctly
         assert!(result.is_ok());
-        let (_final_url, chain) = result.unwrap();
+        let (_final_url, chain, _alt_svc) = result.unwrap();
         assert!(!chain.is_empty());
     }
 }

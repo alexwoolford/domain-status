@@ -3,6 +3,9 @@
 //! This module provides the main technology detection function that matches
 //! fingerprint rules against extracted HTML data, headers, cookies, and URL patterns.
 
+mod body;
+mod cookies;
+mod headers;
 mod matching;
 mod utils;
 
@@ -12,7 +15,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::fingerprint::ruleset::get_ruleset;
 
-use matching::{apply_technology_exclusions, can_technology_match, matches_technology};
+use body::check_body;
+use cookies::check_cookies;
+use headers::check_headers;
+use matching::apply_technology_exclusions;
 use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 
 /// Detects technologies from extracted HTML data, headers, and URL.
@@ -29,7 +35,7 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 ///
 /// # Arguments
 ///
-/// * `meta_tags` - Map of meta tag name/property/http-equiv -> content
+/// * `meta_tags` - Map of meta tag name/property/http-equiv -> Vec of content values (multiple tags with same name are stored as Vec)
 /// * `script_sources` - Vector of script src URLs
 /// * `script_content` - Inline script content for js field detection
 /// * `html_text` - HTML text content (first 50KB) - DEPRECATED, use html_body instead
@@ -37,17 +43,25 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 /// * `headers` - HTTP response headers
 /// * `url` - The URL being analyzed
 /// * `script_tag_ids` - Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
+///
+/// Technology detection result with name and optional version.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DetectedTechnology {
+    pub name: String,
+    pub version: Option<String>,
+}
+
 pub async fn detect_technologies(
-    meta_tags: &HashMap<String, String>,
+    meta_tags: &HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name
     script_sources: &[String],
     script_content: &str,
     html_body: &str, // Full normalized body for HTML pattern matching (wappalyzergo behavior)
     headers: &HeaderMap,
     url: &str,
-    script_tag_ids: &HashSet<String>,
-) -> Result<HashSet<String>> {
-    // Get the ruleset
-    let ruleset = get_ruleset()
+    _script_tag_ids: &HashSet<String>,
+) -> Result<Vec<DetectedTechnology>> {
+    // Get the ruleset (needed for implied technologies and exclusions later)
+    let _ = get_ruleset()
         .await
         .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() first"))?;
 
@@ -62,190 +76,143 @@ pub async fn detect_technologies(
         script_sources.len()
     );
 
-    // Pre-filter technologies for early exit optimization
-    let has_cookies = !cookies.is_empty();
-    let has_headers = !header_map.is_empty();
-    let has_meta = !meta_tags.is_empty();
-    let has_scripts = !script_sources.is_empty();
+    // wappalyzergo order: headers → cookies → body (HTML, scriptSrc, meta)
+    // We match in the same order for consistency
+    #[derive(Clone)]
+    struct TechInfo {
+        version: Option<String>,
+    }
+    let mut detected: HashMap<String, TechInfo> = HashMap::with_capacity(32);
 
-    // Note: We only use inline script content (matches WappalyzerGo's behavior)
-    // WappalyzerGo does NOT fetch external scripts - it only analyzes the initial HTML
-    // JS property matching is disabled - we only match via script tag IDs (WappalyzerGo behavior)
-    // Script source patterns match against URLs from HTML, not fetched content
+    // 1. Check headers (wappalyzergo: checkHeaders())
+    let header_results = check_headers(&header_map).await?;
+    for result in header_results {
+        detected
+            .entry(result.tech_name.clone())
+            .and_modify(|existing| {
+                if existing.version.is_none() && result.version.is_some() {
+                    existing.version = result.version.clone();
+                }
+            })
+            .or_insert(TechInfo {
+                version: result.version,
+            });
+    }
 
-    // Match each technology (now using batch JS results)
-    // Pre-allocate HashMap to store technologies with versions
-    // Format: "Technology:version" or just "Technology" if no version
-    let mut detected: HashMap<String, Option<String>> = HashMap::with_capacity(32);
-    let mut checked_count = 0;
-    let mut skipped_count = 0;
-    for (tech_name, tech) in &ruleset.technologies {
-        // Debug: log if we're checking jsDelivr
-        if tech_name.eq_ignore_ascii_case("jsdelivr") {
-            log::info!(
-                "[DEBUG] Found jsDelivr in ruleset: script patterns={}, can_match check starting...",
-                tech.script.len()
-            );
-        }
-
-        // Early exit: skip technologies that can't match
-        let can_match = can_technology_match(
-            tech,
-            has_cookies,
-            has_headers,
-            has_meta,
-            has_scripts,
-            script_tag_ids,
-        );
-
-        if tech_name.eq_ignore_ascii_case("jsdelivr") {
-            log::info!(
-                "[DEBUG] jsDelivr can_technology_match result: {} (has_scripts={}, tech.script.len()={})",
-                can_match,
-                has_scripts,
-                tech.script.len()
-            );
-        }
-
-        if !can_match {
-            skipped_count += 1;
-            continue;
-        }
-        checked_count += 1;
-
-        // Log when checking high-value technologies for debugging
-        let high_value_techs = [
-            "jQuery",
-            "React",
-            "Google Analytics",
-            "Salesforce",
-            "Adobe DTM",
-            "Omniture",
-            "Brightcove",
-            "WordPress",
-            "Drupal",
-            "jsDelivr",
-        ];
-        if high_value_techs.contains(&tech_name.as_str()) {
-            log::debug!(
-                "Checking {}: {} headers, {} cookies, {} meta, {} script patterns, {} html patterns, {} js properties",
-                tech_name,
-                tech.headers.len(),
-                tech.cookies.len(),
-                tech.meta.len(),
-                tech.script.len(),
-                tech.html.len(),
-                tech.js.len()
-            );
-        }
-
-        let match_result = matches_technology(matching::TechnologyMatchParams {
-            tech,
-            tech_name,
-            headers: &header_map,
-            cookies: &cookies,
-            meta_tags,
-            script_sources,
-            html_text: html_body, // Use full normalized body for HTML pattern matching
-            url,
-            script_tag_ids,
-        })
-        .await;
-
-        if match_result.matched {
-            // Store technology with version (if any)
-            // wappalyzergo behavior: if version already exists, keep it; if not, use new version
-            // This means we check all patterns and take the first version we find
-            if tech_name.eq_ignore_ascii_case("jsdelivr") {
-                log::info!("[DEBUG] jsDelivr matched! Storing in detected HashMap");
-            }
+    // 2. Check cookies (wappalyzergo: checkCookies())
+    if !cookies.is_empty() {
+        let cookie_results = check_cookies(&cookies).await?;
+        for result in cookie_results {
             detected
-                .entry(tech_name.clone())
-                .and_modify(|existing_version| {
-                    // If we already have a version, keep it (first one wins)
-                    // If we don't have a version but new match has one, use it
-                    if existing_version.is_none() && match_result.version.is_some() {
-                        *existing_version = match_result.version.clone();
+                .entry(result.tech_name.clone())
+                .and_modify(|existing| {
+                    if existing.version.is_none() && result.version.is_some() {
+                        existing.version = result.version.clone();
                     }
                 })
-                .or_insert(match_result.version.clone());
-
-            if tech_name.eq_ignore_ascii_case("jsdelivr") {
-                log::info!(
-                    "[DEBUG] jsDelivr stored in detected HashMap: {:?}",
-                    detected.get(tech_name)
-                );
-            }
-
-            let tech_display = if let Some(ref version) = match_result.version {
-                format!("{}:{}", tech_name, version)
-            } else {
-                tech_name.clone()
-            };
-            log::debug!("Detected technology: {}", tech_display);
-
-            // Add implied technologies (without versions, as wappalyzergo does)
-            for implied in &tech.implies {
-                detected.entry(implied.clone()).or_insert(None);
-                log::debug!("Added implied technology: {} (from {})", implied, tech_name);
-            }
-
-            // Special case: "All in One SEO" and "All in One SEO Pack" are detected together by wappalyzergo
-            // When "All in One SEO" is detected, also detect "All in One SEO Pack" with the same version
-            if tech_name == "All in One SEO" {
-                detected
-                    .entry("All in One SEO Pack".to_string())
-                    .or_insert(match_result.version.clone());
-                log::debug!("Added All in One SEO Pack (same version as All in One SEO)");
-            }
+                .or_insert(TechInfo {
+                    version: result.version,
+                });
         }
     }
 
-    // Convert HashMap to HashSet with formatted names (Technology:version or Technology)
-    let mut detected_formatted = HashSet::with_capacity(detected.len());
-    for (tech_name, version) in &detected {
-        let formatted_name = if let Some(ref ver) = version {
-            format!("{}:{}", tech_name, ver)
-        } else {
-            tech_name.clone()
-        };
-        detected_formatted.insert(formatted_name);
+    // 3. Check body (wappalyzergo: checkBody())
+    // This includes HTML patterns, script sources, meta tags, and URL patterns
+    let body_results = check_body(html_body, script_sources, meta_tags, url).await?;
+    for result in body_results {
+        detected
+            .entry(result.tech_name.clone())
+            .and_modify(|existing| {
+                if existing.version.is_none() && result.version.is_some() {
+                    existing.version = result.version.clone();
+                }
+            })
+            .or_insert(TechInfo {
+                version: result.version,
+            });
     }
 
-    // Remove excluded technologies
-    let detected_count = detected_formatted.len();
-    let has_jsdelivr_before = detected_formatted
-        .iter()
-        .any(|t| t.eq_ignore_ascii_case("jsdelivr"));
-    if has_jsdelivr_before {
-        log::info!(
-            "[DEBUG] jsDelivr in detected_formatted before exclusions: {:?}",
-            detected_formatted
-                .iter()
-                .find(|t| t.eq_ignore_ascii_case("jsdelivr"))
-        );
+    // Add implied technologies (wappalyzergo adds these after each match)
+    let ruleset = get_ruleset()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized"))?;
+
+    let mut implied_to_add = Vec::new();
+    for tech_name in detected.keys() {
+        // Extract base tech name (strip version if present) for ruleset lookup
+        let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
+            &tech_name[..colon_pos]
+        } else {
+            tech_name
+        };
+
+        if let Some(tech) = ruleset.technologies.get(base_tech_name) {
+            for implied in &tech.implies {
+                // wappalyzergo's Fingerprint() uses implies string directly (fingerprints.go:271)
+                // but FingerprintWithInfo() filters to only include techs that exist in the ruleset
+                // (tech.go:263-265). Since we're storing to a database (like FingerprintWithInfo),
+                // we filter out implies that don't exist as technologies.
+                // wappalyzergo adds implies without version (fingerprints.go:270-273)
+                // Implied technologies should extract their own versions from their own patterns,
+                // not inherit the parent's version
+                implied_to_add.push((implied.to_string(), TechInfo { version: None }));
+            }
+        }
     }
-    let final_detected = apply_technology_exclusions(detected_formatted, &ruleset);
-    let has_jsdelivr_after = final_detected
-        .iter()
-        .any(|t| t.eq_ignore_ascii_case("jsdelivr"));
-    if has_jsdelivr_before && !has_jsdelivr_after {
-        log::warn!("[DEBUG] jsDelivr was excluded by another technology!");
-    } else if has_jsdelivr_after {
-        log::info!("[DEBUG] jsDelivr in final_detected after exclusions");
+    for (implied_name, tech_info) in implied_to_add {
+        // Filter: only add implies that exist as technologies in the ruleset
+        // This matches wappalyzergo's FingerprintWithInfo() behavior (tech.go:263-265)
+        if ruleset.technologies.contains_key(&implied_name) {
+            detected.entry(implied_name).or_insert(tech_info);
+        }
     }
-    let final_count = final_detected.len();
+
+    // Convert HashMap to Vec of structured data (name + version)
+    // This avoids formatting to strings and parsing them back, which causes issues
+    // with tech names that contain colons (e.g., "Acquia Cloud Platform\;confidence:95")
+    let detected_vec: Vec<(String, Option<String>)> = detected
+        .iter()
+        .map(|(name, info)| (name.clone(), info.version.clone()))
+        .collect();
+
+    // Remove excluded technologies (need to check against formatted names for exclusions)
+    let detected_formatted_for_exclusions: HashSet<String> = detected_vec
+        .iter()
+        .map(|(name, version)| {
+            if let Some(ref ver) = version {
+                format!("{}:{}", name, ver)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+    let final_detected_formatted =
+        apply_technology_exclusions(detected_formatted_for_exclusions, &ruleset);
+
+    // Filter detected_vec to only include technologies that weren't excluded
+    let final_detected: Vec<(String, Option<String>)> = detected_vec
+        .into_iter()
+        .filter(|(name, version)| {
+            let formatted = if let Some(ref ver) = version {
+                format!("{}:{}", name, ver)
+            } else {
+                name.clone()
+            };
+            final_detected_formatted.contains(&formatted)
+        })
+        .collect();
 
     log::debug!(
-        "Technology detection summary for {}: checked {} technologies ({} skipped by early exit), {} detected ({} after exclusions)",
+        "Technology detection summary for {}: {} detected ({} after exclusions)",
         url,
-        checked_count,
-        skipped_count,
-        detected_count,
-        final_count
+        detected.len(),
+        final_detected.len()
     );
 
-    Ok(final_detected)
+    Ok(final_detected
+        .into_iter()
+        .map(|(name, version)| DetectedTechnology { name, version })
+        .collect())
 }
 
 /// Gets the category name for a technology, if available.
@@ -322,10 +289,12 @@ mod tests {
         if let Ok(detected) = result {
             // jQuery should be detected via script pattern
             // JavaScript should be implied
+            let tech_names: Vec<String> = detected.iter().map(|t| t.name.clone()).collect();
             assert!(
-                detected.contains("jQuery") || detected.contains("JavaScript"),
+                tech_names.contains(&"jQuery".to_string())
+                    || tech_names.contains(&"JavaScript".to_string()),
                 "Expected jQuery or JavaScript, got: {:?}",
-                detected
+                tech_names
             );
         }
     }
@@ -385,7 +354,7 @@ mod tests {
 
         // This test is implicit - if circular implies caused issues, detect_technologies would hang
         // The HashSet prevents duplicates, so circular implies are safe
-        let _result = detect_technologies(
+        detect_technologies(
             &meta_tags,
             &script_sources,
             "",
@@ -394,7 +363,8 @@ mod tests {
             "https://example.com",
             &HashSet::new(),
         )
-        .await;
+        .await
+        .expect("Should not hang on circular implies");
     }
 
     #[tokio::test]
@@ -408,7 +378,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         // This is tested implicitly - exclusions are applied after implies are added
-        let _result = detect_technologies(
+        let _ = detect_technologies(
             &meta_tags,
             &script_sources,
             "",

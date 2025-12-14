@@ -313,9 +313,10 @@ pub async fn export_csv(
             .map(|r| r.get::<String, _>("url"))
             .unwrap_or_else(|| final_domain.clone());
 
+        // Format technologies as "Technology:version" or "Technology" for backward compatibility
         let (technologies_str, technology_count) = fetch_string_list(
             &pool,
-            "SELECT technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+            "SELECT CASE WHEN technology_version IS NOT NULL THEN technology_name || ':' || technology_version ELSE technology_name END as technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name, technology_version",
             url_status_id,
         ).await?;
 
@@ -627,16 +628,17 @@ mod tests {
         let pool_arc: DbPool = Arc::new(pool);
         let url_id = create_test_url_status_default(pool_arc.as_ref()).await;
 
-        sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name) VALUES (?, ?)")
+        sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name, technology_version) VALUES (?, ?, ?)")
             .bind(url_id)
             .bind("nginx")
+            .bind::<Option<String>>(None)
             .execute(pool_arc.as_ref())
             .await
             .expect("Failed to insert technology");
 
         let (joined, count) = fetch_string_list(
             &pool_arc,
-            "SELECT technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+            "SELECT CASE WHEN technology_version IS NOT NULL THEN technology_name || ':' || technology_version ELSE technology_name END as technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name, technology_version",
             url_id,
         )
         .await
@@ -654,10 +656,11 @@ mod tests {
 
         for tech in ["nginx", "PHP", "WordPress"] {
             sqlx::query(
-                "INSERT INTO url_technologies (url_status_id, technology_name) VALUES (?, ?)",
+                "INSERT INTO url_technologies (url_status_id, technology_name, technology_version) VALUES (?, ?, ?)",
             )
             .bind(url_id)
             .bind(tech)
+            .bind::<Option<String>>(None)
             .execute(pool_arc.as_ref())
             .await
             .expect("Failed to insert technology");
@@ -665,7 +668,7 @@ mod tests {
 
         let (joined, count) = fetch_string_list(
             &pool_arc,
-            "SELECT technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+            "SELECT CASE WHEN technology_version IS NOT NULL THEN technology_name || ':' || technology_version ELSE technology_name END as technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name, technology_version",
             url_id,
         )
         .await
@@ -691,9 +694,10 @@ mod tests {
         let url_id = create_test_url_status_default(pool_arc.as_ref()).await;
 
         // Test with commas, quotes, and other special characters
-        sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name) VALUES (?, ?)")
+        sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name, technology_version) VALUES (?, ?, ?)")
             .bind(url_id)
             .bind("Tech, with \"quotes\"")
+            .bind::<Option<String>>(None)
             .execute(pool_arc.as_ref())
             .await
             .expect("Failed to insert technology");
@@ -738,10 +742,11 @@ mod tests {
 
         for i in 0..5 {
             sqlx::query(
-                "INSERT INTO url_technologies (url_status_id, technology_name) VALUES (?, ?)",
+                "INSERT INTO url_technologies (url_status_id, technology_name, technology_version) VALUES (?, ?, ?)",
             )
             .bind(url_id)
             .bind(format!("tech_{}", i))
+            .bind::<Option<String>>(None)
             .execute(pool_arc.as_ref())
             .await
             .expect("Failed to insert technology");

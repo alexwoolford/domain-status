@@ -20,7 +20,7 @@ pub struct RecordPreparationParams<'a> {
     /// Additional DNS records (NS, TXT, MX)
     pub additional_dns: &'a AdditionalDnsData,
     /// Detected technologies
-    pub technologies_vec: Vec<String>,
+    pub technologies_vec: Vec<crate::fingerprint::DetectedTechnology>,
     /// Partial failures (DNS/TLS errors that didn't prevent processing)
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
     /// Redirect chain URLs
@@ -391,7 +391,16 @@ mod tests {
         let html_data = create_minimal_html_data();
         let tls_dns_data = create_minimal_tls_dns_data();
         let additional_dns = create_minimal_additional_dns_data();
-        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+        let technologies = vec![
+            crate::fingerprint::DetectedTechnology {
+                name: "WordPress".to_string(),
+                version: None,
+            },
+            crate::fingerprint::DetectedTechnology {
+                name: "PHP".to_string(),
+                version: None,
+            },
+        ];
 
         let (batch_record, _) = prepare_record_for_insertion(RecordPreparationParams {
             resp_data: &resp_data,

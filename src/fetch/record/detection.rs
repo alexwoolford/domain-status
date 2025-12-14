@@ -4,12 +4,12 @@ use crate::fetch::response::{HtmlData, ResponseData};
 
 /// Detects technologies with error handling and logging.
 ///
-/// Returns a sorted vector of detected technology names, or an empty vector on error.
+/// Returns a vector of detected technologies with name and optional version.
 pub(crate) async fn detect_technologies_safely(
     html_data: &HtmlData,
     resp_data: &ResponseData,
     error_stats: &crate::error_handling::ProcessingStats,
-) -> Vec<String> {
+) -> Vec<crate::fingerprint::DetectedTechnology> {
     // wappalyzergo normalizes body to lowercase: normalizedBody := bytes.ToLower(body)
     // HTML patterns match against the entire normalized body, not just extracted text
     let normalized_body = resp_data.body.to_lowercase();
@@ -27,14 +27,11 @@ pub(crate) async fn detect_technologies_safely(
         Ok(techs) => {
             if !techs.is_empty() {
                 log::debug!(
-                    "Detected {} technologies for {}: {:?}",
+                    "Detected {} technologies for {}",
                     techs.len(),
-                    resp_data.final_domain,
-                    techs
+                    resp_data.final_domain
                 );
-                let mut tech_vec: Vec<String> = techs.into_iter().collect();
-                tech_vec.sort();
-                tech_vec
+                techs
             } else {
                 log::debug!("No technologies detected for {}", resp_data.final_domain);
                 Vec::new()
