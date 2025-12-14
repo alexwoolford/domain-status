@@ -22,8 +22,7 @@ async fn test_lookup_ns_records_success() {
     // Use a well-known domain that definitely has NS records
     // Note: This test makes a real DNS call, so it may fail in CI if DNS is blocked
     let result = lookup_ns_records("example.com", &resolver).await;
-    if result.is_ok() {
-        let nameservers = result.unwrap();
+    if let Ok(nameservers) = result {
         assert!(
             !nameservers.is_empty(),
             "example.com should have nameservers"
@@ -89,8 +88,7 @@ async fn test_lookup_txt_records_success() {
     // Use a domain that likely has TXT records (many domains have SPF/DMARC)
     // Note: This test makes a real DNS call, so it may fail in CI if DNS is blocked
     let result = lookup_txt_records("example.com", &resolver).await;
-    if result.is_ok() {
-        let _txt_records = result.unwrap();
+    if let Ok(_txt_records) = result {
         // example.com may or may not have TXT records, both are valid
         // The important thing is the function returns Ok
     } else {
@@ -135,8 +133,7 @@ async fn test_lookup_mx_records_success() {
     // Use a domain that likely has MX records
     // Note: This test makes a real DNS call, so it may fail in CI if DNS is blocked
     let result = lookup_mx_records("example.com", &resolver).await;
-    if result.is_ok() {
-        let mx_records = result.unwrap();
+    if let Ok(mx_records) = result {
         // example.com should have MX records
         if !mx_records.is_empty() {
             // Verify MX records are properly formatted (priority, hostname)
@@ -352,8 +349,7 @@ async fn test_lookup_ns_records_filter_map_coverage() {
     // Test to ensure filter_map None branch (line 35) is covered
     // In practice, DNS lookups should only return NS records, but we verify the function handles it
     let result = lookup_ns_records("example.com", &resolver).await;
-    if result.is_ok() {
-        let nameservers = result.unwrap();
+    if let Ok(nameservers) = result {
         // All returned nameservers should be valid (filter_map should not return None)
         for ns in &nameservers {
             assert!(!ns.is_empty(), "Nameserver should not be empty");
@@ -366,8 +362,7 @@ async fn test_lookup_txt_records_filter_map_coverage() {
     let resolver = create_test_resolver();
     // Test to ensure filter_map None branch (line 88) is covered
     let result = lookup_txt_records("example.com", &resolver).await;
-    if result.is_ok() {
-        let txt_records = result.unwrap();
+    if let Ok(txt_records) = result {
         // All returned TXT records should be valid (filter_map should not return None)
         for txt in &txt_records {
             assert!(!txt.is_empty(), "TXT record should not be empty");
@@ -380,8 +375,7 @@ async fn test_lookup_mx_records_filter_map_coverage() {
     let resolver = create_test_resolver();
     // Test to ensure filter_map None branch (line 136) is covered
     let result = lookup_mx_records("example.com", &resolver).await;
-    if result.is_ok() {
-        let mx_records = result.unwrap();
+    if let Ok(mx_records) = result {
         // All returned MX records should be valid (filter_map should not return None)
         for (priority, hostname) in &mx_records {
             assert!(!hostname.is_empty(), "MX hostname should not be empty");
