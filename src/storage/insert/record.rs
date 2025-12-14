@@ -266,7 +266,16 @@ mod tests {
                 "http://example.com".to_string(),
                 "https://example.com".to_string(),
             ],
-            technologies: vec!["WordPress".to_string(), "PHP".to_string()],
+            technologies: vec![
+                crate::fingerprint::DetectedTechnology {
+                    name: "WordPress".to_string(),
+                    version: None,
+                },
+                crate::fingerprint::DetectedTechnology {
+                    name: "PHP".to_string(),
+                    version: None,
+                },
+            ],
             subject_alternative_names: vec![
                 "example.com".to_string(),
                 "www.example.com".to_string(),
@@ -589,7 +598,10 @@ mod tests {
             http_headers: HashMap::new(),
             oids: HashSet::new(),
             redirect_chain: vec![],
-            technologies: vec!["WordPress".to_string()], // Should still be inserted even if GeoIP fails
+            technologies: vec![crate::fingerprint::DetectedTechnology {
+                name: "WordPress".to_string(),
+                version: None,
+            }], // Should still be inserted even if GeoIP fails
             subject_alternative_names: vec![],
             analytics_ids: vec![],
             geoip: Some(("93.184.216.34".to_string(), geoip_result)),

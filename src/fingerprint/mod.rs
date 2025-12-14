@@ -26,7 +26,7 @@ mod ruleset;
 
 // Re-export public API
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
-pub use detection::{detect_technologies, get_technology_category};
+pub use detection::{detect_technologies, get_technology_category, DetectedTechnology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests

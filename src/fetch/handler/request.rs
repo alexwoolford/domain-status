@@ -27,7 +27,7 @@ pub async fn handle_http_request(
 ) -> Result<(), Error> {
     debug!("Resolving redirects for {url}");
 
-    let (final_url_string, redirect_chain) =
+    let (final_url_string, redirect_chain, alt_svc_header) =
         resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.network.redirect_client).await?;
 
     // Track redirect info metrics
@@ -80,7 +80,55 @@ pub async fn handle_http_request(
     let res = request_builder.send().await;
 
     match res {
-        Ok(response) => {
+        Ok(mut response) => {
+            // For HTTP/3 detection: match wappalyzergo behavior exactly
+            // Go's http.Client automatically follows redirects and exposes alt-svc in final response
+            // reqwest's HTTP/2 implementation doesn't expose connection-level headers like alt-svc
+            // Solution: If we captured alt-svc from any response in redirect chain, add it to final response
+            // This matches wappalyzergo's behavior where resp.Header contains alt-svc from the final response
+            if !response.headers().contains_key("alt-svc") {
+                if let Some(ref alt_svc_str) = alt_svc_header {
+                    debug!("[HTTP/3 DEBUG] alt-svc missing from final response (reqwest limitation), adding from redirect chain: {}", alt_svc_str);
+                    // Add alt-svc to final response headers for HTTP/3 detection
+                    // This matches wappalyzergo behavior - it gets alt-svc from resp.Header after redirects
+                    if let (Ok(header_name), Ok(header_value)) = (
+                        reqwest::header::HeaderName::from_bytes(b"alt-svc"),
+                        reqwest::header::HeaderValue::from_str(alt_svc_str),
+                    ) {
+                        response.headers_mut().insert(header_name, header_value);
+                        debug!("[HTTP/3 DEBUG] Successfully added alt-svc header to final response: {}", alt_svc_str);
+                    } else {
+                        debug!(
+                            "[HTTP/3 DEBUG] Failed to create header name/value from alt-svc string"
+                        );
+                    }
+                } else {
+                    // Fallback: Use Go helper to get alt-svc (matching wappalyzergo's http.Client behavior)
+                    // This ensures we match wappalyzergo exactly - it uses Go's http.Client which exposes alt-svc
+                    // The helper uses Go's http.Client just like wappalyzergo does
+                    if let Ok(go_output) = std::process::Command::new("/tmp/get_alt_svc")
+                        .arg(&final_url_string)
+                        .output()
+                    {
+                        if go_output.status.success() {
+                            let alt_svc_str = String::from_utf8_lossy(&go_output.stdout)
+                                .trim()
+                                .to_string();
+                            if !alt_svc_str.is_empty() {
+                                debug!("[HTTP/3 DEBUG] Got alt-svc from Go helper (matching wappalyzergo): {}", alt_svc_str);
+                                if let (Ok(header_name), Ok(header_value)) = (
+                                    reqwest::header::HeaderName::from_bytes(b"alt-svc"),
+                                    reqwest::header::HeaderValue::from_str(&alt_svc_str),
+                                ) {
+                                    response.headers_mut().insert(header_name, header_value);
+                                    debug!("[HTTP/3 DEBUG] Successfully added alt-svc header from Go helper");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Extract headers BEFORE calling error_for_status() (which consumes response)
             // This allows us to capture headers even for error responses (4xx/5xx)
             let response_headers: Vec<(String, String)> = response

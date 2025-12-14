@@ -35,8 +35,8 @@ pub struct UrlRecordInsertParams<'a> {
     pub oids: &'a std::collections::HashSet<String>,
     /// Vector of redirect URLs (will be inserted into url_redirect_chain table)
     pub redirect_chain: &'a [String],
-    /// Vector of detected technology names (will be inserted into url_technologies table)
-    pub technologies: &'a [String],
+    /// Vector of detected technologies (will be inserted into url_technologies table)
+    pub technologies: &'a [crate::fingerprint::DetectedTechnology],
     /// Vector of DNS names from certificate SAN extension (will be inserted into url_certificate_sans table)
     pub subject_alternative_names: &'a [String],
 }
@@ -262,7 +262,16 @@ mod tests {
         let http_headers = HashMap::new();
         let oids = HashSet::new();
         let redirect_chain = Vec::new();
-        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+        let technologies = vec![
+            crate::fingerprint::DetectedTechnology {
+                name: "WordPress".to_string(),
+                version: None,
+            },
+            crate::fingerprint::DetectedTechnology {
+                name: "PHP".to_string(),
+                version: None,
+            },
+        ];
         let sans = Vec::new();
 
         let url_status_id = insert_url_record(UrlRecordInsertParams {

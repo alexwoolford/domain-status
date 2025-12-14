@@ -44,16 +44,36 @@ pub(crate) fn extract_cookies_from_headers(headers: &HeaderMap) -> HashMap<Strin
 /// Converts HTTP headers to a lowercase map for pattern matching.
 ///
 /// Normalizes both header names and values to lowercase to match Go implementation.
+///
+/// Note: For custom headers (like `alt-svc`), we need to handle them specially.
+/// `HeaderName::as_str()` works for both standard and custom headers.
 pub(crate) fn normalize_headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
-    headers
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|v| (name.as_str().to_lowercase(), v.to_lowercase()))
-        })
-        .collect()
+    let mut header_map = HashMap::new();
+    for (name, value) in headers.iter() {
+        // Get header name as string (works for both standard and custom headers)
+        let header_name = name.as_str().to_lowercase();
+        if let Ok(header_value) = value.to_str() {
+            header_map.insert(header_name, header_value.to_lowercase());
+        }
+    }
+
+    // Debug: Log if alt-svc is in the map (for HTTP/3 detection debugging)
+    if header_map.contains_key("alt-svc") {
+        log::debug!(
+            "[HTTP/3 DEBUG] alt-svc header found in normalized map: {}",
+            header_map.get("alt-svc").unwrap_or(&"".to_string())
+        );
+    } else {
+        log::debug!(
+            "[HTTP/3 DEBUG] alt-svc header NOT found in normalized map. Total headers: {}",
+            header_map.len()
+        );
+        // List all header names for debugging
+        let header_names: Vec<&String> = header_map.keys().collect();
+        log::debug!("[HTTP/3 DEBUG] Available header names: {:?}", header_names);
+    }
+
+    header_map
 }
 
 #[cfg(test)]

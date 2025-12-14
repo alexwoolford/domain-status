@@ -69,7 +69,7 @@ pub struct BatchRecordParams<'a> {
     /// TLS and DNS data
     pub tls_dns_data: &'a TlsDnsData,
     /// Detected technologies
-    pub technologies_vec: Vec<String>,
+    pub technologies_vec: Vec<crate::fingerprint::DetectedTechnology>,
     /// Redirect chain URLs
     pub redirect_chain: Vec<String>,
     /// Partial failures (DNS/TLS errors that didn't prevent processing)
@@ -308,7 +308,16 @@ mod tests {
             &run_id,
         );
 
-        let technologies = vec!["WordPress".to_string(), "PHP".to_string()];
+        let technologies = vec![
+            crate::fingerprint::DetectedTechnology {
+                name: "WordPress".to_string(),
+                version: None,
+            },
+            crate::fingerprint::DetectedTechnology {
+                name: "PHP".to_string(),
+                version: None,
+            },
+        ];
         let redirect_chain = vec!["https://example.com".to_string()];
         let partial_failures = vec![(ErrorType::DnsNsLookupError, "DNS lookup failed".to_string())];
         let geoip_data = Some((
@@ -330,7 +339,7 @@ mod tests {
             resp_data: &resp_data,
             html_data: &html_data,
             tls_dns_data: &tls_dns_data,
-            technologies_vec: technologies,
+            technologies_vec: technologies.clone(),
             redirect_chain,
             partial_failures,
             geoip_data,
@@ -342,7 +351,7 @@ mod tests {
 
         assert_eq!(batch_record.url_record.final_domain, "example.com");
         assert_eq!(batch_record.technologies.len(), 2);
-        assert!(batch_record.technologies.contains(&"PHP".to_string()));
+        assert!(batch_record.technologies.iter().any(|t| t.name == "PHP"));
         assert_eq!(batch_record.redirect_chain.len(), 1);
         assert_eq!(batch_record.partial_failures.len(), 1);
         assert!(batch_record.geoip.is_some());

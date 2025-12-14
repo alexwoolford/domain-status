@@ -28,7 +28,7 @@ pub struct BatchRecord {
     pub http_headers: HashMap<String, String>,
     pub oids: HashSet<String>,
     pub redirect_chain: Vec<String>,
-    pub technologies: Vec<String>,
+    pub technologies: Vec<crate::fingerprint::DetectedTechnology>,
     pub subject_alternative_names: Vec<String>, // Certificate SANs (for linking domains sharing certificates)
     pub analytics_ids: Vec<AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
     pub geoip: Option<(String, GeoIpResult)>, // (ip_address, geoip_result)
