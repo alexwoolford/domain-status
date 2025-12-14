@@ -25,7 +25,7 @@ pub const DEFAULT_CACHE_DIR: &str = ".geoip_cache";
 pub const MAXMIND_LICENSE_KEY_ENV: &str = "MAXMIND_LICENSE_KEY";
 
 /// Cache TTL in seconds (7 days)
-pub const CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+pub const CACHE_TTL_SECS: u64 = crate::config::GEOIP_CACHE_TTL_SECS;
 
 /// MaxMind download base URL
 pub const MAXMIND_DOWNLOAD_BASE: &str = "https://download.maxmind.com/app/geoip_download";

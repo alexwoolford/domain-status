@@ -961,13 +961,16 @@ mod tests {
     #[test]
     fn test_matches_pattern_version_extraction_complex() {
         // Test version extraction syntax with complex patterns
-        // Version extraction syntax: ";version:\\1" should be stripped before matching
-        let pattern = "^nginx/(\\d+\\.\\d+);version:\\1";
+        // Version extraction syntax: "\;version:\\1" should be stripped before matching
+        // Note: In Rust string literals, "\;" is written as "\\;"
+        let pattern = r"^nginx/(\d+\.\d+)\;version:\1";
         let text = "nginx/1.18.0";
 
-        // Should match the pattern part (before ;) and extract version
+        // Should match the pattern part (before \;) and extract version
+        // Pattern: ^nginx/(\d+\.\d+) should match "nginx/1.18" from "nginx/1.18.0"
+        // Version template: \1 should extract "1.18" (first capture group)
         let result = matches_pattern(pattern, text);
-        assert!(result.matched);
+        assert!(result.matched, "Pattern should match 'nginx/1.18.0'");
         assert_eq!(result.version, Some("1.18".to_string()));
     }
 

@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use super::types::{WhoisCacheEntry, WhoisResult};
 
 /// Default cache TTL: 7 days (WHOIS data changes infrequently)
-pub(crate) const CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+pub(crate) const CACHE_TTL_SECS: u64 = crate::config::WHOIS_CACHE_TTL_SECS;
 
 /// Loads a cached WHOIS result from disk
 pub(crate) fn load_from_cache(cache_path: &Path, domain: &str) -> Result<Option<WhoisCacheEntry>> {

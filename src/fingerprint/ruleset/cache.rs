@@ -10,7 +10,8 @@ use crate::fingerprint::models::{FingerprintMetadata, FingerprintRuleset};
 
 /// Cache duration: 7 days
 /// Based on commit history, HTTP Archive updates technologies roughly weekly
-const CACHE_DURATION: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+const CACHE_DURATION: std::time::Duration =
+    std::time::Duration::from_secs(crate::config::FINGERPRINT_CACHE_TTL_SECS);
 
 /// Loads ruleset from cache if it exists and is fresh
 pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRuleset> {
