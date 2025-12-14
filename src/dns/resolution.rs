@@ -83,8 +83,7 @@ mod tests {
         // Note: This test makes a real DNS call, so it may fail in CI if DNS is blocked
         // or if the domain is unreachable. Consider mocking for more reliable CI.
         let result = resolve_host_to_ip("example.com", &resolver).await;
-        if result.is_ok() {
-            let ip = result.unwrap();
+        if let Ok(ip) = result {
             assert!(!ip.is_empty(), "IP address should not be empty");
             // Verify it's a valid IP (IPv4 or IPv6)
             assert!(
