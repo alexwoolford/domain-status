@@ -9,7 +9,7 @@ use crate::dns::{
     extract_dmarc_record, extract_spf_record, lookup_mx_records, lookup_ns_records,
     lookup_txt_records,
 };
-use crate::fetch::utils::serialize_json;
+use crate::fetch::utils::serialize_json_with_default;
 
 use super::types::{AdditionalDnsData, AdditionalDnsResult};
 
@@ -41,7 +41,7 @@ pub(crate) async fn fetch_additional_dns_records(
     let nameservers = match ns_result {
         Ok(ns) if !ns.is_empty() => {
             debug!("Found {} nameservers for {}", ns.len(), final_domain);
-            Some(serialize_json(&ns))
+            Some(serialize_json_with_default(&ns, "[]"))
         }
         Ok(_) => None,
         Err(e) => {
@@ -65,7 +65,7 @@ pub(crate) async fn fetch_additional_dns_records(
     let txt_records = match txt_result {
         Ok(txt) if !txt.is_empty() => {
             debug!("Found {} TXT records for {}", txt.len(), final_domain);
-            Some(serialize_json(&txt))
+            Some(serialize_json_with_default(&txt, "[]"))
         }
         Ok(_) => None,
         Err(e) => {
@@ -109,7 +109,7 @@ pub(crate) async fn fetch_additional_dns_records(
                     })
                 })
                 .collect();
-            Some(serialize_json(&mx_json))
+            Some(serialize_json_with_default(&mx_json, "[]"))
         }
         Ok(_) => None,
         Err(e) => {
