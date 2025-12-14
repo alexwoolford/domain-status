@@ -11,6 +11,7 @@
 /// # Errors
 ///
 /// If serialization fails, logs a warning and returns an empty JSON object `"{}"`.
+#[allow(dead_code)] // Used in tests
 pub(crate) fn serialize_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|e| {
         log::warn!(
