@@ -153,7 +153,7 @@ mod tests {
 </html>"#;
 
         let mut meta_tags = HashMap::new();
-        meta_tags.insert("generator".to_string(), vec!["mura cms 1".to_string()]);
+        meta_tags.insert("name:generator".to_string(), vec!["mura cms 1".to_string()]);
         let script_sources = vec![];
         let url = "https://example.com";
 
