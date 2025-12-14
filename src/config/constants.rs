@@ -122,3 +122,15 @@ pub const MAX_RULESET_DOWNLOAD_SIZE: usize = 10 * 1024 * 1024;
 pub const MAX_GEOIP_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024;
 /// Maximum number of retries for network downloads (rulesets, GeoIP)
 pub const MAX_NETWORK_DOWNLOAD_RETRIES: usize = 3;
+
+// Cache TTL constants (in seconds)
+/// Fingerprint ruleset cache TTL: 7 days
+/// Based on commit history, HTTP Archive updates technologies roughly weekly
+pub const FINGERPRINT_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// WHOIS cache TTL: 7 days (WHOIS data changes infrequently)
+pub const WHOIS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// User-Agent cache TTL: 30 days
+/// Chrome releases roughly every 4 weeks, so 30 days ensures we stay current
+pub const USER_AGENT_CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+/// GeoIP cache TTL: 7 days
+pub const GEOIP_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;

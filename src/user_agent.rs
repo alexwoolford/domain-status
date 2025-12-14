@@ -14,7 +14,7 @@ const DEFAULT_CACHE_DIR: &str = ".user_agent_cache";
 
 /// Cache duration: 30 days
 /// Chrome releases roughly every 4 weeks, so 30 days ensures we stay current
-const CACHE_DURATION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const CACHE_DURATION: Duration = Duration::from_secs(crate::config::USER_AGENT_CACHE_TTL_SECS);
 
 /// Fallback Chrome version if fetch fails
 /// Updated to Chrome 131 (November 2024)
