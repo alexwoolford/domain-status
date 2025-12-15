@@ -113,8 +113,16 @@ pub fn analyze_security(
     {
         let now = chrono::Utc::now().naive_utc();
 
-        // Check if certificate is expired or self-signed (subject == issuer)
-        if *valid_to < now || subject == issuer {
+        // Check if certificate is expired
+        let is_expired = *valid_to < now;
+
+        // Check if certificate is self-signed (subject == issuer)
+        // X.509 DNs from x509-parser are normalized, so direct string comparison should work
+        // However, we normalize by trimming whitespace and comparing case-insensitively
+        // to handle any edge cases
+        let is_self_signed = subject.trim().eq_ignore_ascii_case(issuer.trim());
+
+        if is_expired || is_self_signed {
             warnings.push(SecurityWarning::InvalidCertificate);
         }
         // Note: Hostname mismatch detection is complex and would require
@@ -123,10 +131,13 @@ pub fn analyze_security(
         // detect hostname mismatches without re-implementing the validation logic.
         // For now, we detect expired and self-signed certificates.
     } else if final_url.starts_with("https://") {
-        // If we have HTTPS but no certificate info, it might indicate
-        // a certificate extraction failure (recorded as partial failure)
-        // or the certificate was so invalid we couldn't extract it.
-        // We don't add a warning here since partial failures are already tracked.
+        // If we have HTTPS but no certificate info, it indicates
+        // a certificate extraction failure. This could mean:
+        // - The certificate was so broken we couldn't parse it
+        // - TLS handshake failed completely
+        // - Network/connection issues
+        // This is a security concern (can't verify the certificate) and should be recorded
+        warnings.push(SecurityWarning::InvalidCertificate);
     }
 
     warnings
