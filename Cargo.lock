@@ -829,7 +829,7 @@ dependencies = [
  "once_cell",
  "psl",
  "regex",
- "reqwest 0.12.24",
+ "reqwest 0.12.25",
  "rustls",
  "scraper",
  "serde",
@@ -2488,9 +2488,9 @@ dependencies = [
 
 [[package]]
 name = "psl"
-version = "2.1.167"
+version = "2.1.168"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aef2514878fde15b8d63698f66a1a8bbbc67229f7bc90724277c48c40e37bccd"
+checksum = "6faf5b87f44516ca3989e1e315a0413f7a4d4886e63664cbd4a5f492c73cad93"
 dependencies = [
  "psl-types",
 ]
@@ -2722,15 +2722,13 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.24"
+version = "0.12.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d0946410b9f7b082a427e4ef5c8ff541a88b357bc6c637c40db3a68ac70a36f"
+checksum = "b6eff9328d40131d43bd911d42d79eb6a47312002a4daefc9e37f17e74a7701a"
 dependencies = [
- "async-compression",
  "base64 0.22.1",
  "bytes",
  "futures-core",
- "futures-util",
  "h2 0.4.12",
  "http 1.4.0",
  "http-body 1.0.1",
@@ -2751,7 +2749,6 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-rustls",
- "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
@@ -3818,17 +3815,22 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.7"
+version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cf146f99d442e8e68e585f5d798ccd3cad9a7835b917e09728880a862706456"
+checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
 dependencies = [
+ "async-compression",
  "bitflags 2.10.0",
  "bytes",
+ "futures-core",
  "futures-util",
  "http 1.4.0",
  "http-body 1.0.1",
+ "http-body-util",
  "iri-string",
  "pin-project-lite",
+ "tokio",
+ "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",
