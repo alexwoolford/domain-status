@@ -38,7 +38,15 @@ mod tests {
     #[test]
     fn test_analyze_security_no_https() {
         let headers = HashMap::new();
-        let warnings = analyze_security("http://example.com", &None, &headers);
+        let warnings = analyze_security(
+            "http://example.com",
+            &None,
+            &headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::NoHttps));
     }
@@ -54,6 +62,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.1".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert!(warnings.contains(&SecurityWarning::WeakTls));
     }
@@ -65,6 +77,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert!(warnings.contains(&SecurityWarning::MissingHsts));
         assert!(warnings.contains(&SecurityWarning::MissingCsp));
@@ -89,6 +105,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert_eq!(warnings.len(), 0);
     }
@@ -131,6 +151,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingHsts));
@@ -147,6 +171,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingCsp));
@@ -166,6 +194,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
@@ -185,6 +217,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
@@ -209,6 +245,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.3".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
         // All headers present (case-insensitive match) - no warnings
         assert_eq!(warnings.len(), 0);
@@ -223,8 +263,15 @@ mod tests {
             "max-age=31536000".to_string(),
         );
 
-        let warnings =
-            analyze_security("http://example.com", &Some("TLSv1.1".to_string()), &headers);
+        let warnings = analyze_security(
+            "http://example.com",
+            &Some("TLSv1.1".to_string()),
+            &headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
 
         // Should only have NoHttps warning, not WeakTls or missing headers
         assert_eq!(warnings.len(), 1);
@@ -236,7 +283,15 @@ mod tests {
     fn test_analyze_security_no_tls_version() {
         // HTTPS without TLS version info
         let headers = HashMap::new();
-        let warnings = analyze_security("https://example.com", &None, &headers);
+        let warnings = analyze_security(
+            "https://example.com",
+            &None,
+            &headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
 
         // Should have missing headers warnings, but not WeakTls (no version info)
         assert!(warnings.contains(&SecurityWarning::MissingHsts));
@@ -263,6 +318,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.1".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
 
         // Should only have WeakTls warning
@@ -279,6 +338,10 @@ mod tests {
             "https://example.com",
             &Some("TLSv1.0".to_string()),
             &headers,
+            &None,
+            &None,
+            &None,
+            &None,
         );
 
         // Should have WeakTls + all missing headers

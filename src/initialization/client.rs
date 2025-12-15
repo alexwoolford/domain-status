@@ -30,9 +30,13 @@ use reqwest::ClientBuilder;
 ///
 /// Returns a `reqwest::Error` if client creation fails.
 pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
+    // Always allow invalid certificates to maximize data capture
+    // Certificate issues will be recorded as security warnings
     let client = ClientBuilder::new()
         .timeout(Duration::from_secs(config.timeout_seconds))
         .user_agent(config.user_agent.clone())
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
         .build()?;
     Ok(Arc::new(client))
 }
@@ -55,10 +59,14 @@ pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwes
 ///
 /// Returns a `reqwest::Error` if client creation fails.
 pub async fn init_redirect_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
+    // Always allow invalid certificates to maximize data capture
+    // Certificate issues will be recorded as security warnings
     let client = ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(config.timeout_seconds))
         .user_agent(config.user_agent.clone())
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
         .build()?;
     Ok(Arc::new(client))
 }

@@ -90,6 +90,10 @@ pub async fn prepare_record_for_insertion(
                 &params.resp_data.final_url,
                 &params.tls_dns_data.tls_version,
                 &params.resp_data.security_headers,
+                &params.tls_dns_data.subject,
+                &params.tls_dns_data.issuer,
+                &params.tls_dns_data.valid_to,
+                &params.tls_dns_data.subject_alternative_names,
             );
             let security_analysis_ms = duration_to_ms(security_start.elapsed());
             (security_warnings, security_analysis_ms)

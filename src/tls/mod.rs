@@ -15,17 +15,72 @@ mod extract;
 use anyhow::Result;
 use chrono::NaiveDateTime;
 use log::error;
-use rustls::pki_types::ServerName;
+use rustls::pki_types::{CertificateDer, ServerName};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::TlsConnector;
 
 use crate::models::CertificateInfo;
 
 use extract::{extract_certificate_oids, extract_certificate_sans};
+
+/// A certificate verifier that always accepts certificates.
+/// This allows us to extract certificate information even from invalid certificates,
+/// and we'll record certificate issues as security warnings.
+#[derive(Debug)]
+struct AcceptAllVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // Always accept - we'll validate and record issues ourselves
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        // Return all supported schemes
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+        ]
+    }
+}
 
 /// Retrieves SSL/TLS certificate information for a domain.
 ///
@@ -51,11 +106,11 @@ use extract::{extract_certificate_oids, extract_certificate_sans};
 pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo> {
     log::debug!("Attempting to get SSL info for domain: {domain}");
 
-    let mut root_store = RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
+    // Always allow invalid certificates to maximize data capture
+    // Certificate issues will be detected and recorded as security warnings
     let config = ClientConfig::builder()
-        .with_root_certificates(root_store)
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
         .with_no_client_auth();
 
     log::debug!("Attempting to resolve server name for domain: {domain}");

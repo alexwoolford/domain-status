@@ -258,3 +258,48 @@ fn test_extract_analytics_ids_gtm_url_format() {
         gtm_ids
     );
 }
+
+#[test]
+fn test_extract_analytics_ids_gtm_rejects_false_positives() {
+    // Test that data layer variables and other false positives are NOT matched
+    let html = r#"
+        <script>
+            dataLayer.push({
+                'gtm-company': 'Acme Corp',
+                'gtm-industry': 'Technology',
+                'gtm-province': 'California',
+                'gtm-message': 'Hello',
+                'gtm-subproperty': 'sub',
+                'gtm-script': 'script.js',
+                'gtm-purhcase': 'purchase'
+            });
+        </script>
+    "#;
+    let ids = extract_analytics_ids(html);
+    let gtm_ids: Vec<&str> = ids
+        .iter()
+        .filter(|id| id.provider == "Google Tag Manager")
+        .map(|id| id.id.as_str())
+        .collect();
+    // Should NOT match any of these false positives
+    assert!(
+        !gtm_ids.contains(&"gtm-company"),
+        "Should NOT match gtm-company: {:?}",
+        gtm_ids
+    );
+    assert!(
+        !gtm_ids.contains(&"gtm-industry"),
+        "Should NOT match gtm-industry: {:?}",
+        gtm_ids
+    );
+    assert!(
+        !gtm_ids.contains(&"gtm-province"),
+        "Should NOT match gtm-province: {:?}",
+        gtm_ids
+    );
+    assert!(
+        !gtm_ids.contains(&"gtm-message"),
+        "Should NOT match gtm-message: {:?}",
+        gtm_ids
+    );
+}
