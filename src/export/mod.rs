@@ -4,7 +4,9 @@
 //! into various formats (CSV, JSONL, Parquet) for different use cases.
 
 mod csv;
+mod jsonl;
 mod types;
 
 pub use csv::export_csv;
+pub use jsonl::export_jsonl;
 pub use types::{ExportFormat, ExportOptions};

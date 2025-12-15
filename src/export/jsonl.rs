@@ -1,0 +1,538 @@
+//! JSONL export functionality.
+//!
+//! Exports domain_status data to JSONL (JSON Lines) format.
+//! Each line is a complete JSON object representing one URL scan result.
+//! This format is ideal for programmatic processing, piping to jq, or loading into databases.
+
+use anyhow::{Context, Result};
+use futures::TryStreamExt;
+use serde_json::{json, Value};
+use sqlx::Row;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+
+use crate::storage::init_db_pool_with_path;
+
+// Re-use helper functions from CSV module
+use super::csv::{
+    fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
+};
+
+/// Exports data to JSONL format (JSON Lines).
+///
+/// Each line is a complete JSON object with all fields for one URL scan result.
+/// This format preserves nested structures better than CSV and is ideal for:
+/// - Piping to `jq` for filtering/transformation
+/// - Loading into databases (MongoDB, Elasticsearch, etc.)
+/// - Programmatic processing in scripts
+///
+/// # Arguments
+///
+/// * `db_path` - Path to the SQLite database
+/// * `output` - Output file path (or stdout if None)
+/// * `run_id` - Optional filter by run ID
+/// * `domain` - Optional filter by domain
+/// * `status` - Optional filter by HTTP status code
+/// * `since` - Optional filter by timestamp (milliseconds since epoch)
+///
+/// # Returns
+///
+/// Returns the number of records exported, or an error if export fails.
+pub async fn export_jsonl(
+    db_path: &Path,
+    output: Option<&PathBuf>,
+    run_id: Option<&str>,
+    domain: Option<&str>,
+    status: Option<u16>,
+    since: Option<i64>,
+) -> Result<usize> {
+    let pool = init_db_pool_with_path(db_path)
+        .await
+        .context("Failed to initialize database pool")?;
+
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "SELECT us.id, us.domain, us.final_domain, us.ip_address, us.reverse_dns_name,
+                us.status, us.status_description, us.response_time, us.title, us.keywords,
+                us.description, us.is_mobile_friendly, us.tls_version, us.ssl_cert_subject,
+                us.ssl_cert_issuer, us.ssl_cert_valid_to, us.cipher_suite, us.key_algorithm,
+                us.spf_record, us.dmarc_record, us.timestamp, us.run_id
+         FROM url_status us",
+    );
+
+    let mut has_where = false;
+    if let Some(run_id) = run_id {
+        query_builder.push(" WHERE us.run_id = ");
+        query_builder.push_bind(run_id);
+        has_where = true;
+    }
+    if let Some(domain) = domain {
+        if has_where {
+            query_builder.push(" AND ");
+        } else {
+            query_builder.push(" WHERE ");
+            has_where = true;
+        }
+        query_builder.push("(us.domain = ");
+        query_builder.push_bind(domain);
+        query_builder.push(" OR us.final_domain = ");
+        query_builder.push_bind(domain);
+        query_builder.push(")");
+    }
+    if let Some(status) = status {
+        if has_where {
+            query_builder.push(" AND ");
+        } else {
+            query_builder.push(" WHERE ");
+            has_where = true;
+        }
+        query_builder.push("us.status = ");
+        query_builder.push_bind(status);
+    }
+    if let Some(since) = since {
+        if has_where {
+            query_builder.push(" AND ");
+        } else {
+            query_builder.push(" WHERE ");
+        }
+        query_builder.push("us.timestamp >= ");
+        query_builder.push_bind(since);
+    }
+
+    query_builder.push(" ORDER BY us.timestamp DESC");
+
+    let mut writer: Box<dyn Write> = if let Some(output_path) = output {
+        let file = std::fs::File::create(output_path).context(format!(
+            "Failed to create output file: {}",
+            output_path.display()
+        ))?;
+        Box::new(file)
+    } else {
+        Box::new(io::stdout())
+    };
+
+    let query = query_builder.build();
+    let mut rows = query.fetch(pool.as_ref());
+
+    let mut record_count = 0;
+
+    while let Some(row) = rows.try_next().await? {
+        let url_status_id: i64 = row.get("id");
+        let initial_domain: String = row.get("domain");
+        let final_domain: String = row.get("final_domain");
+        let ip_address: String = row.get("ip_address");
+        let reverse_dns: Option<String> = row.get("reverse_dns_name");
+        let status: u16 = row.get("status");
+        let status_desc: String = row.get("status_description");
+        let response_time: f64 = row.get("response_time");
+        let title: String = row.get("title");
+        let keywords: Option<String> = row.get("keywords");
+        let description: Option<String> = row.get("description");
+        let is_mobile_friendly: bool = row.get("is_mobile_friendly");
+        let tls_version: Option<String> = row.get("tls_version");
+        let ssl_cert_subject: Option<String> = row.get("ssl_cert_subject");
+        let ssl_cert_issuer: Option<String> = row.get("ssl_cert_issuer");
+        let ssl_cert_valid_to: Option<i64> = row.get("ssl_cert_valid_to");
+        let cipher_suite: Option<String> = row.get("cipher_suite");
+        let key_algorithm: Option<String> = row.get("key_algorithm");
+        let spf_record: Option<String> = row.get("spf_record");
+        let dmarc_record: Option<String> = row.get("dmarc_record");
+        let timestamp: i64 = row.get("timestamp");
+        let run_id: Option<String> = row.get("run_id");
+
+        // Build URL from final_domain (construct https:// URL)
+        let url = if final_domain.starts_with("http://") || final_domain.starts_with("https://") {
+            final_domain.clone()
+        } else {
+            format!("https://{}", final_domain)
+        };
+
+        // Fetch redirect chain
+        let redirect_rows = sqlx::query(
+            "SELECT url, sequence_order FROM url_redirect_chain
+             WHERE url_status_id = ? ORDER BY sequence_order",
+        )
+        .bind(url_status_id)
+        .fetch_all(pool.as_ref())
+        .await?;
+
+        let redirect_chain: Vec<Value> = redirect_rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "url": r.get::<String, _>("url"),
+                    "sequence_order": r.get::<i64, _>("sequence_order"),
+                })
+            })
+            .collect();
+
+        let final_redirect_url = redirect_rows
+            .last()
+            .map(|r| r.get::<String, _>("url"))
+            .unwrap_or_default();
+
+        // Fetch technologies
+        let (technologies_str, technology_count) = fetch_key_value_list(
+            &pool,
+            "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+            "technology_name",
+            "technology_version",
+            url_status_id,
+        )
+        .await?;
+
+        // Parse technologies string into array of objects
+        let technologies: Vec<Value> = if technologies_str.is_empty() {
+            vec![]
+        } else {
+            technologies_str
+                .split(',')
+                .filter_map(|s| {
+                    let parts: Vec<&str> = s.split(':').collect();
+                    if parts.len() == 2 {
+                        Some(json!({
+                            "name": parts[0],
+                            "version": if parts[1].is_empty() { Value::Null } else { json!(parts[1]) }
+                        }))
+                    } else if !parts[0].is_empty() {
+                        Some(json!({
+                            "name": parts[0],
+                            "version": Value::Null
+                        }))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Fetch certificate SANs
+        let (certificate_sans_str, certificate_san_count) = fetch_string_list(
+            &pool,
+            "SELECT domain_name FROM url_certificate_sans WHERE url_status_id = ? ORDER BY domain_name",
+            url_status_id,
+        )
+        .await?;
+
+        let certificate_sans: Vec<String> = if certificate_sans_str.is_empty() {
+            vec![]
+        } else {
+            certificate_sans_str
+                .split(',')
+                .map(|s| s.to_string())
+                .collect()
+        };
+
+        // Fetch OIDs
+        let (oids_str, _oid_count) = fetch_string_list(
+            &pool,
+            "SELECT oid FROM url_oids WHERE url_status_id = ? ORDER BY oid",
+            url_status_id,
+        )
+        .await?;
+
+        let oids: Vec<String> = if oids_str.is_empty() {
+            vec![]
+        } else {
+            oids_str.split(',').map(|s| s.to_string()).collect()
+        };
+
+        // Fetch DNS counts
+        let nameserver_count = fetch_count_query(
+            &pool,
+            "SELECT COUNT(*) FROM url_nameservers WHERE url_status_id = ?",
+            url_status_id,
+        )
+        .await?;
+
+        let txt_count = fetch_count_query(
+            &pool,
+            "SELECT COUNT(*) FROM url_txt_records WHERE url_status_id = ?",
+            url_status_id,
+        )
+        .await?;
+
+        let mx_count = fetch_count_query(
+            &pool,
+            "SELECT COUNT(*) FROM url_mx_records WHERE url_status_id = ?",
+            url_status_id,
+        )
+        .await?;
+
+        // Fetch analytics IDs
+        let (analytics_ids_str, analytics_count) = fetch_key_value_list(
+            &pool,
+            "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id",
+            "provider",
+            "tracking_id",
+            url_status_id,
+        )
+        .await?;
+
+        let analytics_ids: Vec<Value> = if analytics_ids_str.is_empty() {
+            vec![]
+        } else {
+            analytics_ids_str
+                .split(',')
+                .filter_map(|s| {
+                    let parts: Vec<&str> = s.split(':').collect();
+                    if parts.len() == 2 {
+                        Some(json!({
+                            "provider": parts[0],
+                            "tracking_id": parts[1]
+                        }))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Fetch social media links
+        let (social_media_links_str, social_media_count) = fetch_key_value_list(
+            &pool,
+            "SELECT platform, url FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, url",
+            "platform",
+            "url",
+            url_status_id,
+        )
+        .await?;
+
+        let social_media_links: Vec<Value> = if social_media_links_str.is_empty() {
+            vec![]
+        } else {
+            social_media_links_str
+                .split(',')
+                .filter_map(|s| {
+                    let parts: Vec<&str> = s.split(':').collect();
+                    if parts.len() == 2 {
+                        Some(json!({
+                            "platform": parts[0],
+                            "url": parts[1]
+                        }))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Fetch security warnings
+        let (security_warnings_str, security_warning_count) = fetch_string_list(
+            &pool,
+            "SELECT warning_code FROM url_security_warnings WHERE url_status_id = ? ORDER BY warning_code",
+            url_status_id,
+        )
+        .await?;
+
+        let security_warnings: Vec<String> = if security_warnings_str.is_empty() {
+            vec![]
+        } else {
+            security_warnings_str
+                .split(',')
+                .map(|s| s.to_string())
+                .collect()
+        };
+
+        // Fetch structured data types
+        let (structured_data_types_str, _) = fetch_string_list(
+            &pool,
+            "SELECT DISTINCT data_type FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type",
+            url_status_id,
+        )
+        .await?;
+
+        let structured_data_types: Vec<String> = if structured_data_types_str.is_empty() {
+            vec![]
+        } else {
+            structured_data_types_str
+                .split(',')
+                .map(|s| s.to_string())
+                .collect()
+        };
+
+        let structured_data_count = fetch_count_query(
+            &pool,
+            "SELECT COUNT(*) FROM url_structured_data WHERE url_status_id = ?",
+            url_status_id,
+        )
+        .await?;
+
+        // Fetch HTTP headers
+        const HTTP_KEY_HEADERS: &[&str] = &[
+            "Content-Type",
+            "Server",
+            "X-Powered-By",
+            "X-Frame-Options",
+            "X-Content-Type-Options",
+            "Strict-Transport-Security",
+            "Content-Security-Policy",
+        ];
+        let (http_headers_str, http_header_count) =
+            fetch_filtered_http_headers(&pool, "url_http_headers", url_status_id, HTTP_KEY_HEADERS)
+                .await?;
+
+        let http_headers: std::collections::HashMap<String, String> = if http_headers_str.is_empty()
+        {
+            std::collections::HashMap::new()
+        } else {
+            http_headers_str
+                .split(';')
+                .filter_map(|s| {
+                    let parts: Vec<&str> = s.split(':').collect();
+                    if parts.len() >= 2 {
+                        Some((
+                            parts[0].to_string(),
+                            parts[1..].join(":"), // Handle values that contain ':'
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Fetch security headers
+        const SECURITY_KEY_HEADERS: &[&str] = &[
+            "Content-Security-Policy",
+            "X-Frame-Options",
+            "X-Content-Type-Options",
+            "Strict-Transport-Security",
+            "Referrer-Policy",
+            "Permissions-Policy",
+        ];
+        let (security_headers_str, security_header_count) = fetch_filtered_http_headers(
+            &pool,
+            "url_security_headers",
+            url_status_id,
+            SECURITY_KEY_HEADERS,
+        )
+        .await?;
+
+        let security_headers: std::collections::HashMap<String, String> =
+            if security_headers_str.is_empty() {
+                std::collections::HashMap::new()
+            } else {
+                security_headers_str
+                    .split(';')
+                    .filter_map(|s| {
+                        let parts: Vec<&str> = s.split(':').collect();
+                        if parts.len() >= 2 {
+                            Some((
+                                parts[0].to_string(),
+                                parts[1..].join(":"), // Handle values that contain ':'
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+
+        // Fetch GeoIP data
+        let geoip_row = sqlx::query(
+            "SELECT country_code, country_name, region, city, latitude, longitude, asn, asn_org
+             FROM url_geoip WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_optional(pool.as_ref())
+        .await?;
+
+        let geoip = geoip_row.map(|r| {
+            json!({
+                "country_code": r.get::<Option<String>, _>("country_code"),
+                "country_name": r.get::<Option<String>, _>("country_name"),
+                "region": r.get::<Option<String>, _>("region"),
+                "city": r.get::<Option<String>, _>("city"),
+                "latitude": r.get::<Option<f64>, _>("latitude"),
+                "longitude": r.get::<Option<f64>, _>("longitude"),
+                "asn": r.get::<Option<i64>, _>("asn"),
+                "asn_org": r.get::<Option<String>, _>("asn_org"),
+            })
+        });
+
+        // Fetch WHOIS data
+        let whois_row = sqlx::query(
+            "SELECT registrar, creation_date, expiration_date, registrant_country
+             FROM url_whois WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_optional(pool.as_ref())
+        .await?;
+
+        let whois = whois_row.map(|r| {
+            json!({
+                "registrar": r.get::<Option<String>, _>("registrar"),
+                "creation_date": r.get::<Option<i64>, _>("creation_date"),
+                "expiration_date": r.get::<Option<i64>, _>("expiration_date"),
+                "registrant_country": r.get::<Option<String>, _>("registrant_country"),
+            })
+        });
+
+        // Build the complete JSON object
+        let json_obj = json!({
+            "url": url,
+            "initial_domain": initial_domain,
+            "final_domain": final_domain,
+            "ip_address": ip_address,
+            "reverse_dns": reverse_dns,
+            "status": status,
+            "status_description": status_desc,
+            "response_time_ms": response_time,
+            "title": title,
+            "keywords": keywords,
+            "description": description,
+            "is_mobile_friendly": is_mobile_friendly,
+            "redirect_chain": redirect_chain,
+            "redirect_count": redirect_chain.len(),
+            "final_redirect_url": final_redirect_url,
+            "technologies": technologies,
+            "technology_count": technology_count,
+            "tls": {
+                "version": tls_version,
+                "certificate": {
+                    "subject": ssl_cert_subject,
+                    "issuer": ssl_cert_issuer,
+                    "valid_to": ssl_cert_valid_to,
+                    "sans": certificate_sans,
+                    "san_count": certificate_san_count,
+                    "oids": oids,
+                },
+                "cipher_suite": cipher_suite,
+                "key_algorithm": key_algorithm,
+            },
+            "dns": {
+                "nameserver_count": nameserver_count,
+                "txt_record_count": txt_count,
+                "mx_record_count": mx_count,
+            },
+            "spf_record": spf_record,
+            "dmarc_record": dmarc_record,
+            "analytics_ids": analytics_ids,
+            "analytics_count": analytics_count,
+            "social_media_links": social_media_links,
+            "social_media_count": social_media_count,
+            "security_warnings": security_warnings,
+            "security_warning_count": security_warning_count,
+            "structured_data": {
+                "types": structured_data_types,
+                "count": structured_data_count,
+            },
+            "http_headers": http_headers,
+            "http_header_count": http_header_count,
+            "security_headers": security_headers,
+            "security_header_count": security_header_count,
+            "geoip": geoip,
+            "whois": whois,
+            "timestamp": timestamp,
+            "run_id": run_id,
+        });
+
+        // Write JSON object as a single line
+        serde_json::to_writer(&mut writer, &json_obj)?;
+        writeln!(writer)?;
+
+        record_count += 1;
+    }
+
+    Ok(record_count)
+}

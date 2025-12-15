@@ -15,6 +15,8 @@ pub enum SecurityWarning {
     MissingContentTypeOptions,
     /// Missing X-Frame-Options header
     MissingFrameOptions,
+    /// Invalid or untrusted SSL certificate (self-signed, expired, or hostname mismatch)
+    InvalidCertificate,
 }
 
 impl SecurityWarning {
@@ -27,6 +29,9 @@ impl SecurityWarning {
             SecurityWarning::MissingCsp => "Missing Content-Security-Policy header",
             SecurityWarning::MissingContentTypeOptions => "Missing X-Content-Type-Options header",
             SecurityWarning::MissingFrameOptions => "Missing X-Frame-Options header",
+            SecurityWarning::InvalidCertificate => {
+                "Invalid or untrusted SSL certificate (self-signed, expired, or hostname mismatch)"
+            }
         }
     }
 
@@ -39,6 +44,7 @@ impl SecurityWarning {
             SecurityWarning::MissingCsp => "missing_csp",
             SecurityWarning::MissingContentTypeOptions => "missing_content_type_options",
             SecurityWarning::MissingFrameOptions => "missing_frame_options",
+            SecurityWarning::InvalidCertificate => "invalid_certificate",
         }
     }
 }

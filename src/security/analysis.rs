@@ -42,6 +42,10 @@ pub(crate) fn is_weak_tls(version: &str) -> bool {
 /// * `final_url` - The final URL after redirects (to check if HTTPS)
 /// * `tls_version` - TLS version used (if HTTPS)
 /// * `security_headers` - Map of security headers found
+/// * `cert_subject` - Certificate subject (if HTTPS)
+/// * `cert_issuer` - Certificate issuer (if HTTPS)
+/// * `cert_valid_to` - Certificate expiration date (if HTTPS)
+/// * `cert_sans` - Certificate Subject Alternative Names (if HTTPS)
 ///
 /// # Returns
 ///
@@ -50,6 +54,10 @@ pub fn analyze_security(
     final_url: &str,
     tls_version: &Option<String>,
     security_headers: &HashMap<String, String>,
+    cert_subject: &Option<String>,
+    cert_issuer: &Option<String>,
+    cert_valid_to: &Option<chrono::NaiveDateTime>,
+    _cert_sans: &Option<Vec<String>>,
 ) -> Vec<SecurityWarning> {
     let mut warnings = Vec::new();
 
@@ -95,6 +103,30 @@ pub fn analyze_security(
         .any(|k| k.eq_ignore_ascii_case("x-frame-options"));
     if !has_frame_options {
         warnings.push(SecurityWarning::MissingFrameOptions);
+    }
+
+    // Check certificate validity
+    // Since we always allow invalid certificates to maximize data capture,
+    // we need to validate the certificate ourselves and record issues
+    if let (Some(subject), Some(issuer), Some(valid_to)) =
+        (cert_subject, cert_issuer, cert_valid_to)
+    {
+        let now = chrono::Utc::now().naive_utc();
+
+        // Check if certificate is expired or self-signed (subject == issuer)
+        if *valid_to < now || subject == issuer {
+            warnings.push(SecurityWarning::InvalidCertificate);
+        }
+        // Note: Hostname mismatch detection is complex and would require
+        // parsing the certificate subject and SANs, which is handled by
+        // the TLS library. Since we're accepting all certs, we can't easily
+        // detect hostname mismatches without re-implementing the validation logic.
+        // For now, we detect expired and self-signed certificates.
+    } else if final_url.starts_with("https://") {
+        // If we have HTTPS but no certificate info, it might indicate
+        // a certificate extraction failure (recorded as partial failure)
+        // or the certificate was so invalid we couldn't extract it.
+        // We don't add a warning here since partial failures are already tracked.
     }
 
     warnings

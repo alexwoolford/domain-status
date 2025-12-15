@@ -6,6 +6,22 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
+/// Analytics provider name constants.
+///
+/// These are `&'static str` constants that:
+/// - Live in the binary's data section (no heap allocation)
+/// - Are shared across all uses (no memory overhead)
+/// - Are compile-time checked (typos caught at compile time)
+/// - Improve maintainability (single source of truth)
+///
+/// When we need an owned `String` (e.g., for `AnalyticsId.provider`), we convert
+/// these constants using `.to_string()`, but the constant itself is never allocated.
+const PROVIDER_GOOGLE_ANALYTICS: &str = "Google Analytics";
+const PROVIDER_GOOGLE_ANALYTICS_4: &str = "Google Analytics 4";
+const PROVIDER_FACEBOOK_PIXEL: &str = "Facebook Pixel";
+const PROVIDER_GOOGLE_TAG_MANAGER: &str = "Google Tag Manager";
+const PROVIDER_GOOGLE_ADSENSE: &str = "Google AdSense";
+
 /// Analytics/Tracking ID extracted from HTML/JavaScript.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AnalyticsId {
@@ -13,6 +29,38 @@ pub struct AnalyticsId {
     pub provider: String,
     /// The tracking ID (e.g., "UA-123456-1", "G-XXXXXXXXXX", "1234567890", "GTM-XXXXX")
     pub id: String,
+}
+
+/// Minimum length for a valid GTM container ID.
+/// Format: GTM- followed by at least 4 uppercase alphanumeric characters = 8 total.
+const MIN_GTM_ID_LENGTH: usize = 8;
+
+/// Validates that a string is a valid Google Tag Manager container ID.
+///
+/// Valid GTM IDs:
+/// - Start with uppercase "GTM-"
+/// - Followed by uppercase letters and numbers only
+/// - Minimum length of 8 characters (GTM- + at least 4 chars)
+///
+/// This filters out false positives like:
+/// - "gtm-company" (lowercase prefix)
+/// - "gtm-industry" (lowercase prefix)
+/// - "GTM-" (too short)
+///
+/// # Arguments
+///
+/// * `id` - The candidate GTM ID string
+///
+/// # Returns
+///
+/// `true` if the ID is a valid GTM container ID, `false` otherwise.
+fn is_valid_gtm_id(id: &str) -> bool {
+    id.starts_with("GTM-")
+        && id.len() >= MIN_GTM_ID_LENGTH
+        && id
+            .chars()
+            .skip(4)
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 /// Helper function to safely compile a regex pattern, panicking with a detailed error message
@@ -56,10 +104,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in GA_UA_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = ("Google Analytics".to_string(), id_str.clone());
+            let key = (PROVIDER_GOOGLE_ANALYTICS.to_string(), id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: "Google Analytics".to_string(),
+                    provider: PROVIDER_GOOGLE_ANALYTICS.to_string(),
                     id: id_str,
                 });
             }
@@ -77,10 +125,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in GA4_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = ("Google Analytics 4".to_string(), id_str.clone());
+            let key = (PROVIDER_GOOGLE_ANALYTICS_4.to_string(), id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: "Google Analytics 4".to_string(),
+                    provider: PROVIDER_GOOGLE_ANALYTICS_4.to_string(),
                     id: id_str,
                 });
             }
@@ -98,10 +146,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in FB_PIXEL_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = ("Facebook Pixel".to_string(), id_str.clone());
+            let key = (PROVIDER_FACEBOOK_PIXEL.to_string(), id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: "Facebook Pixel".to_string(),
+                    provider: PROVIDER_FACEBOOK_PIXEL.to_string(),
                     id: id_str,
                 });
             }
@@ -115,40 +163,49 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     //   - gtm.js?id=GTM-XXXXX (script src)
     //   - "tagIds":["GTM-XXXXX"] (JSON)
     //   - gtag('config', 'GTM-XXXXX') (gtag call)
-    // We match GTM- followed by alphanumeric, appearing after common GTM-related keywords or in URL parameters
+    // Valid GTM container IDs: GTM- followed by uppercase letters and numbers only (typically 6-7 chars)
+    // We use case-sensitive matching to avoid false positives like "gtm-company", "gtm-industry"
     static GTM_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         compile_regex_unsafe(
-            r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]+)"#,
+            r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]{4,})\b"#,
             "GTM_PATTERN",
         )
     });
     for cap in GTM_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = ("Google Tag Manager".to_string(), id_str.clone());
-            if seen_ids.insert(key) {
-                analytics_ids.push(AnalyticsId {
-                    provider: "Google Tag Manager".to_string(),
-                    id: id_str,
-                });
+            // Validate: must start with uppercase GTM- and contain only uppercase letters/numbers
+            // Filter out common false positives like "gtm-company", "gtm-industry", etc.
+            if is_valid_gtm_id(&id_str) {
+                let key = (PROVIDER_GOOGLE_TAG_MANAGER.to_string(), id_str.clone());
+                if seen_ids.insert(key) {
+                    analytics_ids.push(AnalyticsId {
+                        provider: PROVIDER_GOOGLE_TAG_MANAGER.to_string(),
+                        id: id_str,
+                    });
+                }
             }
         }
     }
 
     // Also check for standalone GTM-XXXXX patterns (fallback for edge cases)
     // This catches GTM IDs that appear without the keywords above
+    // Must be uppercase GTM- followed by uppercase letters/numbers only
     static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        compile_regex_unsafe(r#"(?i)\b(GTM-[A-Z0-9]{6,})\b"#, "GTM_STANDALONE_PATTERN")
+        compile_regex_unsafe(r#"\b(GTM-[A-Z0-9]{4,})\b"#, "GTM_STANDALONE_PATTERN")
     });
     for cap in GTM_STANDALONE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = ("Google Tag Manager".to_string(), id_str.clone());
-            if seen_ids.insert(key) {
-                analytics_ids.push(AnalyticsId {
-                    provider: "Google Tag Manager".to_string(),
-                    id: id_str,
-                });
+            // Validate: must start with uppercase GTM- and contain only uppercase letters/numbers
+            if is_valid_gtm_id(&id_str) {
+                let key = (PROVIDER_GOOGLE_TAG_MANAGER.to_string(), id_str.clone());
+                if seen_ids.insert(key) {
+                    analytics_ids.push(AnalyticsId {
+                        provider: PROVIDER_GOOGLE_TAG_MANAGER.to_string(),
+                        id: id_str,
+                    });
+                }
             }
         }
     }
@@ -162,10 +219,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in ADSENSE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = format!("pub-{}", id.as_str());
-            let key = ("Google AdSense".to_string(), id_str.clone());
+            let key = (PROVIDER_GOOGLE_ADSENSE.to_string(), id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: "Google AdSense".to_string(),
+                    provider: PROVIDER_GOOGLE_ADSENSE.to_string(),
                     id: id_str,
                 });
             }

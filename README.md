@@ -193,6 +193,7 @@ Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many
 The tool uses a subcommand-based interface:
 
 - **`domain_status scan <file>`** - Scan URLs and store results in SQLite database
+  - Use `-` as filename to read URLs from stdin: `echo "https://example.com" | domain_status scan -`
 - **`domain_status export`** - Export data from SQLite database to various formats (CSV, JSONL, Parquet)
 
 ### Scan Command
@@ -211,6 +212,7 @@ domain_status scan <file> [OPTIONS]
 - `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 15)
 - `--show-timing`: Display detailed timing metrics at the end of the run (default: disabled)
 - `--status-port <PORT>`: Start HTTP status server on the specified port (optional, disabled by default)
+- `--fail-on <POLICY>`: Exit code policy for CI integration: `never` (default), `any-failure`, `pct>X`, or `errors-only`. See [Exit Code Control](#exit-code-control) for details.
 
 **Advanced Options:**
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
@@ -231,6 +233,33 @@ domain_status scan urls.txt \
   --status-port 8080
 ```
 
+**Exit Code Control (`--fail-on`):**
+
+The `--fail-on` option controls when the scan command exits with a non-zero code, making it ideal for CI/CD pipelines:
+
+- `never` (default): Always return exit code 0, even if some URLs failed. Useful for monitoring scenarios where you want to log failures but not trigger alerts.
+- `any-failure`: Exit with code 2 if any URL failed. Strict mode for CI pipelines where any failure should be treated as a build failure.
+- `pct>X`: Exit with code 2 if failure percentage exceeds X (e.g., `pct>10` means exit if more than 10% failed). Use with `--fail-on-pct-threshold` to set the exact percentage. Useful for large scans where some failures are expected.
+- `errors-only`: Exit only on critical errors (timeouts, DNS failures, etc.). Currently behaves like `any-failure` (future enhancement).
+
+**Exit Codes:**
+- `0`: Success (or failures ignored by policy)
+- `1`: Configuration error or scan initialization failure
+- `2`: Failures exceeded threshold (based on `--fail-on` policy)
+- `3`: Partial success (some URLs processed, but scan incomplete)
+
+**Examples:**
+```bash
+# CI mode: fail if any URL fails
+domain_status scan urls.txt --fail-on any-failure
+
+# Allow up to 10% failures before failing
+domain_status scan urls.txt --fail-on pct>10 --fail-on-pct-threshold 10
+
+# Monitoring mode: always succeed (default)
+domain_status scan urls.txt --fail-on never
+```
+
 ### Export Command
 
 **Usage:**
@@ -241,6 +270,9 @@ domain_status export [OPTIONS]
 **Options:**
 - `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
 - `--format <FORMAT>`: Export format: `csv`, `jsonl`, or `parquet` (default: `csv`)
+  - **CSV**: Flattened format, one row per URL with all fields as columns (ideal for spreadsheets)
+  - **JSONL**: JSON Lines format, one JSON object per line (ideal for scripting, piping to `jq`, or loading into databases)
+  - **Parquet**: Columnar format (not yet implemented)
 - `--output <PATH>`: Output file path (or stdout if not specified)
 - `--run-id <ID>`: Filter by run ID
 - `--domain <DOMAIN>`: Filter by domain (matches initial or final domain)
@@ -263,9 +295,16 @@ domain_status export --format csv --status 200 --output successful.csv
 
 # Export records from a specific domain
 domain_status export --format csv --domain example.com --output example.csv
-```
 
-**Note:** JSONL and Parquet export formats are planned for future releases. Currently, only CSV export is available.
+# Export to JSONL format (ideal for scripting and piping to jq)
+domain_status export --format jsonl --output results.jsonl
+
+# Pipe JSONL to jq for filtering
+domain_status export --format jsonl | jq 'select(.status == 200) | .domain'
+
+# Export failures only to JSONL
+domain_status export --format jsonl --status '>=400' --output failures.jsonl
+```
 
 ### Environment Variables
 
@@ -293,10 +332,28 @@ GITHUB_TOKEN=your_github_token_here
 
 ### URL Input
 
+**Input File:**
 - URLs can be provided with or without `http://` or `https://` prefix
 - If no scheme is provided, `https://` is automatically prepended
 - Only `http://` and `https://` URLs are accepted; other schemes are rejected
 - Invalid URLs are skipped with a warning
+- **Empty lines and comments are automatically skipped**: Lines starting with `#` are treated as comments and ignored
+- **STDIN support**: Use `-` as the filename to read URLs from stdin:
+  ```bash
+  echo -e "https://example.com\nhttps://example.org" | domain_status scan -
+  cat urls.txt | domain_status scan -
+  ```
+
+**Example input file:**
+```bash
+# My domain list
+# Production domains
+https://example.com
+https://www.example.com
+
+# Staging domains
+https://staging.example.com
+```
 
 ## 📊 Output & Results
 

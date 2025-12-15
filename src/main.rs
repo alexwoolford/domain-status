@@ -331,8 +331,26 @@ async fn main() -> Result<()> {
                     Ok(())
                 }
                 ExportFormat::Jsonl => {
-                    eprintln!("JSONL export not yet implemented");
-                    process::exit(1);
+                    use domain_status::export::export_jsonl;
+                    match export_jsonl(
+                        &export_cmd.db_path,
+                        export_cmd.output.as_ref(),
+                        export_cmd.run_id.as_deref(),
+                        export_cmd.domain.as_deref(),
+                        export_cmd.status,
+                        export_cmd.since,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            println!("✅ Exported {} records to JSONL format", count);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Failed to export JSONL: {}", e);
+                            process::exit(1);
+                        }
+                    }
                 }
                 ExportFormat::Parquet => {
                     eprintln!("Parquet export not yet implemented");
