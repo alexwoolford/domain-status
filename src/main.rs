@@ -367,7 +367,7 @@ async fn main() -> Result<()> {
 /// - 0: Success (or failures ignored by policy)
 /// - 2: Failures exceeded threshold (based on --fail-on policy)
 /// - 3: Partial success (some URLs processed, but scan incomplete)
-fn evaluate_exit_code(
+pub fn evaluate_exit_code(
     fail_on: &FailOn,
     pct_threshold: u8,
     report: &domain_status::ScanReport,
@@ -402,5 +402,218 @@ fn evaluate_exit_code(
                 0
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use domain_status::ScanReport;
+
+    #[test]
+    fn test_evaluate_exit_code_never() {
+        let report = ScanReport {
+            total_urls: 10,
+            successful: 5,
+            failed: 5,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::Never, 10, &report),
+            0,
+            "Never policy should always return 0"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_any_failure_with_failures() {
+        let report = ScanReport {
+            total_urls: 10,
+            successful: 5,
+            failed: 5,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::AnyFailure, 10, &report),
+            2,
+            "AnyFailure policy should return 2 when failures exist"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_any_failure_without_failures() {
+        let report = ScanReport {
+            total_urls: 10,
+            successful: 10,
+            failed: 0,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::AnyFailure, 10, &report),
+            0,
+            "AnyFailure policy should return 0 when no failures"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_zero_urls() {
+        let report = ScanReport {
+            total_urls: 0,
+            successful: 0,
+            failed: 0,
+            elapsed_seconds: 0.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            3,
+            "PctGreaterThan policy should return 3 when no URLs processed"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_below_threshold() {
+        let report = ScanReport {
+            total_urls: 100,
+            successful: 95,
+            failed: 5, // 5% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            0,
+            "PctGreaterThan policy should return 0 when failure rate is below threshold"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_at_threshold() {
+        let report = ScanReport {
+            total_urls: 100,
+            successful: 90,
+            failed: 10, // Exactly 10% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            0,
+            "PctGreaterThan policy should return 0 when failure rate equals threshold (not greater)"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_above_threshold() {
+        let report = ScanReport {
+            total_urls: 100,
+            successful: 85,
+            failed: 15, // 15% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            2,
+            "PctGreaterThan policy should return 2 when failure rate exceeds threshold"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_errors_only_with_failures() {
+        let report = ScanReport {
+            total_urls: 10,
+            successful: 5,
+            failed: 5,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::ErrorsOnly, 10, &report),
+            2,
+            "ErrorsOnly policy should return 2 when failures exist"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_errors_only_without_failures() {
+        let report = ScanReport {
+            total_urls: 10,
+            successful: 10,
+            failed: 0,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::ErrorsOnly, 10, &report),
+            0,
+            "ErrorsOnly policy should return 0 when no failures"
+        );
+    }
+
+    #[test]
+    fn test_scan_command_to_config_conversion() {
+        use std::path::PathBuf;
+        let scan_cmd = ScanCommand {
+            file: PathBuf::from("test.txt"),
+            log_level: LogLevel::Debug,
+            log_format: LogFormat::Json,
+            db_path: PathBuf::from("custom.db"),
+            max_concurrency: 50,
+            timeout_seconds: 20,
+            user_agent: "Custom Agent".to_string(),
+            rate_limit_rps: 25,
+            adaptive_error_threshold: 0.3,
+            fingerprints: Some("https://example.com/tech.json".to_string()),
+            geoip: Some("/path/to/geoip.mmdb".to_string()),
+            status_port: Some(8080),
+            enable_whois: true,
+            show_timing: true,
+            fail_on: FailOn::AnyFailure,
+            fail_on_pct_threshold: 15,
+        };
+
+        let config: Config = scan_cmd.into();
+
+        assert_eq!(config.file, PathBuf::from("test.txt"));
+        // Note: LogLevel and LogFormat don't implement PartialEq, so we verify conversion worked
+        // by checking other fields. The conversion itself is tested in config::types::tests.
+        assert_eq!(config.db_path, PathBuf::from("custom.db"));
+        assert_eq!(config.max_concurrency, 50);
+        assert_eq!(config.timeout_seconds, 20);
+        assert_eq!(config.user_agent, "Custom Agent");
+        assert_eq!(config.rate_limit_rps, 25);
+        assert_eq!(config.adaptive_error_threshold, 0.3);
+        assert_eq!(
+            config.fingerprints,
+            Some("https://example.com/tech.json".to_string())
+        );
+        assert_eq!(config.geoip, Some("/path/to/geoip.mmdb".to_string()));
+        assert_eq!(config.status_port, Some(8080));
+        assert!(config.enable_whois);
+        assert!(config.show_timing);
+        assert_eq!(config.fail_on, FailOn::AnyFailure);
+        assert_eq!(config.fail_on_pct_threshold, 15);
     }
 }
