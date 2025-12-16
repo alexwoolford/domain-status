@@ -65,6 +65,9 @@ async fn insert_url_failure_impl(
     pool: &SqlitePool,
     failure: &UrlFailureRecord,
 ) -> Result<i64, DatabaseError> {
+    // Start transaction for atomic insertion of all related records
+    let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+
     // Insert main failure record
     let failure_id = sqlx::query(
         "INSERT INTO url_failures (
@@ -84,7 +87,7 @@ async fn insert_url_failure_impl(
     .bind(failure.elapsed_time_seconds)
     .bind(failure.timestamp)
     .bind(failure.run_id.as_ref())
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(DatabaseError::SqlError)?
     .get::<i64, _>(0);
@@ -99,7 +102,7 @@ async fn insert_url_failure_impl(
         .bind(failure_id)
         .bind(redirect_url)
         .bind(order as i64)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(DatabaseError::SqlError)?;
     }
@@ -114,7 +117,7 @@ async fn insert_url_failure_impl(
         .bind(failure_id)
         .bind(name)
         .bind(value)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(DatabaseError::SqlError)?;
     }
@@ -129,10 +132,13 @@ async fn insert_url_failure_impl(
         .bind(failure_id)
         .bind(name)
         .bind(value)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(DatabaseError::SqlError)?;
     }
+
+    // Commit transaction - all inserts succeed or none are committed
+    tx.commit().await.map_err(DatabaseError::SqlError)?;
 
     Ok(failure_id)
 }
