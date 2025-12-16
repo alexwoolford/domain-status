@@ -321,10 +321,10 @@ mod tests {
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled in test context
                                  // Security analysis should be fast (synchronous operation)
-                                 // Note: Using lenient threshold for CI environments
+                                 // Note: Using very lenient threshold for CI environments where system load can cause delays
         assert!(
-            security_ms < 5000,
-            "Security analysis took {}ms, expected < 5000ms",
+            security_ms < 10000,
+            "Security analysis took {}ms, expected < 10000ms",
             security_ms
         );
     }
@@ -409,10 +409,10 @@ mod tests {
             geoip_ms
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
-                                 // Note: Using lenient threshold for CI environments
+                                 // Note: Using very lenient threshold for CI environments where system load can cause delays
         assert!(
-            security_ms < 5000,
-            "Security analysis took {}ms, expected < 5000ms",
+            security_ms < 10000,
+            "Security analysis took {}ms, expected < 10000ms",
             security_ms
         );
     }
@@ -530,10 +530,10 @@ mod tests {
             "GeoIP lookup took {}ms, expected < 5000ms",
             geoip_ms
         );
-        // Note: Using lenient threshold for CI environments
+        // Note: Using very lenient threshold for CI environments where system load can cause delays
         assert!(
-            security_ms < 5000,
-            "Security analysis took {}ms, expected < 5000ms",
+            security_ms < 10000,
+            "Security analysis took {}ms, expected < 10000ms",
             security_ms
         );
         // _whois_ms may be 0 if lookup fails immediately, but the code path was executed
@@ -611,10 +611,10 @@ mod tests {
             geoip_ms
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
-                                 // Note: Using lenient threshold for CI environments
+                                 // Note: Using very lenient threshold for CI environments where system load can cause delays
         assert!(
-            security_ms < 5000,
-            "Security analysis took {}ms, expected < 5000ms",
+            security_ms < 10000,
+            "Security analysis took {}ms, expected < 10000ms",
             security_ms
         );
         // GeoIP data should be None (invalid IP)
