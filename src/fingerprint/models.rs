@@ -180,3 +180,294 @@ pub struct FingerprintRuleset {
     /// Metadata about the ruleset
     pub metadata: FingerprintMetadata,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test deserializing a technology with string fields (single values)
+    #[test]
+    fn test_technology_deserialize_string_fields() {
+        let json = r#"{
+            "cats": [1, 2],
+            "website": "https://example.com",
+            "html": "pattern1",
+            "script": "jquery.js",
+            "implies": "PHP"
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.cats, vec![1, 2]);
+        assert_eq!(tech.website, "https://example.com");
+        assert_eq!(tech.html, vec!["pattern1"]);
+        assert_eq!(tech.script, vec!["jquery.js"]);
+        assert_eq!(tech.implies, vec!["PHP"]);
+    }
+
+    /// Test deserializing a technology with array fields (multiple values)
+    #[test]
+    fn test_technology_deserialize_array_fields() {
+        let json = r#"{
+            "cats": [1],
+            "html": ["pattern1", "pattern2"],
+            "script": ["jquery.js", "bootstrap.js"],
+            "implies": ["PHP", "MySQL"]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.html, vec!["pattern1", "pattern2"]);
+        assert_eq!(tech.script, vec!["jquery.js", "bootstrap.js"]);
+        assert_eq!(tech.implies, vec!["PHP", "MySQL"]);
+    }
+
+    /// Test deserializing meta tags with string values
+    #[test]
+    fn test_technology_deserialize_meta_string() {
+        let json = r#"{
+            "meta": {
+                "generator": "WordPress"
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string()])
+        );
+    }
+
+    /// Test deserializing meta tags with array values
+    #[test]
+    fn test_technology_deserialize_meta_array() {
+        let json = r#"{
+            "meta": {
+                "generator": ["WordPress", "Drupal"]
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string(), "Drupal".to_string()])
+        );
+    }
+
+    /// Test deserializing headers map
+    #[test]
+    fn test_technology_deserialize_headers() {
+        let json = r#"{
+            "headers": {
+                "Server": "Apache",
+                "X-Powered-By": "PHP"
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.headers.get("Server"), Some(&"Apache".to_string()));
+        assert_eq!(tech.headers.get("X-Powered-By"), Some(&"PHP".to_string()));
+    }
+
+    /// Test deserializing cookies map
+    #[test]
+    fn test_technology_deserialize_cookies() {
+        let json = r#"{
+            "cookies": {
+                "PHPSESSID": "",
+                "laravel_session": "^eyJ"
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.cookies.get("PHPSESSID"), Some(&"".to_string()));
+        assert_eq!(
+            tech.cookies.get("laravel_session"),
+            Some(&"^eyJ".to_string())
+        );
+    }
+
+    /// Test deserializing scriptSrc alias
+    #[test]
+    fn test_technology_deserialize_script_src_alias() {
+        let json = r#"{
+            "scriptSrc": ["jquery.min.js", "bootstrap.bundle.js"]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.script, vec!["jquery.min.js", "bootstrap.bundle.js"]);
+    }
+
+    /// Test deserializing empty/default fields
+    #[test]
+    fn test_technology_deserialize_defaults() {
+        let json = r#"{}"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(tech.cats.is_empty());
+        assert!(tech.website.is_empty());
+        assert!(tech.headers.is_empty());
+        assert!(tech.cookies.is_empty());
+        assert!(tech.meta.is_empty());
+        assert!(tech.script.is_empty());
+        assert!(tech.html.is_empty());
+        assert!(tech.url.is_empty());
+        assert!(tech.js.is_empty());
+        assert!(tech.implies.is_empty());
+        assert!(tech.excludes.is_empty());
+    }
+
+    /// Test deserializing a complete technology (real-world example)
+    #[test]
+    fn test_technology_deserialize_complete() {
+        let json = r#"{
+            "cats": [1, 11],
+            "website": "https://wordpress.org",
+            "headers": {
+                "X-Powered-By": "WordPress"
+            },
+            "cookies": {
+                "wp-settings-": ""
+            },
+            "meta": {
+                "generator": "^WordPress\\s+([\\d.]+)?\\;version:\\1"
+            },
+            "html": [
+                "<link[^>]+/wp-(?:content|includes)/",
+                "data-flavor=\"developer\""
+            ],
+            "scriptSrc": "wp-(?:content|includes)/",
+            "implies": ["PHP", "MySQL"]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.cats, vec![1, 11]);
+        assert_eq!(tech.website, "https://wordpress.org");
+        assert_eq!(tech.headers.len(), 1);
+        assert_eq!(tech.cookies.len(), 1);
+        assert_eq!(tech.meta.len(), 1);
+        assert_eq!(tech.html.len(), 2);
+        assert_eq!(tech.script.len(), 1);
+        assert_eq!(tech.implies, vec!["PHP", "MySQL"]);
+    }
+
+    /// Test Category deserialization
+    #[test]
+    fn test_category_deserialize() {
+        let json = r#"{
+            "name": "CMS",
+            "description": "Content Management System",
+            "priority": 10
+        }"#;
+
+        let cat: Category = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(cat.name, "CMS");
+    }
+
+    /// Test Category deserialization with defaults
+    #[test]
+    fn test_category_deserialize_defaults() {
+        let json = r#"{"name": "CMS"}"#;
+
+        let cat: Category = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(cat.name, "CMS");
+        // description and priority should use defaults
+    }
+
+    /// Test FingerprintMetadata serialization roundtrip
+    #[test]
+    fn test_fingerprint_metadata_roundtrip() {
+        let metadata = FingerprintMetadata {
+            source: "https://example.com/rules".to_string(),
+            version: "1.0.0".to_string(),
+            last_updated: SystemTime::now(),
+        };
+
+        let json = serde_json::to_string(&metadata).expect("Failed to serialize");
+        let deserialized: FingerprintMetadata =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.source, metadata.source);
+        assert_eq!(deserialized.version, metadata.version);
+    }
+
+    /// Test Technology clone
+    #[test]
+    fn test_technology_clone() {
+        let json = r#"{
+            "cats": [1],
+            "html": ["pattern"],
+            "implies": ["PHP"]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        let cloned = tech.clone();
+
+        assert_eq!(tech.cats, cloned.cats);
+        assert_eq!(tech.html, cloned.html);
+        assert_eq!(tech.implies, cloned.implies);
+    }
+
+    /// Test mixed meta types in same object
+    #[test]
+    fn test_technology_deserialize_mixed_meta() {
+        let json = r#"{
+            "meta": {
+                "generator": "WordPress",
+                "author": ["John", "Jane"],
+                "keywords": "single keyword"
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string()])
+        );
+        assert_eq!(
+            tech.meta.get("author"),
+            Some(&vec!["John".to_string(), "Jane".to_string()])
+        );
+        assert_eq!(
+            tech.meta.get("keywords"),
+            Some(&vec!["single keyword".to_string()])
+        );
+    }
+
+    /// Test URL patterns
+    #[test]
+    fn test_technology_deserialize_url_patterns() {
+        let json = r#"{
+            "url": ["^https?://[^/]+/wp-admin/", "\\.aspx$"]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.url.len(), 2);
+        assert!(tech.url[0].contains("wp-admin"));
+        assert!(tech.url[1].contains("aspx"));
+    }
+
+    /// Test JS patterns
+    #[test]
+    fn test_technology_deserialize_js_patterns() {
+        let json = r#"{
+            "js": {
+                "jQuery": "",
+                "jQuery.fn.jquery": "\\;version:\\1"
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.js.len(), 2);
+        assert_eq!(tech.js.get("jQuery"), Some(&"".to_string()));
+    }
+
+    /// Test excludes field
+    #[test]
+    fn test_technology_deserialize_excludes() {
+        let json = r#"{
+            "excludes": ["WordPress", "Drupal"]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.excludes, vec!["WordPress", "Drupal"]);
+    }
+}
