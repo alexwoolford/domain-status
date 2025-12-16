@@ -179,6 +179,286 @@ pub struct TechnologyMatchResult {
     pub version: Option<String>,
 }
 
+/// Matches technology patterns against headers.
+///
+/// Returns match status and version if found. If a version is found, it should be returned immediately.
+/// If no version is found but a match occurs, the caller should continue checking other patterns.
+///
+/// # Arguments
+///
+/// * `headers` - HTTP headers (normalized to lowercase)
+/// * `header_patterns` - Technology header patterns (header_name -> pattern)
+///
+/// # Returns
+///
+/// `(matched: bool, version: Option<String>)` - Match status and optional version
+#[cfg(test)]
+fn match_headers(
+    headers: &std::collections::HashMap<String, String>,
+    header_patterns: &std::collections::HashMap<String, String>,
+) -> (bool, Option<String>) {
+    let mut matched = false;
+    let mut version: Option<String> = None;
+
+    for (header_name, pattern) in header_patterns {
+        if let Some(header_value) = headers.get(header_name) {
+            if pattern.is_empty() {
+                // Empty pattern means header exists (value doesn't matter)
+                log::debug!(
+                    "Technology matched via header: {} exists (empty pattern)",
+                    header_name
+                );
+                matched = true;
+                // Continue checking meta patterns for version
+                break;
+            }
+            let result = matches_pattern(pattern, header_value);
+            if result.matched {
+                log::debug!(
+                    "Technology matched via header: {}='{}' matched pattern '{}' (version: {:?})",
+                    header_name,
+                    header_value,
+                    pattern,
+                    result.version
+                );
+                matched = true;
+                if version.is_none() && result.version.is_some() {
+                    version = result.version.clone();
+                }
+                // If we found a version from header, we can return early
+                if version.is_some() {
+                    return (true, version);
+                }
+                // Otherwise, continue checking meta patterns for version
+            }
+        }
+    }
+
+    (matched, version)
+}
+
+/// Matches technology patterns against cookies, supporting wildcard cookie names.
+///
+/// Returns match status and version if found. Wildcard patterns (e.g., `_ga_*`) are converted to regex.
+///
+/// # Arguments
+///
+/// * `cookies` - HTTP cookies (normalized to lowercase)
+/// * `cookie_patterns` - Technology cookie patterns (cookie_name -> pattern)
+///
+/// # Returns
+///
+/// `Option<Option<String>>` - `None` if no match, `Some(version)` if matched (version may be None)
+#[cfg(test)]
+fn match_cookies(
+    cookies: &std::collections::HashMap<String, String>,
+    cookie_patterns: &std::collections::HashMap<String, String>,
+) -> Option<Option<String>> {
+    for (cookie_name, pattern) in cookie_patterns {
+        // Check if cookie_name contains wildcard (*)
+        if cookie_name.contains('*') {
+            // Convert wildcard pattern to regex (e.g., _ga_* -> ^_ga_.*$)
+            let wildcard_pattern = cookie_name.replace('*', ".*");
+            let cookie_regex = match regex::Regex::new(&format!("^{}$", wildcard_pattern)) {
+                Ok(re) => re,
+                Err(_) => continue, // Invalid regex, skip this cookie pattern
+            };
+
+            // Check all cookies for a match
+            for (actual_cookie_name, cookie_value) in cookies.iter() {
+                if cookie_regex.is_match(actual_cookie_name) {
+                    if pattern.is_empty() {
+                        log::debug!(
+                            "Technology matched via wildcard cookie: {} matches pattern '{}'",
+                            actual_cookie_name,
+                            cookie_name
+                        );
+                        return Some(None);
+                    }
+                    let result = matches_pattern(pattern, cookie_value);
+                    if result.matched {
+                        log::debug!(
+                            "Technology matched via wildcard cookie: {}='{}' matched pattern '{}' (cookie pattern: '{}')",
+                            actual_cookie_name,
+                            cookie_value,
+                            pattern,
+                            cookie_name
+                        );
+                        return Some(result.version);
+                    }
+                }
+            }
+        } else {
+            // Exact match (no wildcard)
+            if let Some(cookie_value) = cookies.get(cookie_name) {
+                if pattern.is_empty() {
+                    return Some(None);
+                }
+                let result = matches_pattern(pattern, cookie_value);
+                if result.matched {
+                    log::debug!(
+                        "Technology matched via cookie: {}='{}' matched pattern '{}'",
+                        cookie_name,
+                        cookie_value,
+                        pattern
+                    );
+                    return Some(result.version);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Matches technology HTML patterns against HTML text.
+///
+/// Returns match status and version if found. If a version is found, it should be returned immediately.
+/// If no version is found but a match occurs, the caller should continue checking other patterns.
+///
+/// # Arguments
+///
+/// * `html_text` - HTML text content
+/// * `html_patterns` - Technology HTML patterns
+///
+/// # Returns
+///
+/// `(matched: bool, version: Option<String>)` - Match status and optional version
+#[cfg(test)]
+fn match_html(html_text: &str, html_patterns: &[String]) -> (bool, Option<String>) {
+    let mut matched = false;
+
+    for pattern in html_patterns {
+        let result = matches_pattern(pattern, html_text);
+        if result.matched {
+            matched = true;
+            log::debug!(
+                "Technology matched via HTML pattern: '{}' matched in HTML text (version: {:?})",
+                pattern,
+                result.version
+            );
+            // If we get a version from HTML pattern, we can return early
+            if result.version.is_some() {
+                return (true, result.version);
+            }
+            // Otherwise, continue checking other patterns for version
+            // Don't break - check all HTML patterns first, then move to script/meta
+            log::debug!(
+                "HTML pattern matched without version, will continue checking script/meta patterns for version"
+            );
+        }
+    }
+
+    (matched, None)
+}
+
+/// Matches technology script source patterns against script URLs.
+///
+/// Returns match status and version if found. wappalyzergo iterates through scripts first,
+/// then patterns, and takes the first version found.
+///
+/// # Arguments
+///
+/// * `script_sources` - Script source URLs
+/// * `script_patterns` - Technology script patterns
+///
+/// # Returns
+///
+/// `(matched: bool, version: Option<String>)` - Match status and optional version
+#[cfg(test)]
+fn match_scripts(script_sources: &[String], script_patterns: &[String]) -> (bool, Option<String>) {
+    let mut matched_version: Option<String> = None;
+    let mut has_match = false;
+
+    // Iterate through scripts first (matching wappalyzergo's behavior)
+    for script_src in script_sources {
+        // For each script, check all patterns and take the first version found
+        for pattern in script_patterns {
+            let result = matches_pattern(pattern, script_src);
+
+            if result.matched {
+                has_match = true;
+                log::debug!(
+                    "Technology matched via script src: pattern '{}' matched '{}' (version: {:?})",
+                    pattern,
+                    script_src,
+                    result.version
+                );
+                // wappalyzergo behavior: take the first version found (from first script that matches)
+                // Once we have a version from this script, we can stop checking other patterns for this script
+                if matched_version.is_none() && result.version.is_some() {
+                    matched_version = result.version.clone();
+                }
+                // If we already have a version, we can break (first version wins)
+                if matched_version.is_some() {
+                    break; // Found version from this script, move to next script
+                }
+            }
+        }
+        // If we found a match with a version, we can return early (first version wins)
+        if has_match && matched_version.is_some() {
+            break; // Found first version, stop checking other scripts
+        }
+    }
+
+    (has_match, matched_version)
+}
+
+/// Matches technology meta tag patterns against meta tags.
+///
+/// Returns match status and version if found. If already matched via other patterns,
+/// this function can still provide a version.
+///
+/// # Arguments
+///
+/// * `meta_tags` - HTML meta tags (key format: "prefix:name")
+/// * `meta_patterns` - Technology meta patterns (meta_key -> patterns)
+///
+/// # Returns
+///
+/// `Option<Option<String>>` - `None` if no match, `Some(version)` if matched (version may be None)
+#[cfg(test)]
+fn match_meta(
+    meta_tags: &std::collections::HashMap<String, Vec<String>>,
+    meta_patterns: &std::collections::HashMap<String, Vec<String>>,
+) -> Option<Option<String>> {
+    for (meta_key, patterns) in meta_patterns {
+        let result = check_meta_patterns(meta_key, patterns, meta_tags);
+        if result.matched {
+            log::debug!(
+                "Technology matched via meta tag: {} (version: {:?})",
+                meta_key,
+                result.version
+            );
+            return Some(result.version);
+        }
+    }
+
+    None
+}
+
+/// Matches technology URL patterns against the URL.
+///
+/// # Arguments
+///
+/// * `url` - The URL being checked
+/// * `url_patterns` - Technology URL patterns
+///
+/// # Returns
+///
+/// `Option<Option<String>>` - `None` if no match, `Some(version)` if matched (version may be None)
+#[cfg(test)]
+fn match_url(url: &str, url_patterns: &[String]) -> Option<Option<String>> {
+    for url_pattern in url_patterns {
+        let result = matches_pattern(url_pattern, url);
+        if result.matched {
+            return Some(result.version);
+        }
+    }
+
+    None
+}
+
 /// Checks if a technology matches based on its patterns.
 ///
 /// # Arguments
@@ -221,190 +501,51 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> Tec
     // Empty pattern means "header exists, value doesn't matter" (like cookies)
     // However, if header pattern matches without a version, we should continue checking other patterns
     // (meta) to find a version, as wappalyzergo takes the first version found across all patterns
-    let mut header_matched = false;
-    let mut header_version: Option<String> = None;
+    let (header_matched, header_version) = match_headers(params.headers, &params.tech.headers);
 
-    for (header_name, pattern) in &params.tech.headers {
-        if let Some(header_value) = params.headers.get(header_name) {
-            if pattern.is_empty() {
-                // Empty pattern means header exists (value doesn't matter)
-                log::debug!(
-                    "Technology matched via header: {} exists (empty pattern)",
-                    header_name
-                );
-                header_matched = true;
-                // Continue checking meta patterns for version
-                break;
-            }
-            let result = matches_pattern(pattern, header_value);
-            if result.matched {
-                log::debug!(
-                    "Technology matched via header: {}='{}' matched pattern '{}' (version: {:?})",
-                    header_name,
-                    header_value,
-                    pattern,
-                    result.version
-                );
-                header_matched = true;
-                if header_version.is_none() && result.version.is_some() {
-                    header_version = result.version.clone();
-                }
-                // If we found a version from header, we can return early
-                if header_version.is_some() {
-                    return TechnologyMatchResult {
-                        matched: true,
-                        version: header_version,
-                    };
-                }
-                // Otherwise, continue checking meta patterns for version
-            }
-        }
+    // If we found a version from header, return early
+    if header_matched && header_version.is_some() {
+        return TechnologyMatchResult {
+            matched: true,
+            version: header_version,
+        };
     }
 
     // Match cookies (cookie_name is already normalized to lowercase in ruleset)
     // wappalyzergo supports wildcard cookie names (e.g., _ga_* matches _ga_123456)
-    for (cookie_name, pattern) in &params.tech.cookies {
-        // Check if cookie_name contains wildcard (*)
-        if cookie_name.contains('*') {
-            // Convert wildcard pattern to regex (e.g., _ga_* -> ^_ga_.*$)
-            let wildcard_pattern = cookie_name.replace('*', ".*");
-            let cookie_regex = match regex::Regex::new(&format!("^{}$", wildcard_pattern)) {
-                Ok(re) => re,
-                Err(_) => continue, // Invalid regex, skip this cookie pattern
-            };
-
-            // Check all cookies for a match
-            for (actual_cookie_name, cookie_value) in params.cookies.iter() {
-                if cookie_regex.is_match(actual_cookie_name) {
-                    if pattern.is_empty() {
-                        log::debug!(
-                            "Technology matched via wildcard cookie: {} matches pattern '{}'",
-                            actual_cookie_name,
-                            cookie_name
-                        );
-                        return TechnologyMatchResult {
-                            matched: true,
-                            version: None,
-                        };
-                    }
-                    let result = matches_pattern(pattern, cookie_value);
-                    if result.matched {
-                        log::debug!(
-                            "Technology matched via wildcard cookie: {}='{}' matched pattern '{}' (cookie pattern: '{}')",
-                            actual_cookie_name,
-                            cookie_value,
-                            pattern,
-                            cookie_name
-                        );
-                        return TechnologyMatchResult {
-                            matched: true,
-                            version: result.version,
-                        };
-                    }
-                }
-            }
-        } else {
-            // Exact match (no wildcard)
-            if let Some(cookie_value) = params.cookies.get(cookie_name) {
-                if pattern.is_empty() {
-                    return TechnologyMatchResult {
-                        matched: true,
-                        version: None,
-                    };
-                }
-                let result = matches_pattern(pattern, cookie_value);
-                if result.matched {
-                    log::debug!(
-                        "Technology matched via cookie: {}='{}' matched pattern '{}'",
-                        cookie_name,
-                        cookie_value,
-                        pattern
-                    );
-                    return TechnologyMatchResult {
-                        matched: true,
-                        version: result.version,
-                    };
-                }
-            }
-        }
+    if let Some(cookie_version) = match_cookies(params.cookies, &params.tech.cookies) {
+        return TechnologyMatchResult {
+            matched: true,
+            version: cookie_version,
+        };
     }
 
     // Match HTML patterns (wappalyzergo checks HTML patterns first in body, before scriptSrc and meta)
     // This is because checkBody() calls matchString(bodyString, htmlPart) before tokenizing
     // However, if HTML pattern matches without a version, we should continue checking other patterns
     // (script, meta) to find a version, as wappalyzergo takes the first version found across all patterns
-    let mut html_matched = false;
-    for pattern in &params.tech.html {
-        let result = matches_pattern(pattern, params.html_text);
-        if result.matched {
-            html_matched = true;
-            log::debug!(
-                "Technology matched via HTML pattern: '{}' matched in HTML text (version: {:?})",
-                pattern,
-                result.version
-            );
-            // If we get a version from HTML pattern, we can return early
-            if result.version.is_some() {
-                return TechnologyMatchResult {
-                    matched: true,
-                    version: result.version,
-                };
-            }
-            // Otherwise, continue checking other patterns for version
-            // Don't break - check all HTML patterns first, then move to script/meta
-            log::debug!(
-                "HTML pattern matched without version, will continue checking script/meta patterns for version"
-            );
-        }
+    let (html_matched, html_version) = match_html(params.html_text, &params.tech.html);
+
+    // If we get a version from HTML pattern, return early
+    if html_matched && html_version.is_some() {
+        return TechnologyMatchResult {
+            matched: true,
+            version: html_version,
+        };
     }
 
     // Match script sources (wappalyzergo checks scriptSrc during HTML tokenization, after HTML patterns)
     // wappalyzergo iterates through scripts first, then patterns, and takes the first version found
     // This ensures that if multiple scripts match, we use the version from the first script (in script order)
     // wappalyzergo checks ALL patterns (both regex and simple substring), not just regex ones
-    let mut matched_version: Option<String> = None;
-    let mut has_match = false;
+    let (has_match, script_version) = match_scripts(params.script_sources, &params.tech.script);
 
-    // Iterate through scripts first (matching wappalyzergo's behavior)
-    for script_src in params.script_sources {
-        // For each script, check all patterns and take the first version found
-        for pattern in &params.tech.script {
-            let result = matches_pattern(pattern, script_src);
-
-            if result.matched {
-                has_match = true;
-                log::debug!(
-                    "Technology matched via script src: pattern '{}' matched '{}' (version: {:?})",
-                    pattern,
-                    script_src,
-                    result.version
-                );
-                // wappalyzergo behavior: take the first version found (from first script that matches)
-                // Once we have a version from this script, we can stop checking other patterns for this script
-                if matched_version.is_none() && result.version.is_some() {
-                    matched_version = result.version.clone();
-                }
-                // If we already have a version, we can break (first version wins)
-                if matched_version.is_some() {
-                    break; // Found version from this script, move to next script
-                }
-            }
-        }
-        // If we found a match with a version, we can return early (first version wins)
-        if has_match && matched_version.is_some() {
-            break; // Found first version, stop checking other scripts
-        }
-    }
-
-    if has_match {
-        // If we found a version from script patterns, return it
-        if matched_version.is_some() {
-            return TechnologyMatchResult {
-                matched: true,
-                version: matched_version,
-            };
-        }
-        // Otherwise, continue checking meta patterns for version
+    // If we found a version from script patterns, return it
+    if has_match && script_version.is_some() {
+        return TechnologyMatchResult {
+            matched: true,
+            version: script_version,
+        };
     }
 
     // Match meta tags (wappalyzergo checks meta during HTML tokenization, after scriptSrc)
@@ -424,37 +565,24 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> Tec
             has_match
         );
     }
-    for (meta_key, patterns) in &params.tech.meta {
-        let result = check_meta_patterns(meta_key, patterns, params.meta_tags);
-        if result.matched {
+
+    if let Some(meta_version) = match_meta(params.meta_tags, &params.tech.meta) {
+        // If we already matched via header/HTML/script, use that match but take version from meta
+        if header_matched || html_matched || has_match {
             log::debug!(
-                "Technology matched via meta tag: {} (version: {:?})",
-                meta_key,
-                result.version
+                "Already matched via header/HTML/script, using version from meta: {:?}",
+                meta_version
             );
-            // If we already matched via header/HTML/script, use that match but take version from meta
-            if header_matched || html_matched || has_match {
-                log::debug!(
-                    "Already matched via header/HTML/script, using version from meta: {:?}",
-                    result.version
-                );
-                return TechnologyMatchResult {
-                    matched: true,
-                    version: result.version, // Use version from meta (first version found)
-                };
-            }
-            // Otherwise, this is the first match
             return TechnologyMatchResult {
                 matched: true,
-                version: result.version,
+                version: meta_version, // Use version from meta (first version found)
             };
-        } else if header_matched || html_matched || has_match {
-            // Log when meta check fails but we already have a match (for debugging)
-            log::debug!(
-                "Meta pattern check failed for key '{}' (already matched via header/HTML/script, continuing to check other meta keys)",
-                meta_key
-            );
         }
+        // Otherwise, this is the first match
+        return TechnologyMatchResult {
+            matched: true,
+            version: meta_version,
+        };
     }
 
     // If we matched via header/HTML/script but found no version in meta, return match without version
@@ -466,14 +594,11 @@ pub(crate) async fn matches_technology(params: TechnologyMatchParams<'_>) -> Tec
     }
 
     // Match URL patterns (can be multiple patterns)
-    for url_pattern in &params.tech.url {
-        let result = matches_pattern(url_pattern, params.url);
-        if result.matched {
-            return TechnologyMatchResult {
-                matched: true,
-                version: result.version,
-            };
-        }
+    if let Some(url_version) = match_url(params.url, &params.tech.url) {
+        return TechnologyMatchResult {
+            matched: true,
+            version: url_version,
+        };
     }
 
     // Match JavaScript patterns (js field) - DISABLED to match wappalyzergo behavior
@@ -1155,6 +1280,248 @@ mod tests {
             result.matched,
             "Should match Google Analytics via scriptSrc pattern"
         );
+    }
+
+    // Tests for extracted helper functions
+
+    #[test]
+    fn test_match_headers_empty_pattern() {
+        let mut headers = HashMap::new();
+        headers.insert("server".to_string(), "nginx/1.18.0".to_string());
+
+        let mut header_patterns = HashMap::new();
+        header_patterns.insert("server".to_string(), String::new()); // Empty pattern
+
+        let (matched, version) = match_headers(&headers, &header_patterns);
+        assert!(matched, "Empty pattern should match when header exists");
+        assert_eq!(version, None, "Empty pattern should not extract version");
+    }
+
+    #[test]
+    fn test_match_headers_with_version() {
+        let mut headers = HashMap::new();
+        headers.insert("server".to_string(), "nginx/1.18.0".to_string());
+
+        let mut header_patterns = HashMap::new();
+        header_patterns.insert(
+            "server".to_string(),
+            r"nginx/(\d+\.\d+)\;version:\1".to_string(),
+        );
+
+        let (matched, version) = match_headers(&headers, &header_patterns);
+        assert!(matched, "Should match nginx pattern");
+        assert_eq!(version, Some("1.18".to_string()), "Should extract version");
+    }
+
+    #[test]
+    fn test_match_headers_no_match() {
+        let mut headers = HashMap::new();
+        headers.insert("server".to_string(), "apache/2.4".to_string());
+
+        let mut header_patterns = HashMap::new();
+        header_patterns.insert("server".to_string(), "nginx".to_string());
+
+        let (matched, version) = match_headers(&headers, &header_patterns);
+        assert!(!matched, "Should not match different server");
+        assert_eq!(version, None);
+    }
+
+    #[test]
+    fn test_match_cookies_exact_match() {
+        let mut cookies = HashMap::new();
+        cookies.insert("session".to_string(), "abc123".to_string());
+
+        let mut cookie_patterns = HashMap::new();
+        cookie_patterns.insert("session".to_string(), ".*".to_string());
+
+        let result = match_cookies(&cookies, &cookie_patterns);
+        assert!(result.is_some(), "Should match cookie");
+        assert_eq!(result.unwrap(), None, "Pattern should match but no version");
+    }
+
+    #[test]
+    fn test_match_cookies_wildcard() {
+        let mut cookies = HashMap::new();
+        cookies.insert("_ga_123456".to_string(), "value".to_string());
+
+        let mut cookie_patterns = HashMap::new();
+        cookie_patterns.insert("_ga_*".to_string(), String::new()); // Wildcard pattern
+
+        let result = match_cookies(&cookies, &cookie_patterns);
+        assert!(result.is_some(), "Should match wildcard cookie");
+    }
+
+    #[test]
+    fn test_match_cookies_no_match() {
+        let mut cookies = HashMap::new();
+        cookies.insert("other".to_string(), "value".to_string());
+
+        let mut cookie_patterns = HashMap::new();
+        cookie_patterns.insert("session".to_string(), ".*".to_string());
+
+        let result = match_cookies(&cookies, &cookie_patterns);
+        assert!(result.is_none(), "Should not match different cookie");
+    }
+
+    #[test]
+    fn test_match_html_simple() {
+        let html_text = "<html><body>Powered by WordPress</body></html>";
+        let html_patterns = vec!["WordPress".to_string()];
+
+        let (matched, version) = match_html(html_text, &html_patterns);
+        assert!(matched, "Should match WordPress in HTML");
+        assert_eq!(version, None, "Simple pattern should not extract version");
+    }
+
+    #[test]
+    fn test_match_html_with_version() {
+        let html_text = "<html><body>jQuery 3.6.0</body></html>";
+        let html_patterns = vec![r"jQuery (\d+\.\d+\.\d+)\;version:\1".to_string()];
+
+        let (matched, version) = match_html(html_text, &html_patterns);
+        assert!(matched, "Should match jQuery pattern");
+        assert_eq!(version, Some("3.6.0".to_string()), "Should extract version");
+    }
+
+    #[test]
+    fn test_match_html_no_match() {
+        let html_text = "<html><body>Some content</body></html>";
+        let html_patterns = vec!["WordPress".to_string()];
+
+        let (matched, version) = match_html(html_text, &html_patterns);
+        assert!(!matched, "Should not match when pattern not found");
+        assert_eq!(version, None);
+    }
+
+    #[test]
+    fn test_match_scripts_simple() {
+        let script_sources = vec!["https://example.com/jquery.min.js".to_string()];
+        let script_patterns = vec!["jquery".to_string()];
+
+        let (matched, version) = match_scripts(&script_sources, &script_patterns);
+        assert!(matched, "Should match jQuery script");
+        assert_eq!(version, None, "Simple pattern should not extract version");
+    }
+
+    #[test]
+    fn test_match_scripts_with_version() {
+        let script_sources = vec!["https://code.jquery.com/jquery-3.6.0.min.js".to_string()];
+        let script_patterns = vec![r"jquery-(\d+\.\d+\.\d+)\;version:\1".to_string()];
+
+        let (matched, version) = match_scripts(&script_sources, &script_patterns);
+        assert!(matched, "Should match jQuery script with version");
+        assert_eq!(version, Some("3.6.0".to_string()), "Should extract version");
+    }
+
+    #[test]
+    fn test_match_scripts_version_from_first_script() {
+        // Test that version is taken from first matching script
+        let script_sources = vec![
+            "https://code.jquery.com/jquery-3.2.1.min.js".to_string(),
+            "https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js".to_string(),
+        ];
+        let script_patterns = vec![
+            r"/(\d+\.\d+\.\d+)/jquery[/.-]\;version:\1".to_string(),
+            r"jquery-(\d+\.\d+\.\d+)\;version:\1".to_string(),
+        ];
+
+        let (matched, version) = match_scripts(&script_sources, &script_patterns);
+        assert!(matched, "Should match jQuery");
+        // Should get version from first script (3.2.1), not second (3.3.1)
+        assert_eq!(
+            version,
+            Some("3.2.1".to_string()),
+            "Should take version from first script"
+        );
+    }
+
+    #[test]
+    fn test_match_meta_simple() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), vec!["WordPress".to_string()]);
+
+        let mut meta_patterns = HashMap::new();
+        meta_patterns.insert("generator".to_string(), vec!["WordPress".to_string()]);
+
+        let result = match_meta(&meta_tags, &meta_patterns);
+        assert!(result.is_some(), "Should match meta tag");
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "Simple pattern should not extract version"
+        );
+    }
+
+    #[test]
+    fn test_match_meta_with_version() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert(
+            "name:generator".to_string(),
+            vec!["WordPress 6.8.3".to_string()],
+        );
+
+        let mut meta_patterns = HashMap::new();
+        meta_patterns.insert(
+            "generator".to_string(),
+            vec![r"^wordpress(?: ([\d.]+))?\;version:\1".to_string()],
+        );
+
+        let result = match_meta(&meta_tags, &meta_patterns);
+        assert!(result.is_some(), "Should match meta tag");
+        assert_eq!(
+            result.unwrap(),
+            Some("6.8.3".to_string()),
+            "Should extract version from meta"
+        );
+    }
+
+    #[test]
+    fn test_match_meta_no_match() {
+        let mut meta_tags = HashMap::new();
+        meta_tags.insert("name:generator".to_string(), vec!["Drupal".to_string()]);
+
+        let mut meta_patterns = HashMap::new();
+        meta_patterns.insert("generator".to_string(), vec!["WordPress".to_string()]);
+
+        let result = match_meta(&meta_tags, &meta_patterns);
+        assert!(result.is_none(), "Should not match different generator");
+    }
+
+    #[test]
+    fn test_match_url_simple() {
+        let url = "https://example.com/page";
+        let url_patterns = vec!["example\\.com".to_string()];
+
+        let result = match_url(url, &url_patterns);
+        assert!(result.is_some(), "Should match URL pattern");
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "Simple pattern should not extract version"
+        );
+    }
+
+    #[test]
+    fn test_match_url_with_version() {
+        let url = "https://example.com/v1.2.3/api";
+        let url_patterns = vec![r"/v(\d+\.\d+\.\d+)/\;version:\1".to_string()];
+
+        let result = match_url(url, &url_patterns);
+        assert!(result.is_some(), "Should match URL pattern");
+        assert_eq!(
+            result.unwrap(),
+            Some("1.2.3".to_string()),
+            "Should extract version from URL"
+        );
+    }
+
+    #[test]
+    fn test_match_url_no_match() {
+        let url = "https://other.com/page";
+        let url_patterns = vec!["example\\.com".to_string()];
+
+        let result = match_url(url, &url_patterns);
+        assert!(result.is_none(), "Should not match different domain");
     }
 
     #[test]

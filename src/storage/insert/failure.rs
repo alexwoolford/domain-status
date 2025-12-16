@@ -60,6 +60,158 @@ pub async fn insert_url_failure(
     Err(DatabaseError::SqlError(sqlx::Error::PoolClosed))
 }
 
+/// Inserts redirect chain for a failure record.
+///
+/// # Arguments
+///
+/// * `tx` - Database transaction
+/// * `failure_id` - The ID of the failure record
+/// * `redirect_chain` - Vector of redirect URLs
+///
+/// # Returns
+///
+/// `Ok(())` if successful, `DatabaseError` if insertion fails
+async fn insert_failure_redirect_chain(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    failure_id: i64,
+    redirect_chain: &[String],
+) -> Result<(), DatabaseError> {
+    for (order, redirect_url) in redirect_chain.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO url_failure_redirect_chain (url_failure_id, redirect_url, redirect_order)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_failure_id, redirect_order) DO NOTHING",
+        )
+        .bind(failure_id)
+        .bind(redirect_url)
+        .bind(order as i64)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "Failed to insert redirect chain entry for failure_id {} (order: {}, url: {}): {}",
+                failure_id,
+                order,
+                redirect_url,
+                e
+            );
+            DatabaseError::SqlError(e)
+        })?;
+    }
+    Ok(())
+}
+
+/// Inserts response headers for a failure record.
+///
+/// # Arguments
+///
+/// * `tx` - Database transaction
+/// * `failure_id` - The ID of the failure record
+/// * `response_headers` - Vector of (header_name, header_value) tuples
+///
+/// # Returns
+///
+/// `Ok(())` if successful, `DatabaseError` if insertion fails
+async fn insert_failure_response_headers(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    failure_id: i64,
+    response_headers: &[(String, String)],
+) -> Result<(), DatabaseError> {
+    for (name, value) in response_headers {
+        sqlx::query(
+            "INSERT INTO url_failure_response_headers (url_failure_id, header_name, header_value)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
+        )
+        .bind(failure_id)
+        .bind(name)
+        .bind(value)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "Failed to insert response header for failure_id {} (header: {}): {}",
+                failure_id,
+                name,
+                e
+            );
+            DatabaseError::SqlError(e)
+        })?;
+    }
+    Ok(())
+}
+
+/// Inserts request headers for a failure record.
+///
+/// # Arguments
+///
+/// * `tx` - Database transaction
+/// * `failure_id` - The ID of the failure record
+/// * `request_headers` - Vector of (header_name, header_value) tuples
+///
+/// # Returns
+///
+/// `Ok(())` if successful, `DatabaseError` if insertion fails
+async fn insert_failure_request_headers(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    failure_id: i64,
+    request_headers: &[(String, String)],
+) -> Result<(), DatabaseError> {
+    for (name, value) in request_headers {
+        sqlx::query(
+            "INSERT INTO url_failure_request_headers (url_failure_id, header_name, header_value)
+             VALUES (?, ?, ?)
+             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
+        )
+        .bind(failure_id)
+        .bind(name)
+        .bind(value)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "Failed to insert request header for failure_id {} (header: {}): {}",
+                failure_id,
+                name,
+                e
+            );
+            DatabaseError::SqlError(e)
+        })?;
+    }
+    Ok(())
+}
+
+/// Inserts all satellite data for a failure record.
+///
+/// This function inserts redirect chain, response headers, and request headers
+/// within a transaction. All inserts must succeed or the transaction is rolled back.
+///
+/// # Arguments
+///
+/// * `tx` - Database transaction
+/// * `failure_id` - The ID of the failure record
+/// * `failure` - The failure record containing satellite data
+///
+/// # Returns
+///
+/// `Ok(())` if all inserts succeed, `DatabaseError` if any insert fails
+async fn insert_failure_satellite_data(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    failure_id: i64,
+    failure: &UrlFailureRecord,
+) -> Result<(), DatabaseError> {
+    // Insert redirect chain
+    insert_failure_redirect_chain(tx, failure_id, &failure.redirect_chain).await?;
+
+    // Insert response headers
+    insert_failure_response_headers(tx, failure_id, &failure.response_headers).await?;
+
+    // Insert request headers
+    insert_failure_request_headers(tx, failure_id, &failure.request_headers).await?;
+
+    Ok(())
+}
+
 /// Internal implementation of insert_url_failure (without retry logic).
 async fn insert_url_failure_impl(
     pool: &SqlitePool,
@@ -69,7 +221,7 @@ async fn insert_url_failure_impl(
     let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
 
     // Insert main failure record
-    let failure_id = sqlx::query(
+    let failure_id_result = sqlx::query(
         "INSERT INTO url_failures (
             url, final_url, domain, final_domain, error_type, error_message,
             http_status, retry_count, elapsed_time_seconds, timestamp, run_id
@@ -89,58 +241,75 @@ async fn insert_url_failure_impl(
     .bind(failure.run_id.as_ref())
     .fetch_one(&mut *tx)
     .await
-    .map_err(DatabaseError::SqlError)?
-    .get::<i64, _>(0);
+    .map_err(|e| {
+        log::error!(
+            "Failed to insert URL failure record for url '{}' (domain: {}, error_type: {}, timestamp: {}): {} (SQL: INSERT INTO url_failures ... RETURNING id)",
+            failure.url,
+            failure.domain,
+            failure.error_type,
+            failure.timestamp,
+            e
+        );
+        DatabaseError::SqlError(e)
+    });
 
-    // Insert redirect chain
-    for (order, redirect_url) in failure.redirect_chain.iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO url_failure_redirect_chain (url_failure_id, redirect_url, redirect_order)
-             VALUES (?, ?, ?)
-             ON CONFLICT(url_failure_id, redirect_order) DO NOTHING",
-        )
-        .bind(failure_id)
-        .bind(redirect_url)
-        .bind(order as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(DatabaseError::SqlError)?;
+    let failure_id = match failure_id_result {
+        Ok(row) => row.get::<i64, _>(0),
+        Err(e) => {
+            // Main insert failed - explicitly rollback transaction
+            // Note: We ignore rollback errors since the transaction will be rolled back
+            // by Drop anyway, but being explicit makes the intent clear
+            if let Err(rollback_err) = tx.rollback().await {
+                log::warn!(
+                    "Failed to rollback transaction after main failure insert error (this is non-fatal): {}",
+                    rollback_err
+                );
+            }
+            return Err(e);
+        }
+    };
+
+    // Insert satellite data (redirect chain, headers)
+    //
+    // DESIGN DECISION: Satellite inserts propagate errors and abort the transaction.
+    // This design prioritizes atomicity over partial success:
+    // - Failure records must be complete - either all related data is saved, or none is
+    // - If any satellite insert fails, the entire transaction is rolled back
+    // - This ensures data consistency for failure records
+    //
+    // This differs from URL record satellite inserts (insert_url_record) which return ()
+    // and handle errors internally, prioritizing partial success over atomicity.
+    //
+    // If any satellite insert fails, we'll rollback the entire transaction
+    let satellite_result = insert_failure_satellite_data(&mut tx, failure_id, failure).await;
+
+    // Explicitly handle transaction commit or rollback
+    match satellite_result {
+        Ok(()) => {
+            // All inserts succeeded - commit transaction
+            tx.commit().await.map_err(|e| {
+                log::error!(
+                    "Failed to commit transaction for failure_id {}: {}",
+                    failure_id,
+                    e
+                );
+                DatabaseError::SqlError(e)
+            })?;
+            Ok(failure_id)
+        }
+        Err(e) => {
+            // A satellite insert failed - explicitly rollback transaction
+            // Note: We ignore rollback errors since the transaction will be rolled back
+            // by Drop anyway, but being explicit makes the intent clear
+            if let Err(rollback_err) = tx.rollback().await {
+                log::warn!(
+                    "Failed to rollback transaction after satellite insert error (this is non-fatal): {}",
+                    rollback_err
+                );
+            }
+            Err(e)
+        }
     }
-
-    // Insert response headers
-    for (name, value) in &failure.response_headers {
-        sqlx::query(
-            "INSERT INTO url_failure_response_headers (url_failure_id, header_name, header_value)
-             VALUES (?, ?, ?)
-             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
-        )
-        .bind(failure_id)
-        .bind(name)
-        .bind(value)
-        .execute(&mut *tx)
-        .await
-        .map_err(DatabaseError::SqlError)?;
-    }
-
-    // Insert request headers
-    for (name, value) in &failure.request_headers {
-        sqlx::query(
-            "INSERT INTO url_failure_request_headers (url_failure_id, header_name, header_value)
-             VALUES (?, ?, ?)
-             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
-        )
-        .bind(failure_id)
-        .bind(name)
-        .bind(value)
-        .execute(&mut *tx)
-        .await
-        .map_err(DatabaseError::SqlError)?;
-    }
-
-    // Commit transaction - all inserts succeed or none are committed
-    tx.commit().await.map_err(DatabaseError::SqlError)?;
-
-    Ok(failure_id)
 }
 
 /// Inserts a partial failure record into the database.

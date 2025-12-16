@@ -10,6 +10,61 @@ use crate::storage::BatchRecord;
 
 use crate::storage::insert;
 
+/// Summary of enrichment data insertion results.
+///
+/// Tracks which enrichment data types succeeded or failed to insert.
+/// This allows callers to monitor enrichment data insertion health
+/// without blocking the main record insertion.
+#[derive(Debug, Clone, Default)]
+pub struct EnrichmentInsertSummary {
+    /// Number of partial failures successfully inserted
+    pub partial_failures_inserted: usize,
+    /// Number of partial failures that failed to insert
+    pub partial_failures_failed: usize,
+    /// Whether GeoIP data was successfully inserted
+    pub geoip_inserted: bool,
+    /// Whether GeoIP data insertion failed
+    pub geoip_failed: bool,
+    /// Whether structured data was successfully inserted
+    pub structured_data_inserted: bool,
+    /// Whether structured data insertion failed
+    pub structured_data_failed: bool,
+    /// Whether social media links were successfully inserted
+    pub social_media_inserted: bool,
+    /// Whether social media links insertion failed
+    pub social_media_failed: bool,
+    /// Whether security warnings were successfully inserted
+    pub security_warnings_inserted: bool,
+    /// Whether security warnings insertion failed
+    pub security_warnings_failed: bool,
+    /// Whether WHOIS data was successfully inserted
+    pub whois_inserted: bool,
+    /// Whether WHOIS data insertion failed
+    pub whois_failed: bool,
+    /// Whether analytics IDs were successfully inserted
+    pub analytics_ids_inserted: bool,
+    /// Whether analytics IDs insertion failed
+    pub analytics_ids_failed: bool,
+}
+
+impl EnrichmentInsertSummary {
+    /// Returns the total number of enrichment operations that failed.
+    pub fn total_failures(&self) -> usize {
+        self.partial_failures_failed
+            + if self.geoip_failed { 1 } else { 0 }
+            + if self.structured_data_failed { 1 } else { 0 }
+            + if self.social_media_failed { 1 } else { 0 }
+            + if self.security_warnings_failed { 1 } else { 0 }
+            + if self.whois_failed { 1 } else { 0 }
+            + if self.analytics_ids_failed { 1 } else { 0 }
+    }
+
+    /// Returns true if any enrichment operations failed.
+    pub fn has_failures(&self) -> bool {
+        self.total_failures() > 0
+    }
+}
+
 /// Inserts a batch record directly into the database.
 ///
 /// This function inserts the main URL record and all enrichment data immediately,
@@ -19,8 +74,8 @@ pub async fn insert_batch_record(
     pool: &SqlitePool,
     record: BatchRecord,
 ) -> Result<(), DatabaseError> {
-    // Use reference instead of clone for error message (domain is already owned in record)
-    let domain = &record.url_record.initial_domain;
+    // Clone domain for error message (record will be moved to insert_enrichment_data)
+    let domain = record.url_record.initial_domain.clone();
 
     // Insert main URL record
     let url_status_id = insert::insert_url_record(insert::url::UrlRecordInsertParams {
@@ -53,9 +108,232 @@ pub async fn insert_batch_record(
     // Trade-off: If enrichment insertion fails, we have inconsistent state (main record exists
     // but enrichment data is missing). This is acceptable because enrichment data is optional
     // and failures are logged for monitoring.
-    insert_enrichment_data(pool, url_status_id, record).await;
+    let enrichment_summary = insert_enrichment_data(pool, url_status_id, record).await;
+
+    // Log summary if there were any failures (for monitoring/debugging)
+    if enrichment_summary.has_failures() {
+        log::warn!(
+            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, security_warnings={}, whois={}, analytics_ids={}",
+            enrichment_summary.total_failures(),
+            url_status_id,
+            domain,
+            enrichment_summary.partial_failures_inserted,
+            enrichment_summary.partial_failures_inserted + enrichment_summary.partial_failures_failed,
+            if enrichment_summary.geoip_inserted { "ok" } else if enrichment_summary.geoip_failed { "failed" } else { "n/a" },
+            if enrichment_summary.structured_data_inserted { "ok" } else if enrichment_summary.structured_data_failed { "failed" } else { "n/a" },
+            if enrichment_summary.social_media_inserted { "ok" } else if enrichment_summary.social_media_failed { "failed" } else { "n/a" },
+            if enrichment_summary.security_warnings_inserted { "ok" } else if enrichment_summary.security_warnings_failed { "failed" } else { "n/a" },
+            if enrichment_summary.whois_inserted { "ok" } else if enrichment_summary.whois_failed { "failed" } else { "n/a" },
+            if enrichment_summary.analytics_ids_inserted { "ok" } else if enrichment_summary.analytics_ids_failed { "failed" } else { "n/a" }
+        );
+    }
 
     Ok(())
+}
+
+/// Inserts partial failures for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `partial_failures` - Vector of partial failure records
+/// * `summary` - Summary to update with insertion results
+async fn insert_partial_failures(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    partial_failures: Vec<crate::storage::models::UrlPartialFailureRecord>,
+    summary: &mut EnrichmentInsertSummary,
+) {
+    for mut partial_failure in partial_failures {
+        partial_failure.url_status_id = url_status_id;
+        match insert::insert_url_partial_failure(pool, &partial_failure).await {
+            Ok(_) => summary.partial_failures_inserted += 1,
+            Err(e) => {
+                summary.partial_failures_failed += 1;
+                log::warn!(
+                    "Failed to insert partial failure for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts GeoIP data for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `geoip` - Optional tuple of (IP address, GeoIP result)
+/// * `summary` - Summary to update with insertion results
+async fn insert_geoip_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    geoip: &Option<(String, crate::geoip::GeoIpResult)>,
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if let Some((ip_address, geoip_result)) = geoip {
+        match insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result).await {
+            Ok(_) => summary.geoip_inserted = true,
+            Err(e) => {
+                summary.geoip_failed = true;
+                log::warn!(
+                    "Failed to insert GeoIP data for IP '{}' (url_status_id {}): {}",
+                    ip_address,
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts structured data for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `structured_data` - Optional structured data
+/// * `summary` - Summary to update with insertion results
+async fn insert_structured_data_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    structured_data: &Option<crate::parse::StructuredData>,
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if let Some(structured_data) = structured_data {
+        match insert::insert_structured_data(pool, url_status_id, structured_data).await {
+            Ok(_) => summary.structured_data_inserted = true,
+            Err(e) => {
+                summary.structured_data_failed = true;
+                log::warn!(
+                    "Failed to insert structured data for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts social media links for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `social_media_links` - Vector of social media links
+/// * `summary` - Summary to update with insertion results
+async fn insert_social_media_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    social_media_links: &[crate::parse::SocialMediaLink],
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if !social_media_links.is_empty() {
+        match insert::insert_social_media_links(pool, url_status_id, social_media_links).await {
+            Ok(_) => summary.social_media_inserted = true,
+            Err(e) => {
+                summary.social_media_failed = true;
+                log::warn!(
+                    "Failed to insert social media links for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts security warnings for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `security_warnings` - Vector of security warnings
+/// * `summary` - Summary to update with insertion results
+async fn insert_security_warnings_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    security_warnings: &[crate::security::SecurityWarning],
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if !security_warnings.is_empty() {
+        match insert::insert_security_warnings(pool, url_status_id, security_warnings).await {
+            Ok(_) => summary.security_warnings_inserted = true,
+            Err(e) => {
+                summary.security_warnings_failed = true;
+                log::warn!(
+                    "Failed to insert security warnings for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts WHOIS data for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `whois` - Optional WHOIS result
+/// * `summary` - Summary to update with insertion results
+async fn insert_whois_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    whois: &Option<crate::whois::WhoisResult>,
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if let Some(ref whois_result) = whois {
+        match insert::insert_whois_data(pool, url_status_id, whois_result).await {
+            Ok(_) => summary.whois_inserted = true,
+            Err(e) => {
+                summary.whois_failed = true;
+                log::warn!(
+                    "Failed to insert WHOIS data for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts analytics IDs for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `analytics_ids` - Vector of analytics IDs
+/// * `summary` - Summary to update with insertion results
+async fn insert_analytics_ids_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    analytics_ids: &[crate::parse::AnalyticsId],
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if !analytics_ids.is_empty() {
+        match insert::insert_analytics_ids(pool, url_status_id, analytics_ids).await {
+            Ok(_) => summary.analytics_ids_inserted = true,
+            Err(e) => {
+                summary.analytics_ids_failed = true;
+                log::warn!(
+                    "Failed to insert analytics IDs for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
 }
 
 /// Inserts all enrichment data for a record.
@@ -69,93 +347,41 @@ pub async fn insert_batch_record(
 /// * `pool` - Database connection pool
 /// * `url_status_id` - The ID of the main URL record
 /// * `record` - The batch record containing enrichment data
-async fn insert_enrichment_data(pool: &SqlitePool, url_status_id: i64, record: BatchRecord) {
-    // Insert partial failures (DNS/TLS errors that didn't prevent processing)
-    for mut partial_failure in record.partial_failures {
-        partial_failure.url_status_id = url_status_id;
-        if let Err(e) = insert::insert_url_partial_failure(pool, &partial_failure).await {
-            log::warn!(
-                "Failed to insert partial failure for url_status_id {}: {}",
-                url_status_id,
-                e
-            );
-        }
-    }
+///
+/// # Returns
+///
+/// An `EnrichmentInsertSummary` tracking which enrichment data types succeeded or failed.
+/// This allows callers to monitor enrichment data insertion health.
+async fn insert_enrichment_data(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    record: BatchRecord,
+) -> EnrichmentInsertSummary {
+    let mut summary = EnrichmentInsertSummary::default();
 
-    // Insert GeoIP data if available
-    if let Some((ip_address, geoip_result)) = &record.geoip {
-        if let Err(e) =
-            insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result).await
-        {
-            log::warn!(
-                "Failed to insert GeoIP data for IP '{}' (url_status_id {}): {}",
-                ip_address,
-                url_status_id,
-                e
-            );
-        }
-    }
+    // Insert each type of enrichment data
+    insert_partial_failures(pool, url_status_id, record.partial_failures, &mut summary).await;
+    insert_geoip_enrichment(pool, url_status_id, &record.geoip, &mut summary).await;
+    insert_structured_data_enrichment(pool, url_status_id, &record.structured_data, &mut summary)
+        .await;
+    insert_social_media_enrichment(
+        pool,
+        url_status_id,
+        &record.social_media_links,
+        &mut summary,
+    )
+    .await;
+    insert_security_warnings_enrichment(
+        pool,
+        url_status_id,
+        &record.security_warnings,
+        &mut summary,
+    )
+    .await;
+    insert_whois_enrichment(pool, url_status_id, &record.whois, &mut summary).await;
+    insert_analytics_ids_enrichment(pool, url_status_id, &record.analytics_ids, &mut summary).await;
 
-    // Insert structured data if available
-    if let Some(structured_data) = &record.structured_data {
-        if let Err(e) = insert::insert_structured_data(pool, url_status_id, structured_data).await {
-            log::warn!(
-                "Failed to insert structured data for url_status_id {}: {}",
-                url_status_id,
-                e
-            );
-        }
-    }
-
-    // Insert social media links if available
-    if !record.social_media_links.is_empty() {
-        if let Err(e) =
-            insert::insert_social_media_links(pool, url_status_id, &record.social_media_links).await
-        {
-            log::warn!(
-                "Failed to insert social media links for url_status_id {}: {}",
-                url_status_id,
-                e
-            );
-        }
-    }
-
-    // Insert security warnings if available
-    if !record.security_warnings.is_empty() {
-        if let Err(e) =
-            insert::insert_security_warnings(pool, url_status_id, &record.security_warnings).await
-        {
-            log::warn!(
-                "Failed to insert security warnings for url_status_id {}: {}",
-                url_status_id,
-                e
-            );
-        }
-    }
-
-    // Insert WHOIS data if available
-    if let Some(ref whois_result) = record.whois {
-        if let Err(e) = insert::insert_whois_data(pool, url_status_id, whois_result).await {
-            log::warn!(
-                "Failed to insert WHOIS data for url_status_id {}: {}",
-                url_status_id,
-                e
-            );
-        }
-    }
-
-    // Insert analytics IDs if available
-    if !record.analytics_ids.is_empty() {
-        if let Err(e) =
-            insert::insert_analytics_ids(pool, url_status_id, &record.analytics_ids).await
-        {
-            log::warn!(
-                "Failed to insert analytics IDs for url_status_id {}: {}",
-                url_status_id,
-                e
-            );
-        }
-    }
+    summary
 }
 
 #[cfg(test)]

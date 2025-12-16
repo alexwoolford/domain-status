@@ -158,8 +158,18 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     };
 
     // 2-10. Insert into satellite tables
-    // Note: These functions return () and handle errors internally (they log but don't propagate).
-    // If they panic, the transaction will be rolled back by Drop.
+    //
+    // DESIGN DECISION: Satellite insert functions return () and handle errors internally.
+    // This design prioritizes partial success over atomicity:
+    // - If a satellite insert fails (e.g., technologies), the main URL record is still saved
+    // - Partial data is better than no data at all
+    // - Failures are logged for monitoring but don't block the main record insertion
+    //
+    // This differs from failure record satellite inserts (insert_url_failure_impl) which
+    // propagate errors because failure records require atomicity - either all related data
+    // is saved together, or none of it is (transaction rollback).
+    //
+    // If any satellite insert panics, the transaction will be rolled back by Drop.
     insert_technologies(&mut tx, url_status_id, params.technologies).await;
     insert_nameservers(&mut tx, url_status_id, &params.record.nameservers).await;
     insert_txt_records(&mut tx, url_status_id, &params.record.txt_records).await;
@@ -173,7 +183,15 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.
     // The transaction will be rolled back by Drop if commit fails.
-    tx.commit().await.map_err(DatabaseError::SqlError)?;
+    tx.commit().await.map_err(|e| {
+        log::error!(
+            "Failed to commit transaction for url_status_id {} (domain: {}): {}",
+            url_status_id,
+            params.record.initial_domain,
+            e
+        );
+        DatabaseError::SqlError(e)
+    })?;
 
     Ok(url_status_id)
 }

@@ -173,26 +173,32 @@ pub(crate) struct PatternMatchResult {
     pub version: Option<String>,
 }
 
-/// Pattern matching supporting Wappalyzer pattern syntax
-/// Patterns can be:
-/// - Simple strings (substring match)
-/// - Regex patterns (if they start with ^ or contain regex special chars)
-/// - Patterns with version extraction (e.g., "version:\\1")
-///
-/// Returns PatternMatchResult with match status and extracted version (if any).
-pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
-    // Match wappalyzergo's ParsePattern exactly:
-    // 1. Split on "\;" to get parts
-    // 2. First part (i==0) is the regex pattern
-    // 3. For parts after first (i>0), split on ":" to get key-value pairs
-    // 4. If key is "version", store value in p.Version
-    // 5. If key is "confidence", parse as int and store in p.Confidence (we ignore this)
+/// Parsed pattern structure
+struct ParsedPattern {
+    pattern_for_match: String,
+    version_template: Option<String>,
+}
 
+/// Parses a Wappalyzer pattern string into pattern and version template.
+///
+/// Wappalyzer patterns can contain metadata after "\;" separators:
+/// - Pattern: "nginx/(\\d+)\\;version:\\1" -> pattern="nginx/(\\d+)", version_template="\\1"
+/// - Pattern: "jquery\\;confidence:50" -> pattern="jquery", version_template=None
+///
+/// # Arguments
+///
+/// * `pattern` - The full pattern string from the ruleset
+///
+/// # Returns
+///
+/// `ParsedPattern` with the pattern to match and optional version template
+#[cfg_attr(test, allow(dead_code))]
+fn parse_pattern(pattern: &str) -> ParsedPattern {
     let parts: Vec<&str> = pattern.split("\\;").collect();
-    let pattern_for_match = parts[0].trim();
+    let pattern_for_match = parts[0].trim().to_string();
 
     // Find version template by looking for "version:" key in subsequent parts
-    let mut version_template: Option<&str> = None;
+    let mut version_template: Option<String> = None;
     for part in parts.iter().skip(1) {
         if let Some(colon_pos) = part.find(':') {
             let key = &part[..colon_pos];
@@ -200,7 +206,7 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
 
             match key {
                 "version" => {
-                    version_template = Some(value);
+                    version_template = Some(value.to_string());
                     break; // wappalyzergo processes parts in order, first "version:" wins
                 }
                 "confidence" => {
@@ -213,99 +219,155 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
         }
     }
 
-    // Handle empty pattern (matches anything)
-    // If there's a version template, extract version even without a pattern match
-    if pattern_for_match.is_empty() {
-        let version = if let Some(template) = version_template {
-            // For empty patterns with version templates (e.g., "\;version:ga4"),
-            // extract the literal version from the template
-            if template.starts_with("version:") {
-                let version_str = template.strip_prefix("version:").unwrap_or("").trim();
-                if !version_str.is_empty() {
-                    // Check if it's a literal (no capture groups like \1, \2)
-                    if !version_str.contains('\\')
-                        || !version_str.chars().any(|c| c.is_ascii_digit())
-                    {
-                        // It's a literal version string (e.g., "ga4", "ua")
-                        Some(version_str.to_string())
-                    } else {
-                        // It has capture groups, but we have no captures for an empty pattern
-                        // This shouldn't happen for empty patterns, but handle it gracefully
-                        None
-                    }
-                } else {
-                    None
-                }
+    ParsedPattern {
+        pattern_for_match,
+        version_template,
+    }
+}
+
+/// Checks if a pattern string contains regex-like syntax.
+///
+/// Patterns starting with ^ or containing regex special chars are likely regex.
+///
+/// # Arguments
+///
+/// * `pattern` - The pattern string to check
+///
+/// # Returns
+///
+/// `true` if the pattern looks like regex, `false` otherwise
+fn is_regex_pattern(pattern: &str) -> bool {
+    pattern.starts_with('^')
+        || pattern.contains('$')
+        || pattern.contains('\\')
+        || pattern.contains('[')
+        || pattern.contains('(')
+        || pattern.contains('*')
+        || pattern.contains('+')
+        || pattern.contains('?')
+}
+
+/// Gets or compiles a regex pattern with caching.
+///
+/// Returns the compiled regex, or `None` if compilation fails.
+/// Handles mutex poisoning gracefully.
+///
+/// # Arguments
+///
+/// * `pattern` - The pattern string (will be made case-insensitive)
+/// * `cache_key` - The key to use for caching (usually the original pattern)
+///
+/// # Returns
+///
+/// `Some(Regex)` if compilation succeeds, `None` if it fails
+fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> {
+    // wappalyzergo uses case-insensitive matching: regexp.Compile("(?i)" + regexPattern)
+    let case_insensitive_pattern = format!("(?i){}", pattern);
+
+    // Handle mutex poisoning gracefully - if poisoned, recover by getting the inner value
+    let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cached_re = cache.get(cache_key).cloned();
+    drop(cache); // Release lock before compilation
+
+    if let Some(cached) = cached_re {
+        return Some(cached);
+    }
+
+    // Compile regex (this is expensive, so we cache it)
+    match regex::Regex::new(&case_insensitive_pattern) {
+        Ok(re) => {
+            // Cache the compiled regex
+            let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            // Check again in case another thread compiled it while we were waiting
+            if let Some(cached) = cache.get(cache_key) {
+                Some(cached.clone())
             } else {
+                let re_clone = re.clone();
+                cache.insert(cache_key.to_string(), re);
+                Some(re_clone)
+            }
+        }
+        Err(_) => None, // Compilation failed
+    }
+}
+
+/// Handles empty pattern matching (matches anything).
+///
+/// If there's a version template, extracts the literal version from the template.
+/// The template is already the value after "version:" (e.g., "ga4" not "version:ga4").
+///
+/// # Arguments
+///
+/// * `version_template` - Optional version template string (value after "version:")
+///
+/// # Returns
+///
+/// `PatternMatchResult` with match=true and optional version
+fn handle_empty_pattern(version_template: Option<&str>) -> PatternMatchResult {
+    let version = if let Some(template) = version_template {
+        let template = template.trim();
+        if !template.is_empty() {
+            // Check if it's a literal (no capture groups like \1, \2)
+            if !template.contains('\\') || !template.chars().any(|c| c.is_ascii_digit()) {
+                // It's a literal version string (e.g., "ga4", "ua")
+                Some(template.to_string())
+            } else {
+                // It has capture groups, but we have no captures for an empty pattern
+                // This shouldn't happen for empty patterns, but handle it gracefully
                 None
             }
         } else {
             None
-        };
-        return PatternMatchResult {
-            matched: true,
-            version,
-        };
+        }
+    } else {
+        None
+    };
+
+    PatternMatchResult {
+        matched: true,
+        version,
+    }
+}
+
+/// Pattern matching supporting Wappalyzer pattern syntax
+/// Patterns can be:
+/// - Simple strings (substring match)
+/// - Regex patterns (if they start with ^ or contain regex special chars)
+/// - Patterns with version extraction (e.g., "version:\\1")
+///
+/// Returns PatternMatchResult with match status and extracted version (if any).
+pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
+    let parsed = parse_pattern(pattern);
+
+    // Handle empty pattern (matches anything)
+    if parsed.pattern_for_match.is_empty() {
+        return handle_empty_pattern(parsed.version_template.as_deref());
     }
 
     // Check if pattern contains regex-like syntax
-    // Wappalyzer patterns often use regex but we'll try to be smart about it
-    // Patterns starting with ^ or containing regex special chars are likely regex
-    let is_regex = pattern_for_match.starts_with('^')
-        || pattern_for_match.contains('$')
-        || pattern_for_match.contains('\\')
-        || pattern_for_match.contains('[')
-        || pattern_for_match.contains('(')
-        || pattern_for_match.contains('*')
-        || pattern_for_match.contains('+')
-        || pattern_for_match.contains('?');
+    let is_regex = is_regex_pattern(&parsed.pattern_for_match);
 
     if is_regex {
         // Try to compile as regex (with caching)
-        // Check cache first (use case-insensitive pattern for cache key)
-        // wappalyzergo uses case-insensitive matching: regexp.Compile("(?i)" + regexPattern)
-        // We need to match this behavior for parity
-        let case_insensitive_pattern = format!("(?i){}", pattern_for_match);
-        let cache_key = pattern_for_match.to_string(); // Cache key is the original pattern
+        let cache_key = parsed.pattern_for_match.clone();
 
-        // Handle mutex poisoning gracefully - if poisoned, recover by getting the inner value
-        let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        let cached_re = cache.get(&cache_key).cloned();
-        drop(cache); // Release lock before compilation
-
-        let re = if let Some(cached) = cached_re {
-            cached
-        } else {
-            // Compile regex (this is expensive, so we cache it)
-            match regex::Regex::new(&case_insensitive_pattern) {
-                Ok(re) => {
-                    // Cache the compiled regex
-                    let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-                    // Check again in case another thread compiled it while we were waiting
-                    if let Some(cached) = cache.get(&cache_key) {
-                        cached.clone()
-                    } else {
-                        let re_clone = re.clone();
-                        cache.insert(cache_key, re);
-                        re_clone
-                    }
-                }
-                Err(_) => {
-                    // If regex compilation fails, fall back to substring
-                    // This handles cases where the pattern looks like regex but isn't valid
-                    return PatternMatchResult {
-                        matched: text
-                            .to_lowercase()
-                            .contains(&pattern_for_match.to_lowercase()),
-                        version: None,
-                    };
-                }
+        let re = match get_or_compile_regex(&parsed.pattern_for_match, &cache_key) {
+            Some(re) => re,
+            None => {
+                // If regex compilation fails, fall back to substring
+                // This handles cases where the pattern looks like regex but isn't valid
+                return PatternMatchResult {
+                    matched: text
+                        .to_lowercase()
+                        .contains(&parsed.pattern_for_match.to_lowercase()),
+                    version: None,
+                };
             }
         };
 
         // Match and extract version
         if let Some(captures) = re.captures(text) {
-            let version = if let Some(template) = version_template {
+            let version = if let Some(template) = &parsed.version_template {
                 // template is already the value after "version:" (e.g., "\1" or "\1?next:")
                 // extract_version_from_template expects "version:..." format
                 extract_version_from_template(&format!("version:{}", template), &captures)
@@ -326,42 +388,19 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
         // Simple string pattern - wappalyzergo compiles ALL patterns as regex, even simple strings
         // For a simple string like "jquery", wappalyzergo compiles it as "(?i)jquery" which matches
         // "jquery" anywhere in the string (case-insensitive). We need to match this behavior.
-        // However, wappalyzergo may have additional logic that prevents matching in certain contexts
-        // to avoid false positives. Based on testing, wappalyzergo detects jQuery for some domains
-        // (like 1liberty.com) but not others (like 163.com), even though the pattern matches.
-        // This suggests there may be additional filtering based on pattern order or
-        // other factors. For now, we'll compile simple strings as regex to match wappalyzergo's
-        // basic behavior, but we may need to add additional logic later.
-        let case_insensitive_pattern = format!("(?i){}", regex::escape(pattern_for_match));
-        let cache_key = pattern_for_match.to_string();
+        let escaped_pattern = regex::escape(&parsed.pattern_for_match);
+        let cache_key = parsed.pattern_for_match.clone();
 
-        let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        let cached_re = cache.get(&cache_key).cloned();
-        drop(cache);
-
-        let re = if let Some(cached) = cached_re {
-            cached
-        } else {
-            match regex::Regex::new(&case_insensitive_pattern) {
-                Ok(re) => {
-                    let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(cached) = cache.get(&cache_key) {
-                        cached.clone()
-                    } else {
-                        let re_clone = re.clone();
-                        cache.insert(cache_key, re);
-                        re_clone
-                    }
-                }
-                Err(_) => {
-                    // If regex compilation fails, fall back to substring match
-                    let pattern_lower = pattern_for_match.to_lowercase();
-                    let text_lower = text.to_lowercase();
-                    return PatternMatchResult {
-                        matched: text_lower.contains(&pattern_lower),
-                        version: None,
-                    };
-                }
+        let re = match get_or_compile_regex(&escaped_pattern, &cache_key) {
+            Some(re) => re,
+            None => {
+                // If regex compilation fails, fall back to substring match
+                let pattern_lower = parsed.pattern_for_match.to_lowercase();
+                let text_lower = text.to_lowercase();
+                return PatternMatchResult {
+                    matched: text_lower.contains(&pattern_lower),
+                    version: None,
+                };
             }
         };
 
@@ -452,6 +491,57 @@ pub(crate) fn extract_version_from_template(
     }
 }
 
+/// Replaces placeholder references (\1, \2, etc.) with actual capture group values.
+///
+/// Handles both escaped (\\1) and unescaped (\1) placeholders.
+///
+/// # Arguments
+///
+/// * `template` - The template string with placeholders
+/// * `captures` - The regex captures containing the values
+///
+/// # Returns
+///
+/// The template with placeholders replaced by capture group values
+fn replace_placeholders(template: &str, captures: &regex::Captures) -> String {
+    let mut result = template.to_string();
+    for i in 1..captures.len() {
+        if let Some(cap_value) = captures.get(i) {
+            let placeholder_double = format!("\\\\{}", i);
+            let placeholder_single = format!("\\{}", i);
+            result = result.replace(&placeholder_double, cap_value.as_str());
+            result = result.replace(&placeholder_single, cap_value.as_str());
+        }
+    }
+    result
+}
+
+/// Parses a ternary expression into its components.
+///
+/// Format: "value1?value1:value2"
+///
+/// # Arguments
+///
+/// * `expression` - The ternary expression string
+///
+/// # Returns
+///
+/// `Some((true_part, false_part))` if valid ternary, `None` if invalid
+fn parse_ternary_expression(expression: &str) -> Option<(&str, &str)> {
+    if !expression.contains('?') {
+        return None;
+    }
+
+    let parts: Vec<&str> = expression.splitn(2, '?').collect();
+    let after_question = parts.get(1)?;
+
+    let true_false_parts: Vec<&str> = after_question.splitn(2, ':').collect();
+    match (true_false_parts.first(), true_false_parts.get(1)) {
+        (Some(true_val), Some(false_val)) => Some((true_val, false_val)),
+        _ => None,
+    }
+}
+
 /// Evaluates ternary expressions in version strings (matching wappalyzergo's evaluateVersionExpression).
 /// Format: "value1?value1:value2" - evaluates based on submatches
 /// Logic matches wappalyzergo's evaluateVersionExpression exactly (patterns.go lines 122-151)
@@ -459,21 +549,15 @@ pub(crate) fn extract_version_from_template(
 /// In wappalyzergo, `submatches` refers to capture groups AFTER the full match (submatches[1:] in extractVersion).
 /// So `len(submatches) == 0` means no capture groups matched.
 fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> String {
-    if !expression.contains('?') {
-        return expression.to_string();
-    }
-
-    let parts: Vec<&str> = expression.splitn(2, '?').collect();
-    let after_question = match parts.get(1) {
-        Some(part) => part,
-        None => return expression.to_string(), // Invalid ternary, return as-is
+    // If not a ternary expression, return as-is
+    let (true_part, false_part) = match parse_ternary_expression(expression) {
+        Some(parts) => parts,
+        None => return expression.to_string(),
     };
 
-    let true_false_parts: Vec<&str> = after_question.splitn(2, ':').collect();
-    let (true_part, false_part) = match (true_false_parts.first(), true_false_parts.get(1)) {
-        (Some(true_val), Some(false_val)) => (true_val, false_val),
-        _ => return expression.to_string(), // Invalid ternary, return as-is
-    };
+    // In wappalyzergo, submatches is the capture groups (excluding full match)
+    // So len(submatches) == 0 means captures.len() <= 1 (only full match, no groups)
+    let has_capture_groups = captures.len() > 1;
 
     // wappalyzergo logic (from patterns.go lines 135-147):
     // if trueFalseParts[0] != "" { // Simple existence check
@@ -490,37 +574,14 @@ fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> Str
     // }
     // return trueFalseParts[1], nil
 
-    // In wappalyzergo, submatches is the capture groups (excluding full match)
-    // So len(submatches) == 0 means captures.len() <= 1 (only full match, no groups)
-    let has_capture_groups = captures.len() > 1;
-
     if !true_part.is_empty() {
         // true_part is non-empty
         if !has_capture_groups {
-            // No capture groups, use false_part
-            // But false_part might have placeholders, replace them
-            let mut result = false_part.to_string();
-            for i in 1..captures.len() {
-                if let Some(cap_value) = captures.get(i) {
-                    let placeholder_double = format!("\\\\{}", i);
-                    let placeholder_single = format!("\\{}", i);
-                    result = result.replace(&placeholder_double, cap_value.as_str());
-                    result = result.replace(&placeholder_single, cap_value.as_str());
-                }
-            }
-            result
+            // No capture groups, use false_part (replace placeholders)
+            replace_placeholders(false_part, captures)
         } else {
             // We have capture groups, use true_part (replace placeholders)
-            let mut result = true_part.to_string();
-            for i in 1..captures.len() {
-                if let Some(cap_value) = captures.get(i) {
-                    let placeholder_double = format!("\\\\{}", i);
-                    let placeholder_single = format!("\\{}", i);
-                    result = result.replace(&placeholder_double, cap_value.as_str());
-                    result = result.replace(&placeholder_single, cap_value.as_str());
-                }
-            }
-            result
+            replace_placeholders(true_part, captures)
         }
     } else {
         // true_part is empty
@@ -529,16 +590,7 @@ fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> Str
             String::new()
         } else {
             // false_part is non-empty, use it (replace placeholders)
-            let mut result = false_part.to_string();
-            for i in 1..captures.len() {
-                if let Some(cap_value) = captures.get(i) {
-                    let placeholder_double = format!("\\\\{}", i);
-                    let placeholder_single = format!("\\{}", i);
-                    result = result.replace(&placeholder_double, cap_value.as_str());
-                    result = result.replace(&placeholder_single, cap_value.as_str());
-                }
-            }
-            result
+            replace_placeholders(false_part, captures)
         }
     }
 }
@@ -1064,5 +1116,189 @@ mod tests {
             result.version, None,
             "Should not extract version when template doesn't start with 'version:'"
         );
+    }
+
+    // Tests for extracted helper functions (indirectly tested through matches_pattern)
+
+    #[test]
+    fn test_parse_pattern_extracts_version_template() {
+        // Test pattern parsing through matches_pattern
+        let pattern = r"nginx/(\d+\.\d+)\;version:\1";
+        let result = matches_pattern(pattern, "nginx/1.18.0");
+
+        assert!(result.matched);
+        assert_eq!(result.version, Some("1.18".to_string()));
+    }
+
+    #[test]
+    fn test_parse_pattern_ignores_confidence() {
+        // Test that confidence is ignored during parsing
+        let pattern = r"jquery\;confidence:50";
+        let result = matches_pattern(pattern, "jquery.min.js");
+
+        assert!(result.matched);
+        assert_eq!(result.version, None); // No version template
+    }
+
+    #[test]
+    fn test_is_regex_pattern_detection() {
+        // Test regex detection through matches_pattern behavior
+        // Patterns with ^ should be treated as regex
+        assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
+        assert!(!matches_pattern("^nginx", "server: nginx/1.18.0").matched);
+
+        // Patterns with $ should be treated as regex
+        assert!(matches_pattern("nginx$", "nginx").matched);
+        assert!(!matches_pattern("nginx$", "nginx/1.18.0").matched);
+
+        // Patterns with regex special chars should be treated as regex
+        assert!(matches_pattern("nginx.*", "nginx/1.18.0").matched);
+    }
+
+    #[test]
+    fn test_get_or_compile_regex_caching() {
+        // Test regex caching through matches_pattern
+        clear_regex_cache();
+
+        // First call should compile
+        let start = std::time::Instant::now();
+        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
+        let first_time = start.elapsed();
+
+        // Second call should use cache (much faster)
+        let start = std::time::Instant::now();
+        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
+        let second_time = start.elapsed();
+
+        // Cached call should be faster (or at least not slower due to system load)
+        assert!(
+            second_time <= first_time || second_time.as_nanos() < 1_000_000,
+            "Cached regex should be faster or similar. First: {:?}, Second: {:?}",
+            first_time,
+            second_time
+        );
+    }
+
+    #[test]
+    fn test_handle_empty_pattern_with_literal_version() {
+        // Test empty pattern with literal version template
+        let pattern = r"\;version:ga4";
+        let result = matches_pattern(pattern, "anything");
+
+        assert!(result.matched, "Empty pattern should match anything");
+        assert_eq!(result.version, Some("ga4".to_string()));
+    }
+
+    #[test]
+    fn test_handle_empty_pattern_without_version() {
+        // Test empty pattern without version template
+        let pattern = "";
+        let result = matches_pattern(pattern, "anything");
+
+        assert!(result.matched, "Empty pattern should match anything");
+        assert_eq!(result.version, None);
+    }
+
+    #[test]
+    fn test_get_or_compile_regex_fallback_on_invalid_regex() {
+        // Test that invalid regex falls back to substring matching
+        let pattern = "[invalid"; // Unclosed bracket
+        let result = matches_pattern(pattern, "text with [invalid bracket");
+
+        // Should fall back to substring match
+        assert!(result.matched);
+        assert_eq!(result.version, None);
+    }
+
+    // Tests for evaluate_version_ternary and extracted helper functions
+
+    #[test]
+    fn test_replace_placeholders_simple() {
+        // Test placeholder replacement through version extraction
+        let pattern = r"nginx/(\d+\.\d+)\;version:\1";
+        let result = matches_pattern(pattern, "nginx/1.18.0");
+
+        assert!(result.matched);
+        assert_eq!(result.version, Some("1.18".to_string()));
+    }
+
+    #[test]
+    fn test_replace_placeholders_multiple_groups() {
+        // Test multiple placeholder replacement
+        let pattern = r"(\d+)\.(\d+)\;version:\1.\2";
+        let result = matches_pattern(pattern, "1.18");
+
+        assert!(result.matched);
+        assert_eq!(result.version, Some("1.18".to_string()));
+    }
+
+    #[test]
+    fn test_parse_ternary_expression_valid() {
+        // Test ternary parsing through version extraction
+        // Pattern with ternary: \1?\1:\2 means "if capture group 1 exists, use it, else use capture group 2"
+        let pattern = r"(\d+)?(\d+)\;version:\1?\1:\2";
+        let result = matches_pattern(pattern, "18");
+
+        // Should match and evaluate ternary
+        assert!(result.matched);
+    }
+
+    #[test]
+    fn test_parse_ternary_expression_invalid() {
+        // Test that invalid ternary expressions are handled gracefully
+        // Missing colon should return expression as-is
+        let pattern = r"test\;version:\1?\1";
+        let result = matches_pattern(pattern, "test");
+
+        // Should match but not extract version (invalid ternary)
+        assert!(result.matched);
+    }
+
+    #[test]
+    fn test_evaluate_version_ternary_with_capture_groups() {
+        // Test ternary evaluation when capture groups exist
+        // Pattern: \1?\1:\2 with captures -> should use \1
+        let pattern = r"(\d+)\.(\d+)\;version:\1?\1:\2";
+        let result = matches_pattern(pattern, "1.18");
+
+        assert!(result.matched);
+        // Should use true_part (\1) because we have capture groups
+        assert_eq!(result.version, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_evaluate_version_ternary_without_capture_groups() {
+        // Test ternary evaluation when no capture groups exist
+        // Pattern: \1?\1:\2 without captures -> should use \2 (false_part)
+        // But since there are no captures, \2 will be empty
+        // This is a complex case - let's test through a simpler pattern
+        let pattern = r"test\;version:\1?\1:fallback";
+        let result = matches_pattern(pattern, "test");
+
+        // Should match but version extraction depends on ternary logic
+        assert!(result.matched);
+    }
+
+    #[test]
+    fn test_evaluate_version_ternary_empty_true_part() {
+        // Test ternary with empty true_part
+        // Pattern: ?:\2 means "if no captures, use empty, else use \2"
+        let pattern = r"(\d+)\;version:?:\1";
+        let result = matches_pattern(pattern, "123");
+
+        assert!(result.matched);
+        // Should use false_part (\1) because true_part is empty
+        assert_eq!(result.version, Some("123".to_string()));
+    }
+
+    #[test]
+    fn test_evaluate_version_ternary_both_parts_empty() {
+        // Test ternary with both parts empty
+        let pattern = r"test\;version:?:";
+        let result = matches_pattern(pattern, "test");
+
+        assert!(result.matched);
+        // Should return empty version
+        assert_eq!(result.version, None);
     }
 }

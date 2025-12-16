@@ -34,6 +34,67 @@ pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIp
     Ok((reader_owned, metadata))
 }
 
+/// Checks if a cached GeoIP database exists and is fresh.
+///
+/// Returns the cached reader and metadata if cache is valid and fresh.
+/// Returns `None` if cache doesn't exist, is expired, or is corrupted.
+///
+/// # Arguments
+///
+/// * `cache_file` - Path to the cached database file
+/// * `metadata_file` - Path to the metadata file
+///
+/// # Returns
+///
+/// `Ok(Some((reader, metadata)))` if cache is fresh and valid
+/// `Ok(None)` if cache doesn't exist, is expired, or is corrupted
+/// `Err(...)` if there's an error checking the cache
+async fn try_load_from_cache(
+    cache_file: &Path,
+    metadata_file: &Path,
+) -> Result<Option<(Reader<Vec<u8>>, GeoIpMetadata)>> {
+    // Check if metadata exists
+    let metadata = match load_metadata(metadata_file).await {
+        Ok(m) => m,
+        Err(_) => return Ok(None), // No metadata, cache doesn't exist
+    };
+
+    // Check if cache is fresh
+    let age = match metadata.last_updated.elapsed() {
+        Ok(a) => a,
+        Err(_) => return Ok(None), // Can't determine age, treat as expired
+    };
+
+    if age.as_secs() >= geoip::CACHE_TTL_SECS {
+        return Ok(None); // Cache expired
+    }
+
+    // Cache is fresh, try to load the file
+    if !cache_file.exists() {
+        return Ok(None); // Cache file doesn't exist
+    }
+
+    let cache_path = match cache_file.to_str() {
+        Some(p) => p,
+        None => {
+            log::warn!("Cache file path contains invalid UTF-8: {:?}", cache_file);
+            return Ok(None);
+        }
+    };
+
+    // Try to load from cache file
+    match load_from_file(cache_path).await {
+        Ok((reader, _)) => {
+            log::info!("Loaded GeoIP database from cache: {:?}", cache_file);
+            Ok(Some((reader, metadata)))
+        }
+        Err(_) => {
+            // Cache file is corrupted or invalid, treat as if it doesn't exist
+            Ok(None)
+        }
+    }
+}
+
 /// Downloads GeoIP database from URL and caches it locally.
 ///
 /// Handles both direct .mmdb file downloads and tar.gz archives (MaxMind format).
@@ -57,22 +118,8 @@ pub(crate) async fn load_from_url(
     let metadata_file = cache_dir.join(format!("{}_metadata.json", db_name.to_lowercase()));
 
     // Check if cached version exists and is fresh
-    if let Ok(metadata) = load_metadata(&metadata_file).await {
-        if let Ok(age) = metadata.last_updated.elapsed() {
-            if age.as_secs() < geoip::CACHE_TTL_SECS {
-                // Cache is fresh, try to load
-                if cache_file.exists() {
-                    if let Some(cache_path) = cache_file.to_str() {
-                        if let Ok((reader, _)) = load_from_file(cache_path).await {
-                            log::info!("Loaded GeoIP database from cache: {:?}", cache_file);
-                            return Ok((reader, metadata));
-                        }
-                    } else {
-                        log::warn!("Cache file path contains invalid UTF-8: {:?}", cache_file);
-                    }
-                }
-            }
-        }
+    if let Some(cached) = try_load_from_cache(&cache_file, &metadata_file).await? {
+        return Ok(cached);
     }
 
     // SSRF protection: validate URL before downloading
@@ -305,6 +352,120 @@ mod tests {
             error_msg.contains("Unsafe") || error_msg.contains("scheme"),
             "Expected unsafe scheme error, got: {}",
             error_msg
+        );
+    }
+
+    // Tests for extracted try_load_from_cache function
+
+    #[tokio::test]
+    async fn test_try_load_from_cache_no_metadata() {
+        // Test that missing metadata returns None
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
+
+        let result = try_load_from_cache(&cache_file, &metadata_file).await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None when metadata doesn't exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_load_from_cache_expired() {
+        // Test that expired cache returns None
+        use crate::geoip::metadata::save_metadata;
+        use std::time::{Duration, SystemTime};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
+
+        // Create expired metadata
+        let expired_time = SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS + 1);
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test://source".to_string(),
+            version: "1.0".to_string(),
+            last_updated: expired_time,
+        };
+        save_metadata(&metadata, &metadata_file)
+            .await
+            .expect("Failed to save expired metadata");
+
+        let result = try_load_from_cache(&cache_file, &metadata_file).await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None when cache is expired"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_load_from_cache_fresh_but_no_file() {
+        // Test that fresh metadata but missing cache file returns None
+        use crate::geoip::metadata::save_metadata;
+        use std::time::SystemTime;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
+
+        // Create fresh metadata but no cache file
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test://source".to_string(),
+            version: "1.0".to_string(),
+            last_updated: SystemTime::now(),
+        };
+        save_metadata(&metadata, &metadata_file)
+            .await
+            .expect("Failed to save metadata");
+
+        let result = try_load_from_cache(&cache_file, &metadata_file).await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None when cache file doesn't exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_load_from_cache_corrupted_file() {
+        // Test that corrupted cache file returns None (not an error)
+        use crate::geoip::metadata::save_metadata;
+        use std::time::SystemTime;
+        use tempfile::TempDir;
+        use tokio::io::AsyncWriteExt;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
+        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
+
+        // Create corrupted cache file
+        let mut file = tokio::fs::File::create(&cache_file)
+            .await
+            .expect("Failed to create cache file");
+        file.write_all(b"corrupted mmdb data")
+            .await
+            .expect("Failed to write corrupted data");
+
+        // Create fresh metadata
+        let metadata = crate::geoip::types::GeoIpMetadata {
+            source: "test://source".to_string(),
+            version: "1.0".to_string(),
+            last_updated: SystemTime::now(),
+        };
+        save_metadata(&metadata, &metadata_file)
+            .await
+            .expect("Failed to save metadata");
+
+        let result = try_load_from_cache(&cache_file, &metadata_file).await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None when cache file is corrupted"
         );
     }
 
