@@ -95,3 +95,202 @@ pub struct InfoCounts {
     pub bot_detection_403: usize,
     pub multiple_redirects: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn test_status_state_atomic_operations() {
+        // Test that atomic counters work correctly in StatusState
+        // This is critical - incorrect atomic operations could cause data races
+        let state = StatusState {
+            total_urls: Arc::new(AtomicUsize::new(100)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
+            completed_urls: Arc::new(AtomicUsize::new(0)),
+            failed_urls: Arc::new(AtomicUsize::new(0)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: None,
+        };
+
+        // Test increment operations
+        state.completed_urls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.completed_urls.load(Ordering::SeqCst), 1);
+
+        state.failed_urls.fetch_add(5, Ordering::SeqCst);
+        assert_eq!(state.failed_urls.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn test_status_state_clone() {
+        // Test that StatusState can be cloned (Arc clones are cheap)
+        let state = StatusState {
+            total_urls: Arc::new(AtomicUsize::new(50)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
+            completed_urls: Arc::new(AtomicUsize::new(10)),
+            failed_urls: Arc::new(AtomicUsize::new(2)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: None,
+        };
+
+        let cloned = state.clone();
+
+        // Both should point to the same data
+        cloned.completed_urls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.completed_urls.load(Ordering::SeqCst), 11);
+    }
+
+    #[test]
+    fn test_status_response_serialization() {
+        // Test that StatusResponse serializes correctly
+        // This is critical - malformed JSON would break monitoring integrations
+        let response = StatusResponse {
+            total_urls: 100,
+            completed_urls: 50,
+            failed_urls: 5,
+            pending_urls: Some(45),
+            percentage_complete: 50.0,
+            elapsed_seconds: 30.5,
+            rate_per_second: 1.64,
+            errors: ErrorCounts {
+                total: 5,
+                timeout: 2,
+                connection_error: 1,
+                http_error: 1,
+                dns_error: 0,
+                tls_error: 1,
+                parse_error: 0,
+                other_error: 0,
+            },
+            warnings: WarningCounts {
+                total: 3,
+                missing_meta_keywords: 1,
+                missing_meta_description: 1,
+                missing_title: 1,
+            },
+            info: InfoCounts {
+                total: 10,
+                http_redirect: 5,
+                https_redirect: 3,
+                bot_detection_403: 1,
+                multiple_redirects: 1,
+            },
+            timing: None,
+        };
+
+        let json = serde_json::to_string(&response).expect("Failed to serialize StatusResponse");
+
+        // Verify key fields are present
+        assert!(json.contains("\"total_urls\":100"));
+        assert!(json.contains("\"completed_urls\":50"));
+        assert!(json.contains("\"percentage_complete\":50"));
+        assert!(json.contains("\"errors\""));
+        assert!(json.contains("\"warnings\""));
+    }
+
+    #[test]
+    fn test_status_response_pending_urls_optional() {
+        // Test that pending_urls is skipped when None
+        let response = StatusResponse {
+            total_urls: 100,
+            completed_urls: 100,
+            failed_urls: 0,
+            pending_urls: None, // Should be skipped in JSON
+            percentage_complete: 100.0,
+            elapsed_seconds: 60.0,
+            rate_per_second: 1.67,
+            errors: ErrorCounts {
+                total: 0,
+                timeout: 0,
+                connection_error: 0,
+                http_error: 0,
+                dns_error: 0,
+                tls_error: 0,
+                parse_error: 0,
+                other_error: 0,
+            },
+            warnings: WarningCounts {
+                total: 0,
+                missing_meta_keywords: 0,
+                missing_meta_description: 0,
+                missing_title: 0,
+            },
+            info: InfoCounts {
+                total: 0,
+                http_redirect: 0,
+                https_redirect: 0,
+                bot_detection_403: 0,
+                multiple_redirects: 0,
+            },
+            timing: None,
+        };
+
+        let json = serde_json::to_string(&response).expect("Failed to serialize");
+        // pending_urls should not appear in JSON when None
+        assert!(!json.contains("pending_urls"));
+    }
+
+    #[test]
+    fn test_timing_summary_serialization() {
+        // Test that TimingSummary serializes correctly
+        let timing = TimingSummary {
+            count: 100,
+            averages: TimingMetrics {
+                http_request_ms: 150,
+                dns_forward_ms: 20,
+                dns_reverse_ms: 15,
+                dns_additional_ms: 10,
+                tls_handshake_ms: 50,
+                html_parsing_ms: 30,
+                tech_detection_ms: 25,
+                geoip_lookup_ms: 5,
+                whois_lookup_ms: 100,
+                security_analysis_ms: 10,
+                total_ms: 415,
+            },
+        };
+
+        let json = serde_json::to_string(&timing).expect("Failed to serialize TimingSummary");
+        assert!(json.contains("\"count\":100"));
+        assert!(json.contains("\"http_request_ms\":150"));
+        assert!(json.contains("\"total_ms\":415"));
+    }
+
+    #[test]
+    fn test_error_counts_all_zero() {
+        // Test that zero counts serialize correctly
+        let errors = ErrorCounts {
+            total: 0,
+            timeout: 0,
+            connection_error: 0,
+            http_error: 0,
+            dns_error: 0,
+            tls_error: 0,
+            parse_error: 0,
+            other_error: 0,
+        };
+
+        let json = serde_json::to_string(&errors).expect("Failed to serialize");
+        assert!(json.contains("\"total\":0"));
+        assert!(json.contains("\"timeout\":0"));
+    }
+
+    #[test]
+    fn test_status_state_with_timing_stats() {
+        // Test StatusState with timing stats enabled
+        let state = StatusState {
+            total_urls: Arc::new(AtomicUsize::new(100)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
+            completed_urls: Arc::new(AtomicUsize::new(0)),
+            failed_urls: Arc::new(AtomicUsize::new(0)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: Some(Arc::new(TimingStats::new())),
+        };
+
+        assert!(state.timing_stats.is_some());
+    }
+}

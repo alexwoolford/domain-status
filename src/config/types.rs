@@ -224,4 +224,66 @@ mod tests {
         assert!(info < debug);
         assert!(debug < trace);
     }
+
+    #[test]
+    fn test_config_default_values() {
+        // Test that Config::default() provides sensible defaults
+        // This is critical - incorrect defaults could break production usage
+        let config = Config::default();
+
+        // Verify critical defaults
+        assert_eq!(config.max_concurrency, 30);
+        assert_eq!(config.timeout_seconds, 10);
+        assert_eq!(config.rate_limit_rps, 15);
+        assert!((config.adaptive_error_threshold - 0.2).abs() < f64::EPSILON);
+        assert_eq!(config.fail_on, FailOn::Never);
+        assert_eq!(config.fail_on_pct_threshold, 10);
+        assert!(!config.enable_whois);
+        assert!(!config.show_timing);
+        assert!(config.fingerprints.is_none());
+        assert!(config.geoip.is_none());
+        assert!(config.status_port.is_none());
+    }
+
+    #[test]
+    fn test_config_default_paths() {
+        // Test that default paths are correct
+        let config = Config::default();
+        assert_eq!(config.file, PathBuf::from("urls.txt"));
+        assert_eq!(config.db_path, PathBuf::from("./domain_status.db"));
+    }
+
+    #[test]
+    fn test_config_default_user_agent() {
+        // Test that default user agent is set correctly
+        // The default mimics a real browser to avoid bot detection
+        let config = Config::default();
+        assert!(!config.user_agent.is_empty());
+        assert!(config.user_agent.contains("Mozilla"));
+    }
+
+    #[test]
+    fn test_fail_on_variants() {
+        // Test that all FailOn variants are distinct
+        assert_ne!(FailOn::Never, FailOn::AnyFailure);
+        assert_ne!(FailOn::AnyFailure, FailOn::PctGreaterThan);
+        assert_ne!(FailOn::PctGreaterThan, FailOn::ErrorsOnly);
+        assert_ne!(FailOn::ErrorsOnly, FailOn::Never);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        // Test that Config can be cloned correctly
+        let config = Config {
+            max_concurrency: 100,
+            rate_limit_rps: 50,
+            enable_whois: true,
+            ..Default::default()
+        };
+
+        let cloned = config.clone();
+        assert_eq!(cloned.max_concurrency, 100);
+        assert_eq!(cloned.rate_limit_rps, 50);
+        assert!(cloned.enable_whois);
+    }
 }
