@@ -102,31 +102,9 @@ pub async fn handle_http_request(
                             "[HTTP/3 DEBUG] Failed to create header name/value from alt-svc string"
                         );
                     }
-                } else {
-                    // Fallback: Use Go helper to get alt-svc (matching wappalyzergo's http.Client behavior)
-                    // This ensures we match wappalyzergo exactly - it uses Go's http.Client which exposes alt-svc
-                    // The helper uses Go's http.Client just like wappalyzergo does
-                    if let Ok(go_output) = std::process::Command::new("/tmp/get_alt_svc")
-                        .arg(&final_url_string)
-                        .output()
-                    {
-                        if go_output.status.success() {
-                            let alt_svc_str = String::from_utf8_lossy(&go_output.stdout)
-                                .trim()
-                                .to_string();
-                            if !alt_svc_str.is_empty() {
-                                debug!("[HTTP/3 DEBUG] Got alt-svc from Go helper (matching wappalyzergo): {}", alt_svc_str);
-                                if let (Ok(header_name), Ok(header_value)) = (
-                                    reqwest::header::HeaderName::from_bytes(b"alt-svc"),
-                                    reqwest::header::HeaderValue::from_str(&alt_svc_str),
-                                ) {
-                                    response.headers_mut().insert(header_name, header_value);
-                                    debug!("[HTTP/3 DEBUG] Successfully added alt-svc header from Go helper");
-                                }
-                            }
-                        }
-                    }
                 }
+                // Note: If alt-svc is not in redirect chain and not in final response,
+                // we don't have it. This is acceptable - we capture it from redirect chain when available.
             }
 
             // Extract headers BEFORE calling error_for_status() (which consumes response)

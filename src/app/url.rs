@@ -2,11 +2,15 @@
 
 use log::warn;
 
+/// Maximum URL length (2048 characters) to prevent DoS attacks via extremely long URLs.
+/// This matches common browser and server limits (e.g., IE, Apache, Nginx default limits).
+const MAX_URL_LENGTH: usize = 2048;
+
 /// Validates and normalizes a URL.
 ///
 /// Adds https:// prefix if missing, then validates that the URL is syntactically
-/// valid and uses http/https scheme. Logs a warning and returns None if the URL
-/// is invalid or uses an unsupported scheme.
+/// valid and uses http/https scheme. Rejects URLs longer than MAX_URL_LENGTH to prevent DoS.
+/// Logs a warning and returns None if the URL is invalid, too long, or uses an unsupported scheme.
 ///
 /// # Arguments
 ///
@@ -16,12 +20,34 @@ use log::warn;
 ///
 /// `Some(normalized_url)` if the URL is valid and should be processed, `None` otherwise.
 pub fn validate_and_normalize_url(url: &str) -> Option<String> {
+    // Check URL length before normalization to prevent DoS
+    if url.len() > MAX_URL_LENGTH {
+        warn!(
+            "Skipping URL exceeding maximum length ({} > {}): {}...",
+            url.len(),
+            MAX_URL_LENGTH,
+            &url[..50.min(url.len())]
+        );
+        return None;
+    }
+
     // Normalize: add https:// prefix if missing
     let normalized = if !url.starts_with("http://") && !url.starts_with("https://") {
         format!("https://{url}")
     } else {
         url.to_string()
     };
+
+    // Check normalized URL length (after adding https:// prefix, it could exceed limit)
+    if normalized.len() > MAX_URL_LENGTH {
+        warn!(
+            "Skipping normalized URL exceeding maximum length ({} > {}): {}...",
+            normalized.len(),
+            MAX_URL_LENGTH,
+            &normalized[..50.min(normalized.len())]
+        );
+        return None;
+    }
 
     // Validate: check syntax and scheme
     match url::Url::parse(&normalized) {
@@ -283,5 +309,45 @@ mod tests {
 
         let result = validate_and_normalize_url("example.com/path+with+plus");
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_validate_and_normalize_url_rejects_too_long_url() {
+        // Create a URL that exceeds MAX_URL_LENGTH (2048 chars)
+        let long_path = "a".repeat(2100);
+        let long_url = format!("https://example.com/{}", long_path);
+        let result = validate_and_normalize_url(&long_url);
+        assert_eq!(result, None, "Should reject URL exceeding maximum length");
+    }
+
+    #[test]
+    fn test_validate_and_normalize_url_accepts_url_at_limit() {
+        // Create a URL exactly at the limit (2048 chars)
+        // "https://example.com/" is 20 chars, so path can be 2028 chars (20 + 2028 = 2048)
+        let path = "a".repeat(2028);
+        let url_at_limit = format!("https://example.com/{}", path);
+        // Verify it's exactly at the limit
+        assert_eq!(
+            url_at_limit.len(),
+            2048,
+            "URL should be exactly 2048 characters"
+        );
+        let result = validate_and_normalize_url(&url_at_limit);
+        assert!(
+            result.is_some(),
+            "Should accept URL at maximum length (2048 chars)"
+        );
+    }
+
+    #[test]
+    fn test_validate_and_normalize_url_rejects_too_long_url_after_normalization() {
+        // URL that's under limit before normalization but exceeds it after adding https://
+        let path = "a".repeat(2045); // 2045 + 8 (https://) = 2053 > 2048
+        let url = format!("example.com/{}", path);
+        let result = validate_and_normalize_url(&url);
+        assert_eq!(
+            result, None,
+            "Should reject URL that exceeds limit after normalization"
+        );
     }
 }
