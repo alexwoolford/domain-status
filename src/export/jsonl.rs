@@ -536,3 +536,466 @@ pub async fn export_jsonl(
 
     Ok(record_count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::migrations::run_migrations;
+    use sqlx::SqlitePool;
+    use std::io::Read;
+    use tempfile::NamedTempFile;
+
+    async fn create_test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create test database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        pool
+    }
+
+    async fn create_test_url_status(pool: &SqlitePool, domain: &str, status: u16) -> i64 {
+        sqlx::query(
+            "INSERT INTO url_status (
+                domain, final_domain, ip_address, status, status_description,
+                response_time, title, timestamp, is_mobile_friendly, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id",
+        )
+        .bind(domain)
+        .bind(domain)
+        .bind("192.0.2.1")
+        .bind(status)
+        .bind("OK")
+        .bind(1.5f64)
+        .bind("Test Page")
+        .bind(1704067200000i64)
+        .bind(true)
+        .bind("test-run-1")
+        .fetch_one(pool)
+        .await
+        .expect("Failed to insert test URL status")
+        .get::<i64, _>(0)
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_basic() {
+        let pool = create_test_pool().await;
+        let _url_id = create_test_url_status(&pool, "example.com", 200).await;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(
+            std::path::Path::new(":memory:"),
+            Some(&output_path),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        // This will fail because we can't use :memory: with a path
+        // We need to use a real file path for the database
+        assert!(count.is_err(), "Should fail with memory database");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_with_real_database() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        // Create a real database file
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let _url_id = create_test_url_status(&pool, "example.com", 200).await;
+        drop(pool); // Close connection so export can open it
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
+            .await
+            .expect("Should export successfully");
+
+        assert_eq!(count, 1, "Should export 1 record");
+
+        // Verify output file contains valid JSON
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let lines: Vec<&str> = contents.trim().split('\n').collect();
+        assert_eq!(lines.len(), 1, "Should have 1 line");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("Should be valid JSON");
+        assert_eq!(json_obj["initial_domain"], "example.com");
+        assert_eq!(json_obj["final_domain"], "example.com");
+        assert_eq!(json_obj["status"], 200);
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_filter_by_run_id() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        // Create records with different run_ids
+        create_test_url_status(&pool, "example.com", 200).await;
+        sqlx::query(
+            "INSERT INTO url_status (
+                domain, final_domain, ip_address, status, status_description,
+                response_time, title, timestamp, is_mobile_friendly, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id",
+        )
+        .bind("other.com")
+        .bind("other.com")
+        .bind("192.0.2.2")
+        .bind(200)
+        .bind("OK")
+        .bind(1.5f64)
+        .bind("Other Page")
+        .bind(1704067200000i64)
+        .bind(true)
+        .bind("test-run-2")
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to insert");
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(
+            db_path,
+            Some(&output_path),
+            Some("test-run-1"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("Should export successfully");
+
+        assert_eq!(count, 1, "Should export only 1 record matching run_id");
+
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let lines: Vec<&str> = contents.trim().split('\n').collect();
+        assert_eq!(lines.len(), 1);
+        let json_obj: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("Should be valid JSON");
+        assert_eq!(json_obj["initial_domain"], "example.com");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_filter_by_domain() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        create_test_url_status(&pool, "example.com", 200).await;
+        create_test_url_status(&pool, "other.com", 200).await;
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(
+            db_path,
+            Some(&output_path),
+            None,
+            Some("example.com"),
+            None,
+            None,
+        )
+        .await
+        .expect("Should export successfully");
+
+        assert_eq!(count, 1, "Should export only 1 record matching domain");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_filter_by_status() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        create_test_url_status(&pool, "example.com", 200).await;
+        create_test_url_status(&pool, "error.com", 404).await;
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, Some(404), None)
+            .await
+            .expect("Should export successfully");
+
+        assert_eq!(count, 1, "Should export only 1 record matching status");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_filter_by_since() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        create_test_url_status(&pool, "example.com", 200).await;
+
+        // Create a record with a later timestamp
+        sqlx::query(
+            "INSERT INTO url_status (
+                domain, final_domain, ip_address, status, status_description,
+                response_time, title, timestamp, is_mobile_friendly, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id",
+        )
+        .bind("newer.com")
+        .bind("newer.com")
+        .bind("192.0.2.3")
+        .bind(200)
+        .bind("OK")
+        .bind(1.5f64)
+        .bind("Newer Page")
+        .bind(1704153600000i64) // Later timestamp
+        .bind(true)
+        .bind("test-run-1")
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to insert");
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        // Filter by timestamp after the first record
+        let count = export_jsonl(
+            db_path,
+            Some(&output_path),
+            None,
+            None,
+            None,
+            Some(1704100000000i64), // Between the two timestamps
+        )
+        .await
+        .expect("Should export successfully");
+
+        assert_eq!(count, 1, "Should export only 1 record after timestamp");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_with_technologies() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let url_id = create_test_url_status(&pool, "example.com", 200).await;
+
+        // Add technologies
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, technology_version)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("WordPress")
+        .bind(Some("6.8.3"))
+        .execute(&pool)
+        .await
+        .expect("Failed to insert technology");
+
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, technology_version)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("PHP")
+        .bind::<Option<String>>(None)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert technology");
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
+            .await
+            .expect("Should export successfully");
+
+        assert_eq!(count, 1);
+
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+        assert_eq!(json_obj["technology_count"], 2);
+        let technologies = json_obj["technologies"]
+            .as_array()
+            .expect("Should be array");
+        assert_eq!(technologies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_empty_database() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
+            .await
+            .expect("Should export successfully even with empty database");
+
+        assert_eq!(count, 0, "Should export 0 records from empty database");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_stdout() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        create_test_url_status(&pool, "example.com", 200).await;
+        drop(pool);
+
+        // Export to stdout (None output path)
+        let count = export_jsonl(
+            db_path, None, // stdout
+            None, None, None, None,
+        )
+        .await
+        .expect("Should export to stdout successfully");
+
+        assert_eq!(count, 1, "Should export 1 record");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_with_redirect_chain() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let url_id = create_test_url_status(&pool, "example.com", 200).await;
+
+        // Add redirect chain
+        sqlx::query(
+            "INSERT INTO url_redirect_chain (url_status_id, url, sequence_order)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("http://example.com")
+        .bind(0)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert redirect");
+
+        sqlx::query(
+            "INSERT INTO url_redirect_chain (url_status_id, url, sequence_order)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("https://example.com")
+        .bind(1)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert redirect");
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
+            .await
+            .expect("Should export successfully");
+
+        assert_eq!(count, 1);
+
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+        assert_eq!(json_obj["redirect_count"], 2);
+        let redirect_chain = json_obj["redirect_chain"]
+            .as_array()
+            .expect("Should be array");
+        assert_eq!(redirect_chain.len(), 2);
+        assert_eq!(json_obj["final_redirect_url"], "https://example.com");
+    }
+}
