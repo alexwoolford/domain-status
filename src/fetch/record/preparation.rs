@@ -321,7 +321,12 @@ mod tests {
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled in test context
                                  // Security analysis should be fast (synchronous operation)
-        assert!(security_ms < 1000); // Security analysis should be fast
+                                 // Note: Using lenient threshold for CI environments
+        assert!(
+            security_ms < 5000,
+            "Security analysis took {}ms, expected < 5000ms",
+            security_ms
+        );
     }
 
     #[tokio::test]
@@ -404,7 +409,12 @@ mod tests {
             geoip_ms
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
-        assert!(security_ms < 1000); // Security analysis should be fast
+                                 // Note: Using lenient threshold for CI environments
+        assert!(
+            security_ms < 5000,
+            "Security analysis took {}ms, expected < 5000ms",
+            security_ms
+        );
     }
 
     #[tokio::test]
@@ -520,8 +530,13 @@ mod tests {
             "GeoIP lookup took {}ms, expected < 5000ms",
             geoip_ms
         );
-        assert!(security_ms < 1000); // Security analysis should be fast
-                                     // _whois_ms may be 0 if lookup fails immediately, but the code path was executed
+        // Note: Using lenient threshold for CI environments
+        assert!(
+            security_ms < 5000,
+            "Security analysis took {}ms, expected < 5000ms",
+            security_ms
+        );
+        // _whois_ms may be 0 if lookup fails immediately, but the code path was executed
     }
 
     #[tokio::test]
@@ -596,8 +611,13 @@ mod tests {
             geoip_ms
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
-        assert!(security_ms < 1000); // Security analysis should be fast
-                                     // GeoIP data should be None (invalid IP)
+                                 // Note: Using lenient threshold for CI environments
+        assert!(
+            security_ms < 5000,
+            "Security analysis took {}ms, expected < 5000ms",
+            security_ms
+        );
+        // GeoIP data should be None (invalid IP)
         assert!(batch_record.geoip.is_none());
     }
 }

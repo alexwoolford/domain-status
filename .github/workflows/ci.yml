@@ -113,13 +113,12 @@ jobs:
             ls -la *.xml 2>/dev/null || echo "No XML files found"
             exit 1
           fi
-        continue-on-error: true
 
       # Only upload if token is available and coverage file was generated (fork-friendly)
       # Skip upload for PRs from forks (secrets not available) or when token is missing
       - name: Check coverage file exists
         id: check_coverage
-        if: always() && steps.coverage.outcome == 'success'
+        if: steps.coverage.outcome == 'success'
         run: |
           if [ -f coverage/cobertura.xml ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
