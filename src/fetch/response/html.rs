@@ -145,7 +145,7 @@ pub(crate) fn parse_html_content(
 
     let regex_extracted_scripts: Vec<String> = script_src_regex
         .captures_iter(body)
-        .map(|cap| cap.get(1).unwrap().as_str().to_string())
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
         .collect();
 
     let scraper_count = script_sources.len();

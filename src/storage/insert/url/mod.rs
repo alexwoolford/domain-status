@@ -75,7 +75,7 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     // 1. Insert into main url_status table
     // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
     // This eliminates the need for a separate SELECT query and improves performance
-    let url_status_id = sqlx::query_scalar::<_, i64>(
+    let url_status_id_result = sqlx::query_scalar::<_, i64>(
         "INSERT INTO url_status (
             domain, final_domain, ip_address, reverse_dns_name, status, status_description,
             response_time, title, keywords, description, tls_version, ssl_cert_subject,
@@ -139,9 +139,27 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
             e
         );
         DatabaseError::SqlError(e)
-    })?;
+    });
+
+    let url_status_id = match url_status_id_result {
+        Ok(id) => id,
+        Err(e) => {
+            // Main insert failed - explicitly rollback transaction
+            // Note: We ignore rollback errors since the transaction will be rolled back
+            // by Drop anyway, but being explicit makes the intent clear
+            if let Err(rollback_err) = tx.rollback().await {
+                log::warn!(
+                    "Failed to rollback transaction after main insert error (this is non-fatal): {}",
+                    rollback_err
+                );
+            }
+            return Err(e);
+        }
+    };
 
     // 2-10. Insert into satellite tables
+    // Note: These functions return () and handle errors internally (they log but don't propagate).
+    // If they panic, the transaction will be rolled back by Drop.
     insert_technologies(&mut tx, url_status_id, params.technologies).await;
     insert_nameservers(&mut tx, url_status_id, &params.record.nameservers).await;
     insert_txt_records(&mut tx, url_status_id, &params.record.txt_records).await;
@@ -152,7 +170,9 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await;
     insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await;
 
-    // Commit transaction
+    // Commit transaction - all inserts succeeded
+    // If any satellite insert had failed internally, it would have been logged but not propagated.
+    // The transaction will be rolled back by Drop if commit fails.
     tx.commit().await.map_err(DatabaseError::SqlError)?;
 
     Ok(url_status_id)

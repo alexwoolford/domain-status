@@ -464,17 +464,16 @@ fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> Str
     }
 
     let parts: Vec<&str> = expression.splitn(2, '?').collect();
-    if parts.len() != 2 {
-        return expression.to_string(); // Invalid ternary, return as-is
-    }
+    let after_question = match parts.get(1) {
+        Some(part) => part,
+        None => return expression.to_string(), // Invalid ternary, return as-is
+    };
 
-    let true_false_parts: Vec<&str> = parts[1].splitn(2, ':').collect();
-    if true_false_parts.len() != 2 {
-        return expression.to_string(); // Invalid ternary, return as-is
-    }
-
-    let true_part = true_false_parts[0];
-    let false_part = true_false_parts[1];
+    let true_false_parts: Vec<&str> = after_question.splitn(2, ':').collect();
+    let (true_part, false_part) = match (true_false_parts.first(), true_false_parts.get(1)) {
+        (Some(true_val), Some(false_val)) => (true_val, false_val),
+        _ => return expression.to_string(), // Invalid ternary, return as-is
+    };
 
     // wappalyzergo logic (from patterns.go lines 135-147):
     // if trueFalseParts[0] != "" { // Simple existence check

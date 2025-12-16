@@ -101,12 +101,17 @@ impl TimingStats {
     }
 
     /// Calculates and returns average times for each operation (in microseconds).
+    ///
+    /// # Safety
+    /// This function is safe from division by zero. If `count == 0`, it returns
+    /// a default `UrlTimingMetrics` with all zeros instead of dividing.
     pub fn averages(&self) -> UrlTimingMetrics {
         let count = self.count.load(Ordering::Relaxed);
         if count == 0 {
             return UrlTimingMetrics::default();
         }
 
+        // Safe to divide by count here because we verified count > 0 above
         UrlTimingMetrics {
             http_request_ms: self.http_request_sum_ms.load(Ordering::Relaxed) / count,
             dns_forward_ms: self.dns_forward_sum_ms.load(Ordering::Relaxed) / count,
@@ -178,6 +183,8 @@ impl TimingStats {
 
         log::info!("=== Timing Metrics Summary ({} URLs) ===", count);
         log::info!("Average times per URL:");
+        // Safe percentage calculation: explicitly handles division by zero
+        // Returns 0.0 when total is 0 to prevent panic
         let percentage = |part: u64, total: u64| -> f64 {
             if total == 0 {
                 0.0
