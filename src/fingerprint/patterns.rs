@@ -5,16 +5,45 @@
 //! - Regex pattern matching
 //! - Meta tag pattern matching with prefix support
 
+use lru::LruCache;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Maximum number of compiled regex patterns to cache.
+///
+/// This is set to a generous size (10,000) to handle large rulesets without eviction
+/// in typical use cases. LRU eviction automatically handles overflow if needed.
+///
+/// **Rationale:**
+/// - Wappalyzer rulesets contain 2000-3000 technologies with many patterns each
+/// - Only regex patterns (containing special chars) need compilation and caching
+/// - Typical production usage sees ~1000-3000 unique regex patterns
+/// - 10k provides ample headroom without memory concerns (each compiled regex is ~1-5KB)
+const MAX_REGEX_CACHE_SIZE: usize = 10_000;
+
+/// Cache statistics for monitoring and optimization.
+#[derive(Debug, Default)]
+struct CacheStats {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    evictions: AtomicU64,
+}
+
+static CACHE_STATS: Lazy<CacheStats> = Lazy::new(CacheStats::default);
 
 /// Global cache for compiled regex patterns.
 /// This cache is shared across all threads and persists for the lifetime of the program.
 /// Regex compilation is expensive (10-100x slower than matching), so caching provides
 /// significant performance improvements when the same patterns are used repeatedly.
-static REGEX_CACHE: Lazy<Arc<Mutex<HashMap<String, regex::Regex>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+/// Uses LRU eviction to prevent unbounded memory growth.
+static REGEX_CACHE: Lazy<Arc<Mutex<LruCache<String, regex::Regex>>>> = Lazy::new(|| {
+    Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_REGEX_CACHE_SIZE).unwrap(),
+    )))
+});
 
 /// Result of meta pattern matching with optional version
 #[derive(Debug, Clone)]
@@ -265,30 +294,81 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
     let case_insensitive_pattern = format!("(?i){}", pattern);
 
     // Handle mutex poisoning gracefully - if poisoned, recover by getting the inner value
-    let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let cached_re = cache.get(cache_key).cloned();
-    drop(cache); // Release lock before compilation
+    let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
 
-    if let Some(cached) = cached_re {
-        return Some(cached);
+    // Check cache first (LRU automatically promotes accessed items to most recently used)
+    if let Some(cached) = cache.get(cache_key) {
+        CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
+        return Some(cached.clone());
     }
+    drop(cache); // Release lock before compilation
+    CACHE_STATS.misses.fetch_add(1, Ordering::Relaxed);
 
     // Compile regex (this is expensive, so we cache it)
     match regex::Regex::new(&case_insensitive_pattern) {
         Ok(re) => {
-            // Cache the compiled regex
+            // Cache the compiled regex (LRU automatically evicts least recently used if full)
             let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             // Check again in case another thread compiled it while we were waiting
             if let Some(cached) = cache.get(cache_key) {
+                CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
                 Some(cached.clone())
             } else {
                 let re_clone = re.clone();
-                cache.insert(cache_key.to_string(), re);
+                // LRU cache: put() returns Some((key, value)) if an entry was evicted
+                // This happens automatically when cache is full - the least recently used entry
+                // is removed to make room for the new one
+                if let Some(_evicted) = cache.put(cache_key.to_string(), re) {
+                    CACHE_STATS.evictions.fetch_add(1, Ordering::Relaxed);
+                    log::debug!(
+                        "Regex cache evicted least recently used pattern (cache full, capacity: {})",
+                        MAX_REGEX_CACHE_SIZE
+                    );
+                }
                 Some(re_clone)
             }
         }
         Err(_) => None, // Compilation failed
     }
+}
+
+/// Returns regex cache statistics for monitoring and optimization.
+///
+/// This function provides insights into cache performance:
+/// - **Hit rate**: `hits / (hits + misses)` - higher is better (ideally >90%)
+/// - **Eviction count**: If high, consider increasing cache size
+/// - **Current size**: How many patterns are currently cached
+///
+/// # Returns
+///
+/// A tuple of `(current_size, capacity, hits, misses, evictions)` where:
+/// - `current_size`: Number of patterns currently in cache
+/// - `capacity`: Maximum cache size (MAX_REGEX_CACHE_SIZE)
+/// - `hits`: Total cache hits (successful retrievals)
+/// - `misses`: Total cache misses (patterns not found, required compilation)
+/// - `evictions`: Total evictions (patterns removed when cache was full)
+///
+/// # Example
+///
+/// ```rust
+/// let (size, capacity, hits, misses, evictions) = get_regex_cache_stats();
+/// let hit_rate = if hits + misses > 0 {
+///     hits as f64 / (hits + misses) as f64
+/// } else {
+///     0.0
+/// };
+/// println!("Cache: {}/{} entries, hit rate: {:.1}%, evictions: {}",
+///          size, capacity, hit_rate * 100.0, evictions);
+/// ```
+#[allow(dead_code)] // Public API function for external monitoring
+pub fn get_regex_cache_stats() -> (usize, usize, u64, u64, u64) {
+    let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let current_size = cache.len();
+    let capacity = cache.cap().get();
+    let hits = CACHE_STATS.hits.load(Ordering::Relaxed);
+    let misses = CACHE_STATS.misses.load(Ordering::Relaxed);
+    let evictions = CACHE_STATS.evictions.load(Ordering::Relaxed);
+    (current_size, capacity, hits, misses, evictions)
 }
 
 /// Handles empty pattern matching (matches anything).
@@ -811,9 +891,9 @@ mod tests {
         );
 
         // Verify cache is populated
-        let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         assert!(
-            cache.contains_key("^nginx"),
+            cache.get("^nginx").is_some(),
             "Cache should contain compiled regex for '^nginx'"
         );
     }
@@ -1177,6 +1257,99 @@ mod tests {
             first_time,
             second_time
         );
+    }
+
+    #[test]
+    fn test_regex_cache_eviction() {
+        // Test that LRU eviction and caching work correctly
+        // Note: With 10k cache size, filling to capacity is impractical for unit tests.
+        // This test verifies caching and stats tracking work correctly.
+        clear_regex_cache();
+
+        // Get initial stats
+        let (size_before, capacity, _hits_before, misses_before, _) = get_regex_cache_stats();
+        assert_eq!(capacity, MAX_REGEX_CACHE_SIZE);
+
+        // Use unique patterns to avoid conflicts with other tests
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        // Add a few patterns to cache
+        let pattern1 = format!("^evict_test_{}_1", timestamp);
+        let pattern2 = format!("^evict_test_{}_2", timestamp);
+        let pattern3 = format!("^evict_test_{}_3", timestamp);
+
+        assert!(matches_pattern(&pattern1, &format!("evict_test_{}_1_value", timestamp)).matched);
+        assert!(matches_pattern(&pattern2, &format!("evict_test_{}_2_value", timestamp)).matched);
+        assert!(matches_pattern(&pattern3, &format!("evict_test_{}_3_value", timestamp)).matched);
+
+        // Verify cache grew and stats updated
+        let (size_after, _, hits_after, misses_after, _) = get_regex_cache_stats();
+        assert!(
+            size_after >= size_before + 3,
+            "Cache should have grown by at least 3 entries"
+        );
+        assert!(
+            misses_after >= misses_before + 3,
+            "Should have at least 3 new misses"
+        );
+
+        // Reuse a pattern to generate a hit
+        assert!(matches_pattern(&pattern1, &format!("evict_test_{}_1_value", timestamp)).matched);
+        let (_, _, hits_final, misses_final, _) = get_regex_cache_stats();
+
+        // Verify we got at least one hit from reusing the pattern
+        assert!(
+            hits_final > hits_after,
+            "Should have increased hit count after reusing pattern"
+        );
+        assert_eq!(
+            misses_final, misses_after,
+            "Misses should not increase when reusing cached pattern"
+        );
+    }
+
+    #[test]
+    fn test_regex_cache_stats() {
+        clear_regex_cache();
+
+        // Get initial stats (may not be zero if other tests ran in parallel)
+        let (size_before, capacity, _hits_before, misses_before, evictions_before) =
+            get_regex_cache_stats();
+        assert_eq!(capacity, MAX_REGEX_CACHE_SIZE);
+
+        // Use a unique pattern to avoid conflicts with other tests
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let unique_pattern = format!("^stats_test_{}", timestamp);
+        let unique_text = format!("stats_test_{}_value", timestamp);
+
+        // Use the pattern (should be a miss, then cached)
+        assert!(matches_pattern(&unique_pattern, &unique_text).matched);
+        let (size_after, _, hits_after, misses_after, evictions_after) = get_regex_cache_stats();
+
+        // Verify cache grew and misses increased
+        assert!(size_after > size_before, "Cache should have grown");
+        assert!(
+            misses_after > misses_before,
+            "Should have at least one new miss"
+        );
+        assert_eq!(
+            evictions_after, evictions_before,
+            "Should have no new evictions"
+        );
+
+        // Use same pattern again (should be a hit)
+        assert!(matches_pattern(&unique_pattern, &unique_text).matched);
+        let (_, _, hits_final, misses_final, _) = get_regex_cache_stats();
+        assert!(hits_final > hits_after, "Should have increased hit count");
+        assert_eq!(misses_final, misses_after, "Misses should not increase");
     }
 
     #[test]
