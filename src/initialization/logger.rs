@@ -2,7 +2,10 @@
 //!
 //! This module provides functions to initialize the logger with custom formatting.
 
+use std::fs::File;
 use std::io::Write;
+use std::path::Path;
+use std::sync::Mutex;
 
 use crate::config::LogFormat;
 use crate::error_handling::InitializationError;
@@ -110,6 +113,68 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 
     // Use try_init() instead of init() to avoid panicking if logger is already initialized
     // This is important for tests where logger may be initialized multiple times
+    builder.try_init().map_err(InitializationError::from)?;
+
+    Ok(())
+}
+
+/// Initializes the logger to write to a file with timestamps.
+///
+/// Used when progress bar is enabled - logs go to file while progress bar shows on terminal.
+/// Log format includes ISO 8601 timestamps for each entry.
+///
+/// # Arguments
+///
+/// * `level` - Minimum log level to display
+/// * `log_file` - Path to the log file
+///
+/// # Returns
+///
+/// `Ok(())` if initialization succeeds, or an error if logger setup fails.
+pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), InitializationError> {
+    // Create/truncate the log file
+    let file = File::create(log_file).map_err(|e| {
+        InitializationError::LoggerSetupError(format!("Failed to create log file: {}", e))
+    })?;
+    let file = Mutex::new(file);
+
+    let mut builder = env_logger::Builder::from_default_env();
+
+    builder.filter_level(level);
+    builder.filter_module("html5ever", LevelFilter::Error);
+    builder.filter_module("sqlx", LevelFilter::Info);
+    builder.filter_module("reqwest", LevelFilter::Info);
+    builder.filter_module("hyper", LevelFilter::Info);
+    builder.filter_module("selectors", LevelFilter::Warn);
+    builder.filter_module("hickory_proto", LevelFilter::Error);
+    builder.filter_module("domain_status", level);
+
+    // Format with timestamps (no colors since it's going to a file)
+    builder.format(move |buf, record| {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let level = record.level();
+
+        // Write to the buffer (which goes to stderr by default)
+        let line = format!(
+            "[{}] {} {} - {}\n",
+            timestamp,
+            level,
+            record.target(),
+            record.args()
+        );
+
+        // Also write to our file
+        if let Ok(mut f) = file.lock() {
+            let _ = f.write_all(line.as_bytes());
+        }
+
+        // Write to buffer (this goes to env_logger's target)
+        write!(buf, "{}", line)
+    });
+
+    // Target the file instead of stderr
+    builder.target(env_logger::Target::Pipe(Box::new(std::io::sink())));
+
     builder.try_init().map_err(InitializationError::from)?;
 
     Ok(())

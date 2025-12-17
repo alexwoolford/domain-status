@@ -10,12 +10,15 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
+use std::time::Duration;
 
 use domain_status::config::{FailOn, LogFormat, LogLevel, DEFAULT_USER_AGENT};
 use domain_status::export::export_csv;
-use domain_status::initialization::{init_crypto_provider, init_logger_with};
+use domain_status::initialization::{init_crypto_provider, init_logger_to_file, init_logger_with};
 use domain_status::{run_scan, Config};
 
 /// CLI-specific configuration with clap parsing.
@@ -181,6 +184,21 @@ struct ScanCommand {
     /// Default: 10
     #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(0..=100))]
     fail_on_pct_threshold: u8,
+
+    /// Show progress bar instead of log output
+    ///
+    /// When enabled, displays a progress bar showing scan progress.
+    /// Log messages are written to a file (domain_status.log) instead of stderr.
+    /// Useful for interactive use when you want to see progress at a glance.
+    #[arg(long)]
+    progress: bool,
+
+    /// Log file path when --progress is enabled
+    ///
+    /// Specifies where to write log messages when progress bar is shown.
+    /// Default: domain_status.log in current directory
+    #[arg(long, default_value = "domain_status.log")]
+    log_file: PathBuf,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -240,6 +258,13 @@ impl From<ScanCommand> for Config {
             show_timing: cli.show_timing,
             fail_on: cli.fail_on,
             fail_on_pct_threshold: cli.fail_on_pct_threshold,
+            show_progress: cli.progress,
+            log_file: if cli.progress {
+                Some(cli.log_file)
+            } else {
+                None
+            },
+            progress_callback: None, // Set later if progress bar is enabled
         }
     }
 }
@@ -266,13 +291,43 @@ async fn main() -> Result<()> {
 
     match cli_command {
         CliCommand::Scan(scan_cmd) => {
-            let config: Config = scan_cmd.into();
+            let mut config: Config = scan_cmd.into();
 
             // Initialize logger based on config
             let log_level = config.log_level.clone();
             let log_format = config.log_format.clone();
-            init_logger_with(log_level.into(), log_format)
-                .context("Failed to initialize logger")?;
+
+            // Set up progress bar if requested
+            if config.show_progress {
+                // Log to file when progress bar is enabled
+                if let Some(ref log_file) = config.log_file {
+                    init_logger_to_file(log_level.into(), log_file)
+                        .context("Failed to initialize file logger")?;
+                    eprintln!("📝 Logs written to: {}", log_file.display());
+                }
+
+                // Create progress bar
+                let pb = Arc::new(ProgressBar::new(0));
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
+                        .expect("Invalid progress bar template")
+                        .progress_chars("█▓░"),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                // Set up progress callback
+                let pb_for_callback = Arc::clone(&pb);
+                config.progress_callback = Some(Arc::new(move |completed, failed, total| {
+                    pb_for_callback.set_length(total as u64);
+                    pb_for_callback.set_position((completed + failed) as u64);
+                    pb_for_callback.set_message(format!("✓{} ✗{}", completed, failed));
+                }));
+            } else {
+                // Normal logging to stderr
+                init_logger_with(log_level.into(), log_format)
+                    .context("Failed to initialize logger")?;
+            };
 
             // Initialize crypto provider for TLS operations
             init_crypto_provider();
@@ -592,6 +647,8 @@ mod tests {
             show_timing: true,
             fail_on: FailOn::AnyFailure,
             fail_on_pct_threshold: 15,
+            progress: false,
+            log_file: PathBuf::from("domain_status.log"),
         };
 
         let config: Config = scan_cmd.into();

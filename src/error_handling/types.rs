@@ -15,6 +15,10 @@ pub enum InitializationError {
     #[error("Logger initialization error: {0}")]
     LoggerError(#[from] SetLoggerError),
 
+    /// Error initializing the logger with custom message (e.g., file creation).
+    #[error("Logger initialization error: {0}")]
+    LoggerSetupError(String),
+
     /// Error initializing the HTTP client.
     #[error("HTTP client initialization error: {0}")]
     HttpClientError(#[from] ReqwestError),

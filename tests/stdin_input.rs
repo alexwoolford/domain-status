@@ -23,6 +23,9 @@ fn create_stdin_test_config(fail_on: domain_status::FailOn) -> Config {
         status_port: None,
         fail_on,
         fail_on_pct_threshold: 10,
+        show_progress: false,
+        log_file: None,
+        progress_callback: None,
     }
 }
 
