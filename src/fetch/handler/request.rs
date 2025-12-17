@@ -86,25 +86,18 @@ pub async fn handle_http_request(
             // reqwest's HTTP/2 implementation doesn't expose connection-level headers like alt-svc
             // Solution: If we captured alt-svc from any response in redirect chain, add it to final response
             // This matches wappalyzergo's behavior where resp.Header contains alt-svc from the final response
+            // If alt-svc header is missing from final response but was captured during redirects,
+            // add it to the final response for HTTP/3 detection (matches wappalyzergo behavior)
             if !response.headers().contains_key("alt-svc") {
                 if let Some(ref alt_svc_str) = alt_svc_header {
-                    debug!("[HTTP/3 DEBUG] alt-svc missing from final response (reqwest limitation), adding from redirect chain: {}", alt_svc_str);
-                    // Add alt-svc to final response headers for HTTP/3 detection
-                    // This matches wappalyzergo behavior - it gets alt-svc from resp.Header after redirects
                     if let (Ok(header_name), Ok(header_value)) = (
                         reqwest::header::HeaderName::from_bytes(b"alt-svc"),
                         reqwest::header::HeaderValue::from_str(alt_svc_str),
                     ) {
                         response.headers_mut().insert(header_name, header_value);
-                        debug!("[HTTP/3 DEBUG] Successfully added alt-svc header to final response: {}", alt_svc_str);
-                    } else {
-                        debug!(
-                            "[HTTP/3 DEBUG] Failed to create header name/value from alt-svc string"
-                        );
+                        log::trace!("Added alt-svc header from redirect chain: {}", alt_svc_str);
                     }
                 }
-                // Note: If alt-svc is not in redirect chain and not in final response,
-                // we don't have it. This is acceptable - we capture it from redirect chain when available.
             }
 
             // Extract headers BEFORE calling error_for_status() (which consumes response)

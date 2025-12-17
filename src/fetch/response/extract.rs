@@ -48,57 +48,8 @@ pub(crate) async fn extract_response_data(
     // Extract headers before consuming response
     let headers = response.headers().clone();
 
-    // Debug: Log response version to understand HTTP protocol used
-    debug!("[HTTP/3 DEBUG] Response version: {:?}", response.version());
-
-    // For HTTP/3 detection: if alt-svc header is missing from final response but was in redirect,
-    // we need to check the original URL. However, wappalyzergo uses the final response headers,
-    // so if it detects HTTP/3, the header must be in the final response.
-    // The issue is that reqwest might not be including it. Let's check if we can get it from
-    // the response's extended headers or connection info.
-
-    // Debug: Check if alt-svc header is present (for HTTP/3 detection)
-    if let Some(alt_svc) = headers.get("alt-svc") {
-        debug!(
-            "[HTTP/3 DEBUG] Found alt-svc header in response: {:?}",
-            alt_svc.to_str().unwrap_or("invalid")
-        );
-    } else {
-        // Try case-insensitive search
-        let mut found_alt_svc = false;
-        for (name, value) in headers.iter() {
-            if name.as_str().eq_ignore_ascii_case("alt-svc") {
-                debug!(
-                    "[HTTP/3 DEBUG] Found alt-svc header (case variant) in response: {} = {:?}",
-                    name.as_str(),
-                    value.to_str().unwrap_or("invalid")
-                );
-                found_alt_svc = true;
-                break;
-            }
-        }
-        if !found_alt_svc {
-            debug!(
-                "[HTTP/3 DEBUG] alt-svc header NOT found in response headers. Total headers: {}",
-                headers.len()
-            );
-            // List all header names for debugging
-            let header_names: Vec<String> = headers
-                .iter()
-                .map(|(name, _)| name.as_str().to_string())
-                .collect();
-            debug!(
-                "[HTTP/3 DEBUG] All header names in response: {:?}",
-                header_names
-            );
-
-            // Try to get alt-svc from the original URL (before redirects) if there was a redirect
-            // This matches wappalyzergo behavior - it checks headers from the response it gets
-            // But since wappalyzergo detects HTTP/3, the header must be accessible somehow
-            // The real issue might be that reqwest's HTTP/2 implementation doesn't expose alt-svc
-            // Let's check the response's version and see if we can access extended headers
-        }
-    }
+    // Trace-level logging for HTTP protocol debugging (only visible with --log-level trace)
+    log::trace!("Response version: {:?}", response.version());
 
     let security_headers = extract_security_headers(&headers);
     let http_headers = extract_http_headers(&headers);
