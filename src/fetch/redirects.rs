@@ -92,17 +92,11 @@ pub async fn resolve_redirect_chain(
         // Capture alt-svc header from ANY response in the redirect chain (for HTTP/3 detection)
         // Go's http.Client exposes alt-svc in the final response after automatic redirect following
         // We need to check all responses and use the last one found (matching Go's behavior)
-        // Check this response for alt-svc (case-insensitive)
         for (name, value) in resp.headers().iter() {
             if name.as_str().eq_ignore_ascii_case("alt-svc") {
                 if let Ok(alt_svc_str) = value.to_str() {
                     alt_svc_header = Some(alt_svc_str.to_string());
-                    log::debug!(
-                        "[HTTP/3 DEBUG] ✓ Captured alt-svc header from response {}: {} = {}",
-                        hop_num,
-                        name.as_str(),
-                        alt_svc_str
-                    );
+                    log::trace!("Captured alt-svc header from redirect hop {}", hop_num);
                     break;
                 }
             }

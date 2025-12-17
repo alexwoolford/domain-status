@@ -148,6 +148,11 @@ mod run {
     /// # }
     /// ```
     pub async fn run_scan(mut config: Config) -> Result<ScanReport> {
+        // Validate configuration before starting
+        config
+            .validate()
+            .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
+
         if config.user_agent == DEFAULT_USER_AGENT {
             let updated_ua = crate::user_agent::get_default_user_agent(None).await;
             config.user_agent = updated_ua;
@@ -585,6 +590,10 @@ mod run {
                 e
             );
         }
+
+        // Explicitly close the database pool to release connections promptly
+        pool.close().await;
+        log::debug!("Database pool closed");
 
         print_error_statistics(&error_stats);
 

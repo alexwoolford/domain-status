@@ -85,6 +85,23 @@ pub enum LogFormat {
     Json,
 }
 
+/// Configuration validation error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigValidationError {
+    /// The field that failed validation
+    pub field: String,
+    /// Description of the validation failure
+    pub message: String,
+}
+
+impl std::fmt::Display for ConfigValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Invalid config '{}': {}", self.field, self.message)
+    }
+}
+
+impl std::error::Error for ConfigValidationError {}
+
 /// Library configuration (no CLI dependencies).
 ///
 /// This is the core configuration struct used by the library. It can be
@@ -177,6 +194,102 @@ impl Default for Config {
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
         }
+    }
+}
+
+impl Config {
+    /// Maximum allowed concurrency to prevent resource exhaustion.
+    pub const MAX_CONCURRENCY: usize = 500;
+
+    /// Maximum allowed rate limit (requests per second).
+    pub const MAX_RATE_LIMIT_RPS: u32 = 100;
+
+    /// Validates the configuration and returns any validation errors.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if configuration is valid, or `Err(ConfigValidationError)` with
+    /// details about the first validation failure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use domain_status::Config;
+    ///
+    /// let mut config = Config::default();
+    /// assert!(config.validate().is_ok());
+    ///
+    /// config.max_concurrency = 0;
+    /// assert!(config.validate().is_err());
+    /// ```
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        // Validate max_concurrency
+        if self.max_concurrency == 0 {
+            return Err(ConfigValidationError {
+                field: "max_concurrency".to_string(),
+                message: "must be greater than 0".to_string(),
+            });
+        }
+        if self.max_concurrency > Self::MAX_CONCURRENCY {
+            return Err(ConfigValidationError {
+                field: "max_concurrency".to_string(),
+                message: format!(
+                    "must be <= {} to prevent resource exhaustion",
+                    Self::MAX_CONCURRENCY
+                ),
+            });
+        }
+
+        // Validate rate_limit_rps
+        if self.rate_limit_rps == 0 {
+            return Err(ConfigValidationError {
+                field: "rate_limit_rps".to_string(),
+                message: "must be greater than 0".to_string(),
+            });
+        }
+        if self.rate_limit_rps > Self::MAX_RATE_LIMIT_RPS {
+            return Err(ConfigValidationError {
+                field: "rate_limit_rps".to_string(),
+                message: format!(
+                    "must be <= {} to prevent overwhelming targets",
+                    Self::MAX_RATE_LIMIT_RPS
+                ),
+            });
+        }
+
+        // Validate timeout_seconds
+        if self.timeout_seconds == 0 {
+            return Err(ConfigValidationError {
+                field: "timeout_seconds".to_string(),
+                message: "must be greater than 0".to_string(),
+            });
+        }
+
+        // Validate adaptive_error_threshold
+        if self.adaptive_error_threshold < 0.0 || self.adaptive_error_threshold > 1.0 {
+            return Err(ConfigValidationError {
+                field: "adaptive_error_threshold".to_string(),
+                message: "must be between 0.0 and 1.0".to_string(),
+            });
+        }
+
+        // Validate fail_on_pct_threshold
+        if self.fail_on_pct_threshold > 100 {
+            return Err(ConfigValidationError {
+                field: "fail_on_pct_threshold".to_string(),
+                message: "must be between 0 and 100".to_string(),
+            });
+        }
+
+        // Validate user_agent is not empty
+        if self.user_agent.trim().is_empty() {
+            return Err(ConfigValidationError {
+                field: "user_agent".to_string(),
+                message: "cannot be empty".to_string(),
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -285,5 +398,182 @@ mod tests {
         assert_eq!(cloned.max_concurrency, 100);
         assert_eq!(cloned.rate_limit_rps, 50);
         assert!(cloned.enable_whois);
+    }
+
+    // Config validation tests
+
+    #[test]
+    fn test_config_validate_default_is_valid() {
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_max_concurrency_zero() {
+        let config = Config {
+            max_concurrency: 0,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "max_concurrency");
+        assert!(err.message.contains("greater than 0"));
+    }
+
+    #[test]
+    fn test_config_validate_max_concurrency_too_high() {
+        let config = Config {
+            max_concurrency: Config::MAX_CONCURRENCY + 1,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "max_concurrency");
+        assert!(err.message.contains("resource exhaustion"));
+    }
+
+    #[test]
+    fn test_config_validate_max_concurrency_at_limit() {
+        let config = Config {
+            max_concurrency: Config::MAX_CONCURRENCY,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_rate_limit_zero() {
+        let config = Config {
+            rate_limit_rps: 0,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "rate_limit_rps");
+        assert!(err.message.contains("greater than 0"));
+    }
+
+    #[test]
+    fn test_config_validate_rate_limit_too_high() {
+        let config = Config {
+            rate_limit_rps: Config::MAX_RATE_LIMIT_RPS + 1,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "rate_limit_rps");
+        assert!(err.message.contains("overwhelming"));
+    }
+
+    #[test]
+    fn test_config_validate_rate_limit_at_limit() {
+        let config = Config {
+            rate_limit_rps: Config::MAX_RATE_LIMIT_RPS,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_timeout_zero() {
+        let config = Config {
+            timeout_seconds: 0,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "timeout_seconds");
+        assert!(err.message.contains("greater than 0"));
+    }
+
+    #[test]
+    fn test_config_validate_adaptive_error_threshold_negative() {
+        let config = Config {
+            adaptive_error_threshold: -0.1,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "adaptive_error_threshold");
+        assert!(err.message.contains("between 0.0 and 1.0"));
+    }
+
+    #[test]
+    fn test_config_validate_adaptive_error_threshold_over_one() {
+        let config = Config {
+            adaptive_error_threshold: 1.1,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "adaptive_error_threshold");
+    }
+
+    #[test]
+    fn test_config_validate_adaptive_error_threshold_boundary() {
+        // Test boundary values (0.0 and 1.0 should be valid)
+        let config_zero = Config {
+            adaptive_error_threshold: 0.0,
+            ..Default::default()
+        };
+        assert!(config_zero.validate().is_ok());
+
+        let config_one = Config {
+            adaptive_error_threshold: 1.0,
+            ..Default::default()
+        };
+        assert!(config_one.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_fail_on_pct_threshold_over_100() {
+        let config = Config {
+            fail_on_pct_threshold: 101,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "fail_on_pct_threshold");
+        assert!(err.message.contains("between 0 and 100"));
+    }
+
+    #[test]
+    fn test_config_validate_fail_on_pct_threshold_boundary() {
+        // 0 and 100 should be valid
+        let config_zero = Config {
+            fail_on_pct_threshold: 0,
+            ..Default::default()
+        };
+        assert!(config_zero.validate().is_ok());
+
+        let config_hundred = Config {
+            fail_on_pct_threshold: 100,
+            ..Default::default()
+        };
+        assert!(config_hundred.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_empty_user_agent() {
+        let config = Config {
+            user_agent: "".to_string(),
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "user_agent");
+        assert!(err.message.contains("empty"));
+    }
+
+    #[test]
+    fn test_config_validate_whitespace_user_agent() {
+        let config = Config {
+            user_agent: "   ".to_string(),
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "user_agent");
+    }
+
+    #[test]
+    fn test_config_validation_error_display() {
+        let err = ConfigValidationError {
+            field: "test_field".to_string(),
+            message: "test message".to_string(),
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("test_field"));
+        assert!(display.contains("test message"));
     }
 }
