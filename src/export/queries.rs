@@ -156,50 +156,6 @@ pub async fn fetch_structured_data_types(
         .collect())
 }
 
-/// Fetches count from a satellite table for a URL status record.
-pub async fn fetch_count(
-    pool: &SqlitePool,
-    table: &str,
-    url_status_id: i64,
-) -> Result<i64, sqlx::Error> {
-    let query = format!(
-        "SELECT COUNT(*) as cnt FROM {} WHERE url_status_id = ?",
-        table
-    );
-    let row = sqlx::query(&query)
-        .bind(url_status_id)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(row.get::<i64, _>("cnt"))
-}
-
-/// Fetches header key-value pairs for a URL status record.
-pub async fn fetch_headers(
-    pool: &SqlitePool,
-    table: &str,
-    url_status_id: i64,
-) -> Result<Vec<(String, String)>, sqlx::Error> {
-    let query = format!(
-        "SELECT header_name, header_value FROM {} WHERE url_status_id = ?",
-        table
-    );
-    let rows = sqlx::query(&query)
-        .bind(url_status_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("header_name"),
-                r.get::<String, _>("header_value"),
-            )
-        })
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,18 +267,5 @@ mod tests {
             ids,
             vec![("Google Analytics".to_string(), "UA-12345".to_string())]
         );
-    }
-
-    #[tokio::test]
-    async fn test_fetch_count() {
-        let pool = create_test_pool().await;
-
-        sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name) VALUES (1, 'A'), (1, 'B')")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let count = fetch_count(&pool, "url_technologies", 1).await.unwrap();
-        assert_eq!(count, 2);
     }
 }
