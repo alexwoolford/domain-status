@@ -240,13 +240,7 @@ impl Config {
             });
         }
 
-        // Validate rate_limit_rps
-        if self.rate_limit_rps == 0 {
-            return Err(ConfigValidationError {
-                field: "rate_limit_rps".to_string(),
-                message: "must be greater than 0".to_string(),
-            });
-        }
+        // Validate rate_limit_rps (0 means disabled, which is valid)
         if self.rate_limit_rps > Self::MAX_RATE_LIMIT_RPS {
             return Err(ConfigValidationError {
                 field: "rate_limit_rps".to_string(),
@@ -440,14 +434,13 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validate_rate_limit_zero() {
+    fn test_config_validate_rate_limit_zero_is_valid() {
+        // 0 means "disabled" which is valid for tests and special use cases
         let config = Config {
             rate_limit_rps: 0,
             ..Default::default()
         };
-        let err = config.validate().unwrap_err();
-        assert_eq!(err.field, "rate_limit_rps");
-        assert!(err.message.contains("greater than 0"));
+        assert!(config.validate().is_ok());
     }
 
     #[test]
