@@ -176,10 +176,14 @@ pub struct Config {
     /// Log file path for detailed logging (always used in CLI)
     pub log_file: Option<PathBuf>,
 
-    /// Progress callback for external progress tracking
+    /// Progress callback for external progress tracking.
     ///
     /// Called with (completed, failed, total) after each URL is processed.
     /// This allows external code (like CLI) to update progress bars.
+    ///
+    /// **Important**: The callback is invoked synchronously from async tasks.
+    /// Keep callback execution fast (microseconds) to avoid blocking URL processing.
+    /// For slow operations, spawn a separate task inside the callback.
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
     pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,

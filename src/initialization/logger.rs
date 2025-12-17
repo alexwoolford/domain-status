@@ -166,6 +166,10 @@ pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), In
         // Also write to our file
         if let Ok(mut f) = file.lock() {
             let _ = f.write_all(line.as_bytes());
+            // Flush on warnings and errors to ensure they're persisted immediately
+            if level <= log::Level::Warn {
+                let _ = f.flush();
+            }
         }
 
         // Write to buffer (this goes to env_logger's target)
