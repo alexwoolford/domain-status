@@ -157,7 +157,6 @@ mod tests {
             status_port: None,
             fail_on: domain_status::FailOn::Never,
             fail_on_pct_threshold: 10,
-            show_progress: false,
             log_file: None,
             progress_callback: None,
         };

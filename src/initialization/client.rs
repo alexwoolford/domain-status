@@ -98,7 +98,6 @@ mod tests {
             geoip: None,
             enable_whois: false,
             adaptive_error_threshold: 0.2,
-            show_progress: false,
             log_file: None,
             progress_callback: None,
         }
