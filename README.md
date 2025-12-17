@@ -205,7 +205,7 @@ domain_status scan <file> [OPTIONS]
 
 **Common Options:**
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
-- `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
+- `--log-file <PATH>`: Log file path (default: `domain_status.log`). All logs are written to this file with timestamps.
 - `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
 - `--max-concurrency <N>`: Maximum concurrent requests (default: 30)
 - `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 35 seconds.
@@ -369,24 +369,27 @@ The database uses a `UNIQUE (final_domain, timestamp)` constraint to ensure idem
 
 **Best practice:** Include each domain only once per input file. If you need to check multiple paths on the same domain, they should be separate URLs (e.g., `https://example.com/` and `https://example.com/about`), but be aware that redirects may cause them to resolve to the same final domain.
 
-### Logging Output
+### Progress Display
 
-The tool provides detailed logging with progress updates and error summaries:
+The tool shows a clean progress bar during scanning, with detailed logs written to a file:
 
-**Plain format (default):**
-```plaintext
-✔️ domain_status [INFO] Processed 88 lines in 128.61 seconds (~0.68 lines/sec)
-✔️ domain_status [INFO] Run statistics: total=100, successful=88, failed=12
-✔️ domain_status [INFO] Error Counts (21 total):
-✔️ domain_status [INFO]    Bot detection (403 Forbidden): 4
-✔️ domain_status [INFO]    Process URL timeout: 3
-✔️ domain_status [INFO]    DNS NS lookup error: 2
-...
+```
+📝 Logs: domain_status.log
+⠋ [00:00:45] [████████████████████░░░░░░░░░░░░░░░░░░░░] 52/100 (52%) ✓48 ✗4
 ```
 
-**JSON format (`--log-format json`):**
-```json
-{"ts":1704067200000,"level":"INFO","target":"domain_status","msg":"Processed 88 lines in 128.61 seconds (~0.68 lines/sec)"}
+After completion:
+```
+✅ Processed 100 URLs (92 succeeded, 8 failed) in 55.9s - see database for details
+Results saved in ./domain_status.db
+💡 Tip: Use `domain_status export --format csv` to export data, or query the database directly.
+```
+
+**Log file format** (with timestamps):
+```
+[2025-01-07 23:33:59.123] INFO domain_status::run - Total URLs in file: 100
+[2025-01-07 23:33:59.456] INFO domain_status::fingerprint::ruleset - Merged 7223 technologies from 2 source(s)
+[2025-01-07 23:34:01.789] WARN domain_status::dns::resolution - Failed to perform reverse DNS lookup...
 ```
 
 **Performance Analysis (`--show-timing`):**
@@ -681,7 +684,7 @@ The tool automatically retries failed HTTP requests up to 2 additional times (3 
 **Scan is very slow or stuck:**
 - Check if you hit a rate limit. domain_status automatically slows down on high error rate (adaptive rate limiting).
 - Enabling WHOIS adds approximately 1 second per domain due to rate limits.
-- If it's truly stuck, use `RUST_LOG=debug` environment variable (or `--log-level debug`) to see what it's doing.
+- If it's truly stuck, check the log file (`domain_status.log` by default) or use `--log-level debug` for more detail.
 
 **I see 'bot_detection_403' in info metrics:**
 - Some sites actively block non-browser agents. Try using `--user-agent` to mimic a different browser or reduce rate with `--rate-limit-rps`.
