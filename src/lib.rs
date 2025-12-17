@@ -307,6 +307,9 @@ mod run {
         let total_urls_attempted = Arc::new(AtomicUsize::new(0));
         let total_urls_in_file = Arc::new(AtomicUsize::new(total_lines));
 
+        // Clone progress callback for use in tasks
+        let progress_callback = config.progress_callback.clone();
+
         if let Some(port) = config.status_port {
             let status_state = crate::status_server::StatusState {
                 total_urls: Arc::clone(&total_urls_in_file),
@@ -383,6 +386,8 @@ mod run {
             let ctx = Arc::clone(&shared_ctx);
             let completed_urls_clone = Arc::clone(&completed_urls);
             let failed_urls_clone = Arc::clone(&failed_urls);
+            let total_urls_for_callback = total_lines;
+            let progress_callback_clone = progress_callback.clone();
             let url_shared = Arc::from(url.as_str());
 
             let request_limiter_clone = request_limiter.as_ref().map(Arc::clone);
@@ -406,6 +411,12 @@ mod run {
                 match result {
                     Ok(ProcessUrlResult { result: Ok(()), .. }) => {
                         completed_urls_clone.fetch_add(1, Ordering::SeqCst);
+                        // Invoke progress callback if provided
+                        if let Some(ref cb) = progress_callback_clone {
+                            let completed = completed_urls_clone.load(Ordering::SeqCst);
+                            let failed = failed_urls_clone.load(Ordering::SeqCst);
+                            cb(completed, failed, total_urls_for_callback);
+                        }
                         if let Some(adaptive) = adaptive_limiter_for_task {
                             adaptive.record_success().await;
                         }
@@ -415,6 +426,12 @@ mod run {
                         retry_count,
                     }) => {
                         failed_urls_clone.fetch_add(1, Ordering::SeqCst);
+                        // Invoke progress callback if provided
+                        if let Some(ref cb) = progress_callback_clone {
+                            let completed = completed_urls_clone.load(Ordering::SeqCst);
+                            let failed = failed_urls_clone.load(Ordering::SeqCst);
+                            cb(completed, failed, total_urls_for_callback);
+                        }
                         log::warn!("Failed to process URL {}: {e}", url_for_logging.as_ref());
 
                         let elapsed = process_start.elapsed().as_secs_f64();
@@ -461,6 +478,12 @@ mod run {
                     }
                     Err(_) => {
                         failed_urls_clone.fetch_add(1, Ordering::SeqCst);
+                        // Invoke progress callback if provided
+                        if let Some(ref cb) = progress_callback_clone {
+                            let completed = completed_urls_clone.load(Ordering::SeqCst);
+                            let failed = failed_urls_clone.load(Ordering::SeqCst);
+                            cb(completed, failed, total_urls_for_callback);
+                        }
                         log::warn!("Timeout processing URL {}", url_for_logging.as_ref());
 
                         let elapsed = process_start.elapsed().as_secs_f64();

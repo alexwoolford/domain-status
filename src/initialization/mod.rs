@@ -20,7 +20,7 @@ use tokio::sync::Semaphore;
 
 // Re-export public API
 pub use client::{init_client, init_redirect_client};
-pub use logger::init_logger_with;
+pub use logger::{init_logger_to_file, init_logger_with};
 pub use rate_limiter::init_rate_limiter;
 pub use resolver::init_resolver;
 

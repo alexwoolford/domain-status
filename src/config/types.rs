@@ -120,7 +120,7 @@ impl std::error::Error for ConfigValidationError {}
 ///     ..Default::default()
 /// };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     /// File to read URLs from
     pub file: PathBuf,
@@ -172,6 +172,20 @@ pub struct Config {
     /// A number between 0 and 100. If failure percentage exceeds this value,
     /// exit with code 2. Only used when `fail_on` is `PctGreaterThan`.
     pub fail_on_pct_threshold: u8,
+
+    /// Show progress bar instead of log output
+    pub show_progress: bool,
+
+    /// Log file path when progress bar is enabled
+    pub log_file: Option<PathBuf>,
+
+    /// Progress callback for external progress tracking
+    ///
+    /// Called with (completed, failed, total) after each URL is processed.
+    /// This allows external code (like CLI) to update progress bars.
+    #[doc(hidden)]
+    #[allow(clippy::type_complexity)]
+    pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,
 }
 
 impl Default for Config {
@@ -193,7 +207,39 @@ impl Default for Config {
             show_timing: false,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
+            show_progress: false,
+            log_file: None,
+            progress_callback: None,
         }
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("file", &self.file)
+            .field("log_level", &self.log_level)
+            .field("log_format", &self.log_format)
+            .field("db_path", &self.db_path)
+            .field("max_concurrency", &self.max_concurrency)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("user_agent", &self.user_agent)
+            .field("rate_limit_rps", &self.rate_limit_rps)
+            .field("adaptive_error_threshold", &self.adaptive_error_threshold)
+            .field("fingerprints", &self.fingerprints)
+            .field("geoip", &self.geoip)
+            .field("status_port", &self.status_port)
+            .field("enable_whois", &self.enable_whois)
+            .field("show_timing", &self.show_timing)
+            .field("fail_on", &self.fail_on)
+            .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
+            .field("show_progress", &self.show_progress)
+            .field("log_file", &self.log_file)
+            .field(
+                "progress_callback",
+                &self.progress_callback.as_ref().map(|_| "<callback>"),
+            )
+            .finish()
     }
 }
 
