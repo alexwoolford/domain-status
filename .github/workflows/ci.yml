@@ -207,4 +207,5 @@ jobs:
         # - Full end-to-end scan pipeline (tests/integration_test.rs)
         # - TLS certificate fetching from real domains (src/tls/mod.rs)
         # They are marked #[ignore] to avoid network calls in regular test runs
-        continue-on-error: true  # Allow failures due to network issues
+        # NOTE: Removed continue-on-error to catch real bugs (like config validation)
+        # If network flakiness becomes an issue, consider retry logic instead
