@@ -173,10 +173,7 @@ pub struct Config {
     /// exit with code 2. Only used when `fail_on` is `PctGreaterThan`.
     pub fail_on_pct_threshold: u8,
 
-    /// Show progress bar instead of log output
-    pub show_progress: bool,
-
-    /// Log file path when progress bar is enabled
+    /// Log file path for detailed logging (always used in CLI)
     pub log_file: Option<PathBuf>,
 
     /// Progress callback for external progress tracking
@@ -207,7 +204,6 @@ impl Default for Config {
             show_timing: false,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
-            show_progress: false,
             log_file: None,
             progress_callback: None,
         }
@@ -233,7 +229,6 @@ impl std::fmt::Debug for Config {
             .field("show_timing", &self.show_timing)
             .field("fail_on", &self.fail_on)
             .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
-            .field("show_progress", &self.show_progress)
             .field("log_file", &self.log_file)
             .field(
                 "progress_callback",
