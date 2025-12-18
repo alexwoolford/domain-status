@@ -92,7 +92,6 @@ mod tests {
             rate_limit_rps: 15,
             log_level: crate::config::LogLevel::Info,
             log_format: crate::config::LogFormat::Plain,
-            show_timing: false,
             status_port: None,
             fingerprints: None,
             geoip: None,

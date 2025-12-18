@@ -13,7 +13,6 @@ fn create_stdin_test_config(fail_on: domain_status::FailOn) -> Config {
         rate_limit_rps: 0, // Disable rate limiting for faster tests
         timeout_seconds: 5,
         enable_whois: false,
-        show_timing: false,
         log_level: LogLevel::Error, // Reduce log noise
         log_format: LogFormat::Plain,
         user_agent: "domain_status-test/1.0".to_string(),

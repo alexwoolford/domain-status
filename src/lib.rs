@@ -620,14 +620,13 @@ mod run {
 
         print_error_statistics(&error_stats);
 
-        if config.show_timing {
-            let geoip_enabled = crate::geoip::is_enabled();
-            print_timing_statistics(
-                &timing_stats,
-                Some(geoip_enabled),
-                Some(config.enable_whois),
-            );
-        }
+        // Always log timing statistics to the log file (useful for performance analysis)
+        let geoip_enabled = crate::geoip::is_enabled();
+        print_timing_statistics(
+            &timing_stats,
+            Some(geoip_enabled),
+            Some(config.enable_whois),
+        );
 
         Ok(ScanReport {
             total_urls: total_urls as usize,

@@ -142,21 +142,6 @@ struct ScanCommand {
     #[arg(long)]
     enable_whois: bool,
 
-    /// Show detailed timing metrics at the end of the run
-    ///
-    /// When enabled, displays a breakdown of time spent in each operation:
-    /// - HTTP requests
-    /// - DNS lookups
-    /// - TLS handshakes
-    /// - Technology detection
-    /// - HTML parsing
-    /// - Enrichment operations
-    ///
-    /// Useful for performance analysis and identifying bottlenecks.
-    /// Disabled by default to reduce output noise.
-    #[arg(long)]
-    show_timing: bool,
-
     /// Exit code policy for handling failures
     ///
     /// Controls when the CLI should exit with a non-zero code:
@@ -254,7 +239,6 @@ impl From<ScanCommand> for Config {
             geoip: cli.geoip,
             status_port: cli.status_port,
             enable_whois: cli.enable_whois,
-            show_timing: cli.show_timing,
             fail_on: cli.fail_on,
             fail_on_pct_threshold: cli.fail_on_pct_threshold,
             log_file: Some(cli.log_file),
@@ -655,7 +639,6 @@ mod tests {
             geoip: Some("/path/to/geoip.mmdb".to_string()),
             status_port: Some(8080),
             enable_whois: true,
-            show_timing: true,
             fail_on: FailOn::AnyFailure,
             fail_on_pct_threshold: 15,
             log_file: PathBuf::from("domain_status.log"),
@@ -679,7 +662,6 @@ mod tests {
         assert_eq!(config.geoip, Some("/path/to/geoip.mmdb".to_string()));
         assert_eq!(config.status_port, Some(8080));
         assert!(config.enable_whois);
-        assert!(config.show_timing);
         assert_eq!(config.fail_on, FailOn::AnyFailure);
         assert_eq!(config.fail_on_pct_threshold, 15);
     }
