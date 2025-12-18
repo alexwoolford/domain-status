@@ -139,12 +139,8 @@ mod tests {
         std::fs::write(&input_file, format!("{}\n", server_url))
             .expect("Failed to write test file");
 
-        // Create minimal fingerprint file to avoid GitHub API calls
-        let fingerprint_file = temp_dir.path().join("technologies.json");
-        std::fs::write(&fingerprint_file, r#"{"nginx": {"cats": [22], "headers": {"Server": "nginx"}, "website": "https://nginx.org"}}"#)
-            .expect("Failed to write fingerprint file");
-
         // Create config for library usage
+        // Note: Uses default fingerprint fetching from GitHub (GITHUB_TOKEN env var increases rate limit)
         let config = Config {
             file: input_file,
             db_path: temp_dir.path().join("test.db"),
@@ -157,8 +153,8 @@ mod tests {
             timeout_seconds: 5,
             user_agent: "domain_status-test/1.0".to_string(),
             adaptive_error_threshold: 0.2,
-            fingerprints: Some(fingerprint_file.to_string_lossy().to_string()), // Use local file to avoid GitHub API
-            geoip: None, // Disable GeoIP for test
+            fingerprints: None, // Use default (fetches from GitHub - GITHUB_TOKEN increases rate limit)
+            geoip: None,        // Disable GeoIP for test
             status_port: None,
             fail_on: domain_status::FailOn::Never,
             fail_on_pct_threshold: 10,
