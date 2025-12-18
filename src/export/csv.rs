@@ -7,157 +7,16 @@ use anyhow::{Context, Result};
 use csv::Writer;
 use futures::TryStreamExt;
 use sqlx::Row;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::storage::{init_db_pool_with_path, DbPool};
+use crate::storage::init_db_pool_with_path;
 
-/// Wrapper around a Write that ignores broken pipe errors (EPIPE).
-/// This allows graceful handling when stdout is piped to a command that exits early.
-pub(crate) struct IgnoreBrokenPipe<W: Write> {
-    inner: W,
-}
-
-impl<W: Write> IgnoreBrokenPipe<W> {
-    pub(crate) fn new(inner: W) -> Self {
-        Self { inner }
-    }
-}
-
-impl<W: Write> Write for IgnoreBrokenPipe<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf).or_else(|e| {
-            if e.kind() == ErrorKind::BrokenPipe {
-                // Ignore broken pipe - downstream command closed the pipe
-                Ok(buf.len())
-            } else {
-                Err(e)
-            }
-        })
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush().or_else(|e| {
-            if e.kind() == ErrorKind::BrokenPipe {
-                Ok(())
-            } else {
-                Err(e)
-            }
-        })
-    }
-}
-
-/// Helper: Fetch a list of string values from a query that returns a single column.
-/// Returns (joined_string, count).
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) async fn fetch_string_list(
-    pool: &DbPool,
-    query: &str,
-    url_status_id: i64,
-) -> Result<(String, usize)> {
-    let rows = sqlx::query(query)
-        .bind(url_status_id)
-        .fetch_all(pool.as_ref())
-        .await?;
-
-    let items: Vec<String> = rows.iter().map(|r| r.get::<String, _>(0)).collect();
-    let count = items.len();
-    let joined = items.join(",");
-    Ok((joined, count))
-}
-
-/// Helper: Fetch a count from a query.
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) async fn fetch_count_query(
-    pool: &DbPool,
-    query: &str,
-    url_status_id: i64,
-) -> Result<i64> {
-    sqlx::query_scalar::<_, i64>(query)
-        .bind(url_status_id)
-        .fetch_one(pool.as_ref())
-        .await
-        .map_err(Into::into)
-}
-
-/// Helper: Fetch key-value pairs and format as "key:value" strings.
-/// Returns (joined_string, count).
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) async fn fetch_key_value_list(
-    pool: &DbPool,
-    query: &str,
-    key_field: &str,
-    value_field: &str,
-    url_status_id: i64,
-) -> Result<(String, usize)> {
-    let rows = sqlx::query(query)
-        .bind(url_status_id)
-        .fetch_all(pool.as_ref())
-        .await?;
-
-    let items: Vec<String> = rows
-        .iter()
-        .map(|r| {
-            let key: String = r.get(key_field);
-            let value: String = r.get(value_field);
-            format!("{}:{}", key, value)
-        })
-        .collect();
-    let count = items.len();
-    let joined = items.join(",");
-    Ok((joined, count))
-}
-
-/// Helper: Fetch filtered HTTP headers and format as "name:value" strings.
-/// Returns (joined_string, total_count).
-/// The joined string contains only filtered headers (separated by semicolons),
-/// but the count is the total number of headers in the table.
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) async fn fetch_filtered_http_headers(
-    pool: &DbPool,
-    table: &str,
-    url_status_id: i64,
-    allowed_headers: &[&str],
-) -> Result<(String, i64)> {
-    // Build query with IN clause for allowed headers
-    // Use QueryBuilder to safely construct the query
-    let mut query_builder = sqlx::QueryBuilder::new(&format!(
-        "SELECT header_name, header_value FROM {} WHERE url_status_id = ",
-        table
-    ));
-
-    query_builder.push_bind(url_status_id);
-    query_builder.push(" AND header_name IN (");
-
-    // Add placeholders for each allowed header
-    let mut separated = query_builder.separated(", ");
-    for header in allowed_headers {
-        separated.push_bind(*header);
-    }
-    separated.push_unseparated(") ORDER BY header_name");
-
-    let rows = query_builder.build().fetch_all(pool.as_ref()).await?;
-
-    let items: Vec<String> = rows
-        .iter()
-        .map(|r| {
-            let name: String = r.get("header_name");
-            let value: String = r.get("header_value");
-            format!("{}:{}", name, value)
-        })
-        .collect();
-    let joined = items.join(";");
-
-    // Get total count (all headers, not just filtered)
-    let total_count = fetch_count_query(
-        pool,
-        &format!("SELECT COUNT(*) FROM {} WHERE url_status_id = ?", table),
-        url_status_id,
-    )
-    .await?;
-
-    Ok((joined, total_count))
-}
+// Import shared helper functions and utilities
+use super::queries::{
+    build_where_clause, fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list,
+    fetch_string_list, IgnoreBrokenPipe,
+};
 
 /// Exports data to CSV format.
 ///
@@ -194,44 +53,8 @@ pub async fn export_csv(
          FROM url_status us",
     );
 
-    let mut has_where = false;
-    if let Some(run_id) = run_id {
-        query_builder.push(" WHERE us.run_id = ");
-        query_builder.push_bind(run_id);
-        has_where = true;
-    }
-    if let Some(domain) = domain {
-        if has_where {
-            query_builder.push(" AND ");
-        } else {
-            query_builder.push(" WHERE ");
-            has_where = true;
-        }
-        query_builder.push("(us.domain = ");
-        query_builder.push_bind(domain);
-        query_builder.push(" OR us.final_domain = ");
-        query_builder.push_bind(domain);
-        query_builder.push(")");
-    }
-    if let Some(status) = status {
-        if has_where {
-            query_builder.push(" AND ");
-        } else {
-            query_builder.push(" WHERE ");
-            has_where = true;
-        }
-        query_builder.push("us.status = ");
-        query_builder.push_bind(status);
-    }
-    if let Some(since) = since {
-        if has_where {
-            query_builder.push(" AND ");
-        } else {
-            query_builder.push(" WHERE ");
-        }
-        query_builder.push("us.timestamp >= ");
-        query_builder.push_bind(since);
-    }
+    // Use shared WHERE clause builder
+    build_where_clause(&mut query_builder, run_id, domain, status, since);
 
     query_builder.push(" ORDER BY us.timestamp DESC");
 

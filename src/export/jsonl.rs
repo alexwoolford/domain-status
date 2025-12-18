@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 
 use crate::storage::init_db_pool_with_path;
 
-// Re-use helper functions from CSV module
-use super::csv::{
-    fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
-    IgnoreBrokenPipe,
+// Import shared helper functions and utilities
+use super::queries::{
+    build_where_clause, fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list,
+    fetch_string_list, IgnoreBrokenPipe,
 };
 
 /// Exports data to JSONL format (JSON Lines).
@@ -60,44 +60,8 @@ pub async fn export_jsonl(
          FROM url_status us",
     );
 
-    let mut has_where = false;
-    if let Some(run_id) = run_id {
-        query_builder.push(" WHERE us.run_id = ");
-        query_builder.push_bind(run_id);
-        has_where = true;
-    }
-    if let Some(domain) = domain {
-        if has_where {
-            query_builder.push(" AND ");
-        } else {
-            query_builder.push(" WHERE ");
-            has_where = true;
-        }
-        query_builder.push("(us.domain = ");
-        query_builder.push_bind(domain);
-        query_builder.push(" OR us.final_domain = ");
-        query_builder.push_bind(domain);
-        query_builder.push(")");
-    }
-    if let Some(status) = status {
-        if has_where {
-            query_builder.push(" AND ");
-        } else {
-            query_builder.push(" WHERE ");
-            has_where = true;
-        }
-        query_builder.push("us.status = ");
-        query_builder.push_bind(status);
-    }
-    if let Some(since) = since {
-        if has_where {
-            query_builder.push(" AND ");
-        } else {
-            query_builder.push(" WHERE ");
-        }
-        query_builder.push("us.timestamp >= ");
-        query_builder.push_bind(since);
-    }
+    // Use shared WHERE clause builder
+    build_where_clause(&mut query_builder, run_id, domain, status, since);
 
     query_builder.push(" ORDER BY us.timestamp DESC");
 
