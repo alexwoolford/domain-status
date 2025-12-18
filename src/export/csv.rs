@@ -7,10 +7,45 @@ use anyhow::{Context, Result};
 use csv::Writer;
 use futures::TryStreamExt;
 use sqlx::Row;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use crate::storage::{init_db_pool_with_path, DbPool};
+
+/// Wrapper around a Write that ignores broken pipe errors (EPIPE).
+/// This allows graceful handling when stdout is piped to a command that exits early.
+pub(crate) struct IgnoreBrokenPipe<W: Write> {
+    inner: W,
+}
+
+impl<W: Write> IgnoreBrokenPipe<W> {
+    pub(crate) fn new(inner: W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W: Write> Write for IgnoreBrokenPipe<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf).or_else(|e| {
+            if e.kind() == ErrorKind::BrokenPipe {
+                // Ignore broken pipe - downstream command closed the pipe
+                Ok(buf.len())
+            } else {
+                Err(e)
+            }
+        })
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush().or_else(|e| {
+            if e.kind() == ErrorKind::BrokenPipe {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+    }
+}
 
 /// Helper: Fetch a list of string values from a query that returns a single column.
 /// Returns (joined_string, count).
@@ -207,7 +242,8 @@ pub async fn export_csv(
         ))?;
         Writer::from_writer(Box::new(file) as Box<dyn Write>)
     } else {
-        Writer::from_writer(Box::new(io::stdout()) as Box<dyn Write>)
+        // Wrap stdout to ignore broken pipe errors (e.g., when piped to jq that exits early)
+        Writer::from_writer(Box::new(IgnoreBrokenPipe::new(io::stdout())) as Box<dyn Write>)
     };
 
     writer.write_record([

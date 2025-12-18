@@ -16,6 +16,7 @@ use crate::storage::init_db_pool_with_path;
 // Re-use helper functions from CSV module
 use super::csv::{
     fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
+    IgnoreBrokenPipe,
 };
 
 /// Exports data to JSONL format (JSON Lines).
@@ -107,7 +108,8 @@ pub async fn export_jsonl(
         ))?;
         Box::new(file)
     } else {
-        Box::new(io::stdout())
+        // Wrap stdout to ignore broken pipe errors (e.g., when piped to jq that exits early)
+        Box::new(IgnoreBrokenPipe::new(io::stdout()))
     };
 
     let query = query_builder.build();
