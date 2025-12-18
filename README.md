@@ -210,7 +210,6 @@ domain_status scan <file> [OPTIONS]
 - `--max-concurrency <N>`: Maximum concurrent requests (default: 30)
 - `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 35 seconds.
 - `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 15)
-- `--show-timing`: Display detailed timing metrics at the end of the run (default: disabled)
 - `--status-port <PORT>`: Start HTTP status server on the specified port (optional, disabled by default)
 - `--fail-on <POLICY>`: Exit code policy for CI integration: `never` (default), `any-failure`, `pct>X`, or `errors-only`. See [Exit Code Control](#exit-code-control) for details.
 
@@ -227,9 +226,7 @@ domain_status scan urls.txt \
   --max-concurrency 100 \
   --timeout-seconds 15 \
   --log-level debug \
-  --log-format json \
   --rate-limit-rps 20 \
-  --show-timing \
   --status-port 8080
 ```
 
@@ -273,7 +270,9 @@ domain_status export [OPTIONS]
   - **CSV**: Flattened format, one row per URL with all fields as columns (ideal for spreadsheets)
   - **JSONL**: JSON Lines format, one JSON object per line (ideal for scripting, piping to `jq`, or loading into databases)
   - **Parquet**: Columnar format (not yet implemented)
-- `--output <PATH>`: Output file path (or stdout if not specified)
+- `--output <PATH>`: Output file path
+  - If not specified, writes to `domain_status_export.{csv,jsonl,parquet}` in the current directory
+  - Use `-` to write to stdout (for piping to other commands)
 - `--run-id <ID>`: Filter by run ID
 - `--domain <DOMAIN>`: Filter by domain (matches initial or final domain)
 - `--status <CODE>`: Filter by HTTP status code
@@ -281,11 +280,14 @@ domain_status export [OPTIONS]
 
 **Examples:**
 ```bash
-# Export all data to CSV
+# Export all data to CSV (defaults to domain_status_export.csv)
+domain_status export --format csv
+
+# Export to a custom file
 domain_status export --format csv --output results.csv
 
 # Export to stdout (pipe to another command)
-domain_status export --format csv | head -20
+domain_status export --format jsonl --output - | jq '.domain'
 
 # Export only records from a specific run
 domain_status export --format csv --run-id run_1765150444953 --output run_results.csv
@@ -296,11 +298,8 @@ domain_status export --format csv --status 200 --output successful.csv
 # Export records from a specific domain
 domain_status export --format csv --domain example.com --output example.csv
 
-# Export to JSONL format (ideal for scripting and piping to jq)
-domain_status export --format jsonl --output results.jsonl
-
-# Pipe JSONL to jq for filtering
-domain_status export --format jsonl | jq 'select(.status == 200) | .domain'
+# Pipe JSONL to jq for filtering (redirect stderr to avoid log messages)
+domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.status == 200) | .domain'
 
 # Export failures only to JSONL
 domain_status export --format jsonl --status '>=400' --output failures.jsonl
@@ -392,15 +391,11 @@ Results saved in ./domain_status.db
 [2025-01-07 23:34:01.789] WARN domain_status::dns::resolution - Failed to perform reverse DNS lookup...
 ```
 
-**Performance Analysis (`--show-timing`):**
+**Performance Analysis:**
 
-Use the `--show-timing` flag to display detailed timing metrics:
+Detailed timing metrics are automatically logged to the log file (`domain_status.log` by default) at the end of each scan. This includes a breakdown of time spent in each operation:
 
-```bash
-domain_status scan urls.txt --show-timing
-```
-
-Example output:
+Example log output:
 ```
 === Timing Metrics Summary (88 URLs) ===
 Average times per URL:

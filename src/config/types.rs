@@ -161,9 +161,6 @@ pub struct Config {
     /// Enable WHOIS/RDAP lookup for domain registration information
     pub enable_whois: bool,
 
-    /// Show detailed timing metrics at the end of the run
-    pub show_timing: bool,
-
     /// Exit code policy for handling failures
     pub fail_on: FailOn,
 
@@ -205,7 +202,6 @@ impl Default for Config {
             geoip: None,
             status_port: None,
             enable_whois: false,
-            show_timing: false,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
             log_file: None,
@@ -230,7 +226,6 @@ impl std::fmt::Debug for Config {
             .field("geoip", &self.geoip)
             .field("status_port", &self.status_port)
             .field("enable_whois", &self.enable_whois)
-            .field("show_timing", &self.show_timing)
             .field("fail_on", &self.fail_on)
             .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
             .field("log_file", &self.log_file)
@@ -391,7 +386,6 @@ mod tests {
         assert_eq!(config.fail_on, FailOn::Never);
         assert_eq!(config.fail_on_pct_threshold, 10);
         assert!(!config.enable_whois);
-        assert!(!config.show_timing);
         assert!(config.fingerprints.is_none());
         assert!(config.geoip.is_none());
         assert!(config.status_port.is_none());
