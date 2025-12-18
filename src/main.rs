@@ -369,10 +369,11 @@ async fn main() -> Result<()> {
                     )
                     .await
                     .context("Failed to export CSV")?;
+                    // Always write status messages to stderr to avoid polluting stdout
                     if let Some(ref path) = output_path {
-                        println!("✅ Exported {} records to {}", count, path.display());
+                        eprintln!("✅ Exported {} records to {}", count, path.display());
                     } else {
-                        println!("✅ Exported {} records to CSV", count);
+                        eprintln!("✅ Exported {} records to CSV", count);
                     }
                     Ok(())
                 }
@@ -389,10 +390,11 @@ async fn main() -> Result<()> {
                     .await
                     {
                         Ok(count) => {
+                            // Always write status messages to stderr to avoid polluting stdout
                             if let Some(ref path) = output_path {
-                                println!("✅ Exported {} records to {}", count, path.display());
+                                eprintln!("✅ Exported {} records to {}", count, path.display());
                             } else {
-                                println!("✅ Exported {} records to JSONL format", count);
+                                eprintln!("✅ Exported {} records to JSONL format", count);
                             }
                             Ok(())
                         }

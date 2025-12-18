@@ -66,6 +66,9 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
     builder.filter_module("hickory_proto", LevelFilter::Error);
     builder.filter_module("domain_status", level);
 
+    // Explicitly write logs to stderr to avoid polluting stdout when piping
+    builder.target(env_logger::Target::Stderr);
+
     match format {
         LogFormat::Json => {
             builder.format(|buf, record| {
