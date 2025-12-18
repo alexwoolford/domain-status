@@ -203,7 +203,14 @@ struct ExportCommand {
     #[arg(long, value_enum, default_value = "csv")]
     format: ExportFormat,
 
-    /// Output file path (or stdout if not specified)
+    /// Output file path
+    ///
+    /// If not specified, writes to a file in the current directory:
+    /// - CSV: `domain_status_export.csv`
+    /// - JSONL: `domain_status_export.jsonl`
+    /// - Parquet: `domain_status_export.parquet`
+    ///
+    /// Use `-` to write to stdout (for piping to other commands).
     #[arg(long, value_parser)]
     output: Option<PathBuf>,
 
@@ -348,12 +355,29 @@ async fn main() -> Result<()> {
             init_logger_with(log_level.into(), log_format)
                 .context("Failed to initialize logger")?;
 
+            // Determine output path: default to file, allow "-" for stdout
+            let output_path = if let Some(ref path) = export_cmd.output {
+                if path.as_os_str() == "-" {
+                    None // stdout
+                } else {
+                    Some(path.clone())
+                }
+            } else {
+                // Default to file based on format
+                let extension = match export_cmd.format {
+                    ExportFormat::Csv => "csv",
+                    ExportFormat::Jsonl => "jsonl",
+                    ExportFormat::Parquet => "parquet",
+                };
+                Some(PathBuf::from(format!("domain_status_export.{}", extension)))
+            };
+
             // Handle export format
             match export_cmd.format {
                 ExportFormat::Csv => {
                     let count = export_csv(
                         &export_cmd.db_path,
-                        export_cmd.output.as_ref(),
+                        output_path.as_ref(),
                         export_cmd.run_id.as_deref(),
                         export_cmd.domain.as_deref(),
                         export_cmd.status,
@@ -361,14 +385,18 @@ async fn main() -> Result<()> {
                     )
                     .await
                     .context("Failed to export CSV")?;
-                    println!("✅ Exported {} records to CSV", count);
+                    if let Some(ref path) = output_path {
+                        println!("✅ Exported {} records to {}", count, path.display());
+                    } else {
+                        println!("✅ Exported {} records to CSV", count);
+                    }
                     Ok(())
                 }
                 ExportFormat::Jsonl => {
                     use domain_status::export::export_jsonl;
                     match export_jsonl(
                         &export_cmd.db_path,
-                        export_cmd.output.as_ref(),
+                        output_path.as_ref(),
                         export_cmd.run_id.as_deref(),
                         export_cmd.domain.as_deref(),
                         export_cmd.status,
@@ -377,7 +405,11 @@ async fn main() -> Result<()> {
                     .await
                     {
                         Ok(count) => {
-                            println!("✅ Exported {} records to JSONL format", count);
+                            if let Some(ref path) = output_path {
+                                println!("✅ Exported {} records to {}", count, path.display());
+                            } else {
+                                println!("✅ Exported {} records to JSONL format", count);
+                            }
                             Ok(())
                         }
                         Err(e) => {
