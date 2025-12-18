@@ -75,3 +75,5 @@ test_*.rs
 test_*
 check_psl*
 compare_detection
+*.db
+:memory:
