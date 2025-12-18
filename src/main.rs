@@ -667,4 +667,119 @@ mod tests {
         assert_eq!(config.fail_on, FailOn::AnyFailure);
         assert_eq!(config.fail_on_pct_threshold, 15);
     }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_overflow_protection() {
+        // Test that very large numbers don't cause overflow in percentage calculation
+        // This is critical - overflow could cause incorrect exit codes
+        // Use usize::MAX which is the actual type used in ScanReport
+        let max_urls = usize::MAX;
+        let report = ScanReport {
+            total_urls: max_urls,
+            successful: max_urls.saturating_sub(1),
+            failed: 1,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        // Should not panic or overflow - percentage should be very small (< 0.0001%)
+        let exit_code = evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report);
+        // With only 1 failure out of usize::MAX, percentage is essentially 0, so should return 0
+        assert_eq!(exit_code, 0, "Should handle large numbers without overflow");
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_all_failed() {
+        // Test edge case where all URLs failed
+        let report = ScanReport {
+            total_urls: 100,
+            successful: 0,
+            failed: 100, // 100% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            2,
+            "Should return 2 when 100% of URLs failed (exceeds 10% threshold)"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_one_failure() {
+        // Test edge case with single failure
+        let report = ScanReport {
+            total_urls: 1000,
+            successful: 999,
+            failed: 1, // 0.1% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            0,
+            "Should return 0 when failure rate is below threshold"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_precision() {
+        // Test that floating point precision doesn't cause issues
+        // 10.0000001% should exceed 10% threshold
+        let report = ScanReport {
+            total_urls: 1000,
+            successful: 899,
+            failed: 101, // 10.1% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            2,
+            "Should correctly handle floating point precision (10.1% > 10%)"
+        );
+    }
+
+    #[test]
+    fn test_scan_command_to_config_conversion_defaults() {
+        // Test that conversion handles None values correctly
+        use std::path::PathBuf;
+        let scan_cmd = ScanCommand {
+            file: PathBuf::from("test.txt"),
+            log_level: LogLevel::Info,
+            log_format: LogFormat::Plain,
+            db_path: PathBuf::from("./domain_status.db"),
+            max_concurrency: 30,
+            timeout_seconds: 10,
+            user_agent: DEFAULT_USER_AGENT.to_string(),
+            rate_limit_rps: 15,
+            adaptive_error_threshold: 0.2,
+            fingerprints: None,
+            geoip: None,
+            status_port: None,
+            enable_whois: false,
+            fail_on: FailOn::Never,
+            fail_on_pct_threshold: 10,
+            log_file: PathBuf::from("domain_status.log"),
+        };
+
+        let config: Config = scan_cmd.into();
+
+        assert_eq!(config.fingerprints, None);
+        assert_eq!(config.geoip, None);
+        assert_eq!(config.status_port, None);
+        assert!(!config.enable_whois);
+        assert_eq!(config.fail_on, FailOn::Never);
+        // Verify log_file is set correctly
+        assert_eq!(config.log_file, Some(PathBuf::from("domain_status.log")));
+        // Verify progress_callback is None initially (set later)
+        assert!(config.progress_callback.is_none());
+    }
 }

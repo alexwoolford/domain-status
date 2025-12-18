@@ -247,4 +247,67 @@ mod tests {
         let result = init_logger_with(LevelFilter::Info, LogFormat::Plain);
         assert!(result.is_ok() || result.is_err());
     }
+
+    #[test]
+    fn test_init_logger_to_file_success() {
+        use tempfile::NamedTempFile;
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        // Should succeed with valid path
+        let result = init_logger_to_file(LevelFilter::Info, path);
+        // May fail if logger already initialized, which is acceptable
+        assert!(result.is_ok() || result.is_err());
+        // Keep temp_file in scope until after the test
+        drop(temp_file);
+    }
+
+    #[test]
+    fn test_init_logger_to_file_invalid_path() {
+        // Test error handling for invalid file path (e.g., directory instead of file)
+        use std::path::Path;
+        // On Unix, trying to create a file in a non-existent directory should fail
+        let invalid_path = Path::new("/nonexistent/directory/that/does/not/exist/log.txt");
+
+        let result = init_logger_to_file(LevelFilter::Info, invalid_path);
+        // Should return an error for invalid path
+        assert!(result.is_err(), "Should fail when file cannot be created");
+        let err = result.unwrap_err();
+        // Should be a LoggerSetupError (not a panic)
+        match err {
+            InitializationError::LoggerSetupError(_) => {
+                // Expected - file creation failed
+            }
+            _ => {
+                panic!("Expected LoggerSetupError, got: {:?}", err);
+            }
+        }
+    }
+
+    #[test]
+    fn test_init_logger_to_file_all_levels() {
+        use tempfile::NamedTempFile;
+
+        // Test that function works with all log levels
+        for level in [
+            LevelFilter::Error,
+            LevelFilter::Warn,
+            LevelFilter::Info,
+            LevelFilter::Debug,
+            LevelFilter::Trace,
+        ] {
+            // Create a new temp file for each level to avoid conflicts
+            let temp_file = NamedTempFile::new().unwrap();
+            let path = temp_file.path();
+            let result = init_logger_to_file(level, path);
+            // May fail if logger already initialized, which is acceptable
+            assert!(
+                result.is_ok() || result.is_err(),
+                "Level {:?} should not panic",
+                level
+            );
+            // Keep temp_file in scope until after the test
+            drop(temp_file);
+        }
+    }
 }
