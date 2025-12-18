@@ -289,23 +289,14 @@ domain_status export --format csv --output results.csv
 # Export to stdout (pipe to another command)
 domain_status export --format jsonl --output - 2>/dev/null | jq '.final_domain'
 
-# Export only records from a specific run
-domain_status export --format csv --run-id run_1765150444953 --output run_results.csv
-
 # Export only successful URLs (status 200)
 domain_status export --format csv --status 200 --output successful.csv
-
-# Export records from a specific domain
-domain_status export --format csv --domain example.com --output example.csv
 
 # Pipe JSONL to jq for filtering (log messages go to stderr automatically)
 domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.status == 200) | .final_domain'
 
-# Export failures only to JSONL (using jq to filter for status >= 400)
-domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.status >= 400)' > failures.jsonl
-
-# Export a specific error status code (e.g., 404 Not Found)
-domain_status export --format jsonl --status 404 --output not_found.jsonl
+# Export and filter with jq (e.g., get domains with specific technologies)
+domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.technologies[].name == "WordPress") | .final_domain'
 ```
 
 ### Environment Variables
