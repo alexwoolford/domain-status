@@ -211,8 +211,8 @@ struct ExportCommand {
     /// - Parquet: `domain_status_export.parquet`
     ///
     /// Use `-` to write to stdout (for piping to other commands).
-    #[arg(long, value_parser)]
-    output: Option<PathBuf>,
+    #[arg(long)]
+    output: Option<String>,
 
     /// Filter by run ID
     #[arg(long)]
@@ -356,11 +356,11 @@ async fn main() -> Result<()> {
                 .context("Failed to initialize logger")?;
 
             // Determine output path: default to file, allow "-" for stdout
-            let output_path = if let Some(ref path) = export_cmd.output {
-                if path.as_os_str() == "-" {
+            let output_path = if let Some(ref path_str) = export_cmd.output {
+                if path_str == "-" {
                     None // stdout
                 } else {
-                    Some(path.clone())
+                    Some(PathBuf::from(path_str))
                 }
             } else {
                 // Default to file based on format
