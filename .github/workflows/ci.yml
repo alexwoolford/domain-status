@@ -203,6 +203,9 @@ jobs:
 
       - name: Run ignored tests (requires network)
         run: cargo test --all-features --all-targets --locked -- --ignored
+        env:
+          # Use GitHub's automatic token for API rate limits (5000 req/hour vs 60 without)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # These tests verify:
         # - Full end-to-end scan pipeline (tests/integration_test.rs)
         # - TLS certificate fetching from real domains (src/tls/mod.rs)
