@@ -204,7 +204,8 @@ jobs:
       - name: Run ignored tests (requires network)
         run: cargo test --all-features --all-targets --locked -- --ignored
         env:
-          # Use GitHub's automatic token for API rate limits (5000 req/hour vs 60 without)
+          # GitHub Actions automatically provides GITHUB_TOKEN (increases API rate limit from 60 to 5000 req/hour)
+          # No need to create this secret manually - it's provided automatically
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # These tests verify:
         # - Full end-to-end scan pipeline (tests/integration_test.rs)
