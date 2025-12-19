@@ -460,4 +460,134 @@ mod tests {
         assert_eq!(row.get::<i32, _>("failed_urls"), 2);
         assert_eq!(row.get::<Option<f64>, _>("elapsed_seconds"), Some(25.3));
     }
+
+    #[tokio::test]
+    async fn test_query_run_history_with_limit() {
+        // Test that query_run_history respects the limit parameter
+        // This is critical - prevents loading too many runs into memory
+        let pool = create_test_pool().await;
+
+        // Create multiple completed runs
+        for i in 0..5 {
+            let run_id = format!("test-run-limit-{}", i);
+            insert_run_metadata(
+                &pool,
+                &run_id,
+                1704067200000 + (i * 1000),
+                "0.1.4",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to insert run metadata");
+            update_run_stats(&pool, &run_id, 10, 9, 1, 5.0)
+                .await
+                .expect("Failed to update run stats");
+        }
+
+        // Query with limit of 3
+        let result = query_run_history(&pool, Some(3)).await;
+        assert!(result.is_ok());
+        let runs = result.unwrap();
+        assert_eq!(
+            runs.len(),
+            3,
+            "Should return exactly 3 runs when limit is 3"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_run_history_without_limit() {
+        // Test that query_run_history returns all runs when limit is None
+        // This is critical - ensures unlimited queries work correctly
+        let pool = create_test_pool().await;
+
+        // Create multiple completed runs
+        for i in 0..5 {
+            let run_id = format!("test-run-unlimited-{}", i);
+            insert_run_metadata(
+                &pool,
+                &run_id,
+                1704067200000 + (i * 1000),
+                "0.1.4",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to insert run metadata");
+            update_run_stats(&pool, &run_id, 10, 9, 1, 5.0)
+                .await
+                .expect("Failed to update run stats");
+        }
+
+        // Query without limit
+        let result = query_run_history(&pool, None).await;
+        assert!(result.is_ok());
+        let runs = result.unwrap();
+        assert_eq!(runs.len(), 5, "Should return all 5 runs when limit is None");
+    }
+
+    #[tokio::test]
+    async fn test_query_run_history_empty_result() {
+        // Test that query_run_history returns empty vector when no completed runs exist
+        // This is critical - edge case handling prevents panics
+        let pool = create_test_pool().await;
+
+        // Create a run but don't complete it (no end_time_ms)
+        insert_run_metadata(
+            &pool,
+            "test-run-incomplete",
+            1704067200000,
+            "0.1.4",
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("Failed to insert run metadata");
+        // Don't call update_run_stats - this keeps end_time_ms as NULL
+
+        // Query should return empty (only completed runs are returned)
+        let result = query_run_history(&pool, None).await;
+        assert!(result.is_ok());
+        let runs = result.unwrap();
+        assert!(
+            runs.is_empty(),
+            "Should return empty vector when no completed runs exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_run_history_sorted_by_start_time_desc() {
+        // Test that query_run_history returns runs sorted by start_time_ms DESC (most recent first)
+        // This is critical - ensures correct ordering for display
+        let pool = create_test_pool().await;
+
+        // Create runs with different start times
+        let run_ids = ["run-1", "run-2", "run-3"];
+        let start_times = [1704067200000, 1704067300000, 1704067400000]; // Increasing times
+
+        for (run_id, start_time) in run_ids.iter().zip(start_times.iter()) {
+            insert_run_metadata(&pool, run_id, *start_time, "0.1.4", None, None, None)
+                .await
+                .expect("Failed to insert run metadata");
+            update_run_stats(&pool, run_id, 10, 9, 1, 5.0)
+                .await
+                .expect("Failed to update run stats");
+        }
+
+        // Query should return runs in descending order (most recent first)
+        let result = query_run_history(&pool, None).await;
+        assert!(result.is_ok());
+        let runs = result.unwrap();
+        assert_eq!(runs.len(), 3);
+        // Most recent should be first
+        assert_eq!(runs[0].run_id, "run-3");
+        assert_eq!(runs[0].start_time_ms, 1704067400000);
+        // Oldest should be last
+        assert_eq!(runs[2].run_id, "run-1");
+        assert_eq!(runs[2].start_time_ms, 1704067200000);
+    }
 }

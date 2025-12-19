@@ -938,4 +938,59 @@ mod tests {
         let result = insert_batch_record(&pool, record).await;
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_enrichment_insert_summary_total_failures_calculation() {
+        // Test that total_failures correctly counts all failure types
+        // This is critical - incorrect counting would break monitoring/logging
+        let summary = EnrichmentInsertSummary {
+            partial_failures_failed: 2,
+            geoip_failed: true,
+            structured_data_failed: true,
+            social_media_failed: false,
+            security_warnings_failed: true,
+            whois_failed: false,
+            analytics_ids_failed: true,
+            ..Default::default()
+        };
+
+        // Should count: 2 (partial) + 1 (geoip) + 1 (structured) + 1 (security) + 1 (analytics) = 6
+        assert_eq!(summary.total_failures(), 6);
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_total_failures_zero() {
+        // Test that total_failures returns 0 when no failures
+        let summary = EnrichmentInsertSummary::default();
+        assert_eq!(summary.total_failures(), 0);
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_has_failures_true() {
+        // Test that has_failures returns true when any failure exists
+        let summary = EnrichmentInsertSummary {
+            geoip_failed: true,
+            ..Default::default()
+        };
+        assert!(summary.has_failures());
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_has_failures_false() {
+        // Test that has_failures returns false when no failures
+        let summary = EnrichmentInsertSummary::default();
+        assert!(!summary.has_failures());
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_partial_failures_counted() {
+        // Test that partial_failures_failed is included in total_failures
+        // This is critical - partial failures are a different type of failure
+        let summary = EnrichmentInsertSummary {
+            partial_failures_failed: 5,
+            ..Default::default()
+        };
+        assert_eq!(summary.total_failures(), 5);
+        assert!(summary.has_failures());
+    }
 }
