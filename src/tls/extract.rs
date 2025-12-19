@@ -123,26 +123,10 @@ pub(crate) fn extract_certificate_sans(
 
 #[cfg(test)]
 mod tests {
-
     // Note: Testing X.509 certificate extraction requires actual DER-encoded certificates.
     // Creating valid certificates from scratch is complex and requires cryptographic libraries.
     //
-    // For now, we test the logic structure and edge cases:
-    // 1. Functions return Ok(Vec) for valid certificates (tested via integration tests with real certs)
-    // 2. Functions handle empty extensions correctly (extensions() returns empty iterator)
-    // 3. The OID mapping logic is correct (tested via code review)
-    //
-    // To add full unit tests, we would:
-    // - Use `rcgen` crate to generate test certificates with specific extensions
-    // - Or use real certificate DER bytes from well-known sites
-    // - Or create test fixtures with pre-generated certificates
-
-    // Note: test_extract_certificate_oids_returns_result was removed
-    // The test only asserted constants equal themselves, which is useless.
-    // Full testing requires actual certificate DER bytes, which is better
-    // handled in integration tests with real certificates.
-
-    // Integration note: These functions are tested in practice via:
+    // These functions are tested in practice via:
     // - Real TLS connections in src/tls/mod.rs::get_ssl_certificate_info()
     // - The functions are called with real certificates from HTTPS connections
     // - Error handling is tested when certificates fail to parse

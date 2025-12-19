@@ -29,6 +29,8 @@ use domain_status::{run_scan, Config};
 #[command(
     name = "domain_status",
     about = "Domain intelligence scanner - scan URLs and export results.",
+    version = env!("CARGO_PKG_VERSION"),
+    long_version = env!("CARGO_PKG_VERSION"),
     subcommand_required = true
 )]
 enum CliCommand {
@@ -280,6 +282,7 @@ async fn main() -> Result<()> {
             init_logger_to_file(log_level.into(), log_file)
                 .context("Failed to initialize file logger")?;
             eprintln!("📝 Logs: {}", log_file.display());
+            log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
 
             // Create progress bar
             let pb = Arc::new(ProgressBar::new(0));
@@ -338,6 +341,7 @@ async fn main() -> Result<()> {
             let log_format = LogFormat::Plain;
             init_logger_with(log_level.into(), log_format)
                 .context("Failed to initialize logger")?;
+            log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
 
             // Determine output path: default to file, allow "-" for stdout
             let output_path = if let Some(ref path_str) = export_cmd.output {

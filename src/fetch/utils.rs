@@ -242,4 +242,71 @@ mod tests {
         // Actual serialization failures are hard to trigger, but the default
         // value "{}" is verified to be returned for empty maps
     }
+
+    #[test]
+    fn test_serialize_json_error_handling_path() {
+        // Test the error handling path by creating a type that fails to serialize
+        // This is critical - error handling must work correctly when serialization fails
+        use serde::ser::{Error, Serialize, Serializer};
+
+        // Create a type that always fails to serialize
+        struct FailingSerialize;
+
+        impl Serialize for FailingSerialize {
+            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                Err(S::Error::custom(
+                    "Intentional serialization failure for testing",
+                ))
+            }
+        }
+
+        // Test that serialize_json handles the error gracefully
+        let failing_value = FailingSerialize;
+        let json = serialize_json(&failing_value);
+        // Should return "{}" (the default) when serialization fails
+        assert_eq!(
+            json, "{}",
+            "serialize_json should return default '{{}}' on serialization failure"
+        );
+    }
+
+    #[test]
+    fn test_serialize_json_with_default_error_handling_path() {
+        // Test that serialize_json_with_default uses the provided default on error
+        // This is critical - the default parameter must be used when serialization fails
+        use serde::ser::{Error, Serialize, Serializer};
+
+        // Create a type that always fails to serialize
+        struct FailingSerialize;
+
+        impl Serialize for FailingSerialize {
+            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                Err(S::Error::custom(
+                    "Intentional serialization failure for testing",
+                ))
+            }
+        }
+
+        // Test with custom default "[]"
+        let failing_value = FailingSerialize;
+        let json = serialize_json_with_default(&failing_value, "[]");
+        // Should return the provided default "[]" when serialization fails
+        assert_eq!(
+            json, "[]",
+            "serialize_json_with_default should return the provided default on serialization failure"
+        );
+
+        // Test with custom default "fallback"
+        let json2 = serialize_json_with_default(&failing_value, "fallback");
+        assert_eq!(
+            json2, "fallback",
+            "serialize_json_with_default should return the provided default on serialization failure"
+        );
+    }
 }
