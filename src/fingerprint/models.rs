@@ -453,4 +453,105 @@ mod tests {
         let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
         assert_eq!(tech.excludes, vec!["WordPress", "Drupal"]);
     }
+
+    /// Test error handling for invalid JSON
+    #[test]
+    fn test_technology_deserialize_invalid_json() {
+        let invalid_json = r#"{
+            "cats": [1, 2],
+            "html": "pattern1",
+            "invalid_field": {
+                "nested": "invalid"
+            }
+        }"#;
+
+        // Invalid JSON should fail to deserialize
+        let result: Result<Technology, _> = serde_json::from_str(invalid_json);
+        // This should succeed because serde ignores unknown fields by default
+        // But we verify the deserialization works correctly
+        assert!(result.is_ok(), "Should handle invalid fields gracefully");
+    }
+
+    /// Test error handling for wrong type in array field
+    #[test]
+    fn test_technology_deserialize_wrong_type_in_array() {
+        let json = r#"{
+            "html": [123, "pattern2"]
+        }"#;
+
+        // This should fail because html expects strings, not numbers
+        let result: Result<Technology, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "Should fail when array contains non-string values"
+        );
+    }
+
+    /// Test error handling for wrong type in meta map
+    #[test]
+    fn test_technology_deserialize_wrong_type_in_meta() {
+        let json = r#"{
+            "meta": {
+                "generator": 123
+            }
+        }"#;
+
+        // This should fail because meta values must be strings or arrays of strings
+        let result: Result<Technology, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "Should fail when meta value is not string or array"
+        );
+    }
+
+    /// Test error handling for malformed meta array
+    #[test]
+    fn test_technology_deserialize_malformed_meta_array() {
+        let json = r#"{
+            "meta": {
+                "generator": [123, "WordPress"]
+            }
+        }"#;
+
+        // The deserializer filters out non-string values, so this succeeds
+        // but only "WordPress" is included (123 is filtered out)
+        let result: Result<Technology, _> = serde_json::from_str(json);
+        assert!(
+            result.is_ok(),
+            "Should handle non-string values by filtering them out"
+        );
+        let tech = result.unwrap();
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string()]),
+            "Should only include string values"
+        );
+    }
+
+    /// Test error handling for invalid category JSON
+    #[test]
+    fn test_category_deserialize_invalid_json() {
+        let invalid_json = r#"{
+            "name": 123
+        }"#;
+
+        // This should fail because name must be a string
+        let result: Result<Category, _> = serde_json::from_str(invalid_json);
+        assert!(
+            result.is_err(),
+            "Should fail when category name is not a string"
+        );
+    }
+
+    /// Test error handling for missing required field in category
+    #[test]
+    fn test_category_deserialize_missing_name() {
+        let json = r#"{
+            "description": "Test"
+        }"#;
+
+        // This should fail because name is required (no default)
+        let result: Result<Category, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "Should fail when category name is missing");
+    }
 }

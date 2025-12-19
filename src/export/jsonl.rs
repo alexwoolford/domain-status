@@ -983,4 +983,141 @@ mod tests {
         assert_eq!(redirect_chain.len(), 2);
         assert_eq!(json_obj["final_redirect_url"], "https://example.com");
     }
+
+    #[tokio::test]
+    async fn test_export_jsonl_file_creation_error() {
+        // Test error handling when file creation fails (e.g., invalid path)
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        drop(pool);
+
+        // Use an invalid path (directory instead of file)
+        let invalid_path = std::path::PathBuf::from("/invalid/path/that/does/not/exist.jsonl");
+
+        let result = export_jsonl(db_path, Some(&invalid_path), None, None, None, None).await;
+
+        // Should fail with file creation error
+        assert!(result.is_err(), "Should fail when file cannot be created");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Failed to create output file")
+                || error_msg.contains("No such file")
+                || error_msg.contains("Permission denied"),
+            "Error should mention file creation issue, got: {}",
+            error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_handles_malformed_technology_data() {
+        // Test that malformed technology data (empty strings, special characters) is handled gracefully
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let url_id = create_test_url_status(&pool, "example.com", 200).await;
+
+        // Add technology with empty version (should serialize as null)
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, technology_version)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("WordPress")
+        .bind::<Option<String>>(None)
+        .execute(&pool)
+        .await
+        .expect("Failed to insert technology");
+
+        // Add technology with colon in name (tests key-value parsing)
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, technology_version)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("Tech:Name")
+        .bind(Some("1.0"))
+        .execute(&pool)
+        .await
+        .expect("Failed to insert technology");
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
+            .await
+            .expect("Should export successfully");
+
+        assert_eq!(count, 1);
+
+        // Verify the export succeeded and JSON is valid
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+        let technologies = json_obj["technologies"]
+            .as_array()
+            .expect("Should be array");
+        assert_eq!(technologies.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_handles_empty_redirect_chain() {
+        // Test that empty redirect chain is handled correctly
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let _url_id = create_test_url_status(&pool, "example.com", 200).await;
+        // Don't add any redirect chain entries
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
+            .await
+            .expect("Should export successfully");
+
+        assert_eq!(count, 1);
+
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+        assert_eq!(json_obj["redirect_count"], 0);
+        let redirect_chain = json_obj["redirect_chain"]
+            .as_array()
+            .expect("Should be array");
+        assert!(redirect_chain.is_empty());
+        assert_eq!(json_obj["final_redirect_url"], "");
+    }
 }

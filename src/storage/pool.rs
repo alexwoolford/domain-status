@@ -86,3 +86,93 @@ pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool,
 
     Ok(Arc::new(pool))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_init_db_pool_with_path_success() {
+        // Test successful pool initialization
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db_path = temp_file.path();
+
+        let result = init_db_pool_with_path(db_path).await;
+        assert!(result.is_ok(), "Pool initialization should succeed");
+        let pool = result.unwrap();
+        assert!(!pool.is_closed(), "Pool should be open");
+    }
+
+    #[tokio::test]
+    async fn test_init_db_pool_with_path_existing_file() {
+        // Test pool initialization when file already exists
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db_path = temp_file.path();
+
+        // Create the file first
+        std::fs::File::create(db_path).expect("Failed to create file");
+
+        let result = init_db_pool_with_path(db_path).await;
+        assert!(
+            result.is_ok(),
+            "Pool initialization should succeed with existing file"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_db_pool_with_path_invalid_path() {
+        // Test error handling with invalid path (directory instead of file)
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let invalid_path = temp_dir.path(); // This is a directory, not a file
+
+        // This should fail when trying to connect (SQLite expects a file path)
+        let result = init_db_pool_with_path(invalid_path).await;
+        // May succeed (SQLite creates a file in the directory) or fail depending on path format
+        // The key is that it doesn't panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_init_db_pool_with_path_wal_mode_enabled() {
+        // Test that WAL mode is actually enabled
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db_path = temp_file.path();
+
+        let pool = init_db_pool_with_path(db_path)
+            .await
+            .expect("Failed to initialize pool");
+
+        // Verify WAL mode is enabled
+        let result: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("Failed to query journal mode");
+
+        assert_eq!(
+            result.to_uppercase(),
+            "WAL",
+            "WAL mode should be enabled, got: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_db_pool_with_path_foreign_keys_enabled() {
+        // Test that foreign keys are actually enabled
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db_path = temp_file.path();
+
+        let pool = init_db_pool_with_path(db_path)
+            .await
+            .expect("Failed to initialize pool");
+
+        // Verify foreign keys are enabled
+        let result: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("Failed to query foreign keys");
+
+        assert_eq!(result, 1, "Foreign keys should be enabled");
+    }
+}

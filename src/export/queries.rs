@@ -382,6 +382,7 @@ pub async fn fetch_structured_data_types(
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::Arc;
 
     async fn create_test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -489,5 +490,266 @@ mod tests {
             ids,
             vec![("Google Analytics".to_string(), "UA-12345".to_string())]
         );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_string_list_empty() {
+        // Test fetch_string_list with no results
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        let (result, count) = fetch_string_list(
+            &pool_arc,
+            "SELECT redirect_url FROM url_redirect_chain WHERE url_status_id = ?",
+            999,
+        )
+        .await
+        .expect("Should succeed with empty result");
+
+        assert_eq!(result, "");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_string_list_multiple() {
+        // Test fetch_string_list with multiple results
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        sqlx::query("INSERT INTO url_redirect_chain (url_status_id, redirect_url, sequence_order) VALUES (1, 'https://a.com', 1), (1, 'https://b.com', 2), (1, 'https://c.com', 3)")
+            .execute(&*pool_arc)
+            .await
+            .unwrap();
+
+        let (result, count) = fetch_string_list(
+            &pool_arc,
+            "SELECT redirect_url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
+            1,
+        )
+        .await
+        .expect("Should succeed");
+
+        assert_eq!(result, "https://a.com,https://b.com,https://c.com");
+        assert_eq!(count, 3);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_count_query_zero() {
+        // Test fetch_count_query with zero count
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        let count = fetch_count_query(
+            &pool_arc,
+            "SELECT COUNT(*) FROM url_redirect_chain WHERE url_status_id = ?",
+            999,
+        )
+        .await
+        .expect("Should succeed");
+
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_count_query_non_zero() {
+        // Test fetch_count_query with non-zero count
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        sqlx::query("INSERT INTO url_redirect_chain (url_status_id, redirect_url, sequence_order) VALUES (1, 'https://a.com', 1), (1, 'https://b.com', 2)")
+            .execute(&*pool_arc)
+            .await
+            .unwrap();
+
+        let count = fetch_count_query(
+            &pool_arc,
+            "SELECT COUNT(*) FROM url_redirect_chain WHERE url_status_id = ?",
+            1,
+        )
+        .await
+        .expect("Should succeed");
+
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_key_value_list_empty() {
+        // Test fetch_key_value_list with no results
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        let (result, count) = fetch_key_value_list(
+            &pool_arc,
+            "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ?",
+            "provider",
+            "tracking_id",
+            999,
+        )
+        .await
+        .expect("Should succeed with empty result");
+
+        assert_eq!(result, "");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_key_value_list_multiple() {
+        // Test fetch_key_value_list with multiple results
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        sqlx::query("INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (1, 'Google Analytics', 'UA-12345'), (1, 'Facebook Pixel', '123456789')")
+            .execute(&*pool_arc)
+            .await
+            .unwrap();
+
+        let (result, count) = fetch_key_value_list(
+            &pool_arc,
+            "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider",
+            "provider",
+            "tracking_id",
+            1,
+        )
+        .await
+        .expect("Should succeed");
+
+        assert!(result.contains("Facebook Pixel:123456789"));
+        assert!(result.contains("Google Analytics:UA-12345"));
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_build_where_clause_no_filters() {
+        // Test build_where_clause with no filters
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+        build_where_clause(&mut query_builder, None, None, None, None);
+        // Verify the query can be built (no panic)
+        let _query = query_builder.build();
+        // The query should be valid SQL even with no WHERE clause
+    }
+
+    #[test]
+    fn test_build_where_clause_run_id_only() {
+        // Test build_where_clause with only run_id
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+        build_where_clause(&mut query_builder, Some("test-run-1"), None, None, None);
+        // Verify the query can be built
+        let _query = query_builder.build();
+    }
+
+    #[test]
+    fn test_build_where_clause_domain_only() {
+        // Test build_where_clause with only domain
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+        build_where_clause(&mut query_builder, None, Some("example.com"), None, None);
+        // Verify the query can be built
+        let _query = query_builder.build();
+    }
+
+    #[test]
+    fn test_build_where_clause_status_only() {
+        // Test build_where_clause with only status
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+        build_where_clause(&mut query_builder, None, None, Some(404), None);
+        // Verify the query can be built
+        let _query = query_builder.build();
+    }
+
+    #[test]
+    fn test_build_where_clause_since_only() {
+        // Test build_where_clause with only since
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+        build_where_clause(&mut query_builder, None, None, None, Some(1704067200000i64));
+        // Verify the query can be built
+        let _query = query_builder.build();
+    }
+
+    #[test]
+    fn test_build_where_clause_all_filters() {
+        // Test build_where_clause with all filters
+        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+        build_where_clause(
+            &mut query_builder,
+            Some("test-run-1"),
+            Some("example.com"),
+            Some(200),
+            Some(1704067200000i64),
+        );
+        // Verify the query can be built with all filters
+        let _query = query_builder.build();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_filtered_http_headers_empty() {
+        // Test fetch_filtered_http_headers with no matching headers
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        // Create a table for headers (simplified schema)
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS url_http_headers (
+                id INTEGER PRIMARY KEY,
+                url_status_id INTEGER NOT NULL,
+                header_name TEXT NOT NULL,
+                header_value TEXT NOT NULL
+            )",
+        )
+        .execute(&*pool_arc)
+        .await
+        .unwrap();
+
+        let (result, count) = fetch_filtered_http_headers(
+            &pool_arc,
+            "url_http_headers",
+            999,
+            &["Content-Type", "Server"],
+        )
+        .await
+        .expect("Should succeed with empty result");
+
+        assert_eq!(result, "");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_filtered_http_headers_with_matches() {
+        // Test fetch_filtered_http_headers with matching headers
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        // Create a table for headers
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS url_http_headers (
+                id INTEGER PRIMARY KEY,
+                url_status_id INTEGER NOT NULL,
+                header_name TEXT NOT NULL,
+                header_value TEXT NOT NULL
+            )",
+        )
+        .execute(&*pool_arc)
+        .await
+        .unwrap();
+
+        // Insert headers (some matching, some not)
+        sqlx::query("INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (1, 'Content-Type', 'text/html'), (1, 'Server', 'nginx'), (1, 'X-Custom', 'value')")
+            .execute(&*pool_arc)
+            .await
+            .unwrap();
+
+        let (result, total_count) = fetch_filtered_http_headers(
+            &pool_arc,
+            "url_http_headers",
+            1,
+            &["Content-Type", "Server"],
+        )
+        .await
+        .expect("Should succeed");
+
+        // Result should contain only filtered headers (Content-Type and Server)
+        assert!(result.contains("Content-Type:text/html"));
+        assert!(result.contains("Server:nginx"));
+        assert!(!result.contains("X-Custom")); // Should not include non-filtered header
+                                               // Total count should be 3 (all headers), but result string only has filtered ones
+        assert_eq!(total_count, 3);
     }
 }
