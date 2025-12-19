@@ -190,6 +190,8 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
+        // Yield to ensure circuit is fully opened (Windows timing issue)
+        tokio::task::yield_now().await;
         assert!(cb.is_circuit_open().await);
 
         // Wait for cooldown
@@ -222,6 +224,8 @@ mod tests {
         // First cycle: open
         cb.record_failure().await;
         cb.record_failure().await;
+        // Yield to ensure circuit is fully opened (Windows timing issue)
+        tokio::task::yield_now().await;
         assert!(cb.is_circuit_open().await);
 
         // Wait for cooldown
@@ -231,6 +235,8 @@ mod tests {
         // Second cycle: open again
         cb.record_failure().await;
         cb.record_failure().await;
+        // Yield to ensure circuit is fully opened (Windows timing issue)
+        tokio::task::yield_now().await;
         assert!(cb.is_circuit_open().await);
 
         // Wait for cooldown again
@@ -245,6 +251,8 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
+        // Yield to ensure circuit is fully opened (Windows timing issue)
+        tokio::task::yield_now().await;
         assert!(cb.is_circuit_open().await);
 
         // Record success - should close circuit immediately
@@ -281,6 +289,8 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
+        // Yield to ensure circuit is fully opened (Windows timing issue)
+        tokio::task::yield_now().await;
         assert!(cb.is_circuit_open().await);
 
         // Wait less than cooldown
@@ -325,6 +335,8 @@ mod tests {
         cb.record_failure().await;
         cb.record_failure().await;
         assert_eq!(cb.failure_count(), 2);
+        // Yield to ensure circuit is fully opened (Windows timing issue)
+        tokio::task::yield_now().await;
         assert!(cb.is_circuit_open().await);
 
         // Wait for cooldown
