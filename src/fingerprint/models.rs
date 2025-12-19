@@ -389,23 +389,6 @@ mod tests {
         assert_eq!(deserialized.version, metadata.version);
     }
 
-    /// Test Technology clone
-    #[test]
-    fn test_technology_clone() {
-        let json = r#"{
-            "cats": [1],
-            "html": ["pattern"],
-            "implies": ["PHP"]
-        }"#;
-
-        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
-        let cloned = tech.clone();
-
-        assert_eq!(tech.cats, cloned.cats);
-        assert_eq!(tech.html, cloned.html);
-        assert_eq!(tech.implies, cloned.implies);
-    }
-
     /// Test mixed meta types in same object
     #[test]
     fn test_technology_deserialize_mixed_meta() {

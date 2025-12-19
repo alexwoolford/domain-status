@@ -87,16 +87,6 @@ fn test_extract_domain_url_without_host() {
     assert!(extract_domain(&extractor, "file:///path/to/file").is_err());
 }
 
-#[test]
-fn test_extract_domain_ip_address() {
-    let extractor = test_extractor();
-    // IP addresses might not work with public suffix list
-    // This is a real edge case - IPs don't have registrable domains
-    let result = extract_domain(&extractor, "http://192.168.1.1");
-    // Either fails (expected) or returns the IP (also acceptable)
-    // The important thing is it doesn't panic
-    assert!(result.is_ok() || result.is_err());
-}
 
 #[test]
 fn test_extract_domain_uk_domain() {

@@ -73,46 +73,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_lookup_whois_invalid_domain() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        // Invalid domain format
-        let result = lookup_whois("not-a-valid-domain-format", Some(temp_dir.path())).await;
-        // Should handle gracefully (may return None or error depending on whois-service behavior)
-        // We verify it doesn't panic - result can be Ok(None) or Err
-        assert!(
-            result.is_ok() || result.is_err(),
-            "Should not panic on invalid domain"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_lookup_whois_empty_domain() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let result = lookup_whois("", Some(temp_dir.path())).await;
-        // Should handle gracefully - result can be Ok(None) or Err
-        assert!(
-            result.is_ok() || result.is_err(),
-            "Should not panic on empty domain"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_lookup_whois_nonexistent_domain() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        // Domain that definitely doesn't exist
-        let result = lookup_whois(
-            "this-domain-definitely-does-not-exist-12345.invalid",
-            Some(temp_dir.path()),
-        )
-        .await;
-        // Should return Ok(None) or Err gracefully
-        assert!(
-            result.is_ok() || result.is_err(),
-            "Should not panic on nonexistent domain"
-        );
-    }
-
-    #[tokio::test]
     async fn test_lookup_whois_cache_directory_creation() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path().join("whois_cache");

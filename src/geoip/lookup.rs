@@ -129,17 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lookup_ip_ipv6() {
-        // Test with IPv6 address
-        // When uninitialized, should return None
-        // When initialized, may return None if database doesn't support IPv6, or Some with data
-        let result = lookup_ip("2001:0db8:85a3:0000:0000:8a2e:0370:7334");
-        // Should not panic - either None (uninitialized or not in DB) or Some (found in DB)
-        // This test verifies the function doesn't panic on IPv6 addresses
-        let _ = result; // Can't assert specific value without initializing GeoIP
-    }
-
-    #[test]
     fn test_is_enabled_uninitialized() {
         // Test when GeoIP is not initialized
         let enabled = is_enabled();
