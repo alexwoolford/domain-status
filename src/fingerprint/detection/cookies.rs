@@ -147,9 +147,11 @@ mod tests {
             .await
             .expect("Failed to check cookies");
         let tech_names1: Vec<String> = results1.iter().map(|r| r.tech_name.clone()).collect();
+        eprintln!("Detected technologies from jsessionid: {:?}", tech_names1);
         assert!(
             tech_names1.contains(&"Java".to_string()),
-            "Could not get correct fingerprints for Java"
+            "Could not get correct fingerprints for Java. Detected: {:?}",
+            tech_names1
         );
 
         // Test multiple technologies from cookies
