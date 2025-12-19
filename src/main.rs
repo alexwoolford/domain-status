@@ -786,4 +786,59 @@ mod tests {
         // Verify progress_callback is None initially (set later)
         assert!(config.progress_callback.is_none());
     }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_edge_cases() {
+        // Test edge cases for percentage calculation
+        // Test with 1 URL (100% failure should exceed any threshold > 0)
+        let report = ScanReport {
+            total_urls: 1,
+            successful: 0,
+            failed: 1,
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 0, &report),
+            2,
+            "100% failure should exceed 0% threshold"
+        );
+
+        // Test with very small threshold
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 99, &report),
+            2,
+            "100% failure should exceed 99% threshold"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_exit_code_pct_greater_than_rounding() {
+        // Test that floating point rounding doesn't cause issues
+        // 33.333...% failure rate with 33% threshold
+        let report = ScanReport {
+            total_urls: 3,
+            successful: 2,
+            failed: 1, // 33.33...% failure rate
+            elapsed_seconds: 1.0,
+            db_path: std::path::PathBuf::from("test.db"),
+            run_id: "test-run-1".to_string(),
+        };
+
+        // Should exceed 33% threshold (33.33... > 33)
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 33, &report),
+            2,
+            "33.33% failure should exceed 33% threshold"
+        );
+
+        // Should not exceed 34% threshold (33.33... < 34)
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 34, &report),
+            0,
+            "33.33% failure should not exceed 34% threshold"
+        );
+    }
 }
