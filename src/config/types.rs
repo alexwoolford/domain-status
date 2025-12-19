@@ -592,4 +592,82 @@ mod tests {
         assert!(display.contains("test_field"));
         assert!(display.contains("test message"));
     }
+
+    #[test]
+    fn test_config_validation_error_error_trait() {
+        // Test that ConfigValidationError implements std::error::Error
+        let err = ConfigValidationError {
+            field: "test_field".to_string(),
+            message: "test message".to_string(),
+        };
+        // Verify it can be used as Error trait object
+        let error_ref: &dyn std::error::Error = &err;
+        let error_msg = error_ref.to_string();
+        assert!(error_msg.contains("test_field") || error_msg.contains("test message"));
+    }
+
+    #[test]
+    fn test_config_debug_formatting() {
+        // Test that Config Debug implementation works correctly
+        let config = Config {
+            max_concurrency: 50,
+            rate_limit_rps: 25,
+            enable_whois: true,
+            status_port: Some(8080),
+            ..Default::default()
+        };
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("Config"));
+        assert!(debug_str.contains("max_concurrency"));
+        assert!(debug_str.contains("50"));
+        // Progress callback should be shown as "<callback>" not actual function pointer
+        assert!(debug_str.contains("<callback>") || !debug_str.contains("0x"));
+    }
+
+    #[test]
+    fn test_config_debug_with_callback() {
+        // Test Debug formatting when progress_callback is set
+        use std::sync::Arc;
+        let callback = Arc::new(|_completed: usize, _failed: usize, _total: usize| {});
+        let config = Config {
+            progress_callback: Some(callback),
+            ..Default::default()
+        };
+        let debug_str = format!("{:?}", config);
+        // Should show "<callback>" not expose the actual function pointer
+        assert!(debug_str.contains("<callback>") || !debug_str.contains("0x"));
+    }
+
+    #[test]
+    fn test_config_validate_all_fields_valid() {
+        // Test validation with all fields at valid boundary values
+        let config = Config {
+            max_concurrency: Config::MAX_CONCURRENCY,
+            rate_limit_rps: Config::MAX_RATE_LIMIT_RPS,
+            timeout_seconds: 1,
+            adaptive_error_threshold: 1.0,
+            fail_on_pct_threshold: 100,
+            user_agent: "Valid User Agent".to_string(),
+            ..Default::default()
+        };
+        assert!(
+            config.validate().is_ok(),
+            "All valid boundary values should pass"
+        );
+    }
+
+    #[test]
+    fn test_config_validate_multiple_errors_first_one_returned() {
+        // Test that validation returns the first error encountered
+        // This is important - validation order matters for error messages
+        let config = Config {
+            max_concurrency: 0,         // First validation check
+            timeout_seconds: 0,         // Would be second, but first error is returned
+            user_agent: "".to_string(), // Would be third, but first error is returned
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        // Should return max_concurrency error (first check)
+        assert_eq!(err.field, "max_concurrency");
+    }
 }

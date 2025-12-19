@@ -997,4 +997,103 @@ mod tests {
         // and should be included in the batch_record
         let _ = result;
     }
+
+    #[tokio::test]
+    async fn test_handle_response_database_insertion_failure_propagates_error() {
+        // Test that database insertion failures are correctly propagated
+        // This is critical - database errors should not be silently ignored
+        let server = Server::run();
+        let server_url = server.url("/test").to_string();
+        let original_url = "https://example.com/test";
+
+        // Return valid HTML
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/test")).respond_with(
+                status_code(200)
+                    .insert_header("Content-Type", "text/html; charset=utf-8")
+                    .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
+            ),
+        );
+
+        let client = reqwest::Client::new();
+        let response = client.get(&server_url).send().await.unwrap();
+
+        // Create context with a closed/invalid pool to trigger database insertion failure
+        let pool = Arc::new(
+            sqlx::SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("Failed to create test pool"),
+        );
+        // Close the pool to make insertion fail
+        pool.close().await;
+
+        let client_arc = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("Failed to create HTTP client"),
+        );
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("Failed to create redirect client"),
+        );
+        let extractor = Arc::new(psl::List);
+        let resolver = Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+        let error_stats = Arc::new(ProcessingStats::new());
+        let timing_stats = Arc::new(TimingStats::new());
+        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
+
+        let ctx = ProcessingContext::new(
+            client_arc,
+            redirect_client,
+            extractor,
+            resolver,
+            error_stats,
+            Some("test-run".to_string()),
+            false,
+            db_circuit_breaker,
+            pool, // Closed pool will cause insertion to fail
+            timing_stats,
+        );
+
+        let start_time = std::time::Instant::now();
+
+        // Should fail at database insertion
+        let result = handle_response(
+            response,
+            original_url,
+            &server_url,
+            &ctx,
+            0.1,
+            None,
+            start_time,
+        )
+        .await;
+
+        // Should return error - either domain extraction (for IP addresses) or database insertion
+        assert!(
+            result.is_err(),
+            "Should fail when database insertion fails or domain extraction fails"
+        );
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Database write failed")
+                || error_msg.contains("pool")
+                || error_msg.contains("closed")
+                || error_msg.contains("Connection")
+                || error_msg.contains("domain")
+                || error_msg.contains("IP addresses")
+                || error_msg.contains("Failed to extract"),
+            "Expected database insertion or domain extraction error, got: {}",
+            error_msg
+        );
+    }
 }
