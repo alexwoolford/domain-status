@@ -52,18 +52,18 @@ pub async fn export_jsonl(
         .context("Failed to initialize database pool")?;
 
     let mut query_builder = sqlx::QueryBuilder::new(
-        "SELECT us.id, us.domain, us.final_domain, us.ip_address, us.reverse_dns_name,
-                us.status, us.status_description, us.response_time, us.title, us.keywords,
+        "SELECT us.id, us.initial_domain, us.final_domain, us.ip_address, us.reverse_dns_name,
+                us.http_status, us.http_status_text, us.response_time_seconds, us.title, us.keywords,
                 us.description, us.is_mobile_friendly, us.tls_version, us.ssl_cert_subject,
-                us.ssl_cert_issuer, us.ssl_cert_valid_to, us.cipher_suite, us.key_algorithm,
-                us.spf_record, us.dmarc_record, us.timestamp, us.run_id
+                us.ssl_cert_issuer, us.ssl_cert_valid_to_ms, us.cipher_suite, us.key_algorithm,
+                us.spf_record, us.dmarc_record, us.observed_at_ms, us.run_id
          FROM url_status us",
     );
 
     // Use shared WHERE clause builder
     build_where_clause(&mut query_builder, run_id, domain, status, since);
 
-    query_builder.push(" ORDER BY us.timestamp DESC");
+    query_builder.push(" ORDER BY us.observed_at_ms DESC");
 
     let mut writer: Box<dyn Write> = if let Some(output_path) = output {
         let file = std::fs::File::create(output_path).context(format!(
@@ -83,13 +83,13 @@ pub async fn export_jsonl(
 
     while let Some(row) = rows.try_next().await? {
         let url_status_id: i64 = row.get("id");
-        let initial_domain: String = row.get("domain");
+        let initial_domain: String = row.get("initial_domain");
         let final_domain: String = row.get("final_domain");
         let ip_address: String = row.get("ip_address");
         let reverse_dns: Option<String> = row.get("reverse_dns_name");
-        let status: u16 = row.get("status");
-        let status_desc: String = row.get("status_description");
-        let response_time: f64 = row.get("response_time");
+        let status: u16 = row.get("http_status");
+        let status_desc: String = row.get("http_status_text");
+        let response_time: f64 = row.get("response_time_seconds");
         let title: String = row.get("title");
         let keywords: Option<String> = row.get("keywords");
         let description: Option<String> = row.get("description");
@@ -97,12 +97,12 @@ pub async fn export_jsonl(
         let tls_version: Option<String> = row.get("tls_version");
         let ssl_cert_subject: Option<String> = row.get("ssl_cert_subject");
         let ssl_cert_issuer: Option<String> = row.get("ssl_cert_issuer");
-        let ssl_cert_valid_to: Option<i64> = row.get("ssl_cert_valid_to");
+        let ssl_cert_valid_to: Option<i64> = row.get("ssl_cert_valid_to_ms");
         let cipher_suite: Option<String> = row.get("cipher_suite");
         let key_algorithm: Option<String> = row.get("key_algorithm");
         let spf_record: Option<String> = row.get("spf_record");
         let dmarc_record: Option<String> = row.get("dmarc_record");
-        let timestamp: i64 = row.get("timestamp");
+        let timestamp: i64 = row.get("observed_at_ms");
         let run_id: Option<String> = row.get("run_id");
 
         // Build URL from final_domain (construct https:// URL)
@@ -114,7 +114,7 @@ pub async fn export_jsonl(
 
         // Fetch redirect chain
         let redirect_rows = sqlx::query(
-            "SELECT url, sequence_order FROM url_redirect_chain
+            "SELECT redirect_url, sequence_order FROM url_redirect_chain
              WHERE url_status_id = ? ORDER BY sequence_order",
         )
         .bind(url_status_id)
@@ -125,7 +125,7 @@ pub async fn export_jsonl(
             .iter()
             .map(|r| {
                 json!({
-                    "url": r.get::<String, _>("url"),
+                    "redirect_url": r.get::<String, _>("redirect_url"),
                     "sequence_order": r.get::<i64, _>("sequence_order"),
                 })
             })
@@ -133,7 +133,7 @@ pub async fn export_jsonl(
 
         let final_redirect_url = redirect_rows
             .last()
-            .map(|r| r.get::<String, _>("url"))
+            .map(|r| r.get::<String, _>("redirect_url"))
             .unwrap_or_default();
 
         // Fetch technologies
@@ -174,7 +174,7 @@ pub async fn export_jsonl(
         // Fetch certificate SANs
         let (certificate_sans_str, certificate_san_count) = fetch_string_list(
             &pool,
-            "SELECT domain_name FROM url_certificate_sans WHERE url_status_id = ? ORDER BY domain_name",
+            "SELECT san_value FROM url_certificate_sans WHERE url_status_id = ? ORDER BY san_value",
             url_status_id,
         )
         .await?;
@@ -191,7 +191,7 @@ pub async fn export_jsonl(
         // Fetch OIDs
         let (oids_str, _oid_count) = fetch_string_list(
             &pool,
-            "SELECT oid FROM url_oids WHERE url_status_id = ? ORDER BY oid",
+            "SELECT oid FROM url_certificate_oids WHERE url_status_id = ? ORDER BY oid",
             url_status_id,
         )
         .await?;
@@ -256,9 +256,9 @@ pub async fn export_jsonl(
         // Fetch social media links
         let (social_media_links_str, social_media_count) = fetch_key_value_list(
             &pool,
-            "SELECT platform, url FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, url",
+            "SELECT platform, profile_url FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
             "platform",
-            "url",
+            "profile_url",
             url_status_id,
         )
         .await?;
@@ -418,7 +418,7 @@ pub async fn export_jsonl(
 
         // Fetch WHOIS data
         let whois_row = sqlx::query(
-            "SELECT registrar, creation_date, expiration_date, registrant_country
+            "SELECT registrar, creation_date_ms, expiration_date_ms, registrant_country
              FROM url_whois WHERE url_status_id = ?",
         )
         .bind(url_status_id)
@@ -428,8 +428,8 @@ pub async fn export_jsonl(
         let whois = whois_row.map(|r| {
             json!({
                 "registrar": r.get::<Option<String>, _>("registrar"),
-                "creation_date": r.get::<Option<i64>, _>("creation_date"),
-                "expiration_date": r.get::<Option<i64>, _>("expiration_date"),
+                "creation_date_ms": r.get::<Option<i64>, _>("creation_date_ms"),
+                "expiration_date_ms": r.get::<Option<i64>, _>("expiration_date_ms"),
                 "registrant_country": r.get::<Option<String>, _>("registrant_country"),
             })
         });
@@ -521,11 +521,26 @@ mod tests {
         pool
     }
 
+    async fn create_test_run(pool: &SqlitePool, run_id: &str) {
+        sqlx::query(
+            "INSERT INTO runs (run_id, start_time_ms) VALUES (?, ?)
+             ON CONFLICT(run_id) DO NOTHING",
+        )
+        .bind(run_id)
+        .bind(1704067200000i64)
+        .execute(pool)
+        .await
+        .expect("Failed to insert test run");
+    }
+
     async fn create_test_url_status(pool: &SqlitePool, domain: &str, status: u16) -> i64 {
+        // Ensure the run exists first (FK constraint)
+        create_test_run(pool, "test-run-1").await;
+
         sqlx::query(
             "INSERT INTO url_status (
-                domain, final_domain, ip_address, status, status_description,
-                response_time, title, timestamp, is_mobile_friendly, run_id
+                initial_domain, final_domain, ip_address, http_status, http_status_text,
+                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
@@ -623,10 +638,14 @@ mod tests {
 
         // Create records with different run_ids
         create_test_url_status(&pool, "example.com", 200).await;
+
+        // Create second run first (FK constraint)
+        create_test_run(&pool, "test-run-2").await;
+
         sqlx::query(
             "INSERT INTO url_status (
-                domain, final_domain, ip_address, status, status_description,
-                response_time, title, timestamp, is_mobile_friendly, run_id
+                initial_domain, final_domain, ip_address, http_status, http_status_text,
+                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
@@ -752,8 +771,8 @@ mod tests {
         // Create a record with a later timestamp
         sqlx::query(
             "INSERT INTO url_status (
-                domain, final_domain, ip_address, status, status_description,
-                response_time, title, timestamp, is_mobile_friendly, run_id
+                initial_domain, final_domain, ip_address, http_status, http_status_text,
+                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
@@ -918,7 +937,7 @@ mod tests {
 
         // Add redirect chain
         sqlx::query(
-            "INSERT INTO url_redirect_chain (url_status_id, url, sequence_order)
+            "INSERT INTO url_redirect_chain (url_status_id, redirect_url, sequence_order)
              VALUES (?, ?, ?)",
         )
         .bind(url_id)
@@ -929,7 +948,7 @@ mod tests {
         .expect("Failed to insert redirect");
 
         sqlx::query(
-            "INSERT INTO url_redirect_chain (url_status_id, url, sequence_order)
+            "INSERT INTO url_redirect_chain (url_status_id, redirect_url, sequence_order)
              VALUES (?, ?, ?)",
         )
         .bind(url_id)

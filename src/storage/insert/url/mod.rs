@@ -77,26 +77,26 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     // This eliminates the need for a separate SELECT query and improves performance
     let url_status_id_result = sqlx::query_scalar::<_, i64>(
         "INSERT INTO url_status (
-            domain, final_domain, ip_address, reverse_dns_name, status, status_description,
-            response_time, title, keywords, description, tls_version, ssl_cert_subject,
-            ssl_cert_issuer, ssl_cert_valid_from, ssl_cert_valid_to, is_mobile_friendly, timestamp,
+            initial_domain, final_domain, ip_address, reverse_dns_name, http_status, http_status_text,
+            response_time_seconds, title, keywords, description, tls_version, ssl_cert_subject,
+            ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
             spf_record, dmarc_record, cipher_suite, key_algorithm, run_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(final_domain, timestamp) DO UPDATE SET
-            domain=excluded.domain,
+        ON CONFLICT(final_domain, observed_at_ms) DO UPDATE SET
+            initial_domain=excluded.initial_domain,
             ip_address=excluded.ip_address,
             reverse_dns_name=excluded.reverse_dns_name,
-            status=excluded.status,
-            status_description=excluded.status_description,
-            response_time=excluded.response_time,
+            http_status=excluded.http_status,
+            http_status_text=excluded.http_status_text,
+            response_time_seconds=excluded.response_time_seconds,
             title=excluded.title,
             keywords=excluded.keywords,
             description=excluded.description,
             tls_version=excluded.tls_version,
             ssl_cert_subject=excluded.ssl_cert_subject,
             ssl_cert_issuer=excluded.ssl_cert_issuer,
-            ssl_cert_valid_from=excluded.ssl_cert_valid_from,
-            ssl_cert_valid_to=excluded.ssl_cert_valid_to,
+            ssl_cert_valid_from_ms=excluded.ssl_cert_valid_from_ms,
+            ssl_cert_valid_to_ms=excluded.ssl_cert_valid_to_ms,
             is_mobile_friendly=excluded.is_mobile_friendly,
             spf_record=excluded.spf_record,
             dmarc_record=excluded.dmarc_record,
@@ -216,6 +216,19 @@ mod tests {
         pool
     }
 
+    /// Creates a test run record for FK constraint
+    async fn create_test_run(pool: &SqlitePool, run_id: &str) {
+        sqlx::query(
+            "INSERT INTO runs (run_id, start_time_ms) VALUES (?, ?)
+             ON CONFLICT(run_id) DO NOTHING",
+        )
+        .bind(run_id)
+        .bind(1704067200000i64)
+        .execute(pool)
+        .await
+        .expect("Failed to insert test run");
+    }
+
     /// Creates a minimal UrlRecord for testing
     fn create_test_url_record() -> UrlRecord {
         UrlRecord {
@@ -254,6 +267,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_record_basic() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
         let record = create_test_url_record();
         let security_headers = HashMap::new();
         let http_headers = HashMap::new();
@@ -279,22 +293,24 @@ mod tests {
         assert!(url_status_id > 0);
 
         // Verify the record was inserted
-        let row =
-            sqlx::query("SELECT domain, final_domain, status, title FROM url_status WHERE id = ?")
-                .bind(url_status_id)
-                .fetch_one(&pool)
-                .await
-                .expect("Failed to fetch inserted record");
+        let row = sqlx::query(
+            "SELECT initial_domain, final_domain, http_status, title FROM url_status WHERE id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch inserted record");
 
-        assert_eq!(row.get::<String, _>("domain"), "example.com");
+        assert_eq!(row.get::<String, _>("initial_domain"), "example.com");
         assert_eq!(row.get::<String, _>("final_domain"), "example.com");
-        assert_eq!(row.get::<i64, _>("status"), 200);
+        assert_eq!(row.get::<i64, _>("http_status"), 200);
         assert_eq!(row.get::<String, _>("title"), "Example Domain");
     }
 
     #[tokio::test]
     async fn test_insert_url_record_with_technologies() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
         let record = create_test_url_record();
         let security_headers = HashMap::new();
         let http_headers = HashMap::new();
@@ -345,6 +361,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_record_with_redirect_chain() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
         let record = create_test_url_record();
         let security_headers = HashMap::new();
         let http_headers = HashMap::new();
@@ -371,7 +388,7 @@ mod tests {
 
         // Verify redirect chain was inserted
         let redirect_rows = sqlx::query(
-            "SELECT url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
+            "SELECT redirect_url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
         )
         .bind(url_status_id)
         .fetch_all(&pool)
@@ -380,11 +397,11 @@ mod tests {
 
         assert_eq!(redirect_rows.len(), 2);
         assert_eq!(
-            redirect_rows[0].get::<String, _>("url"),
+            redirect_rows[0].get::<String, _>("redirect_url"),
             "http://example.com"
         );
         assert_eq!(
-            redirect_rows[1].get::<String, _>("url"),
+            redirect_rows[1].get::<String, _>("redirect_url"),
             "https://example.com"
         );
     }
@@ -392,6 +409,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_record_with_security_headers() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
         let record = create_test_url_record();
         let mut security_headers = HashMap::new();
         security_headers.insert(
@@ -447,6 +465,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_url_record_upsert() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
         let mut record = create_test_url_record();
         let security_headers = HashMap::new();
         let http_headers = HashMap::new();
@@ -489,19 +508,20 @@ mod tests {
         assert_eq!(id1, id2);
 
         // Verify the record was updated
-        let row = sqlx::query("SELECT title, status FROM url_status WHERE id = ?")
+        let row = sqlx::query("SELECT title, http_status FROM url_status WHERE id = ?")
             .bind(id1)
             .fetch_one(&pool)
             .await
             .expect("Failed to fetch updated record");
 
         assert_eq!(row.get::<String, _>("title"), "Updated Title");
-        assert_eq!(row.get::<i64, _>("status"), 301);
+        assert_eq!(row.get::<i64, _>("http_status"), 301);
     }
 
     #[tokio::test]
     async fn test_insert_url_record_nullable_fields() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
         let mut record = create_test_url_record();
         // Set nullable fields to None
         record.keywords = None;

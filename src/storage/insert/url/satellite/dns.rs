@@ -61,7 +61,7 @@ pub(crate) async fn insert_txt_records(
         // Batch insert: build VALUES clause for all TXT records
         let query = build_batch_insert_query(
             "url_txt_records",
-            &["url_status_id", "txt_record", "record_type"],
+            &["url_status_id", "record_value", "record_type"],
             txt_with_types.len(),
             None,
         );
@@ -190,7 +190,7 @@ mod tests {
 
         // Verify insertion
         let rows = sqlx::query(
-            "SELECT txt_record, record_type FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type",
+            "SELECT record_value, record_type FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type",
         )
         .bind(url_status_id)
         .fetch_all(&pool)

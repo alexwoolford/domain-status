@@ -5,7 +5,7 @@ use sqlx::Transaction;
 
 use super::super::super::utils::build_batch_insert_query;
 
-/// Inserts OIDs into url_oids table using batch insert.
+/// Inserts OIDs into url_certificate_oids table using batch insert.
 pub(crate) async fn insert_oids(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
@@ -20,7 +20,7 @@ pub(crate) async fn insert_oids(
 
     // Batch insert: build VALUES clause for all OIDs
     let query = build_batch_insert_query(
-        "url_oids",
+        "url_certificate_oids",
         &["url_status_id", "oid"],
         oids_vec.len(),
         Some("ON CONFLICT(url_status_id, oid) DO NOTHING"),
@@ -55,9 +55,9 @@ pub(crate) async fn insert_certificate_sans(
     // Batch insert: build VALUES clause for all SANs
     let query = build_batch_insert_query(
         "url_certificate_sans",
-        &["url_status_id", "domain_name"],
+        &["url_status_id", "san_value"],
         subject_alternative_names.len(),
-        Some("ON CONFLICT(url_status_id, domain_name) DO NOTHING"),
+        Some("ON CONFLICT(url_status_id, san_value) DO NOTHING"),
     );
 
     let mut query_builder = sqlx::query(&query);
@@ -97,11 +97,13 @@ mod tests {
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
-        let rows = sqlx::query("SELECT oid FROM url_oids WHERE url_status_id = ? ORDER BY oid")
-            .bind(url_status_id)
-            .fetch_all(&pool)
-            .await
-            .expect("Failed to fetch OIDs");
+        let rows = sqlx::query(
+            "SELECT oid FROM url_certificate_oids WHERE url_status_id = ? ORDER BY oid",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch OIDs");
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get::<String, _>("oid"), "1.2.840.113549");
@@ -123,7 +125,7 @@ mod tests {
 
         // Verify only one entry
         let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM url_oids WHERE url_status_id = ?")
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_certificate_oids WHERE url_status_id = ?")
                 .bind(url_status_id)
                 .fetch_one(&pool)
                 .await
@@ -149,7 +151,7 @@ mod tests {
 
         // Verify insertion
         let rows = sqlx::query(
-            "SELECT domain_name FROM url_certificate_sans WHERE url_status_id = ? ORDER BY domain_name",
+            "SELECT san_value FROM url_certificate_sans WHERE url_status_id = ? ORDER BY san_value",
         )
         .bind(url_status_id)
         .fetch_all(&pool)
@@ -157,9 +159,9 @@ mod tests {
         .expect("Failed to fetch certificate SANs");
 
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].get::<String, _>("domain_name"), "*.example.com");
-        assert_eq!(rows[1].get::<String, _>("domain_name"), "example.com");
-        assert_eq!(rows[2].get::<String, _>("domain_name"), "www.example.com");
+        assert_eq!(rows[0].get::<String, _>("san_value"), "*.example.com");
+        assert_eq!(rows[1].get::<String, _>("san_value"), "example.com");
+        assert_eq!(rows[2].get::<String, _>("san_value"), "www.example.com");
     }
 
     #[tokio::test]

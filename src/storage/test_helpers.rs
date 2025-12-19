@@ -50,8 +50,8 @@ pub async fn create_test_url_status(
 ) -> i64 {
     sqlx::query(
         "INSERT INTO url_status (
-            domain, final_domain, ip_address, status, status_description,
-            response_time, title, timestamp, run_id, is_mobile_friendly
+            initial_domain, final_domain, ip_address, http_status, http_status_text,
+            response_time_seconds, title, observed_at_ms, run_id, is_mobile_friendly
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id",
     )
@@ -75,7 +75,7 @@ pub async fn create_test_url_status(
 /// Uses direct SQL insertion for simplicity in tests.
 #[cfg(test)]
 pub async fn create_test_run(pool: &SqlitePool, run_id: &str, timestamp: i64) -> String {
-    sqlx::query("INSERT INTO runs (run_id, start_time, version, fingerprints_source, fingerprints_version, geoip_version) VALUES (?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO runs (run_id, start_time_ms, version, fingerprints_source, fingerprints_version, geoip_version) VALUES (?, ?, ?, ?, ?, ?)")
         .bind(run_id)
         .bind(timestamp)
         .bind("0.1.6")

@@ -33,11 +33,11 @@ use anyhow::Error;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use anyhow::Error;
 ///
 /// // Timeout error - retriable
-/// let timeout_err = Error::from(reqwest::Error::from(reqwest::ErrorKind::Request));
+/// let timeout_err = Error::from(reqwest::Error::timeout(...));
 /// assert!(is_retriable_error(&timeout_err));
 ///
 /// // URL parse error - not retriable

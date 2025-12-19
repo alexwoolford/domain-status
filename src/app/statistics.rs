@@ -208,8 +208,8 @@ mod tests {
             "CREATE TABLE runs (
                 run_id TEXT PRIMARY KEY,
                 version TEXT,
-                start_time INTEGER NOT NULL,
-                end_time INTEGER,
+                start_time_ms INTEGER NOT NULL,
+                end_time_ms INTEGER,
                 total_urls INTEGER,
                 successful_urls INTEGER,
                 failed_urls INTEGER,
@@ -281,8 +281,8 @@ mod tests {
             "CREATE TABLE runs (
                 run_id TEXT PRIMARY KEY,
                 version TEXT,
-                start_time INTEGER NOT NULL,
-                end_time INTEGER,
+                start_time_ms INTEGER NOT NULL,
+                end_time_ms INTEGER,
                 total_urls INTEGER,
                 successful_urls INTEGER,
                 failed_urls INTEGER,

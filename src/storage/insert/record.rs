@@ -398,6 +398,18 @@ mod tests {
 
     use crate::storage::test_helpers::create_test_pool;
 
+    async fn create_test_run(pool: &SqlitePool, run_id: &str) {
+        sqlx::query(
+            "INSERT INTO runs (run_id, start_time_ms) VALUES (?, ?)
+             ON CONFLICT(run_id) DO NOTHING",
+        )
+        .bind(run_id)
+        .bind(1704067200000i64)
+        .execute(pool)
+        .await
+        .expect("Failed to insert test run");
+    }
+
     fn create_test_url_record() -> UrlRecord {
         UrlRecord {
             initial_domain: "example.com".to_string(),
@@ -435,6 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_batch_record_basic() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         let record = BatchRecord {
             url_record: create_test_url_record(),
@@ -457,19 +470,21 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify main record was inserted
-        let row =
-            sqlx::query("SELECT id, domain, title FROM url_status WHERE domain = 'example.com'")
-                .fetch_one(&pool)
-                .await
-                .expect("Failed to fetch URL record");
+        let row = sqlx::query(
+            "SELECT id, initial_domain, title FROM url_status WHERE initial_domain = 'example.com'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch URL record");
 
-        assert_eq!(row.get::<String, _>("domain"), "example.com");
+        assert_eq!(row.get::<String, _>("initial_domain"), "example.com");
         assert_eq!(row.get::<String, _>("title"), "Example Domain");
     }
 
     #[tokio::test]
     async fn test_insert_batch_record_with_enrichment() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         let mut security_headers = HashMap::new();
         security_headers.insert(
@@ -523,7 +538,7 @@ mod tests {
 
         // Verify main record
         let url_status_id: i64 =
-            sqlx::query_scalar("SELECT id FROM url_status WHERE domain = 'example.com'")
+            sqlx::query_scalar("SELECT id FROM url_status WHERE initial_domain = 'example.com'")
                 .fetch_one(&pool)
                 .await
                 .expect("Failed to fetch URL status ID");
@@ -574,7 +589,7 @@ mod tests {
 
         // Verify OIDs
         let oid_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM url_oids WHERE url_status_id = ?")
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_certificate_oids WHERE url_status_id = ?")
                 .bind(url_status_id)
                 .fetch_one(&pool)
                 .await
@@ -594,6 +609,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_batch_record_with_all_enrichment() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         let geoip_result = GeoIpResult {
             country_code: Some("US".to_string()),
@@ -652,7 +668,7 @@ mod tests {
 
         // Verify enrichment data was inserted
         let url_status_id: i64 =
-            sqlx::query_scalar("SELECT id FROM url_status WHERE domain = 'example.com'")
+            sqlx::query_scalar("SELECT id FROM url_status WHERE initial_domain = 'example.com'")
                 .fetch_one(&pool)
                 .await
                 .expect("Failed to fetch URL status ID");
@@ -708,6 +724,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_batch_record_empty_enrichment() {
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         let record = BatchRecord {
             url_record: create_test_url_record(),
@@ -731,7 +748,7 @@ mod tests {
 
         // Verify main record exists but no enrichment
         let url_status_id: i64 =
-            sqlx::query_scalar("SELECT id FROM url_status WHERE domain = 'example.com'")
+            sqlx::query_scalar("SELECT id FROM url_status WHERE initial_domain = 'example.com'")
                 .fetch_one(&pool)
                 .await
                 .expect("Failed to fetch URL status ID");
@@ -759,6 +776,7 @@ mod tests {
         // Test that partial failure insertion failures don't prevent other enrichment
         // This is critical - one enrichment failure shouldn't break all enrichment
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         // Create a URL status record first
         let url_record = create_test_url_record();
@@ -804,6 +822,7 @@ mod tests {
         // Test that GeoIP insertion failure doesn't prevent other enrichment
         // This is critical - enrichment failures should be isolated
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         let geoip_result = GeoIpResult {
             country_code: Some("US".to_string()),
@@ -845,7 +864,7 @@ mod tests {
 
         // Verify technologies were inserted (enrichment failure shouldn't prevent this)
         let url_status_id: i64 =
-            sqlx::query_scalar("SELECT id FROM url_status WHERE domain = 'example.com'")
+            sqlx::query_scalar("SELECT id FROM url_status WHERE initial_domain = 'example.com'")
                 .fetch_one(&pool)
                 .await
                 .expect("Failed to fetch URL status ID");
@@ -864,6 +883,7 @@ mod tests {
         // Test that all enrichment failures are logged but don't propagate
         // This is critical - enrichment is optional, failures shouldn't break main record
         let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
 
         let record = BatchRecord {
             url_record: create_test_url_record(),

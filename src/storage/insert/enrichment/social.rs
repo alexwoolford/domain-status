@@ -19,9 +19,9 @@ pub async fn insert_social_media_links(
 ) -> Result<(), DatabaseError> {
     for link in links {
         if let Err(e) = sqlx::query(
-            "INSERT INTO url_social_media_links (url_status_id, platform, url, identifier)
+            "INSERT INTO url_social_media_links (url_status_id, platform, profile_url, identifier)
              VALUES (?, ?, ?, ?)
-             ON CONFLICT(url_status_id, platform, url) DO UPDATE SET
+             ON CONFLICT(url_status_id, platform, profile_url) DO UPDATE SET
              identifier=excluded.identifier",
         )
         .bind(url_status_id)
@@ -74,7 +74,7 @@ mod tests {
 
         // Verify insertion
         let rows = sqlx::query(
-            "SELECT platform, url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform",
+            "SELECT platform, profile_url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform",
         )
         .bind(url_status_id)
         .fetch_all(&pool)
@@ -84,12 +84,12 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get::<String, _>("platform"), "LinkedIn");
         assert_eq!(
-            rows[0].get::<String, _>("url"),
+            rows[0].get::<String, _>("profile_url"),
             "https://linkedin.com/company/example"
         );
         assert_eq!(rows[1].get::<String, _>("platform"), "Twitter");
         assert_eq!(
-            rows[1].get::<String, _>("url"),
+            rows[1].get::<String, _>("profile_url"),
             "https://twitter.com/example"
         );
     }

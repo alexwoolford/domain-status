@@ -65,12 +65,22 @@ pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool,
             DatabaseError::SqlError(e)
         })?;
 
-    // Enable WAL mode
+    // Enable WAL mode for better concurrent access
     sqlx::query("PRAGMA journal_mode=WAL")
         .execute(&pool)
         .await
         .map_err(|e| {
             error!("Failed to set WAL mode: {e}");
+            DatabaseError::SqlError(e)
+        })?;
+
+    // Enable foreign key enforcement (required for ON DELETE CASCADE to work)
+    // Without this, foreign key constraints are parsed but not enforced
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to enable foreign keys: {e}");
             DatabaseError::SqlError(e)
         })?;
 

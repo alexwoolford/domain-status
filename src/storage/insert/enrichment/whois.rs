@@ -33,19 +33,19 @@ pub async fn insert_whois_data(
 
     sqlx::query(
         "INSERT INTO url_whois (
-            url_status_id, creation_date, expiration_date, updated_date,
-            registrar, registrant_country, registrant_org, status, nameservers, raw_text
+            url_status_id, creation_date_ms, expiration_date_ms, updated_date_ms,
+            registrar, registrant_country, registrant_org, whois_statuses, nameservers_json, raw_response
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url_status_id) DO UPDATE SET
-            creation_date=excluded.creation_date,
-            expiration_date=excluded.expiration_date,
-            updated_date=excluded.updated_date,
+            creation_date_ms=excluded.creation_date_ms,
+            expiration_date_ms=excluded.expiration_date_ms,
+            updated_date_ms=excluded.updated_date_ms,
             registrar=excluded.registrar,
             registrant_country=excluded.registrant_country,
             registrant_org=excluded.registrant_org,
-            status=excluded.status,
-            nameservers=excluded.nameservers,
-            raw_text=excluded.raw_text",
+            whois_statuses=excluded.whois_statuses,
+            nameservers_json=excluded.nameservers_json,
+            raw_response=excluded.raw_response",
     )
     .bind(url_status_id)
     .bind(creation_date_ms)

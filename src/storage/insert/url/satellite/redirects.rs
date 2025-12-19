@@ -19,9 +19,9 @@ pub(crate) async fn insert_redirect_chain(
     // Preserve sequence order (redirects happen in order, 1-based)
     let query = build_batch_insert_query(
         "url_redirect_chain",
-        &["url_status_id", "sequence_order", "url"],
+        &["url_status_id", "sequence_order", "redirect_url"],
         redirect_chain.len(),
-        Some("ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET url=excluded.url"),
+        Some("ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET redirect_url=excluded.redirect_url"),
     );
 
     let mut query_builder = sqlx::query(&query);
@@ -67,7 +67,7 @@ mod tests {
 
         // Verify insertion with correct sequence order
         let rows = sqlx::query(
-            "SELECT sequence_order, url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
+            "SELECT sequence_order, redirect_url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
         )
         .bind(url_status_id)
         .fetch_all(&pool)
@@ -76,10 +76,19 @@ mod tests {
 
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].get::<i32, _>("sequence_order"), 1);
-        assert_eq!(rows[0].get::<String, _>("url"), "http://example.com");
+        assert_eq!(
+            rows[0].get::<String, _>("redirect_url"),
+            "http://example.com"
+        );
         assert_eq!(rows[1].get::<i32, _>("sequence_order"), 2);
-        assert_eq!(rows[1].get::<String, _>("url"), "https://example.com");
+        assert_eq!(
+            rows[1].get::<String, _>("redirect_url"),
+            "https://example.com"
+        );
         assert_eq!(rows[2].get::<i32, _>("sequence_order"), 3);
-        assert_eq!(rows[2].get::<String, _>("url"), "https://www.example.com");
+        assert_eq!(
+            rows[2].get::<String, _>("redirect_url"),
+            "https://www.example.com"
+        );
     }
 }

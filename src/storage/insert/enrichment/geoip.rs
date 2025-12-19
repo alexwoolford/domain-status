@@ -8,19 +8,19 @@ use crate::error_handling::DatabaseError;
 ///
 /// This should be called after `insert_url_record` to populate geographic
 /// and network information for the IP address.
+/// Note: ip_address is not stored here - it's in the url_status table.
 pub async fn insert_geoip_data(
     pool: &SqlitePool,
     url_status_id: i64,
-    ip_address: &str,
+    _ip_address: &str, // Kept for API compatibility, but not stored (use url_status.ip_address)
     geoip: &crate::geoip::GeoIpResult,
 ) -> Result<(), DatabaseError> {
     sqlx::query(
         "INSERT INTO url_geoip (
-            url_status_id, ip_address, country_code, country_name, region, city,
+            url_status_id, country_code, country_name, region, city,
             latitude, longitude, postal_code, timezone, asn, asn_org
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url_status_id) DO UPDATE SET
-            ip_address=excluded.ip_address,
             country_code=excluded.country_code,
             country_name=excluded.country_name,
             region=excluded.region,
@@ -33,7 +33,6 @@ pub async fn insert_geoip_data(
             asn_org=excluded.asn_org",
     )
     .bind(url_status_id)
-    .bind(ip_address)
     .bind(&geoip.country_code)
     .bind(&geoip.country_name)
     .bind(&geoip.region)
@@ -85,14 +84,14 @@ mod tests {
 
         // Verify insertion
         let row = sqlx::query(
-            "SELECT ip_address, country_code, country_name, region, city, latitude, longitude, asn, asn_org FROM url_geoip WHERE url_status_id = ?",
+            "SELECT country_code, country_name, region, city, latitude, longitude, asn, asn_org FROM url_geoip WHERE url_status_id = ?",
         )
         .bind(url_status_id)
         .fetch_one(&pool)
         .await
         .expect("Failed to fetch geoip data");
 
-        assert_eq!(row.get::<String, _>("ip_address"), "93.184.216.34");
+        // Note: ip_address is no longer stored in url_geoip - it's in url_status table
         assert_eq!(
             row.get::<Option<String>, _>("country_code"),
             Some("US".to_string())

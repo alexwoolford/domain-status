@@ -308,12 +308,14 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify failure was recorded with "unknown" domain
-        let row = sqlx::query("SELECT domain FROM url_failures WHERE url = 'not-a-valid-url'")
-            .fetch_optional(&pool)
-            .await
-            .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT initial_domain FROM url_failures WHERE attempted_url = 'not-a-valid-url'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
-            assert_eq!(row.get::<String, _>("domain"), "unknown");
+            assert_eq!(row.get::<String, _>("initial_domain"), "unknown");
         }
     }
 
@@ -351,11 +353,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify context was extracted and used
-        let row =
-            sqlx::query("SELECT final_url FROM url_failures WHERE url = 'https://example.org'")
-                .fetch_optional(&pool)
-                .await
-                .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT final_url FROM url_failures WHERE attempted_url = 'https://example.org'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
             let final_url: Option<String> = row.get::<Option<String>, _>("final_url");
             assert_eq!(final_url, Some("https://example.com".to_string()));
@@ -440,11 +443,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify error message was sanitized (no control characters)
-        let row =
-            sqlx::query("SELECT error_message FROM url_failures WHERE url = 'https://example.com'")
-                .fetch_optional(&pool)
-                .await
-                .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT error_message FROM url_failures WHERE attempted_url = 'https://example.com'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
             let msg: String = row.get::<String, _>("error_message");
             // Should not contain control characters
@@ -567,11 +571,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify provided context was used
-        let row =
-            sqlx::query("SELECT final_url FROM url_failures WHERE url = 'https://example.com'")
-                .fetch_optional(&pool)
-                .await
-                .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT final_url FROM url_failures WHERE attempted_url = 'https://example.com'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
             let final_url: Option<String> = row.get::<Option<String>, _>("final_url");
             assert_eq!(final_url, Some("https://provided.com".to_string()));
@@ -613,11 +618,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify extracted context was used
-        let row =
-            sqlx::query("SELECT final_url FROM url_failures WHERE url = 'https://example.com'")
-                .fetch_optional(&pool)
-                .await
-                .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT final_url FROM url_failures WHERE attempted_url = 'https://example.com'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
             let final_url: Option<String> = row.get::<Option<String>, _>("final_url");
             assert_eq!(final_url, extracted_context.final_url);
@@ -657,11 +663,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify error message was created (should contain root cause or chain summary)
-        let row =
-            sqlx::query("SELECT error_message FROM url_failures WHERE url = 'https://example.com'")
-                .fetch_optional(&pool)
-                .await
-                .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT error_message FROM url_failures WHERE attempted_url = 'https://example.com'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
             let msg: String = row.get::<String, _>("error_message");
             // Should contain meaningful error information
@@ -679,7 +686,7 @@ mod tests {
 
         // Create a test run first (run_id might be a foreign key)
         // Use a simple SQL insert instead of the full insert_run_metadata function
-        sqlx::query("INSERT INTO runs (run_id, start_time) VALUES (?, ?)")
+        sqlx::query("INSERT INTO runs (run_id, start_time_ms) VALUES (?, ?)")
             .bind("test-run-123")
             .bind(chrono::Utc::now().timestamp_millis())
             .execute(&pool)
@@ -706,10 +713,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify run_id was stored
-        let row = sqlx::query("SELECT run_id FROM url_failures WHERE url = 'https://example.com'")
-            .fetch_optional(&pool)
-            .await
-            .expect("Failed to query failures");
+        let row = sqlx::query(
+            "SELECT run_id FROM url_failures WHERE attempted_url = 'https://example.com'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Failed to query failures");
         if let Some(row) = row {
             let stored_run_id: Option<String> = row.get::<Option<String>, _>("run_id");
             assert_eq!(stored_run_id, Some("test-run-123".to_string()));
