@@ -32,8 +32,9 @@ use url::Url;
 ///
 /// # Examples
 ///
-/// ```
-/// use domain_status::security::url_validation::validate_url_safe;
+/// ```ignore
+/// // This function is internal; use it via crate::security::validate_url_safe
+/// use crate::security::validate_url_safe;
 ///
 /// // Safe URLs
 /// assert!(validate_url_safe("https://example.com").is_ok());

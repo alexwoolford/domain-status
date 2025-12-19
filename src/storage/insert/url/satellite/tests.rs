@@ -93,12 +93,14 @@ async fn test_insert_empty_collections() {
             .unwrap(),
         ),
         (
-            "url_oids",
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM url_oids WHERE url_status_id = ?")
-                .bind(url_status_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap(),
+            "url_certificate_oids",
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM url_certificate_oids WHERE url_status_id = ?",
+            )
+            .bind(url_status_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
         ),
         (
             "url_redirect_chain",

@@ -179,7 +179,7 @@ pub(crate) fn build_where_clause<'a>(
             query_builder.push(" WHERE ");
             has_where = true;
         }
-        query_builder.push("(us.domain = ");
+        query_builder.push("(us.initial_domain = ");
         query_builder.push_bind(domain);
         query_builder.push(" OR us.final_domain = ");
         query_builder.push_bind(domain);
@@ -193,7 +193,7 @@ pub(crate) fn build_where_clause<'a>(
             query_builder.push(" WHERE ");
             has_where = true;
         }
-        query_builder.push("us.status = ");
+        query_builder.push("us.http_status = ");
         query_builder.push_bind(status);
     }
 
@@ -203,7 +203,7 @@ pub(crate) fn build_where_clause<'a>(
         } else {
             query_builder.push(" WHERE ");
         }
-        query_builder.push("us.timestamp >= ");
+        query_builder.push("us.observed_at_ms >= ");
         query_builder.push_bind(since);
     }
 }
@@ -220,13 +220,16 @@ pub async fn fetch_redirect_chain(
     url_status_id: i64,
 ) -> Result<Vec<String>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
+        "SELECT redirect_url FROM url_redirect_chain WHERE url_status_id = ? ORDER BY sequence_order",
     )
     .bind(url_status_id)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.iter().map(|r| r.get::<String, _>("url")).collect())
+    Ok(rows
+        .iter()
+        .map(|r| r.get::<String, _>("redirect_url"))
+        .collect())
 }
 
 /// Fetches technologies with optional versions for a URL status record.
@@ -261,7 +264,7 @@ pub async fn fetch_certificate_sans(
     url_status_id: i64,
 ) -> Result<Vec<String>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT domain_name FROM url_certificate_sans WHERE url_status_id = ? ORDER BY domain_name",
+        "SELECT san_value FROM url_certificate_sans WHERE url_status_id = ? ORDER BY san_value",
     )
     .bind(url_status_id)
     .fetch_all(pool)
@@ -269,17 +272,18 @@ pub async fn fetch_certificate_sans(
 
     Ok(rows
         .iter()
-        .map(|r| r.get::<String, _>("domain_name"))
+        .map(|r| r.get::<String, _>("san_value"))
         .collect())
 }
 
 /// Fetches OIDs for a URL status record.
 #[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
 pub async fn fetch_oids(pool: &SqlitePool, url_status_id: i64) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query("SELECT oid FROM url_oids WHERE url_status_id = ? ORDER BY oid")
-        .bind(url_status_id)
-        .fetch_all(pool)
-        .await?;
+    let rows =
+        sqlx::query("SELECT oid FROM url_certificate_oids WHERE url_status_id = ? ORDER BY oid")
+            .bind(url_status_id)
+            .fetch_all(pool)
+            .await?;
 
     Ok(rows.iter().map(|r| r.get::<String, _>("oid")).collect())
 }
@@ -316,8 +320,8 @@ pub async fn fetch_social_media_links(
     url_status_id: i64,
 ) -> Result<Vec<(String, String)>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT platform, url FROM url_social_media_links
-         WHERE url_status_id = ? ORDER BY platform, url",
+        "SELECT platform, profile_url FROM url_social_media_links
+         WHERE url_status_id = ? ORDER BY platform, profile_url",
     )
     .bind(url_status_id)
     .fetch_all(pool)
@@ -325,7 +329,12 @@ pub async fn fetch_social_media_links(
 
     Ok(rows
         .iter()
-        .map(|r| (r.get::<String, _>("platform"), r.get::<String, _>("url")))
+        .map(|r| {
+            (
+                r.get::<String, _>("platform"),
+                r.get::<String, _>("profile_url"),
+            )
+        })
         .collect())
 }
 
@@ -396,7 +405,7 @@ mod tests {
             "CREATE TABLE url_redirect_chain (
                 id INTEGER PRIMARY KEY,
                 url_status_id INTEGER NOT NULL,
-                url TEXT NOT NULL,
+                redirect_url TEXT NOT NULL,
                 sequence_order INTEGER NOT NULL
             )",
         )
@@ -435,7 +444,7 @@ mod tests {
     async fn test_fetch_redirect_chain() {
         let pool = create_test_pool().await;
 
-        sqlx::query("INSERT INTO url_redirect_chain (url_status_id, url, sequence_order) VALUES (1, 'https://a.com', 1), (1, 'https://b.com', 2)")
+        sqlx::query("INSERT INTO url_redirect_chain (url_status_id, redirect_url, sequence_order) VALUES (1, 'https://a.com', 1), (1, 'https://b.com', 2)")
             .execute(&pool)
             .await
             .unwrap();

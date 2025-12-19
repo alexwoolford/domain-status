@@ -7,7 +7,7 @@ use tempfile::TempDir;
 #[path = "helpers.rs"]
 mod helpers;
 
-use helpers::{create_test_pool_with_path, create_test_url_status};
+use helpers::{create_test_pool_with_path, create_test_run, create_test_url_status};
 
 /// Creates test data: URL with technologies, GeoIP, WHOIS, etc.
 async fn create_test_url_with_enrichment(
@@ -33,7 +33,7 @@ async fn create_test_url_with_enrichment(
 
     // Add redirect chain
     sqlx::query(
-        "INSERT INTO url_redirect_chain (url_status_id, sequence_order, url) VALUES (?, ?, ?)",
+        "INSERT INTO url_redirect_chain (url_status_id, sequence_order, redirect_url) VALUES (?, ?, ?)",
     )
     .bind(url_id)
     .bind(0)
@@ -45,11 +45,10 @@ async fn create_test_url_with_enrichment(
     // Add GeoIP
     sqlx::query(
         "INSERT INTO url_geoip (
-            url_status_id, ip_address, country_code, country_name, city, latitude, longitude, asn, asn_org
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            url_status_id, country_code, country_name, city, latitude, longitude, asn, asn_org
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(url_id)
-    .bind("192.0.2.1")
     .bind("US")
     .bind("United States")
     .bind("San Francisco")
@@ -59,18 +58,18 @@ async fn create_test_url_with_enrichment(
     .bind("GOOGLE")
     .execute(pool)
     .await
-        .expect("Failed to insert GeoIP");
+    .expect("Failed to insert GeoIP");
 
     // Add WHOIS
     sqlx::query(
         "INSERT INTO url_whois (
-            url_status_id, registrar, creation_date, expiration_date, registrant_country
+            url_status_id, registrar, creation_date_ms, expiration_date_ms, registrant_country
         ) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(url_id)
     .bind("Test Registrar")
-    .bind(1609459200i64) // 2021-01-01
-    .bind(1735689600i64) // 2025-01-01
+    .bind(1609459200000i64) // 2021-01-01 in ms
+    .bind(1735689600000i64) // 2025-01-01 in ms
     .bind("US")
     .execute(pool)
     .await
@@ -89,7 +88,7 @@ async fn create_test_url_with_enrichment(
 
     // Add social media links
     sqlx::query(
-        "INSERT INTO url_social_media_links (url_status_id, platform, url) VALUES (?, ?, ?)",
+        "INSERT INTO url_social_media_links (url_status_id, platform, profile_url) VALUES (?, ?, ?)",
     )
     .bind(url_id)
     .bind("LinkedIn")
@@ -110,7 +109,7 @@ async fn create_test_url_with_enrichment(
         .expect("Failed to insert security warning");
 
     // Add certificate SANs
-    sqlx::query("INSERT INTO url_certificate_sans (url_status_id, domain_name) VALUES (?, ?)")
+    sqlx::query("INSERT INTO url_certificate_sans (url_status_id, san_value) VALUES (?, ?)")
         .bind(url_id)
         .bind("example.com")
         .execute(pool)
@@ -118,7 +117,7 @@ async fn create_test_url_with_enrichment(
         .expect("Failed to insert certificate SAN");
 
     // Add OIDs
-    sqlx::query("INSERT INTO url_oids (url_status_id, oid) VALUES (?, ?)")
+    sqlx::query("INSERT INTO url_certificate_oids (url_status_id, oid) VALUES (?, ?)")
         .bind(url_id)
         .bind("1.3.6.1.4.1.11129.2.4.2")
         .execute(pool)
@@ -141,6 +140,9 @@ async fn test_export_csv_basic() {
     }
     // Create test database with migrations
     let pool = create_test_pool_with_path(&db_path).await;
+
+    // Create test run first (required for foreign key)
+    create_test_run(&pool, "test_run_1", 1704067200000).await;
 
     // Create test data
     create_test_url_with_enrichment(&pool, "example.com", Some("test_run_1")).await;
@@ -193,6 +195,10 @@ async fn test_export_csv_filter_by_run_id() {
 
     // Create test database with migrations
     let pool = create_test_pool_with_path(&db_path).await;
+
+    // Create runs first (required for foreign key)
+    create_test_run(&pool, "run_1", 1704067200000).await;
+    create_test_run(&pool, "run_2", 1704067200000).await;
 
     // Create data with different run_ids
     create_test_url_status(
@@ -429,6 +435,10 @@ async fn test_export_csv_filter_combinations() {
     // Create test database with migrations
     let pool = create_test_pool_with_path(&db_path).await;
 
+    // Create run first (required for foreign key)
+    create_test_run(&pool, "run_1", 1704067200000).await;
+    create_test_run(&pool, "run_2", 1704067200000).await;
+
     // Create data with different attributes
     create_test_url_status(
         &pool,
@@ -567,7 +577,7 @@ async fn test_export_csv_date_formatting() {
         create_test_url_status(&pool, "date.com", "date.com", 200, None, 1704067200000).await;
 
     // Add SSL cert with valid_to date
-    sqlx::query("UPDATE url_status SET ssl_cert_valid_to = ? WHERE id = ?")
+    sqlx::query("UPDATE url_status SET ssl_cert_valid_to_ms = ? WHERE id = ?")
         .bind(1735689600000i64) // 2025-01-01 in milliseconds
         .bind(url_id)
         .execute(&pool)
@@ -577,12 +587,12 @@ async fn test_export_csv_date_formatting() {
     // Add WHOIS with dates
     sqlx::query(
         "INSERT INTO url_whois (
-            url_status_id, creation_date, expiration_date
+            url_status_id, creation_date_ms, expiration_date_ms
         ) VALUES (?, ?, ?)",
     )
     .bind(url_id)
-    .bind(1609459200i64) // 2021-01-01 (seconds, not milliseconds)
-    .bind(1735689600i64) // 2025-01-01 (seconds, not milliseconds)
+    .bind(1609459200000i64) // 2021-01-01 in milliseconds
+    .bind(1735689600000i64) // 2025-01-01 in milliseconds
     .execute(&pool)
     .await
     .expect("Failed to insert WHOIS");
@@ -903,7 +913,7 @@ async fn test_export_csv_redirect_chain_edge_cases() {
         .enumerate()
     {
         sqlx::query(
-            "INSERT INTO url_redirect_chain (url_status_id, sequence_order, url) VALUES (?, ?, ?)",
+            "INSERT INTO url_redirect_chain (url_status_id, sequence_order, redirect_url) VALUES (?, ?, ?)",
         )
         .bind(url_id2)
         .bind(i as i64)

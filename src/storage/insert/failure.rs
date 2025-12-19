@@ -78,13 +78,13 @@ async fn insert_failure_redirect_chain(
 ) -> Result<(), DatabaseError> {
     for (order, redirect_url) in redirect_chain.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO url_failure_redirect_chain (url_failure_id, redirect_url, redirect_order)
+            "INSERT INTO url_failure_redirect_chain (url_failure_id, sequence_order, redirect_url)
              VALUES (?, ?, ?)
-             ON CONFLICT(url_failure_id, redirect_order) DO NOTHING",
+             ON CONFLICT(url_failure_id, sequence_order) DO NOTHING",
         )
         .bind(failure_id)
+        .bind((order + 1) as i64) // 1-based sequence_order
         .bind(redirect_url)
-        .bind(order as i64)
         .execute(&mut **tx)
         .await
         .map_err(|e| {
@@ -223,8 +223,8 @@ async fn insert_url_failure_impl(
     // Insert main failure record
     let failure_id_result = sqlx::query(
         "INSERT INTO url_failures (
-            url, final_url, domain, final_domain, error_type, error_message,
-            http_status, retry_count, elapsed_time_seconds, timestamp, run_id
+            attempted_url, final_url, initial_domain, final_domain, error_type, error_message,
+            http_status, retry_count, elapsed_time_seconds, observed_at_ms, run_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id",
     )
@@ -331,7 +331,7 @@ pub async fn insert_url_partial_failure(
 ) -> Result<i64, DatabaseError> {
     let partial_failure_id = sqlx::query(
         "INSERT INTO url_partial_failures (
-            url_status_id, error_type, error_message, timestamp, run_id
+            url_status_id, error_type, error_message, observed_at_ms, run_id
         ) VALUES (?, ?, ?, ?, ?)
         RETURNING id",
     )
@@ -387,19 +387,19 @@ mod tests {
 
         // Verify main failure record
         let row = sqlx::query(
-            "SELECT url, final_url, domain, error_type, error_message, retry_count FROM url_failures WHERE id = ?",
+            "SELECT attempted_url, final_url, initial_domain, error_type, error_message, retry_count FROM url_failures WHERE id = ?",
         )
         .bind(failure_id)
         .fetch_one(&pool)
         .await
         .expect("Failed to fetch failure record");
 
-        assert_eq!(row.get::<String, _>("url"), "http://example.com");
+        assert_eq!(row.get::<String, _>("attempted_url"), "http://example.com");
         assert_eq!(
             row.get::<Option<String>, _>("final_url"),
             Some("https://example.com".to_string())
         );
-        assert_eq!(row.get::<String, _>("domain"), "example.com");
+        assert_eq!(row.get::<String, _>("initial_domain"), "example.com");
         assert_eq!(row.get::<String, _>("error_type"), "HttpError");
         assert_eq!(row.get::<String, _>("error_message"), "Connection timeout");
         assert_eq!(row.get::<i64, _>("retry_count"), 3);
@@ -437,7 +437,7 @@ mod tests {
 
         // Verify redirect chain
         let rows = sqlx::query(
-            "SELECT redirect_url, redirect_order FROM url_failure_redirect_chain WHERE url_failure_id = ? ORDER BY redirect_order",
+            "SELECT redirect_url, sequence_order FROM url_failure_redirect_chain WHERE url_failure_id = ? ORDER BY sequence_order",
         )
         .bind(failure_id)
         .fetch_all(&pool)
@@ -449,17 +449,17 @@ mod tests {
             rows[0].get::<String, _>("redirect_url"),
             "http://example.com"
         );
-        assert_eq!(rows[0].get::<i64, _>("redirect_order"), 0);
+        assert_eq!(rows[0].get::<i64, _>("sequence_order"), 1); // 1-based
         assert_eq!(
             rows[1].get::<String, _>("redirect_url"),
             "https://example.com"
         );
-        assert_eq!(rows[1].get::<i64, _>("redirect_order"), 1);
+        assert_eq!(rows[1].get::<i64, _>("sequence_order"), 2); // 1-based
         assert_eq!(
             rows[2].get::<String, _>("redirect_url"),
             "https://www.example.com"
         );
-        assert_eq!(rows[2].get::<i64, _>("redirect_order"), 2);
+        assert_eq!(rows[2].get::<i64, _>("sequence_order"), 3); // 1-based
     }
 
     #[tokio::test]

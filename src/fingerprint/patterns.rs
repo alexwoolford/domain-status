@@ -350,7 +350,8 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
+/// // This function is internal; use it via crate::fingerprint::get_regex_cache_stats
 /// let (size, capacity, hits, misses, evictions) = get_regex_cache_stats();
 /// let hit_rate = if hits + misses > 0 {
 ///     hits as f64 / (hits + misses) as f64

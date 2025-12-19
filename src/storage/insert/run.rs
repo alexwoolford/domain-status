@@ -15,7 +15,7 @@ use crate::error_handling::DatabaseError;
 ///
 /// * `pool` - Database connection pool
 /// * `run_id` - Unique identifier for this run
-/// * `start_time` - Start time as milliseconds since Unix epoch
+/// * `start_time_ms` - Start time as milliseconds since Unix epoch
 /// * `version` - Application version (e.g., "0.1.4") from Cargo.toml
 /// * `fingerprints_source` - Source URL of the fingerprint ruleset
 /// * `fingerprints_version` - Version/commit hash of the fingerprint ruleset
@@ -23,28 +23,28 @@ use crate::error_handling::DatabaseError;
 pub async fn insert_run_metadata(
     pool: &SqlitePool,
     run_id: &str,
-    start_time: i64,
+    start_time_ms: i64,
     version: &str,
     fingerprints_source: Option<&str>,
     fingerprints_version: Option<&str>,
     geoip_version: Option<&str>,
 ) -> Result<(), DatabaseError> {
     sqlx::query(
-        "INSERT INTO runs (run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time)
+        "INSERT INTO runs (run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time_ms)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(run_id) DO UPDATE SET
              version=excluded.version,
              fingerprints_source=excluded.fingerprints_source,
              fingerprints_version=excluded.fingerprints_version,
              geoip_version=excluded.geoip_version,
-             start_time=excluded.start_time",
+             start_time_ms=excluded.start_time_ms",
     )
     .bind(run_id)
     .bind(version)
     .bind(fingerprints_source)
     .bind(fingerprints_version)
     .bind(geoip_version)
-    .bind(start_time)
+    .bind(start_time_ms)
     .execute(pool)
     .await
     .map_err(DatabaseError::SqlError)?;
@@ -63,14 +63,14 @@ pub async fn update_run_stats(
     failed_urls: i32,
     elapsed_seconds: f64,
 ) -> Result<(), DatabaseError> {
-    let end_time = chrono::Utc::now().timestamp_millis();
+    let end_time_ms = chrono::Utc::now().timestamp_millis();
 
     sqlx::query(
         "UPDATE runs
-         SET end_time = ?, total_urls = ?, successful_urls = ?, failed_urls = ?, elapsed_seconds = ?
+         SET end_time_ms = ?, total_urls = ?, successful_urls = ?, failed_urls = ?, elapsed_seconds = ?
          WHERE run_id = ?",
     )
-    .bind(end_time)
+    .bind(end_time_ms)
     .bind(total_urls)
     .bind(successful_urls)
     .bind(failed_urls)
@@ -85,18 +85,18 @@ pub async fn update_run_stats(
 
 /// Query run history from the database.
 ///
-/// Returns all completed runs sorted by start_time (most recent first).
+/// Returns all completed runs sorted by start_time_ms (most recent first).
 /// Useful for reviewing past scan results after closing the terminal.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use domain_status::storage::query_run_history;
+/// use domain_status::query_run_history;
 /// use sqlx::SqlitePool;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let pool = SqlitePool::connect("sqlite:./domain_status.db").await?;
-/// let runs = query_run_history(&pool, 10).await?;
+/// let runs = query_run_history(&pool, Some(10)).await?;
 /// for run in runs {
 ///     println!("Run {}: {} URLs ({} succeeded, {} failed) in {:.1}s",
 ///              run.run_id, run.total_urls, run.successful_urls,
@@ -111,18 +111,18 @@ pub async fn query_run_history(
 ) -> Result<Vec<RunSummary>, DatabaseError> {
     let query = if let Some(limit) = limit {
         format!(
-            "SELECT run_id, version, start_time, end_time, total_urls, successful_urls, failed_urls, elapsed_seconds
+            "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds
              FROM runs
-             WHERE end_time IS NOT NULL
-             ORDER BY start_time DESC
+             WHERE end_time_ms IS NOT NULL
+             ORDER BY start_time_ms DESC
              LIMIT {}",
             limit
         )
     } else {
-        "SELECT run_id, version, start_time, end_time, total_urls, successful_urls, failed_urls, elapsed_seconds
+        "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds
          FROM runs
-         WHERE end_time IS NOT NULL
-         ORDER BY start_time DESC"
+         WHERE end_time_ms IS NOT NULL
+         ORDER BY start_time_ms DESC"
             .to_string()
     };
 
@@ -136,8 +136,8 @@ pub async fn query_run_history(
         .map(|row| RunSummary {
             run_id: row.get("run_id"),
             version: row.get("version"),
-            start_time: row.get("start_time"),
-            end_time: row.get("end_time"),
+            start_time_ms: row.get("start_time_ms"),
+            end_time_ms: row.get("end_time_ms"),
             total_urls: row.get("total_urls"),
             successful_urls: row.get("successful_urls"),
             failed_urls: row.get("failed_urls"),
@@ -156,9 +156,9 @@ pub struct RunSummary {
     /// Application version that ran this scan (e.g., "0.1.4").
     pub version: Option<String>,
     /// Start time as milliseconds since Unix epoch.
-    pub start_time: i64,
+    pub start_time_ms: i64,
     /// End time as milliseconds since Unix epoch (None if run still in progress).
-    pub end_time: Option<i64>,
+    pub end_time_ms: Option<i64>,
     /// Total number of URLs processed in this run.
     pub total_urls: i32,
     /// Number of URLs that were successfully processed.
@@ -195,7 +195,7 @@ mod tests {
 
         // Verify insertion
         let row = sqlx::query(
-            "SELECT run_id, fingerprints_source, fingerprints_version, geoip_version, start_time FROM runs WHERE run_id = ?",
+            "SELECT run_id, fingerprints_source, fingerprints_version, geoip_version, start_time_ms FROM runs WHERE run_id = ?",
         )
         .bind("test-run-123")
         .fetch_one(&pool)
@@ -215,7 +215,7 @@ mod tests {
             row.get::<Option<String>, _>("geoip_version"),
             Some("2024-01-01".to_string())
         );
-        assert_eq!(row.get::<i64, _>("start_time"), 1704067200000);
+        assert_eq!(row.get::<i64, _>("start_time_ms"), 1704067200000);
     }
 
     #[tokio::test]
@@ -286,7 +286,7 @@ mod tests {
 
         // Verify update
         let row = sqlx::query(
-            "SELECT version, fingerprints_version, geoip_version, start_time FROM runs WHERE run_id = ?",
+            "SELECT version, fingerprints_version, geoip_version, start_time_ms FROM runs WHERE run_id = ?",
         )
         .bind("test-run-789")
         .fetch_one(&pool)
@@ -305,7 +305,7 @@ mod tests {
             row.get::<Option<String>, _>("geoip_version"),
             Some("2024-01-02".to_string())
         );
-        assert_eq!(row.get::<i64, _>("start_time"), 1704153600000);
+        assert_eq!(row.get::<i64, _>("start_time_ms"), 1704153600000);
 
         // Verify only one row exists (UPSERT, not INSERT)
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE run_id = ?")
@@ -341,15 +341,15 @@ mod tests {
 
         // Verify update
         let row = sqlx::query(
-            "SELECT end_time, total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
+            "SELECT end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
         )
         .bind("test-run-stats")
         .fetch_one(&pool)
         .await
         .expect("Failed to fetch run stats");
 
-        let end_time: i64 = row.get("end_time");
-        assert!(end_time > 0); // Should be set to current time
+        let end_time_ms: i64 = row.get("end_time_ms");
+        assert!(end_time_ms > 0); // Should be set to current time
         assert_eq!(row.get::<i32, _>("total_urls"), 100);
         assert_eq!(row.get::<i32, _>("successful_urls"), 95);
         assert_eq!(row.get::<i32, _>("failed_urls"), 5);
@@ -436,7 +436,7 @@ mod tests {
 
         // Verify complete record
         let row = sqlx::query(
-            "SELECT run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time, end_time, total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
+            "SELECT run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
         )
         .bind("complete-run")
         .fetch_one(&pool)
@@ -452,9 +452,9 @@ mod tests {
             row.get::<Option<String>, _>("fingerprints_source"),
             Some("https://github.com/wappalyzer/wappalyzer".to_string())
         );
-        assert_eq!(row.get::<i64, _>("start_time"), 1704067200000);
-        let end_time: i64 = row.get("end_time");
-        assert!(end_time > 0);
+        assert_eq!(row.get::<i64, _>("start_time_ms"), 1704067200000);
+        let end_time_ms: i64 = row.get("end_time_ms");
+        assert!(end_time_ms > 0);
         assert_eq!(row.get::<i32, _>("total_urls"), 50);
         assert_eq!(row.get::<i32, _>("successful_urls"), 48);
         assert_eq!(row.get::<i32, _>("failed_urls"), 2);

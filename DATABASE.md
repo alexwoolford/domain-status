@@ -994,6 +994,55 @@ GROUP BY uw.registrant_country
 ORDER BY domain_count DESC;
 ```
 
+### Analyst-Friendly Views
+
+The database includes pre-built views for common analytical queries:
+
+#### `url_status_enriched`
+
+Joins `url_status` with 1:1 satellites (GeoIP, WHOIS) for convenient querying. Column names are prefixed to avoid collisions:
+
+```sql
+-- Example: Find all sites hosted in the US with registrar info
+SELECT final_domain, geoip_country_code, geoip_city, whois_registrar
+FROM url_status_enriched
+WHERE geoip_country_code = 'US';
+```
+
+| Column Alias | Source |
+|-------------|--------|
+| `http_status` | `url_status.status` (avoids collision with WHOIS status) |
+| `observed_at_ms` | `url_status.timestamp` |
+| `geoip_*` | All columns from `url_geoip`, prefixed |
+| `whois_*` | All columns from `url_whois`, prefixed |
+| `whois_statuses_json` | `url_whois.status` (renamed to avoid collision) |
+
+#### `url_observations`
+
+Unified timeline of successes and failures for easier analytics:
+
+```sql
+-- Example: Get all observations from a run (success + failure)
+SELECT outcome, final_domain, http_status, error_type, observed_at_ms
+FROM url_observations
+WHERE run_id = 'run_123'
+ORDER BY observed_at_ms;
+
+-- Example: Count success/failure ratio per run
+SELECT run_id, outcome, COUNT(*) as count
+FROM url_observations
+GROUP BY run_id, outcome;
+```
+
+| Column | Description |
+|--------|-------------|
+| `outcome` | `'success'` or `'failure'` |
+| `observation_id` | ID from source table (`url_status.id` or `url_failures.id`) |
+| `error_type` | Error type (NULL for successes) |
+| `error_message` | Error details (NULL for successes) |
+
+---
+
 ### Schema Design Principles
 
 The database uses a **star schema** design pattern:
@@ -1111,3 +1160,8 @@ ORDER BY uf.domain;
 - Response body size is capped at 2MB to prevent memory exhaustion
 - Only HTML content-types are processed (others are skipped)
 - Maximum redirect hops: 10 (prevents infinite loops)
+
+**SQLite Configuration:**
+- **WAL Mode**: Enabled for better concurrent read/write performance
+- **Foreign Keys**: Enabled (`PRAGMA foreign_keys=ON`) for referential integrity and cascade deletes
+- All satellite tables use `ON DELETE CASCADE` - deleting a `url_status` row automatically deletes related satellite records
