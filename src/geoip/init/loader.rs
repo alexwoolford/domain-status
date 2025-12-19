@@ -181,7 +181,16 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
             .text()
             .await
             .unwrap_or_else(|_| "No error details".to_string());
-        log::error!("MaxMind API error response: {}", error_body);
+        // Log expected errors as WARN to reduce noise in test output:
+        // - "Invalid license key" when using test/invalid keys
+        // - HTML responses when hitting wrong URLs (common in tests)
+        if error_body.contains("Invalid license key")
+            || (error_body.trim_start().starts_with("<!") && error_body.contains("<html"))
+        {
+            log::warn!("MaxMind API error response: {}", error_body);
+        } else {
+            log::error!("MaxMind API error response: {}", error_body);
+        }
         return Err(anyhow::anyhow!(
             "Failed to download GeoIP database: {} - {}",
             status,

@@ -1,0 +1,8 @@
+# Cargo configuration for the domain_status project
+
+[env]
+# Suppress logs during tests for clean, professional test output
+# This prevents expected error/warning logs from cluttering test results
+# Override for debugging: RUST_LOG=debug cargo test
+# Note: force = false allows override via command line or environment variable
+RUST_LOG = { value = "off", force = false }

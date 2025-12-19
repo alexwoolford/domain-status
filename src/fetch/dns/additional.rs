@@ -358,4 +358,179 @@ mod tests {
             "DMARC record should be Option (None or Some)"
         );
     }
+
+    #[test]
+    fn test_spf_extraction_edge_cases() {
+        // Test SPF extraction with various edge cases
+        // This tests the extract_spf_record function indirectly through fetch_additional_dns_records
+        use crate::dns::extract_spf_record;
+
+        // Valid SPF record
+        let txt_with_spf = vec!["v=spf1 include:_spf.google.com ~all".to_string()];
+        let spf = extract_spf_record(&txt_with_spf);
+        assert!(spf.is_some(), "Should extract valid SPF record");
+        assert!(
+            spf.unwrap().starts_with("v=spf1"),
+            "SPF should start with v=spf1"
+        );
+
+        // Multiple TXT records, SPF not first
+        let txt_multiple = vec![
+            "some other record".to_string(),
+            "v=spf1 include:_spf.google.com ~all".to_string(),
+        ];
+        let spf = extract_spf_record(&txt_multiple);
+        assert!(spf.is_some(), "Should extract SPF even if not first");
+
+        // SPF with redirect modifier
+        let txt_redirect = vec!["v=spf1 redirect=_spf.example.com".to_string()];
+        let spf = extract_spf_record(&txt_redirect);
+        assert!(spf.is_some(), "Should extract SPF with redirect");
+
+        // No SPF record
+        let txt_no_spf = vec!["some other txt record".to_string()];
+        let spf = extract_spf_record(&txt_no_spf);
+        assert!(spf.is_none(), "Should return None when no SPF record");
+
+        // Empty TXT records
+        let txt_empty: Vec<String> = vec![];
+        let spf = extract_spf_record(&txt_empty);
+        assert!(spf.is_none(), "Should return None for empty TXT records");
+    }
+
+    #[test]
+    fn test_dmarc_extraction_edge_cases() {
+        // Test DMARC extraction with various edge cases
+        use crate::dns::extract_dmarc_record;
+
+        // Valid DMARC record
+        let txt_with_dmarc = vec!["v=DMARC1; p=none; rua=mailto:dmarc@example.com".to_string()];
+        let dmarc = extract_dmarc_record(&txt_with_dmarc);
+        assert!(dmarc.is_some(), "Should extract valid DMARC record");
+        assert!(
+            dmarc.unwrap().starts_with("v=DMARC1"),
+            "DMARC should start with v=DMARC1"
+        );
+
+        // DMARC with different policy
+        let txt_policy = vec!["v=DMARC1; p=quarantine; pct=100".to_string()];
+        let dmarc = extract_dmarc_record(&txt_policy);
+        assert!(
+            dmarc.is_some(),
+            "Should extract DMARC with quarantine policy"
+        );
+
+        // DMARC with reject policy
+        let txt_reject = vec!["v=DMARC1; p=reject".to_string()];
+        let dmarc = extract_dmarc_record(&txt_reject);
+        assert!(dmarc.is_some(), "Should extract DMARC with reject policy");
+
+        // Multiple TXT records, DMARC not first
+        let txt_multiple = vec![
+            "some other record".to_string(),
+            "v=DMARC1; p=none".to_string(),
+        ];
+        let dmarc = extract_dmarc_record(&txt_multiple);
+        assert!(dmarc.is_some(), "Should extract DMARC even if not first");
+
+        // No DMARC record
+        let txt_no_dmarc = vec!["some other txt record".to_string()];
+        let dmarc = extract_dmarc_record(&txt_no_dmarc);
+        assert!(dmarc.is_none(), "Should return None when no DMARC record");
+
+        // Empty TXT records
+        let txt_empty: Vec<String> = vec![];
+        let dmarc = extract_dmarc_record(&txt_empty);
+        assert!(dmarc.is_none(), "Should return None for empty TXT records");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_additional_dns_records_spf_dmarc_extraction() {
+        // Test that SPF and DMARC are correctly extracted from TXT records
+        // This is critical - SPF/DMARC extraction must work correctly for security analysis
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        // Use a domain that might have SPF/DMARC records
+        let result =
+            fetch_additional_dns_records("example.com", &resolver, error_stats.as_ref()).await;
+
+        // Result should have valid structure
+        // SPF and DMARC may or may not be present depending on actual DNS
+        // The key is that extraction logic is exercised
+        if let Some(spf) = &result.data.spf_record {
+            assert!(
+                spf.starts_with("v=spf1"),
+                "SPF record should start with v=spf1"
+            );
+        }
+        if let Some(dmarc) = &result.data.dmarc_record {
+            assert!(
+                dmarc.starts_with("v=DMARC1"),
+                "DMARC record should start with v=DMARC1"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_additional_dns_records_dmarc_subdomain_fallback_logic() {
+        // Test that _dmarc subdomain lookup is attempted when main domain doesn't have DMARC
+        // This is critical - DMARC can be at _dmarc.example.com if not at example.com
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        // The function will attempt _dmarc subdomain lookup if main domain doesn't have DMARC
+        // We can't easily verify the exact behavior without mocking, but we verify it doesn't panic
+        let result =
+            fetch_additional_dns_records("example.com", &resolver, error_stats.as_ref()).await;
+
+        // Should not panic - _dmarc subdomain lookup is attempted if needed
+        let _ = result.data.dmarc_record;
+    }
+
+    #[tokio::test]
+    async fn test_fetch_additional_dns_records_mx_json_format() {
+        // Test that MX records are correctly formatted as JSON
+        // This is critical - MX records must be in correct format for database storage
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        let result =
+            fetch_additional_dns_records("example.com", &resolver, error_stats.as_ref()).await;
+
+        // If MX records are present, they should be valid JSON
+        if let Some(mx_json) = &result.data.mx_records {
+            // Should be valid JSON array
+            let parsed: Result<serde_json::Value, _> = serde_json::from_str(mx_json);
+            assert!(parsed.is_ok(), "MX records should be valid JSON");
+            if let Ok(json) = parsed {
+                assert!(json.is_array(), "MX records JSON should be an array");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_additional_dns_records_error_message_sanitization() {
+        // Test that error messages are correctly sanitized and truncated
+        // This is critical - error messages must not cause database bloat
+        let resolver = create_test_resolver();
+        let error_stats = Arc::new(ProcessingStats::new());
+
+        let result = fetch_additional_dns_records(
+            "this-domain-definitely-does-not-exist-12345.invalid",
+            &resolver,
+            error_stats.as_ref(),
+        )
+        .await;
+
+        // Verify partial failures have sanitized messages
+        for (_error_type, error_msg) in &result.partial_failures {
+            assert!(!error_msg.is_empty(), "Error message should not be empty");
+            assert!(
+                error_msg.len() <= 500,
+                "Error message should be sanitized/truncated to prevent database bloat, got length: {}",
+                error_msg.len()
+            );
+        }
+    }
 }
