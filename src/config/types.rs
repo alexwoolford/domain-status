@@ -417,22 +417,6 @@ mod tests {
         assert_ne!(FailOn::ErrorsOnly, FailOn::Never);
     }
 
-    #[test]
-    fn test_config_clone() {
-        // Test that Config can be cloned correctly
-        let config = Config {
-            max_concurrency: 100,
-            rate_limit_rps: 50,
-            enable_whois: true,
-            ..Default::default()
-        };
-
-        let cloned = config.clone();
-        assert_eq!(cloned.max_concurrency, 100);
-        assert_eq!(cloned.rate_limit_rps, 50);
-        assert!(cloned.enable_whois);
-    }
-
     // Config validation tests
 
     #[test]

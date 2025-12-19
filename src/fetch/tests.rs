@@ -232,7 +232,7 @@ fn test_url_join_malformed_location() {
     let joined = base.join(malformed_location);
     // This might succeed or fail depending on URL parser behavior
     // The important thing is it doesn't panic
-    assert!(joined.is_ok() || joined.is_err());
+    let _ = joined;
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn test_url_join_empty_location() {
 
     let joined = base.join(empty_location);
     // Empty string might be treated as relative path
-    assert!(joined.is_ok() || joined.is_err());
+    let _ = joined;
 }
 
 #[test]

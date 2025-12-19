@@ -608,23 +608,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_metadata_clone_for_return() {
-        // Test that metadata is cloned correctly for return (lines 129, 146)
-        // This is critical - metadata should be cloned, not moved
-
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: std::time::SystemTime::now(),
-        };
-
-        // Clone should work
-        let cloned = metadata.clone();
-        assert_eq!(cloned.source, metadata.source);
-        assert_eq!(cloned.version, metadata.version);
-    }
-
-    #[tokio::test]
     async fn test_init_geoip_multiple_calls_same_source_no_reload() {
         // Test that multiple calls with same source don't cause unnecessary reloads
         // This is critical - prevents resource waste and potential race conditions
