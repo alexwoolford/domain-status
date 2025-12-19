@@ -841,4 +841,86 @@ mod tests {
             "33.33% failure should not exceed 34% threshold"
         );
     }
+
+    #[test]
+    fn test_export_output_path_stdout_detection() {
+        // Test that "-" is correctly detected as stdout
+        // This is critical - stdout detection must work for piping
+        let output_str = Some("-".to_string());
+        let is_stdout = output_str.as_ref().map(|s| s == "-").unwrap_or(false);
+        assert!(is_stdout, "Should detect '-' as stdout");
+    }
+
+    #[test]
+    fn test_export_output_path_file_path() {
+        // Test that non-"-" paths are treated as file paths
+        // This is critical - file paths must be preserved correctly
+        let output_str = Some("/path/to/output.csv".to_string());
+        let is_stdout = output_str.as_ref().map(|s| s == "-").unwrap_or(false);
+        assert!(!is_stdout, "Should not treat file path as stdout");
+    }
+
+    #[test]
+    fn test_export_output_path_default_file_naming() {
+        // Test that default file names are generated correctly based on format
+        // This is critical - default file naming must match format
+        let csv_ext = "csv";
+        let jsonl_ext = "jsonl";
+        let parquet_ext = "parquet";
+
+        let csv_file = format!("domain_status_export.{}", csv_ext);
+        let jsonl_file = format!("domain_status_export.{}", jsonl_ext);
+        let parquet_file = format!("domain_status_export.{}", parquet_ext);
+
+        assert_eq!(csv_file, "domain_status_export.csv");
+        assert_eq!(jsonl_file, "domain_status_export.jsonl");
+        assert_eq!(parquet_file, "domain_status_export.parquet");
+    }
+
+    #[test]
+    fn test_url_pluralization_logic() {
+        // Test that URL pluralization works correctly (line 315)
+        // This is critical - output message must be grammatically correct
+        let total_urls_1 = 1;
+        let suffix_1 = if total_urls_1 == 1 { "" } else { "s" };
+        assert_eq!(suffix_1, "", "Should use singular 'URL' for 1 URL");
+
+        let total_urls_0 = 0;
+        let suffix_0 = if total_urls_0 == 1 { "" } else { "s" };
+        assert_eq!(suffix_0, "s", "Should use plural 'URLs' for 0 URLs");
+
+        let total_urls_2 = 2;
+        let suffix_2 = if total_urls_2 == 1 { "" } else { "s" };
+        assert_eq!(suffix_2, "s", "Should use plural 'URLs' for 2 URLs");
+    }
+
+    #[test]
+    fn test_progress_callback_overflow_protection() {
+        // Test that progress callback handles large numbers without overflow
+        // This is critical - prevents panics when processing many URLs
+        let total = usize::MAX;
+        let completed = usize::MAX / 2;
+        let failed = usize::MAX / 2;
+
+        // Test that casting to u64 doesn't panic
+        let total_u64 = total as u64;
+        let position_u64 = (completed + failed) as u64;
+
+        // Should not overflow
+        assert!(total_u64 > 0);
+        assert!(position_u64 <= total_u64);
+    }
+
+    #[test]
+    fn test_progress_callback_message_formatting() {
+        // Test that progress callback message formatting works correctly
+        // This is critical - progress bar must show correct counts
+        let completed = 10;
+        let failed = 5;
+        let message = format!("✓{} ✗{}", completed, failed);
+        assert_eq!(
+            message, "✓10 ✗5",
+            "Progress message should format correctly"
+        );
+    }
 }

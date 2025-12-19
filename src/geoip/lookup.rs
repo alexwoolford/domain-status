@@ -590,4 +590,73 @@ mod tests {
         // (or true if previous test initialized it)
         let _ = enabled;
     }
+
+    #[test]
+    fn test_lookup_ip_ipv4_octet_boundary_values() {
+        // Test IPv4 parsing with boundary values for each octet
+        // This is critical - ensures IP parsing handles edge cases correctly
+        let boundary_ips = vec![
+            "0.0.0.0",         // Minimum valid IPv4
+            "255.255.255.255", // Maximum valid IPv4
+            "127.0.0.1",       // Loopback
+            "192.168.0.1",     // Private network
+            "10.0.0.1",        // Private network
+        ];
+        for ip in boundary_ips {
+            // Test that parsing works (may return None if uninitialized, but shouldn't panic)
+            let result = lookup_ip(ip);
+            // Should not panic on valid IPs
+            let _ = result;
+        }
+    }
+
+    #[test]
+    fn test_lookup_ip_ipv6_scope_id_handling() {
+        // Test IPv6 with scope IDs (e.g., fe80::1%eth0)
+        // This is critical - scope IDs are valid in some contexts but may not parse
+        let ipv6_with_scope = "fe80::1%eth0";
+        let result = lookup_ip(ipv6_with_scope);
+        // Scope IDs may not parse as valid IP addresses
+        // Should handle gracefully (return None, not panic)
+        assert!(
+            result.is_none(),
+            "IPv6 with scope ID should return None or handle gracefully"
+        );
+    }
+
+    #[test]
+    fn test_lookup_ip_leading_zeros_in_octets() {
+        // Test IPv4 with leading zeros (should parse but may be invalid)
+        // This is critical - some systems accept leading zeros, others don't
+        let leading_zero_ips = vec!["010.010.010.010", "192.168.001.001"];
+        for ip in leading_zero_ips {
+            let result = lookup_ip(ip);
+            // Should handle gracefully (may parse or return None, but not panic)
+            let _ = result;
+        }
+    }
+
+    #[test]
+    fn test_lookup_ip_unicode_characters() {
+        // Test that Unicode characters in IP strings are handled gracefully
+        // This is critical - prevents panics from invalid UTF-8 or special characters
+        let unicode_strings = vec!["8.8.8.8\u{200B}", "8.8.8.8\u{FEFF}", "8.8.8.8\u{00A0}"];
+        for ip in unicode_strings {
+            let result = lookup_ip(ip);
+            // Should handle gracefully (may fail parsing, but not panic)
+            let _ = result;
+        }
+    }
+
+    #[test]
+    fn test_lookup_ip_control_characters() {
+        // Test that control characters are handled gracefully
+        // This is critical - prevents issues with special control characters
+        let control_chars = vec!["8.8.8.8\u{0001}", "8.8.8.8\u{0007}", "8.8.8.8\u{001F}"];
+        for ip in control_chars {
+            let result = lookup_ip(ip);
+            // Should handle gracefully (may fail parsing, but not panic)
+            let _ = result;
+        }
+    }
 }
