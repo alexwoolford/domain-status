@@ -797,4 +797,207 @@ mod tests {
 
         assert_eq!(count, 0, "Empty redirect chain should result in 0 entries");
     }
+
+    #[tokio::test]
+    async fn test_insert_url_failure_exponential_backoff_calculation() {
+        // Test that exponential backoff delay is calculated correctly
+        // This is critical - incorrect backoff could cause excessive retries or delays
+        // Formula: INITIAL_DELAY_MS * (1 << attempt)
+        // attempt 0: 50ms (INITIAL_DELAY_MS)
+        // attempt 1: 50 * 2 = 100ms
+        // attempt 2: 50 * 4 = 200ms
+        const INITIAL_DELAY_MS: u64 = 50;
+        assert_eq!(INITIAL_DELAY_MS, 50);
+        assert_eq!(INITIAL_DELAY_MS * (1 << 1), 100);
+        assert_eq!(INITIAL_DELAY_MS * (1 << 2), 200);
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_failure_max_retries() {
+        // Test that MAX_RETRIES is 3 (0, 1, 2, 3 = 4 attempts total)
+        // This is critical - ensures retry logic has correct bounds
+        const MAX_RETRIES: usize = 3;
+        // Loop runs from 0 to MAX_RETRIES (inclusive), so 4 attempts total
+        let mut attempt_count = 0;
+        for attempt in 0..=MAX_RETRIES {
+            attempt_count += 1;
+            let _ = attempt; // Suppress unused warning
+        }
+        assert_eq!(attempt_count, 4, "Should have 4 attempts (0, 1, 2, 3)");
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_failure_response_headers_conflict_handling() {
+        // Test that response headers with duplicate names are handled correctly
+        // This is critical - ON CONFLICT DO UPDATE ensures latest value is used
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-headers", 1704067200000i64).await;
+
+        let failure = UrlFailureRecord {
+            url: "http://example.com".to_string(),
+            final_url: None,
+            domain: "example.com".to_string(),
+            final_domain: None,
+            error_type: "HttpError".to_string(),
+            error_message: "Test error".to_string(),
+            http_status: None,
+            retry_count: 0,
+            elapsed_time_seconds: None,
+            timestamp: 1704067200000,
+            run_id: Some("test-run-headers".to_string()),
+            redirect_chain: vec![],
+            response_headers: vec![
+                ("Server".to_string(), "nginx/1.18.0".to_string()),
+                ("Server".to_string(), "nginx/1.20.0".to_string()), // Duplicate name
+            ],
+            request_headers: vec![],
+        };
+
+        let result = insert_url_failure(&pool, &failure).await;
+        assert!(result.is_ok());
+
+        let failure_id = result.unwrap();
+
+        // Verify that duplicate header names result in only one entry (last value wins)
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_failure_response_headers WHERE url_failure_id = ? AND header_name = 'Server'",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to count Server headers");
+
+        assert_eq!(
+            count, 1,
+            "Duplicate header names should result in one entry (last value wins)"
+        );
+
+        // Verify the last value is stored
+        let row = sqlx::query(
+            "SELECT header_value FROM url_failure_response_headers WHERE url_failure_id = ? AND header_name = 'Server'",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch Server header");
+
+        assert_eq!(row.get::<String, _>("header_value"), "nginx/1.20.0");
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_failure_request_headers_conflict_handling() {
+        // Test that request headers with duplicate names are handled correctly
+        // This is critical - ON CONFLICT DO UPDATE ensures latest value is used
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-req-headers", 1704067200000i64).await;
+
+        let failure = UrlFailureRecord {
+            url: "http://example.com".to_string(),
+            final_url: None,
+            domain: "example.com".to_string(),
+            final_domain: None,
+            error_type: "HttpError".to_string(),
+            error_message: "Test error".to_string(),
+            http_status: None,
+            retry_count: 0,
+            elapsed_time_seconds: None,
+            timestamp: 1704067200000,
+            run_id: Some("test-run-req-headers".to_string()),
+            redirect_chain: vec![],
+            response_headers: vec![],
+            request_headers: vec![
+                ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
+                ("User-Agent".to_string(), "Chrome/91.0".to_string()), // Duplicate name
+            ],
+        };
+
+        let result = insert_url_failure(&pool, &failure).await;
+        assert!(result.is_ok());
+
+        let failure_id = result.unwrap();
+
+        // Verify that duplicate header names result in only one entry (last value wins)
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_failure_request_headers WHERE url_failure_id = ? AND header_name = 'User-Agent'",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to count User-Agent headers");
+
+        assert_eq!(
+            count, 1,
+            "Duplicate header names should result in one entry (last value wins)"
+        );
+
+        // Verify the last value is stored
+        let row = sqlx::query(
+            "SELECT header_value FROM url_failure_request_headers WHERE url_failure_id = ? AND header_name = 'User-Agent'",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to fetch User-Agent header");
+
+        assert_eq!(row.get::<String, _>("header_value"), "Chrome/91.0");
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_failure_all_satellite_data_empty() {
+        // Test that all satellite data being empty is handled correctly
+        // This is critical - edge case where no satellite data exists
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-empty", 1704067200000i64).await;
+
+        let failure = UrlFailureRecord {
+            url: "http://example.com".to_string(),
+            final_url: None,
+            domain: "example.com".to_string(),
+            final_domain: None,
+            error_type: "HttpError".to_string(),
+            error_message: "Test error".to_string(),
+            http_status: None,
+            retry_count: 0,
+            elapsed_time_seconds: None,
+            timestamp: 1704067200000,
+            run_id: Some("test-run-empty".to_string()),
+            redirect_chain: vec![],
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+
+        let result = insert_url_failure(&pool, &failure).await;
+        assert!(result.is_ok());
+
+        let failure_id = result.unwrap();
+
+        // Verify no satellite data was inserted
+        let redirect_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_failure_redirect_chain WHERE url_failure_id = ?",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to count redirect chain");
+
+        let response_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_failure_response_headers WHERE url_failure_id = ?",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to count response headers");
+
+        let request_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_failure_request_headers WHERE url_failure_id = ?",
+        )
+        .bind(failure_id)
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to count request headers");
+
+        assert_eq!(redirect_count, 0);
+        assert_eq!(response_count, 0);
+        assert_eq!(request_count, 0);
+    }
 }

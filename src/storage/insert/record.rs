@@ -993,4 +993,84 @@ mod tests {
         assert_eq!(summary.total_failures(), 5);
         assert!(summary.has_failures());
     }
+
+    #[test]
+    fn test_enrichment_insert_summary_all_failures() {
+        // Test that all enrichment types failing is counted correctly
+        // This is critical - ensures all failure types are tracked
+        let summary = EnrichmentInsertSummary {
+            partial_failures_failed: 3,
+            geoip_failed: true,
+            structured_data_failed: true,
+            social_media_failed: true,
+            security_warnings_failed: true,
+            whois_failed: true,
+            analytics_ids_failed: true,
+            ..Default::default()
+        };
+        // Should count: 3 (partial) + 6 (all other types) = 9
+        assert_eq!(summary.total_failures(), 9);
+        assert!(summary.has_failures());
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_mixed_success_failure() {
+        // Test mixed success/failure scenario
+        // This is critical - real-world scenarios often have partial success
+        let summary = EnrichmentInsertSummary {
+            partial_failures_inserted: 2,
+            partial_failures_failed: 1,
+            geoip_inserted: true,
+            geoip_failed: false,
+            structured_data_inserted: false,
+            structured_data_failed: true,
+            social_media_inserted: true,
+            social_media_failed: false,
+            security_warnings_inserted: false,
+            security_warnings_failed: true,
+            whois_inserted: true,
+            whois_failed: false,
+            analytics_ids_inserted: false,
+            analytics_ids_failed: true,
+        };
+        // Should count: 1 (partial) + 1 (structured) + 1 (security) + 1 (analytics) = 4
+        assert_eq!(summary.total_failures(), 4);
+        assert!(summary.has_failures());
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_large_partial_failures_count() {
+        // Test that large partial_failures_failed counts work correctly
+        // This is critical - ensures no overflow issues
+        let summary = EnrichmentInsertSummary {
+            partial_failures_failed: 1000,
+            ..Default::default()
+        };
+        assert_eq!(summary.total_failures(), 1000);
+        assert!(summary.has_failures());
+    }
+
+    #[test]
+    fn test_enrichment_insert_summary_all_success() {
+        // Test that all enrichment types succeeding results in no failures
+        // This is critical - ensures success is correctly tracked
+        let summary = EnrichmentInsertSummary {
+            partial_failures_inserted: 5,
+            partial_failures_failed: 0,
+            geoip_inserted: true,
+            geoip_failed: false,
+            structured_data_inserted: true,
+            structured_data_failed: false,
+            social_media_inserted: true,
+            social_media_failed: false,
+            security_warnings_inserted: true,
+            security_warnings_failed: false,
+            whois_inserted: true,
+            whois_failed: false,
+            analytics_ids_inserted: true,
+            analytics_ids_failed: false,
+        };
+        assert_eq!(summary.total_failures(), 0);
+        assert!(!summary.has_failures());
+    }
 }
