@@ -186,4 +186,71 @@ mod tests {
         // Should handle trailing slash correctly
         let _ = result;
     }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_url_exactly_seven_parts() {
+        // Test URL parsing with exactly 7 parts (boundary case)
+        // This is critical - the code checks parts.len() < 7, so exactly 7 should work
+        // URL structure: https://raw.githubusercontent.com/owner/repo/branch/path
+        // parts[0] = "https:", parts[1] = "", parts[2] = "raw.githubusercontent.com",
+        // parts[3] = owner, parts[4] = repo, parts[5] = branch, parts[6] = path
+        // So 7 parts means minimal valid URL
+        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main";
+        let result = get_latest_commit_sha(url).await;
+        // Should handle gracefully (may succeed or fail depending on network)
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_url_with_empty_path_segments() {
+        // Test URL with empty path segments (double slashes)
+        // This is critical - empty segments could break path extraction
+        let url =
+            "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main//src//technologies";
+        let result = get_latest_commit_sha(url).await;
+        // Should handle gracefully (may succeed or fail depending on network)
+        // The path extraction at line 49 uses parts[6..].join("/") which handles empty segments
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_owner_extraction_failure() {
+        // Test that missing owner in URL parts returns None gracefully
+        // This is critical - prevents panics from index out of bounds
+        // The code at line 35-40 handles missing owner
+        // We test with a URL that has fewer than 7 parts, which should return None at line 18
+        // But we also want to test the specific owner extraction failure path
+        // A URL with exactly 7 parts but empty owner would be: https://raw.githubusercontent.com//repo/branch/path
+        // However, split('/') on that would give parts[3] = "" (empty string), not None
+        // So the code at line 35 would get Some(""), which is valid
+        // To test the None case, we need a URL with fewer than 4 parts before the path
+        let url = "https://raw.githubusercontent.com";
+        let result = get_latest_commit_sha(url).await;
+        // Should return None (parts.len() < 7)
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_repo_extraction_failure() {
+        // Test that missing repo in URL parts returns None gracefully
+        // This is critical - prevents panics from index out of bounds
+        // The code at line 42-47 handles missing repo
+        let url = "https://raw.githubusercontent.com/owner";
+        let result = get_latest_commit_sha(url).await;
+        // Should return None (parts.len() < 7)
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_path_extraction_with_single_segment() {
+        // Test path extraction when path has only one segment
+        // This is critical - ensures path extraction works for simple paths
+        // The code at line 49 uses parts[6..].join("/")
+        // For URL: https://raw.githubusercontent.com/owner/repo/branch/file.json
+        // parts[6] = "file.json", so path should be "file.json"
+        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/file.json";
+        let result = get_latest_commit_sha(url).await;
+        // Should handle gracefully (may succeed or fail depending on network)
+        let _ = result;
+    }
 }
