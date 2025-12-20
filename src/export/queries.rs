@@ -752,4 +752,139 @@ mod tests {
                                                // Total count should be 3 (all headers), but result string only has filtered ones
         assert_eq!(total_count, 3);
     }
+
+    #[test]
+    fn test_ignore_broken_pipe_write() {
+        // Test that IgnoreBrokenPipe handles broken pipe errors gracefully
+        // This is critical - allows graceful shutdown when piped to commands that exit early
+        use std::io::ErrorKind;
+
+        struct BrokenPipeWriter;
+
+        impl Write for BrokenPipeWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(ErrorKind::BrokenPipe, "Broken pipe"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut wrapper = IgnoreBrokenPipe::new(BrokenPipeWriter);
+        let test_data = b"test data";
+
+        // Should not return error for broken pipe
+        let result = wrapper.write(test_data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), test_data.len());
+    }
+
+    #[test]
+    fn test_ignore_broken_pipe_flush() {
+        // Test that IgnoreBrokenPipe handles broken pipe errors in flush
+        use std::io::ErrorKind;
+
+        struct BrokenPipeWriter;
+
+        impl Write for BrokenPipeWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::new(ErrorKind::BrokenPipe, "Broken pipe"))
+            }
+        }
+
+        let mut wrapper = IgnoreBrokenPipe::new(BrokenPipeWriter);
+
+        // Should not return error for broken pipe in flush
+        let result = wrapper.flush();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ignore_broken_pipe_other_errors_propagate() {
+        // Test that non-broken-pipe errors are still propagated
+        // This is critical - we only want to ignore broken pipe, not all errors
+        use std::io::ErrorKind;
+
+        struct ErrorWriter;
+
+        impl Write for ErrorWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "Permission denied",
+                ))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut wrapper = IgnoreBrokenPipe::new(ErrorWriter);
+        let test_data = b"test data";
+
+        // Should propagate non-broken-pipe errors
+        let result = wrapper.write(test_data);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_key_value_list_with_colon_in_value() {
+        // Test that fetch_key_value_list handles colons in values correctly
+        // This is critical - values like "https://example.com" contain colons
+        // The code at line 100 formats as "key:value", so colons in values are preserved
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        sqlx::query("INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (1, 'Google Analytics', 'https://example.com/UA-12345')")
+            .execute(&*pool_arc)
+            .await
+            .unwrap();
+
+        let (result, count) = fetch_key_value_list(
+            &pool_arc,
+            "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ?",
+            "provider",
+            "tracking_id",
+            1,
+        )
+        .await
+        .expect("Should succeed");
+
+        // Should preserve colon in value
+        assert!(result.contains("Google Analytics:https://example.com/UA-12345"));
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_key_value_list_with_empty_value() {
+        // Test that fetch_key_value_list handles empty values correctly
+        let pool = create_test_pool().await;
+        let pool_arc = Arc::new(pool);
+
+        sqlx::query("INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (1, 'Test', '')")
+            .execute(&*pool_arc)
+            .await
+            .unwrap();
+
+        let (result, count) = fetch_key_value_list(
+            &pool_arc,
+            "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ?",
+            "provider",
+            "tracking_id",
+            1,
+        )
+        .await
+        .expect("Should succeed");
+
+        // Should format as "key:" (empty value)
+        assert_eq!(result, "Test:");
+        assert_eq!(count, 1);
+    }
 }
