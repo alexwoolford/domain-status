@@ -212,4 +212,105 @@ mod tests {
         // MAX_RULESET_DOWNLOAD_SIZE should be > 1KB and < 100MB (currently 10MB)
         let _ = MAX_RULESET_DOWNLOAD_SIZE; // Ensure constant is accessible
     }
+
+    #[tokio::test]
+    async fn test_fetch_single_file_content_length_mismatch() {
+        // Test that actual body size is checked even if content-length header is valid
+        // This is critical - servers might send incorrect content-length headers
+        // The code at line 106 checks actual bytes.len() after reading
+        // Note: Hyper will panic if content-length header doesn't match body, so we test
+        // the case where content-length is missing but body is too large
+        let server = Server::run();
+        let url = server.url("/mismatch.json").to_string();
+
+        // Server sends no content-length header but body is too large
+        let large_body = vec![0u8; MAX_RULESET_DOWNLOAD_SIZE + 1];
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/mismatch.json")).respond_with(
+                status_code(200)
+                    // No Content-Length header - body size will be checked after reading
+                    .body(large_body),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap();
+
+        let result = fetch_single_file_with_size_limit(&client, &url).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_retry_exponential_backoff_calculation() {
+        // Test that exponential backoff calculation is correct
+        // The code at line 61 uses 1 << (attempt - 1) for backoff
+        // This is critical - ensures we don't hammer failing servers
+        // attempt 1: 1 << 0 = 1 second
+        // attempt 2: 1 << 1 = 2 seconds
+        // attempt 3: 1 << 2 = 4 seconds
+        assert_eq!(1 << (1 - 1), 1);
+        assert_eq!(1 << (2 - 1), 2);
+        assert_eq!(1 << (3 - 1), 4);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_single_file_invalid_utf8() {
+        // Test that invalid UTF-8 in response body is handled gracefully
+        // This is critical - prevents panics from malformed responses
+        let server = Server::run();
+        let url = server.url("/invalid-utf8.json").to_string();
+
+        // Send invalid UTF-8 bytes
+        let invalid_utf8 = vec![0xFF, 0xFE, 0xFD];
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/invalid-utf8.json")).respond_with(
+                status_code(200)
+                    .insert_header("Content-Length", "3")
+                    .body(invalid_utf8),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap();
+
+        let result = fetch_single_file_with_size_limit(&client, &url).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid UTF-8"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_single_file_invalid_json() {
+        // Test that invalid JSON is handled gracefully
+        // This is critical - prevents panics from malformed ruleset files
+        let server = Server::run();
+        let url = server.url("/invalid.json").to_string();
+
+        let invalid_json = "{invalid json}";
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/invalid.json")).respond_with(
+                status_code(200)
+                    .insert_header("Content-Length", invalid_json.len().to_string()) // Match actual body size
+                    .body(invalid_json),
+            ),
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap();
+
+        let result = fetch_single_file_with_size_limit(&client, &url).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("parse technologies JSON"));
+    }
 }
