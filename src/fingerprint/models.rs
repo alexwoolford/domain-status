@@ -554,4 +554,219 @@ mod tests {
         let result: Result<Category, _> = serde_json::from_str(json);
         assert!(result.is_err(), "Should fail when category name is missing");
     }
+
+    /// Test deserializing empty arrays for string_or_array fields
+    #[test]
+    fn test_technology_deserialize_empty_arrays() {
+        // Test that empty arrays are handled correctly (should return empty Vec)
+        // This is critical - empty arrays are valid and should not cause errors
+        let json = r#"{
+            "html": [],
+            "script": [],
+            "url": [],
+            "implies": [],
+            "excludes": []
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(tech.html.is_empty());
+        assert!(tech.script.is_empty());
+        assert!(tech.url.is_empty());
+        assert!(tech.implies.is_empty());
+        assert!(tech.excludes.is_empty());
+    }
+
+    /// Test deserializing empty strings in arrays
+    #[test]
+    fn test_technology_deserialize_empty_strings_in_arrays() {
+        // Test that empty strings in arrays are preserved
+        // This is critical - empty strings are valid pattern values
+        let json = r#"{
+            "html": ["pattern1", "", "pattern2"],
+            "script": [""]
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.html.len(), 3);
+        assert_eq!(tech.html[0], "pattern1");
+        assert_eq!(tech.html[1], "");
+        assert_eq!(tech.html[2], "pattern2");
+        assert_eq!(tech.script.len(), 1);
+        assert_eq!(tech.script[0], "");
+    }
+
+    /// Test deserializing empty meta map
+    #[test]
+    fn test_technology_deserialize_empty_meta_map() {
+        // Test that empty meta map is handled correctly
+        let json = r#"{
+            "meta": {}
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(tech.meta.is_empty());
+    }
+
+    /// Test deserializing meta array with null values
+    #[test]
+    fn test_technology_deserialize_meta_array_with_nulls() {
+        // Test that null values in meta arrays are filtered out (line 134 uses filter_map)
+        // This is critical - null values should not break deserialization
+        let json = r#"{
+            "meta": {
+                "generator": [null, "WordPress", null]
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string()]),
+            "Should filter out null values and only include strings"
+        );
+    }
+
+    /// Test deserializing meta array with empty strings
+    #[test]
+    fn test_technology_deserialize_meta_array_with_empty_strings() {
+        // Test that empty strings in meta arrays are preserved
+        // This is critical - empty strings are valid pattern values
+        let json = r#"{
+            "meta": {
+                "generator": ["WordPress", "", "Drupal"]
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec![
+                "WordPress".to_string(),
+                "".to_string(),
+                "Drupal".to_string()
+            ]),
+            "Should preserve empty strings in meta arrays"
+        );
+    }
+
+    /// Test deserializing meta with empty string key
+    #[test]
+    fn test_technology_deserialize_meta_empty_key() {
+        // Test that empty string keys in meta map are handled
+        // This is an edge case - empty keys are technically valid in JSON
+        let json = r#"{
+            "meta": {
+                "": "value",
+                "generator": "WordPress"
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(tech.meta.get(""), Some(&vec!["value".to_string()]));
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string()])
+        );
+    }
+
+    /// Test deserializing string_or_array with null value
+    #[test]
+    fn test_technology_deserialize_string_or_array_null() {
+        // Test that null values are rejected for string_or_array fields
+        // The visitor doesn't implement visit_none/visit_unit, so null should fail
+        let json = r#"{
+            "html": null
+        }"#;
+
+        let result: Result<Technology, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "Should fail when string_or_array field is null"
+        );
+    }
+
+    /// Test deserializing meta with null value in array
+    #[test]
+    fn test_technology_deserialize_meta_array_mixed_with_other_types() {
+        // Test that meta array with mixed types (null, number, string) filters correctly
+        // This is critical - ensures filter_map works correctly
+        let json = r#"{
+            "meta": {
+                "generator": [null, 123, "WordPress", true, "Drupal"]
+            }
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        // Should only include string values: "WordPress" and "Drupal"
+        assert_eq!(
+            tech.meta.get("generator"),
+            Some(&vec!["WordPress".to_string(), "Drupal".to_string()]),
+            "Should filter out null, numbers, and booleans, keeping only strings"
+        );
+    }
+
+    /// Test FingerprintMetadata with empty strings
+    #[test]
+    fn test_fingerprint_metadata_empty_strings() {
+        // Test that empty source/version strings are handled
+        // This is critical - empty strings might be valid in some contexts
+        let metadata = FingerprintMetadata {
+            source: "".to_string(),
+            version: "".to_string(),
+            last_updated: SystemTime::now(),
+        };
+
+        let json = serde_json::to_string(&metadata).expect("Failed to serialize");
+        let deserialized: FingerprintMetadata =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.source, "");
+        assert_eq!(deserialized.version, "");
+    }
+
+    /// Test Category with empty name
+    #[test]
+    fn test_category_deserialize_empty_name() {
+        // Test that empty name string is accepted (empty string is still a string)
+        // This is an edge case - empty name might be valid in some contexts
+        let json = r#"{
+            "name": ""
+        }"#;
+
+        let cat: Category = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(cat.name, "");
+    }
+
+    /// Test deserializing technology with all fields as empty arrays/strings
+    #[test]
+    fn test_technology_deserialize_all_empty() {
+        // Test that technology with all fields empty is valid
+        // This is critical - ensures defaults work correctly
+        let json = r#"{
+            "cats": [],
+            "website": "",
+            "headers": {},
+            "cookies": {},
+            "meta": {},
+            "script": [],
+            "html": [],
+            "url": [],
+            "js": {},
+            "implies": [],
+            "excludes": []
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(tech.cats.is_empty());
+        assert!(tech.website.is_empty());
+        assert!(tech.headers.is_empty());
+        assert!(tech.cookies.is_empty());
+        assert!(tech.meta.is_empty());
+        assert!(tech.script.is_empty());
+        assert!(tech.html.is_empty());
+        assert!(tech.url.is_empty());
+        assert!(tech.js.is_empty());
+        assert!(tech.implies.is_empty());
+        assert!(tech.excludes.is_empty());
+    }
 }
