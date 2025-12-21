@@ -1,0 +1,22 @@
+codecov:
+  # Exclude test code from coverage calculations
+  # Tarpaulin already excludes #[cfg(test)] modules, but we want to be explicit
+  ignore:
+    - "**/tests.rs"
+    - "**/test_*.rs"
+    - "**/*_test.rs"
+    # Exclude test modules within source files
+    - "**/#[cfg(test)]"
+
+  # Coverage settings
+  coverage:
+    # Don't fail CI on coverage drops (we use fail_ci_if_error: false in workflow)
+    status:
+      project: false
+      patch: false
+
+  # Comment settings for PRs
+  comment:
+    layout: "reach,diff,flags,tree"
+    behavior: default
+    require_changes: false
