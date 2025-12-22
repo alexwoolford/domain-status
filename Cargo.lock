@@ -240,9 +240,9 @@ dependencies = [
 
 [[package]]
 name = "axum"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b098575ebe77cb6d14fc7f32749631a6e44edbef6b796f89b020e99ba20d425"
+checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
 dependencies = [
  "axum-core",
  "bytes",
@@ -844,7 +844,7 @@ dependencies = [
  "once_cell",
  "psl",
  "regex",
- "reqwest 0.12.25",
+ "reqwest 0.12.26",
  "rustls",
  "scraper",
  "serde",
@@ -2006,9 +2006,9 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "maxminddb"
-version = "0.27.0"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef0551fc3e7345a6c854c1026b0ddada1e443e51f4fb4cdcf86cc1a71d4b337"
+checksum = "99681a80368084e68fff1a4ec657b09ae6a04f1107762ec6346a82b8cc19d8eb"
 dependencies = [
  "ipnetwork",
  "log",
@@ -2537,9 +2537,9 @@ dependencies = [
 
 [[package]]
 name = "psl"
-version = "2.1.168"
+version = "2.1.173"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6faf5b87f44516ca3989e1e315a0413f7a4d4886e63664cbd4a5f492c73cad93"
+checksum = "c1f92451a57d4ac86539041234be4c839d381e536a43c816f7b8f5b6139a74dd"
 dependencies = [
  "psl-types",
 ]
@@ -2771,9 +2771,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.25"
+version = "0.12.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6eff9328d40131d43bd911d42d79eb6a47312002a4daefc9e37f17e74a7701a"
+checksum = "3b4c14b2d9afca6a60277086b0cc6a6ae0b568f6f7916c943a8cdc79f8be240f"
 dependencies = [
  "base64 0.22.1",
  "bytes",
