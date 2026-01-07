@@ -235,6 +235,7 @@ mod tests {
 
     /// Test script source detection
     #[tokio::test]
+    #[ignore] // Requires network access to fetch fingerprint ruleset
     async fn test_body_script_src() {
         // Skip test if ruleset initialization fails (e.g., no network in CI)
         if init_ruleset(None, None).await.is_err() {
@@ -271,6 +272,7 @@ mod tests {
 
     /// Test HTML pattern detection (WordPress)
     #[tokio::test]
+    #[ignore] // Requires network access to fetch fingerprint ruleset
     async fn test_body_html_pattern() {
         // Skip test if ruleset initialization fails (e.g., no network in CI)
         if init_ruleset(None, None).await.is_err() {
