@@ -1552,9 +1552,8 @@ mod tests {
         // Should extract "10" (not "1" from partial match)
         // Note: The code only checks \1-\9, so \10 won't work, but this tests the reverse order logic
         // For \9, it should work correctly
-        if result.version.is_some() {
+        if let Some(version) = result.version {
             // If version extraction works, verify it's correct
-            let version = result.version.unwrap();
             // Should not be "1" (partial match)
             assert_ne!(version, "1");
         }
