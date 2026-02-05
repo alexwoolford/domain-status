@@ -10,11 +10,23 @@ use crate::geoip::{GEOIP_ASN_READER, GEOIP_CITY_READER};
 ///
 /// Returns `None` if GeoIP is not initialized or if the lookup fails.
 pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
-    let city_reader = GEOIP_CITY_READER.read().ok()?;
+    let city_reader = match GEOIP_CITY_READER.read() {
+        Ok(reader) => reader,
+        Err(e) => {
+            log::warn!("GeoIP city reader lock poisoned: {}", e);
+            return None;
+        }
+    };
     let (city_reader, _) = city_reader.as_ref()?;
 
     // Parse IP address
-    let ip_addr: std::net::IpAddr = ip.parse().ok()?;
+    let ip_addr: std::net::IpAddr = match ip.parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            log::debug!("Failed to parse IP address '{}': {}", ip, e);
+            return None;
+        }
+    };
 
     let mut geo_result = GeoIpResult::default();
 
@@ -63,7 +75,13 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     // Lookup ASN data if ASN database is available
     // maxminddb 0.27 API: lookup() returns Result<LookupResult, MaxMindDbError>
     // Use has_data() to check if data exists, then decode() to get the Asn struct
-    let asn_reader = GEOIP_ASN_READER.read().ok()?;
+    let asn_reader = match GEOIP_ASN_READER.read() {
+        Ok(reader) => reader,
+        Err(e) => {
+            log::warn!("GeoIP ASN reader lock poisoned: {}", e);
+            return None;
+        }
+    };
     if let Some((asn_reader, _)) = asn_reader.as_ref() {
         if let Ok(asn_lookup) = asn_reader.lookup(ip_addr) {
             if asn_lookup.has_data() {

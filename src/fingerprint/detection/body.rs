@@ -58,7 +58,7 @@ pub async fn check_body(
             if result.matched {
                 matched = true;
                 if version.is_none() && result.version.is_some() {
-                    version = result.version.clone();
+                    version = result.version;
                 }
                 // If we get a version from HTML pattern, we can stop checking HTML patterns
                 if version.is_some() {
@@ -75,7 +75,7 @@ pub async fn check_body(
                 if result.matched {
                     matched = true;
                     if version.is_none() && result.version.is_some() {
-                        version = result.version.clone();
+                        version = result.version;
                     }
                     // If we found a version from this script, stop checking other patterns for this script
                     if version.is_some() {
@@ -98,7 +98,7 @@ pub async fn check_body(
                 matched = true;
                 // If we already matched via HTML/script but have no version, use version from meta
                 if version.is_none() && result.version.is_some() {
-                    version = result.version.clone();
+                    version = result.version;
                 }
                 // If we haven't matched yet, this is the first match
                 if version.is_some() {
@@ -113,7 +113,7 @@ pub async fn check_body(
             if result.matched {
                 matched = true;
                 if version.is_none() && result.version.is_some() {
-                    version = result.version.clone();
+                    version = result.version;
                 }
                 if version.is_some() {
                     break;

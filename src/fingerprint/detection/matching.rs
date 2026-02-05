@@ -982,8 +982,8 @@ mod tests {
         assert!(!result.contains("TechB"));
     }
 
-    #[test]
-    fn test_matches_technology_all_empty_patterns() {
+    #[tokio::test]
+    async fn test_matches_technology_all_empty_patterns() {
         // Test technology with all empty patterns (should not match)
         let tech = create_empty_technology();
         let params = TechnologyMatchParams {
@@ -1000,16 +1000,15 @@ mod tests {
 
         // Technology with no patterns should not match (tested in matches_technology function)
         // This is a critical edge case - empty technology should never match
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         assert!(
             !result.matched,
             "Technology with all empty patterns should not match"
         );
     }
 
-    #[test]
-    fn test_matches_technology_js_empty_but_has_js_field() {
+    #[tokio::test]
+    async fn test_matches_technology_js_empty_but_has_js_field() {
         // Test that JS field matching only works via script_tag_ids
         // If js field is not empty but no matching script_tag_ids, should not match
         let mut tech = create_empty_technology();
@@ -1028,14 +1027,13 @@ mod tests {
             script_tag_ids: &HashSet::new(), // No matching script tag ID
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         // Should not match because script_tag_ids doesn't contain "__NEXT_DATA__"
         assert!(!result.matched);
     }
 
-    #[test]
-    fn test_matches_technology_cookie_empty_pattern() {
+    #[tokio::test]
+    async fn test_matches_technology_cookie_empty_pattern() {
         // Test that empty cookie pattern matches any value (special case in code)
         let mut tech = create_empty_technology();
         tech.cookies.insert("session".to_string(), String::new()); // Empty pattern
@@ -1055,14 +1053,13 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         // Empty pattern should match any cookie value
         assert!(result.matched);
     }
 
-    #[test]
-    fn test_matches_technology_header_case_sensitivity() {
+    #[tokio::test]
+    async fn test_matches_technology_header_case_sensitivity() {
         // Test that header matching is case-insensitive (headers normalized to lowercase)
         let mut tech = create_empty_technology();
         tech.headers
@@ -1084,8 +1081,7 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         // Pattern matching is case-insensitive now (to match wappalyzergo), so "nginx" will match "NGINX"
         // Headers are normalized to lowercase, so this should match
         assert!(
@@ -1094,8 +1090,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_matches_technology_url_pattern_special_chars() {
+    #[tokio::test]
+    async fn test_matches_technology_url_pattern_special_chars() {
         // Test URL pattern matching with special characters
         let mut tech = create_empty_technology();
         tech.url.push("example\\.com".to_string()); // Escaped dot in regex
@@ -1112,14 +1108,13 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         // Escaped dot should match literal dot
         assert!(result.matched);
     }
 
-    #[test]
-    fn test_matches_technology_script_source_special_chars() {
+    #[tokio::test]
+    async fn test_matches_technology_script_source_special_chars() {
         // Test script source matching with URL-encoded and special characters
         let mut tech = create_empty_technology();
         tech.script.push("jquery".to_string());
@@ -1141,14 +1136,13 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         // Should match script sources containing "jquery"
         assert!(result.matched);
     }
 
-    #[test]
-    fn test_matches_technology_html_pattern_very_long_text() {
+    #[tokio::test]
+    async fn test_matches_technology_html_pattern_very_long_text() {
         // Test HTML pattern matching with very long HTML text
         let mut tech = create_empty_technology();
         tech.html.push("WordPress".to_string());
@@ -1168,8 +1162,7 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
         // Should handle very long text without panicking
         assert!(
             !result.matched,
@@ -1177,8 +1170,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_matches_technology_script_version_selection_order() {
+    #[tokio::test]
+    async fn test_matches_technology_script_version_selection_order() {
         // Test that when multiple scripts match different patterns, we take the version from the first script
         // This reproduces the 1liberty.com issue where:
         // - Script 1: jquery-3.2.1.slim.min.js matches pattern 2, extracts 3.2.1
@@ -1207,8 +1200,7 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
 
         assert!(result.matched, "Should match jQuery");
         // Should detect version 3.2.1 (from first script), not 3.3.1 (from second script)
@@ -1250,8 +1242,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_matches_technology_google_analytics_via_script() {
+    #[tokio::test]
+    async fn test_matches_technology_google_analytics_via_script() {
         // Test Google Analytics detection via scriptSrc pattern (even without cookies)
         let mut tech = create_empty_technology();
         tech.cookies.insert("_ga".to_string(), String::new()); // Cookie pattern (not required)
@@ -1273,8 +1265,7 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
 
         assert!(
             result.matched,
@@ -1524,8 +1515,8 @@ mod tests {
         assert!(result.is_none(), "Should not match different domain");
     }
 
-    #[test]
-    fn test_matches_technology_wordpress_version_from_meta_after_html_match() {
+    #[tokio::test]
+    async fn test_matches_technology_wordpress_version_from_meta_after_html_match() {
         // Test WordPress version extraction from meta generator tag when HTML pattern matches first
         // This reproduces the 4dmoleculartherapeutics.com issue
         let mut tech = create_empty_technology();
@@ -1554,8 +1545,7 @@ mod tests {
             script_tag_ids: &HashSet::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(matches_technology(params));
+        let result = matches_technology(params).await;
 
         assert!(result.matched, "Should match WordPress");
         assert_eq!(

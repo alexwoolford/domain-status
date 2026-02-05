@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
             let log_file = config
                 .log_file
                 .as_ref()
-                .expect("log_file should always be set");
+                .context("Configuration error: log_file not set")?;
             init_logger_to_file(log_level.into(), log_file)
                 .context("Failed to initialize file logger")?;
             eprintln!("📝 Logs: {}", log_file.display());
@@ -289,7 +289,7 @@ async fn main() -> Result<()> {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
-                    .expect("Invalid progress bar template")
+                    .context("Failed to create progress bar template")?
                     .progress_chars("█▓░"),
             );
             pb.enable_steady_tick(Duration::from_millis(100));

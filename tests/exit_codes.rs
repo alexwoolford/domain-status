@@ -82,17 +82,7 @@ fn test_fail_on_any_failure_without_failures() {
         elapsed_seconds: 1.0,
     };
 
-    let exit_code = match &FailOn::AnyFailure {
-        FailOn::Never => 0,
-        FailOn::AnyFailure => {
-            if report.failed > 0 {
-                2
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
+    let exit_code = evaluate_exit_code(&FailOn::AnyFailure, 10, &report);
     assert_eq!(
         exit_code, 0,
         "FailOn::AnyFailure should return 0 when no failures"
@@ -134,21 +124,7 @@ fn test_fail_on_pct_threshold_above_threshold() {
         elapsed_seconds: 1.0,
     };
 
-    let exit_code = match &FailOn::PctGreaterThan {
-        FailOn::PctGreaterThan => {
-            if report.total_urls == 0 {
-                3
-            } else {
-                let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
-                if failure_pct > 25.0 {
-                    2
-                } else {
-                    0
-                }
-            }
-        }
-        _ => 0,
-    };
+    let exit_code = evaluate_exit_code(&FailOn::PctGreaterThan, 25, &report);
     assert_eq!(
         exit_code, 2,
         "Should return 2 when failure % exceeds threshold"
@@ -169,21 +145,7 @@ fn test_fail_on_pct_threshold_exact_threshold() {
         elapsed_seconds: 1.0,
     };
 
-    let exit_code = match &FailOn::PctGreaterThan {
-        FailOn::PctGreaterThan => {
-            if report.total_urls == 0 {
-                3
-            } else {
-                let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
-                if failure_pct > 20.0 {
-                    2
-                } else {
-                    0
-                }
-            }
-        }
-        _ => 0,
-    };
+    let exit_code = evaluate_exit_code(&FailOn::PctGreaterThan, 20, &report);
     assert_eq!(
         exit_code, 0,
         "Should return 0 when failure % equals threshold (not greater)"
@@ -204,21 +166,7 @@ fn test_fail_on_pct_threshold_zero_urls() {
         elapsed_seconds: 1.0,
     };
 
-    let exit_code = match &FailOn::PctGreaterThan {
-        FailOn::PctGreaterThan => {
-            if report.total_urls == 0 {
-                3
-            } else {
-                let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
-                if failure_pct > 10.0 {
-                    2
-                } else {
-                    0
-                }
-            }
-        }
-        _ => 0,
-    };
+    let exit_code = evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report);
     assert_eq!(
         exit_code, 3,
         "Should return 3 (partial success) when no URLs processed"

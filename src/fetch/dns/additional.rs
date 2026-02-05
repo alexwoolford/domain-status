@@ -60,7 +60,13 @@ pub(crate) async fn fetch_additional_dns_records(
     };
 
     // Extract TXT records for both JSON storage and SPF/DMARC extraction
-    let txt_for_extraction = txt_result.as_ref().ok().cloned().unwrap_or_default();
+    let txt_for_extraction = txt_result
+        .as_ref()
+        .map(|txt| txt.clone())
+        .unwrap_or_else(|e| {
+            log::debug!("Failed to extract TXT records for pattern matching: {}", e);
+            Vec::new()
+        });
 
     let txt_records = match txt_result {
         Ok(txt) if !txt.is_empty() => {
