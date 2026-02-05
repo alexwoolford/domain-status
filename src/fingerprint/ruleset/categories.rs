@@ -267,6 +267,7 @@ mod tests {
         file.write_all(r#"{"1": {"name": "CMS"}, "2": {"name": "E-commerce"}}"#.as_bytes())
             .await
             .expect("Failed to write categories JSON");
+        file.flush().await.expect("Failed to flush file");
         drop(file);
 
         let tech_path = temp_dir.path().join("technologies");
@@ -301,6 +302,7 @@ mod tests {
         file.write_all(b"{ invalid json }")
             .await
             .expect("Failed to write invalid JSON");
+        file.flush().await.expect("Failed to flush file");
         drop(file);
 
         let tech_path = temp_dir.path().join("technologies");
@@ -320,6 +322,7 @@ mod tests {
         file.write_all(r#"{"1": {"name": "CMS"}}"#.as_bytes())
             .await
             .expect("Failed to write categories JSON");
+        file.flush().await.expect("Failed to flush file");
         drop(file);
 
         // Test with directory path
@@ -351,6 +354,7 @@ mod tests {
         file.write_all(r#"{"1": {"name": "CMS"}}"#.as_bytes())
             .await
             .expect("Failed to write categories JSON");
+        file.flush().await.expect("Failed to flush file");
         drop(file);
 
         // Test with file path in technologies subdirectory
