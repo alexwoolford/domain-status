@@ -181,6 +181,11 @@ pub struct Config {
     /// **Important**: The callback is invoked synchronously from async tasks.
     /// Keep callback execution fast (microseconds) to avoid blocking URL processing.
     /// For slow operations, spawn a separate task inside the callback.
+    ///
+    /// **Thread Safety**: The callback may be invoked concurrently from multiple
+    /// tokio tasks. If the callback maintains state, use `Arc<Mutex<_>>` or atomic
+    /// operations. The `completed` and `failed` counters are already `Arc<AtomicUsize>`,
+    /// so they can be safely read from multiple threads.
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
     pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,

@@ -110,6 +110,25 @@ mod run {
         pub elapsed_seconds: f64,
     }
 
+    /// Helper function to invoke the progress callback if provided.
+    ///
+    /// This reduces code duplication by centralizing the callback invocation logic.
+    #[allow(clippy::type_complexity)]
+    fn invoke_progress_callback(
+        callback: &Option<Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,
+        completed: &Arc<AtomicUsize>,
+        failed: &Arc<AtomicUsize>,
+        total: usize,
+    ) {
+        if let Some(ref cb) = callback {
+            cb(
+                completed.load(Ordering::SeqCst),
+                failed.load(Ordering::SeqCst),
+                total,
+            );
+        }
+    }
+
     /// Runs a URL scan with the provided configuration.
     ///
     /// This is the main entry point for the library. It reads URLs from the input file,
@@ -341,6 +360,9 @@ mod run {
             Arc::clone(&timing_stats),
         ));
 
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: usize = 10;
+
         loop {
             let line_result = if is_stdin {
                 stdin_lines
@@ -356,9 +378,20 @@ mod run {
                     .await
             };
             let line = match line_result {
-                Ok(Some(line)) => line,
+                Ok(Some(line)) => {
+                    consecutive_errors = 0; // Reset on success
+                    line
+                }
                 Ok(None) => break,
                 Err(e) => {
+                    consecutive_errors += 1;
+                    if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
+                        return Err(anyhow::anyhow!(
+                            "Too many consecutive read errors ({}): {}",
+                            consecutive_errors,
+                            e
+                        ));
+                    }
                     warn!("Failed to read line from input: {e}");
                     continue;
                 }
@@ -411,12 +444,12 @@ mod run {
                 match result {
                     Ok(ProcessUrlResult { result: Ok(()), .. }) => {
                         completed_urls_clone.fetch_add(1, Ordering::SeqCst);
-                        // Invoke progress callback if provided
-                        if let Some(ref cb) = progress_callback_clone {
-                            let completed = completed_urls_clone.load(Ordering::SeqCst);
-                            let failed = failed_urls_clone.load(Ordering::SeqCst);
-                            cb(completed, failed, total_urls_for_callback);
-                        }
+                        invoke_progress_callback(
+                            &progress_callback_clone,
+                            &completed_urls_clone,
+                            &failed_urls_clone,
+                            total_urls_for_callback,
+                        );
                         if let Some(adaptive) = adaptive_limiter_for_task {
                             adaptive.record_success().await;
                         }
@@ -426,12 +459,12 @@ mod run {
                         retry_count,
                     }) => {
                         failed_urls_clone.fetch_add(1, Ordering::SeqCst);
-                        // Invoke progress callback if provided
-                        if let Some(ref cb) = progress_callback_clone {
-                            let completed = completed_urls_clone.load(Ordering::SeqCst);
-                            let failed = failed_urls_clone.load(Ordering::SeqCst);
-                            cb(completed, failed, total_urls_for_callback);
-                        }
+                        invoke_progress_callback(
+                            &progress_callback_clone,
+                            &completed_urls_clone,
+                            &failed_urls_clone,
+                            total_urls_for_callback,
+                        );
                         log::warn!("Failed to process URL {}: {e}", url_for_logging.as_ref());
 
                         let elapsed = process_start.elapsed().as_secs_f64();
@@ -478,12 +511,12 @@ mod run {
                     }
                     Err(_) => {
                         failed_urls_clone.fetch_add(1, Ordering::SeqCst);
-                        // Invoke progress callback if provided
-                        if let Some(ref cb) = progress_callback_clone {
-                            let completed = completed_urls_clone.load(Ordering::SeqCst);
-                            let failed = failed_urls_clone.load(Ordering::SeqCst);
-                            cb(completed, failed, total_urls_for_callback);
-                        }
+                        invoke_progress_callback(
+                            &progress_callback_clone,
+                            &completed_urls_clone,
+                            &failed_urls_clone,
+                            total_urls_for_callback,
+                        );
                         log::warn!("Timeout processing URL {}", url_for_logging.as_ref());
 
                         let elapsed = process_start.elapsed().as_secs_f64();

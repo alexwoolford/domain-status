@@ -21,7 +21,11 @@ pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<Fi
 
     // Check if cache exists
     if !metadata_path.exists() || !technologies_path.exists() {
-        return Err(anyhow::anyhow!("Cache not found"));
+        return Err(anyhow::anyhow!(
+            "Cache not found at {} for source {}",
+            cache_dir.display(),
+            source
+        ));
     }
 
     // Load metadata
@@ -56,7 +60,12 @@ pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<Fi
     // Check if cache is fresh
     if let Ok(age) = metadata.last_updated.elapsed() {
         if age > CACHE_DURATION {
-            return Err(anyhow::anyhow!("Cache expired"));
+            return Err(anyhow::anyhow!(
+                "Cache expired (age: {:?}, max: {:?}) for source {}",
+                age,
+                CACHE_DURATION,
+                source
+            ));
         }
     }
 
