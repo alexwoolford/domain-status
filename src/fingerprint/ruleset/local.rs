@@ -79,6 +79,7 @@ mod tests {
         file.write_all(b"{ invalid json }")
             .await
             .expect("Failed to write invalid JSON");
+        file.flush().await.expect("Failed to flush file");
         drop(file);
 
         let result = load_from_path(&file_path).await;

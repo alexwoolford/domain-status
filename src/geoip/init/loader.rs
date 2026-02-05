@@ -307,6 +307,7 @@ mod tests {
         file.write_all(b"not a valid mmdb file")
             .await
             .expect("Failed to write test data");
+        file.flush().await.expect("Failed to flush file");
         drop(file);
 
         let result = load_from_file(db_path.to_str().unwrap()).await;
