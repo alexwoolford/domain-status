@@ -29,7 +29,6 @@ pub struct SocialMediaLink {
     pub identifier: Option<String>, // Username, handle, or ID extracted from URL
 }
 
-
 // Lazy static regex patterns for social media links
 static LINKEDIN_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(LINKEDIN_URL_PATTERN)

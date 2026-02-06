@@ -22,8 +22,9 @@ static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
 });
 
 static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(META_KEYWORDS_SELECTOR_STR)
-        .expect("META_KEYWORDS_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
+    Selector::parse(META_KEYWORDS_SELECTOR_STR).expect(
+        "META_KEYWORDS_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug",
+    )
 });
 
 static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {

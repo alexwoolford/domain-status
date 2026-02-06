@@ -31,7 +31,6 @@ pub fn parse_selector_with_fallback(selector_str: &str, context: &str) -> Select
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

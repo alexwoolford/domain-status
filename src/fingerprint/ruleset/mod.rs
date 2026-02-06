@@ -520,8 +520,15 @@ mod tests {
         };
 
         // Verify it's a valid SHA256 hex string (64 characters)
-        assert_eq!(cache_key.len(), 64, "SHA256 hash should be 64 hex characters");
-        assert!(cache_key.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
+        assert_eq!(
+            cache_key.len(),
+            64,
+            "SHA256 hash should be 64 hex characters"
+        );
+        assert!(
+            cache_key.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should only contain hex digits"
+        );
 
         // Verify the expected hash value for "https://source.com"
         let expected_hash = "60ef962257f419d4576a713a49f7309f1797614577b1f16cc9a867a54f386619";
@@ -544,8 +551,15 @@ mod tests {
         };
 
         // Verify it's a valid SHA256 hex string (64 characters)
-        assert_eq!(cache_key.len(), 64, "SHA256 hash should be 64 hex characters");
-        assert!(cache_key.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
+        assert_eq!(
+            cache_key.len(),
+            64,
+            "SHA256 hash should be 64 hex characters"
+        );
+        assert!(
+            cache_key.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should only contain hex digits"
+        );
 
         // Verify the expected hash value for "https://source1.com\nhttps://source2.com"
         let expected_hash = "f3457c3dd40c5100f522ed2aba0f2fc774223660a93ce15d08b294d004293fea";
@@ -593,6 +607,9 @@ mod tests {
 
         // Should produce valid hash regardless of special characters
         assert_eq!(cache_key.len(), 64, "Hash should be 64 hex characters");
-        assert!(cache_key.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
+        assert!(
+            cache_key.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should only contain hex digits"
+        );
     }
 }
