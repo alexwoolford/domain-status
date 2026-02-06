@@ -63,16 +63,6 @@ fn is_valid_gtm_id(id: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
-/// Helper function to safely compile a regex pattern, panicking with a detailed error message
-/// if compilation fails. Used for static regex patterns that are compile-time constants.
-fn compile_regex_unsafe(pattern: &str, context: &str) -> Regex {
-    Regex::new(pattern).unwrap_or_else(|e| {
-        panic!(
-            "Failed to compile regex pattern '{}' in {}: {}. This is a programming error.",
-            pattern, context, e
-        )
-    })
-}
 
 /// Extracts analytics and tracking IDs from HTML content and JavaScript.
 ///
@@ -96,10 +86,8 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Google Analytics (Universal Analytics): ga('create', 'UA-XXXXX-Y')
     // Pattern: ga('create', 'UA-XXXXX-Y') or ga("create", "UA-XXXXX-Y")
     static GA_UA_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        compile_regex_unsafe(
-            r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#,
-            "GA_UA_PATTERN",
-        )
+        Regex::new(r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#)
+            .expect("GA_UA_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in GA_UA_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -117,10 +105,8 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Google Analytics 4 (GA4): gtag('config', 'G-XXXXXXXXXX')
     // Pattern: gtag('config', 'G-XXXXXXXXXX') or gtag("config", "G-XXXXXXXXXX")
     static GA4_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        compile_regex_unsafe(
-            r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#,
-            "GA4_PATTERN",
-        )
+        Regex::new(r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#)
+            .expect("GA4_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in GA4_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -138,10 +124,8 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Facebook Pixel: fbq('init', 'XXXXX')
     // Pattern: fbq('init', 'XXXXX') or fbq("init", "XXXXX")
     static FB_PIXEL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        compile_regex_unsafe(
-            r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#,
-            "FB_PIXEL_PATTERN",
-        )
+        Regex::new(r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#)
+            .expect("FB_PIXEL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in FB_PIXEL_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -166,10 +150,8 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Valid GTM container IDs: GTM- followed by uppercase letters and numbers only (typically 6-7 chars)
     // We use case-sensitive matching to avoid false positives like "gtm-company", "gtm-industry"
     static GTM_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        compile_regex_unsafe(
-            r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]{4,})\b"#,
-            "GTM_PATTERN",
-        )
+        Regex::new(r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]{4,})\b"#)
+            .expect("GTM_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in GTM_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -192,7 +174,8 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // This catches GTM IDs that appear without the keywords above
     // Must be uppercase GTM- followed by uppercase letters/numbers only
     static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        compile_regex_unsafe(r#"\b(GTM-[A-Z0-9]{4,})\b"#, "GTM_STANDALONE_PATTERN")
+        Regex::new(r#"\b(GTM-[A-Z0-9]{4,})\b"#)
+            .expect("GTM_STANDALONE_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in GTM_STANDALONE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
@@ -214,8 +197,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // Pattern: ca-pub-XXXXXXXXXX or pub-XXXXXXXXXX
     // AdSense publisher IDs are typically 16 digits (e.g., pub-1234567890123456)
     // We require at least 10 digits to avoid false positives like "pub-1"
-    static ADSENSE_PATTERN: LazyLock<Regex> =
-        LazyLock::new(|| compile_regex_unsafe(r#"(?i)(?:ca-)?pub-(\d{10,})"#, "ADSENSE_PATTERN"));
+    static ADSENSE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)(?:ca-)?pub-(\d{10,})"#)
+            .expect("ADSENSE_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+    });
     for cap in ADSENSE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = format!("pub-{}", id.as_str());

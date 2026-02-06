@@ -75,12 +75,24 @@ pub(crate) async fn load_categories_from_path(path: &Path) -> Result<HashMap<u32
         path.parent()
             .map(|p| p.join("categories.json"))
             .or_else(|| Some(path.join("categories.json")))
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine categories.json path"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot determine categories.json path. Checked: parent directory of '{}' and \
+                    same directory. Ensure categories.json exists in the expected location.",
+                    path.display()
+                )
+            })?
     } else {
         // If it's a file, replace filename with categories.json
         path.parent()
             .map(|p| p.join("categories.json"))
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine categories.json path"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot determine categories.json path. Checked: parent directory of '{}'. \
+                    Ensure categories.json exists in the expected location.",
+                    path.display()
+                )
+            })?
     };
 
     if !categories_path.exists() {

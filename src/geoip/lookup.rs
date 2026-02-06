@@ -13,7 +13,11 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     let city_reader = match GEOIP_CITY_READER.read() {
         Ok(reader) => reader,
         Err(e) => {
-            log::warn!("GeoIP city reader lock poisoned: {}", e);
+            log::error!(
+                "GeoIP database access failed due to lock poisoning (fatal error). \
+                Please restart the application. Details: {}",
+                e
+            );
             return None;
         }
     };
@@ -78,7 +82,11 @@ pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     let asn_reader = match GEOIP_ASN_READER.read() {
         Ok(reader) => reader,
         Err(e) => {
-            log::warn!("GeoIP ASN reader lock poisoned: {}", e);
+            log::error!(
+                "GeoIP database access failed due to lock poisoning (fatal error). \
+                Please restart the application. Details: {}",
+                e
+            );
             return None;
         }
     };

@@ -36,7 +36,11 @@ pub(crate) async fn fetch_from_github_directory(
             })?;
             (constructed_url, branch)
         } else {
-            return Err(anyhow::anyhow!("Invalid GitHub URL format: {}", dir_url));
+            return Err(anyhow::anyhow!(
+                "Invalid GitHub URL format. Expected: \
+                'https://raw.githubusercontent.com/owner/repo/branch/path', got: '{}'",
+                dir_url
+            ));
         }
     } else {
         // Already an API URL or different format - validate it

@@ -69,6 +69,7 @@ include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
+sha2 = "^0.10"
 # Note: With rust-version = "1.85", edition 2024 is available
 # No need to constrain base64ct or home - newer versions will work
 

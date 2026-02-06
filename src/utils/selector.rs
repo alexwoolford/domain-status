@@ -31,28 +31,6 @@ pub fn parse_selector_with_fallback(selector_str: &str, context: &str) -> Select
     })
 }
 
-/// Parses a CSS selector that must succeed (for compile-time constants).
-///
-/// This function panics if parsing fails, which is appropriate for static selectors
-/// that are compile-time constants. Use `parse_selector_with_fallback()` for
-/// dynamic selectors.
-///
-/// # Arguments
-///
-/// * `selector_str` - The CSS selector string to parse
-/// * `context` - Context description for error messages
-///
-/// # Panics
-///
-/// Panics if the selector cannot be parsed (indicates a programming error).
-pub fn parse_selector_unsafe(selector_str: &str, context: &str) -> Selector {
-    Selector::parse(selector_str).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse CSS selector '{}' in {}: {}. This is a programming error.",
-            selector_str, context, e
-        )
-    })
-}
 
 #[cfg(test)]
 mod tests {
@@ -104,25 +82,6 @@ mod tests {
         let html = scraper::Html::parse_fragment("<div attr='unclosed'>test</div>");
         let matches: Vec<_> = html.select(&selector).collect();
         assert_eq!(matches.len(), 0);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_parse_selector_unsafe_invalid() {
-        // Should panic on invalid selector
-        // Use a selector that definitely won't parse (invalid syntax)
-        // Note: Some malformed selectors might actually parse due to scraper's leniency
-        // This test verifies that parse_selector_unsafe panics on parse failure
-        parse_selector_unsafe("[[[", "test");
-    }
-
-    #[test]
-    fn test_parse_selector_unsafe_valid() {
-        let selector = parse_selector_unsafe("div", "test");
-        // Should parse successfully
-        let html = scraper::Html::parse_fragment("<div>test</div>");
-        let matches: Vec<_> = html.select(&selector).collect();
-        assert_eq!(matches.len(), 1);
     }
 
     #[test]

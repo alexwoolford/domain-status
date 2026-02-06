@@ -29,41 +29,53 @@ pub struct SocialMediaLink {
     pub identifier: Option<String>, // Username, handle, or ID extracted from URL
 }
 
-/// Helper function to safely compile a regex pattern, panicking with a detailed error message
-/// if compilation fails. Used for static regex patterns that are compile-time constants.
-fn compile_regex_unsafe(pattern: &str, context: &str) -> Regex {
-    Regex::new(pattern).unwrap_or_else(|e| {
-        panic!(
-            "Failed to compile regex pattern '{}' in {}: {}. This is a programming error.",
-            pattern, context, e
-        )
-    })
-}
 
 // Lazy static regex patterns for social media links
-static LINKEDIN_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(LINKEDIN_URL_PATTERN, "LINKEDIN_RE"));
-static TWITTER_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(TWITTER_URL_PATTERN, "TWITTER_RE"));
-static FACEBOOK_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(FACEBOOK_URL_PATTERN, "FACEBOOK_RE"));
-static INSTAGRAM_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(INSTAGRAM_URL_PATTERN, "INSTAGRAM_RE"));
-static YOUTUBE_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(YOUTUBE_URL_PATTERN, "YOUTUBE_RE"));
-static GITHUB_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(GITHUB_URL_PATTERN, "GITHUB_RE"));
-static TIKTOK_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(TIKTOK_URL_PATTERN, "TIKTOK_RE"));
-static PINTEREST_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(PINTEREST_URL_PATTERN, "PINTEREST_RE"));
-static SNAPCHAT_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(SNAPCHAT_URL_PATTERN, "SNAPCHAT_RE"));
-static REDDIT_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex_unsafe(REDDIT_URL_PATTERN, "REDDIT_RE"));
+static LINKEDIN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(LINKEDIN_URL_PATTERN)
+        .expect("LINKEDIN_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static TWITTER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(TWITTER_URL_PATTERN)
+        .expect("TWITTER_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static FACEBOOK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(FACEBOOK_URL_PATTERN)
+        .expect("FACEBOOK_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static INSTAGRAM_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(INSTAGRAM_URL_PATTERN)
+        .expect("INSTAGRAM_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static YOUTUBE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(YOUTUBE_URL_PATTERN)
+        .expect("YOUTUBE_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static GITHUB_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(GITHUB_URL_PATTERN)
+        .expect("GITHUB_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static TIKTOK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(TIKTOK_URL_PATTERN)
+        .expect("TIKTOK_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static PINTEREST_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(PINTEREST_URL_PATTERN)
+        .expect("PINTEREST_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static SNAPCHAT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(SNAPCHAT_URL_PATTERN)
+        .expect("SNAPCHAT_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
+static REDDIT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(REDDIT_URL_PATTERN)
+        .expect("REDDIT_URL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
+});
 
-static ANCHOR_SELECTOR: LazyLock<Selector> =
-    LazyLock::new(|| crate::utils::parse_selector_unsafe(ANCHOR_SELECTOR_STR, "ANCHOR_SELECTOR"));
+static ANCHOR_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(ANCHOR_SELECTOR_STR)
+        .expect("ANCHOR_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
+});
 
 /// Extracts social media links from an HTML document.
 ///
