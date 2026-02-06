@@ -190,12 +190,11 @@ pub async fn resolve_redirect_chain(
 
     // Use last_fetched_url as the final URL (the last URL we actually fetched)
     // This ensures we never return a URL that wasn't actually fetched
-    let final_url = last_fetched_url.clone();
-
     // Ensure final URL is included in chain (in case we broke out of loop early)
-    if !chain.contains(&final_url) {
-        chain.push(final_url.clone());
+    if !chain.contains(&last_fetched_url) {
+        chain.push(last_fetched_url.clone());
     }
+    let final_url = last_fetched_url; // Move instead of clone (optimization)
 
     Ok((final_url, chain, alt_svc_header))
 }
