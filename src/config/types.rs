@@ -675,4 +675,122 @@ mod tests {
         // Should return max_concurrency error (first check)
         assert_eq!(err.field, "max_concurrency");
     }
+
+    // Property-based tests using proptest
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn test_config_validation_concurrency(n in 1u32..=500) {
+            let config = Config {
+                max_concurrency: n as usize,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_ok(),
+                "Concurrency 1-500 should be valid");
+        }
+
+        #[test]
+        fn test_config_validation_concurrency_invalid(n in 501u32..1000) {
+            let config = Config {
+                max_concurrency: n as usize,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_err(),
+                "Concurrency > 500 should be invalid");
+        }
+
+        #[test]
+        fn test_config_validation_rate_limit(n in 0u32..=100) {
+            let config = Config {
+                rate_limit_rps: n,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_ok(),
+                "Rate limit 0-100 should be valid");
+        }
+
+        #[test]
+        fn test_config_validation_rate_limit_invalid(n in 101u32..1000) {
+            let config = Config {
+                rate_limit_rps: n,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_err(),
+                "Rate limit > 100 should be invalid");
+        }
+
+        #[test]
+        fn test_config_validation_error_threshold(threshold in 0.0f64..=1.0) {
+            let config = Config {
+                adaptive_error_threshold: threshold,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_ok(),
+                "Error threshold 0.0-1.0 should be valid");
+        }
+
+        #[test]
+        fn test_config_validation_error_threshold_invalid_high(threshold in 1.01f64..10.0) {
+            let config = Config {
+                adaptive_error_threshold: threshold,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_err(),
+                "Error threshold > 1.0 should be invalid");
+        }
+
+        #[test]
+        fn test_config_validation_error_threshold_invalid_low(threshold in -10.0f64..-0.01) {
+            let config = Config {
+                adaptive_error_threshold: threshold,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_err(),
+                "Error threshold < 0.0 should be invalid");
+        }
+
+        #[test]
+        fn test_config_validation_fail_on_pct(pct in 0u8..=100) {
+            let config = Config {
+                fail_on_pct_threshold: pct,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_ok(),
+                "Fail on pct 0-100 should be valid");
+        }
+
+        #[test]
+        fn test_config_validation_fail_on_pct_invalid(pct in 101u8..=255) {
+            let config = Config {
+                fail_on_pct_threshold: pct,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_err(),
+                "Fail on pct > 100 should be invalid");
+        }
+
+        #[test]
+        fn test_config_validation_timeout(timeout in 1u64..3600) {
+            let config = Config {
+                timeout_seconds: timeout,
+                ..Default::default()
+            };
+            prop_assert!(config.validate().is_ok(),
+                "Timeout >= 1 should be valid");
+        }
+
+        #[test]
+        fn test_config_validation_user_agent_nonempty(agent in "[a-zA-Z0-9]+( [a-zA-Z0-9]+){0,10}") {
+            let config = Config {
+                user_agent: agent.clone(),
+                ..Default::default()
+            };
+            // Ensure the agent is not just whitespace after trimming
+            if !agent.trim().is_empty() {
+                prop_assert!(config.validate().is_ok(),
+                    "Non-empty user agent should be valid");
+            }
+        }
+    }
 }

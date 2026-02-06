@@ -77,3 +77,4 @@ check_psl*
 compare_detection
 *.db
 :memory:
+proptest-regressions/
