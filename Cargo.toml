@@ -12,6 +12,29 @@ documentation = "https://docs.rs/domain_status"
 keywords = ["url", "scraper", "domain", "status", "monitoring"]
 categories = ["web-programming", "command-line-utilities", "development-tools"]
 
+[lints.clippy]
+# === Correctness (prevent bugs) ===
+cast_possible_truncation = "warn"        # usize→u32, u64→u32 truncation
+cast_precision_loss = "warn"             # usize→f64, i64→f64 precision loss
+cast_sign_loss = "warn"                  # i32→u32 sign loss
+float_cmp = "warn"                       # Direct float equality checks
+duration_subsec = "warn"                 # Unchecked duration subtraction
+
+# === Performance ===
+needless_pass_by_value = "warn"          # Unnecessary clones in parameters
+clone_on_copy = "warn"                   # Clone on Copy types
+unnecessary_wraps = "warn"               # Functions always return Ok
+
+# === Maintainability ===
+too_many_lines = "warn"                  # Functions >100 lines
+cognitive_complexity = "warn"            # High cyclomatic complexity
+
+# === Allow noisy pedantic lints ===
+must_use_candidate = "allow"             # Many false positives
+missing_errors_doc = "allow"             # Not critical
+module_name_repetitions = "allow"        # Common in Rust
+similar_names = "allow"                  # Too strict
+
 [lib]
 name = "domain_status"
 path = "src/lib.rs"

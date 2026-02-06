@@ -855,6 +855,32 @@ See [TESTING.md](TESTING.md) for detailed information about:
 - Code quality checks (fmt, clippy, audit)
 - CI test coverage
 
+### Quick Start
+
+```bash
+# Run all checks
+just check
+
+# Full CI pipeline
+just ci
+
+# Install pre-commit hooks
+just install-hooks
+```
+
+### Developer Tools
+
+We use `just` for task automation: `cargo install just`
+
+Common commands:
+- `just check` - Format + lint + test
+- `just ci` - Full CI pipeline
+- `just lint` - Run clippy
+- `just test` - Run tests
+- `just coverage` - Generate coverage
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
