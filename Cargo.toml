@@ -102,3 +102,4 @@ proptest = "1.4"           # Property-based testing
 insta = { version = "1.38", features = ["yaml"] }  # Snapshot/golden testing
 pretty_assertions = "1.4"   # Better test output
 assert_cmd = "2.0"          # CLI testing
+wiremock = "0.6"            # HTTP mocking for integration tests
