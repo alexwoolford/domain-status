@@ -117,6 +117,8 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
         .with_no_client_auth();
 
     log::debug!("Attempting to resolve server name for domain: {domain}");
+    // Note: ServerName::try_from requires 'static lifetime, so we must clone or pass String
+    // The clone is necessary because we need domain for error messages later
     let server_name = match ServerName::try_from(domain.clone()) {
         Ok(name) => name,
         Err(e) => {
@@ -126,9 +128,10 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
     };
 
     log::debug!("Attempting to connect to domain: {domain}");
+    // TcpStream::connect can use &str, avoiding clone here
     let sock = match tokio::time::timeout(
         std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
-        TcpStream::connect((domain.clone(), 443)),
+        TcpStream::connect((domain.as_str(), 443)),
     )
     .await
     {
