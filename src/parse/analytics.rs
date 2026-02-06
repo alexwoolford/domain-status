@@ -63,7 +63,6 @@ fn is_valid_gtm_id(id: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
-
 /// Extracts analytics and tracking IDs from HTML content and JavaScript.
 ///
 /// Searches for:

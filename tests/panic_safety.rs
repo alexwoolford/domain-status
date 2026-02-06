@@ -8,6 +8,8 @@
 //! Note: Detailed panic safety for internal modules (parse::analytics,
 //! parse::social, etc.) is tested at the unit level within those modules.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use domain_status::Config;
 
 #[test]
@@ -18,13 +20,19 @@ fn test_config_validation_does_not_panic() {
     // Test zero values
     config.max_concurrency = 0;
     let result = config.validate();
-    assert!(result.is_err(), "Zero max_concurrency should fail validation");
+    assert!(
+        result.is_err(),
+        "Zero max_concurrency should fail validation"
+    );
 
     // Test boundary values
     config = Config::default();
     config.max_concurrency = 1000;
     let result = config.validate();
-    assert!(result.is_err(), "Excessive concurrency should fail validation");
+    assert!(
+        result.is_err(),
+        "Excessive concurrency should fail validation"
+    );
 
     // Test percentage out of range
     config = Config::default();

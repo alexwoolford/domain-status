@@ -33,11 +33,9 @@ pub async fn check_body(
     meta_tags: &HashMap<String, Vec<String>>,
     url: &str,
 ) -> anyhow::Result<Vec<BodyMatchResult>> {
-    let ruleset = get_ruleset()
-        .await
-        .ok_or_else(|| {
-            anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
-        })?;
+    let ruleset = get_ruleset().await.ok_or_else(|| {
+        anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
+    })?;
 
     let mut results = Vec::new();
 

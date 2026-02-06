@@ -6,6 +6,8 @@
 //! Note: These integration tests focus on the public API (Config validation).
 //! Internal module error messages are tested at the unit level.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use domain_status::Config;
 
 #[test]
@@ -16,55 +18,80 @@ fn test_config_validation_errors_are_descriptive() {
     // Test max_concurrency validation
     config.max_concurrency = 0;
     let result = config.validate();
-    assert!(result.is_err(), "Zero max_concurrency should fail validation");
+    assert!(
+        result.is_err(),
+        "Zero max_concurrency should fail validation"
+    );
     if let Err(e) = result {
         assert_eq!(e.field, "max_concurrency");
-        assert!(e.message.contains("greater than 0"),
-            "Error should mention valid range");
+        assert!(
+            e.message.contains("greater than 0"),
+            "Error should mention valid range"
+        );
     }
 
     // Test timeout_seconds validation
     config = Config::default();
     config.timeout_seconds = 0;
     let result = config.validate();
-    assert!(result.is_err(), "Zero timeout_seconds should fail validation");
+    assert!(
+        result.is_err(),
+        "Zero timeout_seconds should fail validation"
+    );
     if let Err(e) = result {
         assert_eq!(e.field, "timeout_seconds");
-        assert!(e.message.contains("greater than 0"),
-            "Error should mention minimum value");
+        assert!(
+            e.message.contains("greater than 0"),
+            "Error should mention minimum value"
+        );
     }
 
     // Test rate_limit_rps validation
     config = Config::default();
     config.rate_limit_rps = 101;
     let result = config.validate();
-    assert!(result.is_err(), "rate_limit_rps > 100 should fail validation");
+    assert!(
+        result.is_err(),
+        "rate_limit_rps > 100 should fail validation"
+    );
     if let Err(e) = result {
         assert_eq!(e.field, "rate_limit_rps");
-        assert!(e.message.contains("100") || e.message.contains("overwhelming"),
-            "Error should mention maximum value");
+        assert!(
+            e.message.contains("100") || e.message.contains("overwhelming"),
+            "Error should mention maximum value"
+        );
     }
 
     // Test fail_on_pct_threshold validation
     config = Config::default();
     config.fail_on_pct_threshold = 101;
     let result = config.validate();
-    assert!(result.is_err(), "fail_on_pct_threshold > 100 should fail validation");
+    assert!(
+        result.is_err(),
+        "fail_on_pct_threshold > 100 should fail validation"
+    );
     if let Err(e) = result {
         assert_eq!(e.field, "fail_on_pct_threshold");
-        assert!(e.message.contains("between 0 and 100"),
-            "Error should mention valid range");
+        assert!(
+            e.message.contains("between 0 and 100"),
+            "Error should mention valid range"
+        );
     }
 
     // Test adaptive_error_threshold validation
     config = Config::default();
     config.adaptive_error_threshold = 1.5;
     let result = config.validate();
-    assert!(result.is_err(), "adaptive_error_threshold > 1.0 should fail validation");
+    assert!(
+        result.is_err(),
+        "adaptive_error_threshold > 1.0 should fail validation"
+    );
     if let Err(e) = result {
         assert_eq!(e.field, "adaptive_error_threshold");
-        assert!(e.message.contains("between 0.0 and 1.0"),
-            "Error should mention valid range");
+        assert!(
+            e.message.contains("between 0.0 and 1.0"),
+            "Error should mention valid range"
+        );
     }
 }
 
