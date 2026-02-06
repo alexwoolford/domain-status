@@ -10,6 +10,9 @@ use crate::fingerprint::models::Technology;
 use crate::security::validate_url_safe;
 
 /// Fetches all JSON files from a GitHub directory and merges them
+// Large function handling GitHub API directory listing, file downloading, and JSON parsing.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn fetch_from_github_directory(
     dir_url: &str,
     client: &Client,

@@ -10,13 +10,21 @@ use std::sync::atomic::Ordering;
 use super::super::types::StatusState;
 
 /// Prometheus-compatible metrics endpoint
+// Large function handling comprehensive Prometheus metrics output with all error and timing statistics.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn metrics_handler(State(state): State<StatusState>) -> Response {
     let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
+    // Safe cast: converting usize to f64 for rate calculation
+    // Values are bounded by practical URL counts (< 10^15), well within f64 precision
     let rate = if elapsed > 0.0 {
-        completed as f64 / elapsed
+        #[allow(clippy::cast_precision_loss)]
+        {
+            completed as f64 / elapsed
+        }
     } else {
         0.0
     };
@@ -135,7 +143,12 @@ domain_status_info_total {}
         completed,
         failed,
         if total_urls_in_file > 0 {
-            ((completed + failed) as f64 / total_urls_in_file as f64) * 100.0
+            // Safe cast: converting usize to f64 for percentage calculation
+            // Values are practical URL counts, precision loss is acceptable for display
+            #[allow(clippy::cast_precision_loss)]
+            {
+                ((completed + failed) as f64 / total_urls_in_file as f64) * 100.0
+            }
         } else {
             0.0
         },

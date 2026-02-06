@@ -78,6 +78,9 @@ fn is_valid_gtm_id(id: &str) -> bool {
 /// # Returns
 ///
 /// A vector of `AnalyticsId` structs containing provider and ID pairs.
+// Large function handling comprehensive analytics ID extraction with multiple regex patterns.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     let mut analytics_ids = Vec::new();
     let mut seen_ids = std::collections::HashSet::<(String, String)>::new();

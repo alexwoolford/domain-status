@@ -26,6 +26,13 @@ pub(crate) async fn insert_redirect_chain(
 
     let mut query_builder = sqlx::query(&query);
     for (index, url) in redirect_chain.iter().enumerate() {
+        // SAFETY: Cast usize to i32 for redirect chain sequence number
+        // - Redirect chains are typically 1-10 URLs (browsers limit to ~20)
+        // - Max value is redirect_chain.len() which is constrained by memory (~usize::MAX)
+        // - SQLite INTEGER can hold ±2^63, but we use i32 which can hold ±2^31 (2.1 billion)
+        // - In practice, redirect chains > 100 are extremely rare
+        // - If chain exceeds i32::MAX (2.1B URLs), cast will wrap, but this is impossible in practice
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let sequence_order = (index + 1) as i32; // 1-based ordering
         query_builder = query_builder
             .bind(url_status_id)

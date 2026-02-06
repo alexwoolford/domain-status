@@ -101,11 +101,11 @@ fn extract_base_tech_name(formatted_name: &str) -> &str {
 }
 
 pub(crate) fn apply_technology_exclusions(
-    detected: HashSet<String>,
+    detected: &HashSet<String>,
     ruleset: &FingerprintRuleset,
 ) -> HashSet<String> {
     let mut final_detected = HashSet::new();
-    for tech_name in &detected {
+    for tech_name in detected {
         let base_tech_name = extract_base_tech_name(tech_name);
 
         // Check if this technology is excluded by any other detected technology
@@ -858,7 +858,7 @@ mod tests {
         detected.insert("WordPress".to_string());
         detected.insert("PHP".to_string());
 
-        let result = apply_technology_exclusions(detected, &ruleset);
+        let result = apply_technology_exclusions(&detected, &ruleset);
         assert_eq!(result.len(), 2);
         assert!(result.contains("WordPress"));
         assert!(result.contains("PHP"));
@@ -880,7 +880,7 @@ mod tests {
         detected.insert("TechA".to_string());
         detected.insert("TechB".to_string());
 
-        let result = apply_technology_exclusions(detected, &ruleset);
+        let result = apply_technology_exclusions(&detected, &ruleset);
         // TechB should be excluded because TechA excludes it
         assert_eq!(result.len(), 1);
         assert!(result.contains("TechA"));
@@ -906,7 +906,7 @@ mod tests {
         detected.insert("TechC".to_string());
         detected.insert("TechD".to_string());
 
-        let result = apply_technology_exclusions(detected, &ruleset);
+        let result = apply_technology_exclusions(&detected, &ruleset);
         // TechB and TechC should be excluded
         assert_eq!(result.len(), 2);
         assert!(result.contains("TechA"));
@@ -931,7 +931,7 @@ mod tests {
         detected.insert("TechA".to_string());
         // TechB is not detected, so exclusion shouldn't matter
 
-        let result = apply_technology_exclusions(detected, &ruleset);
+        let result = apply_technology_exclusions(&detected, &ruleset);
         assert_eq!(result.len(), 1);
         assert!(result.contains("TechA"));
     }
@@ -948,7 +948,7 @@ mod tests {
         detected.insert("UnknownTech".to_string());
 
         // Unknown technology should still be included (no exclusion rules)
-        let result = apply_technology_exclusions(detected, &ruleset);
+        let result = apply_technology_exclusions(&detected, &ruleset);
         assert_eq!(result.len(), 1);
         assert!(result.contains("UnknownTech"));
     }
@@ -973,7 +973,7 @@ mod tests {
         detected.insert("TechA".to_string());
         detected.insert("TechB".to_string()); // Not in ruleset
 
-        let result = apply_technology_exclusions(detected, &ruleset);
+        let result = apply_technology_exclusions(&detected, &ruleset);
         // TechB should be excluded by TechA (even though TechB is not in ruleset)
         // The exclusion check uses .unwrap_or(false), so missing tech = no exclusion
         // But TechA.excludes contains "TechB", so TechB should be excluded

@@ -32,6 +32,9 @@ use super::queries::{
 /// # Returns
 ///
 /// Returns the number of records exported, or an error if export fails.
+// Large function handling CSV export with comprehensive data flattening and formatting.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn export_csv(
     db_path: &Path,
     output: Option<&PathBuf>,

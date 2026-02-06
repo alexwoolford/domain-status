@@ -155,6 +155,9 @@ impl TimingStats {
     ///
     /// Optionally accepts flags to indicate whether GeoIP and WHOIS are enabled,
     /// which will be displayed in the output when these features are disabled.
+    // Large function handling comprehensive timing summary output with percentage calculations and formatting.
+    // Consider refactoring into smaller focused functions in Phase 4.
+    #[allow(clippy::too_many_lines)]
     pub fn log_summary(&self, geoip_enabled: Option<bool>, whois_enabled: Option<bool>) {
         let count = self.count.load(Ordering::Relaxed);
         if count == 0 {
@@ -189,7 +192,17 @@ impl TimingStats {
             if total == 0 {
                 0.0
             } else {
-                part as f64 / total as f64 * 100.0
+                // SAFETY: Cast u64 to f64 for percentage calculation
+                // - Timing values are in microseconds (10^-6 seconds)
+                // - Practical max: processing 1M URLs at 10s each = 10^13 microseconds
+                // - f64 has 53 bits of precision, can exactly represent integers up to 2^53 (9 x 10^15)
+                // - Timing sums in typical usage (< 10^13 μs) are well within f64 range
+                // - If sum exceeds 2^53, precision loss is acceptable for display purposes
+                // - This is display-only code; precision loss of a few microseconds in aggregate stats is negligible
+                #[allow(clippy::cast_precision_loss)]
+                {
+                    part as f64 / total as f64 * 100.0
+                }
             }
         };
 
@@ -339,11 +352,18 @@ impl TimingStats {
             percentage(other_ms, avg_ms.total_ms)
         );
         log::info!("  Total:               {:>6} ms", avg_ms.total_ms);
-        log::info!(
-            "Total time across all URLs: {} ms ({:.2} seconds)",
-            total_sum_ms,
-            total_sum_micros as f64 / 1_000_000.0
-        );
+        // SAFETY: Cast u64 to f64 for display formatting
+        // - Converting microseconds to seconds for human-readable output
+        // - See justification for cast_precision_loss above in percentage closure
+        // - This is display-only code; precision loss is acceptable
+        #[allow(clippy::cast_precision_loss)]
+        {
+            log::info!(
+                "Total time across all URLs: {} ms ({:.2} seconds)",
+                total_sum_ms,
+                total_sum_micros as f64 / 1_000_000.0
+            );
+        }
     }
 }
 
@@ -355,7 +375,18 @@ pub fn duration_to_ms(duration: Duration) -> u64 {
     // Return microseconds (despite the function name for API compatibility)
     // The name is kept as `duration_to_ms` to avoid breaking existing code,
     // but it actually returns microseconds which are stored internally
-    duration.as_micros() as u64
+
+    // SAFETY: Cast u128 to u64 for Duration microseconds conversion
+    // - Duration::as_micros() returns u128 to handle very large durations
+    // - Practical max: URL processing timeout is ~60s = 60M microseconds
+    // - u64 can hold up to 2^64-1 (~1.8 x 10^19), which is 584,942 years in microseconds
+    // - If Duration exceeds u64::MAX microseconds (584K years), cast will truncate
+    // - Acceptable: no URL processing operation will take centuries to complete
+    // - Truncation to u64::MAX is acceptable failure mode (still represents "very long time")
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        duration.as_micros() as u64
+    }
 }
 
 #[cfg(test)]

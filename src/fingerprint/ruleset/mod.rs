@@ -147,6 +147,11 @@ pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
 }
 
 /// Fetches ruleset from multiple sources and merges them (matching Go implementation)
+// Large function handling multi-source ruleset fetching with fallback and caching logic.
+// Complex control flow for source iteration, error handling, and cache management.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 async fn fetch_ruleset_from_multiple_sources(
     sources: &[String],
     cache_dir: &Path,

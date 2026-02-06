@@ -147,6 +147,14 @@ mod tests {
             // If not at max, should be approximately double
             let max_delay_ms = (crate::config::RETRY_MAX_DELAY_SECS * 1000) as u128;
             if curr < max_delay_ms {
+                // SAFETY: Cast u128 to f64 for retry backoff ratio test
+                // - Duration delays are in milliseconds (typically 10-5000ms for retries)
+                // - Max delay is RETRY_MAX_DELAY_SECS (config) * 1000, typically 5000ms
+                // - f64 has 53 bits of precision, can exactly represent integers up to 2^53
+                // - Test delays (< 10^6 ms) are well within f64 precision range
+                // - This is test-only code for ratio validation
+                // - Precision loss for delays > 2^53 ms is acceptable (test would still work)
+                #[allow(clippy::cast_precision_loss)]
                 let ratio = curr as f64 / prev as f64;
                 // Allow wide tolerance - ExponentialBackoff behavior can vary
                 assert!(

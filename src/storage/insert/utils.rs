@@ -74,6 +74,13 @@ pub(crate) fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32,
     if let Ok(mx_objects) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
         let mut result = Vec::new();
         for obj in mx_objects {
+            // SAFETY: Cast i64 to i32 for MX record priority
+            // - MX priority is defined in RFC 5321 as an unsigned 16-bit value (0-65535)
+            // - DNS servers enforce this constraint, so values > 65535 are invalid
+            // - i32 can hold values up to 2^31-1 (2.1B), which is >> 65535
+            // - If JSON contains invalid priority > i32::MAX, cast will truncate/wrap
+            // - This is acceptable: invalid priorities are treated as errors during insertion
+            #[allow(clippy::cast_possible_truncation)]
             if let (Some(priority), Some(hostname)) = (
                 obj.get("priority")
                     .and_then(|v| v.as_i64().map(|p| p as i32)),

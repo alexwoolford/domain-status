@@ -249,6 +249,9 @@ impl From<ScanCommand> for Config {
     }
 }
 
+// Large function handling comprehensive CLI command parsing, initialization, and execution orchestration.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load environment variables from .env file (if it exists)
@@ -442,6 +445,17 @@ pub fn evaluate_exit_code(
                 // No URLs processed - this is a configuration/input issue
                 return 3;
             }
+            // SAFETY: Cast from usize to f64 for percentage calculation is acceptable here.
+            // f64 mantissa has 53 bits of precision, while usize is 64 bits on 64-bit systems.
+            // Precision loss analysis:
+            // 1. Exact representation: All integers up to 2^53 (9,007,199,254,740,992) are exactly representable
+            // 2. Realistic URL counts: Production runs process <10M URLs, well within exact range
+            // 3. Acceptable precision loss: Even with 100B URLs (beyond physical memory limits),
+            //    the error would be ~0.000001%, negligible for percentage calculation (e.g., 10.000% vs 10.000001%)
+            // 4. Purpose: Percentage calculation for exit code policy - sub-0.001% precision is more than sufficient
+            //
+            // The alternative (checked arithmetic with Decimal) would be overkill for this use case.
+            #[allow(clippy::cast_precision_loss)]
             let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
             if failure_pct > pct_threshold as f64 {
                 2
@@ -660,7 +674,11 @@ mod tests {
         assert_eq!(config.timeout_seconds, 20);
         assert_eq!(config.user_agent, "Custom Agent");
         assert_eq!(config.rate_limit_rps, 25);
-        assert_eq!(config.adaptive_error_threshold, 0.3);
+        // Allow float comparison for exact constant value in test
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(config.adaptive_error_threshold, 0.3);
+        }
         assert_eq!(
             config.fingerprints,
             Some("https://example.com/tech.json".to_string())

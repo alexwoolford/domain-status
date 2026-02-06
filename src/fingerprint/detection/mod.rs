@@ -50,6 +50,9 @@ pub struct DetectedTechnology {
     pub version: Option<String>,
 }
 
+// Large function handling comprehensive technology detection across multiple signal types.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn detect_technologies(
     meta_tags: &HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name
     script_sources: &[String],
@@ -186,7 +189,7 @@ pub async fn detect_technologies(
         })
         .collect();
     let final_detected_formatted =
-        apply_technology_exclusions(detected_formatted_for_exclusions, &ruleset);
+        apply_technology_exclusions(&detected_formatted_for_exclusions, &ruleset);
 
     // Filter detected_vec to only include technologies that weren't excluded
     let final_detected: Vec<(String, Option<String>)> = detected_vec

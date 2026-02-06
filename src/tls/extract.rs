@@ -1,6 +1,5 @@
 //! Certificate extraction utilities.
 
-use anyhow::Result;
 use x509_parser::extensions::{GeneralName, ParsedExtension};
 
 /// Extracts all relevant OIDs from an X.509 certificate.
@@ -16,10 +15,10 @@ use x509_parser::extensions::{GeneralName, ParsedExtension};
 ///
 /// # Returns
 ///
-/// A vector of OID strings, or an error if parsing fails.
+/// A vector of OID strings.
 pub(crate) fn extract_certificate_oids(
     cert: &x509_parser::certificate::X509Certificate<'_>,
-) -> Result<Vec<String>> {
+) -> Vec<String> {
     let mut oids: Vec<String> = Vec::new();
 
     for ext in cert.extensions() {
@@ -84,7 +83,7 @@ pub(crate) fn extract_certificate_oids(
         }
     }
 
-    Ok(oids)
+    oids
 }
 
 /// Extracts Subject Alternative Names (SANs) from an X.509 certificate.
@@ -102,7 +101,7 @@ pub(crate) fn extract_certificate_oids(
 /// A vector of DNS domain names found in the SAN extension.
 pub(crate) fn extract_certificate_sans(
     cert: &x509_parser::certificate::X509Certificate<'_>,
-) -> Result<Vec<String>> {
+) -> Vec<String> {
     let mut sans = Vec::new();
 
     for ext in cert.extensions() {
@@ -118,7 +117,7 @@ pub(crate) fn extract_certificate_sans(
         }
     }
 
-    Ok(sans)
+    sans
 }
 
 #[cfg(test)]

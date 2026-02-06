@@ -53,6 +53,9 @@ pub struct FailureRecordParams<'a> {
 /// # Arguments
 ///
 /// * `params` - Parameters for failure recording
+// Large function handling comprehensive failure recording with context extraction and database insertion.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), anyhow::Error> {
     // Check if circuit breaker is open (database writes are blocked)
     if params.circuit_breaker.is_circuit_open().await {

@@ -10,19 +10,16 @@ use std::time::SystemTime;
 use super::types::GeoIpMetadata;
 
 /// Extracts metadata from a GeoIP database
-pub(crate) fn extract_metadata<T: AsRef<[u8]>>(
-    reader: &Reader<T>,
-    source: &str,
-) -> Result<GeoIpMetadata> {
+pub(crate) fn extract_metadata<T: AsRef<[u8]>>(reader: &Reader<T>, source: &str) -> GeoIpMetadata {
     // Try to get build epoch from database metadata
     // MaxMind databases have a build_epoch field in their metadata
     let version = format!("build_{}", reader.metadata.build_epoch);
 
-    Ok(GeoIpMetadata {
+    GeoIpMetadata {
         source: source.to_string(),
         version,
         last_updated: SystemTime::now(),
-    })
+    }
 }
 
 /// Loads metadata from cache file

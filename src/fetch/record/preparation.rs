@@ -42,6 +42,9 @@ pub struct RecordPreparationParams<'a> {
 /// # Arguments
 ///
 /// * `params` - Parameters for record preparation
+// Large function handling record preparation with parallel enrichment lookups (GeoIP, WHOIS, security analysis).
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn prepare_record_for_insertion(
     params: RecordPreparationParams<'_>,
 ) -> (BatchRecord, (u64, u64, u64)) {

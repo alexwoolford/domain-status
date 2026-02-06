@@ -77,7 +77,7 @@ impl From<LogLevel> for log::LevelFilter {
 /// Controls how log messages are formatted:
 /// - `Plain`: Human-readable format with colors (default)
 /// - `Json`: Structured JSON format for machine parsing
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum LogFormat {
     /// Human-readable format with colors (default)
     Plain,
