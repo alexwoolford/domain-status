@@ -10,6 +10,9 @@ use super::{
 
 use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
+// Large test function handling comprehensive satellite table insertion with all empty cases.
+// Consider refactoring into smaller focused test functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_insert_empty_collections() {
     let pool = create_test_pool().await;

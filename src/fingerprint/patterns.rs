@@ -1005,6 +1005,14 @@ mod tests {
             with_cache_time
         );
 
+        // SAFETY: Cast u128 to f64 for performance test speedup calculation
+        // - Converting nanosecond Duration measurements to f64 for ratio calculation
+        // - Test durations are typically microseconds to milliseconds (10^3 to 10^9 nanoseconds)
+        // - f64 has 53 bits of precision, can exactly represent integers up to 2^53 (~9 x 10^15)
+        // - Test timing values (< 10^12 ns) are well within f64 precision range
+        // - This is test-only code for performance comparison
+        // - Precision loss for very large durations is acceptable (test result still meaningful)
+        #[allow(clippy::cast_precision_loss)]
         let speedup = if with_cache_time.as_nanos() > 0 {
             without_cache_time.as_nanos() as f64 / with_cache_time.as_nanos() as f64
         } else {

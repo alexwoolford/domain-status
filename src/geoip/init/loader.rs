@@ -25,7 +25,7 @@ pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIp
         .with_context(|| format!("Failed to parse GeoIP database from {}", path))?;
 
     // Extract metadata from database
-    let metadata = extract_metadata(&reader, path)?;
+    let metadata = extract_metadata(&reader, path);
 
     // Create reader with owned data
     let reader_owned = Reader::from_source(db_bytes)
@@ -259,7 +259,7 @@ async fn process_downloaded_geoip(
     let reader_temp = Reader::from_source(db_bytes.as_slice())
         .with_context(|| "Failed to parse downloaded GeoIP database")?;
 
-    let metadata = extract_metadata(&reader_temp, url)?;
+    let metadata = extract_metadata(&reader_temp, url);
 
     // Create reader with owned data
     let reader = Reader::from_source(db_bytes)

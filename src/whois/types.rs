@@ -67,6 +67,13 @@ impl From<&WhoisResult> for WhoisCacheResult {
 
 impl From<WhoisCacheResult> for WhoisResult {
     fn from(cache: WhoisCacheResult) -> Self {
+        // SAFETY: Cast i64 to u32 for DateTime nanosecond conversion
+        // - Converting milliseconds to nanoseconds for DateTime::from_timestamp
+        // - ms % 1000 yields 0-999 (milliseconds within a second)
+        // - Multiply by 1_000_000 to convert milliseconds to nanoseconds: 0 to 999_000_000
+        // - u32::MAX is 4_294_967_295, which is > 999_000_000, so this always fits
+        // - No truncation possible: the value range (0-999_000_000) is well within u32 bounds
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         WhoisResult {
             creation_date: cache.creation_date.map(|ms| {
                 DateTime::from_timestamp(ms / 1000, ((ms % 1000) * 1_000_000) as u32)

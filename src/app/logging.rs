@@ -23,6 +23,9 @@ pub fn log_progress(
     let failed = failed_urls.load(Ordering::SeqCst);
     let attempted = completed + failed;
     let elapsed_secs = elapsed.as_secs_f64();
+    // Safe cast: URL counts typically < 1M, well within f64 precision
+    // Computing rate for progress display
+    #[allow(clippy::cast_precision_loss)]
     let rate = if elapsed_secs > 0.0 {
         attempted as f64 / elapsed_secs
     } else {
@@ -35,9 +38,12 @@ pub fn log_progress(
         if total > 0 {
             // Percentage based on attempted URLs (completed + failed) out of total attempted
             // This matches the status server calculation for consistency
+            // Safe casts: URL counts within f64 precision, computing percentage for display
+            #[allow(clippy::cast_precision_loss)]
             let percentage = (attempted as f64 / total as f64) * 100.0;
             let remaining = total.saturating_sub(attempted);
 
+            #[allow(clippy::cast_precision_loss)]
             let eta_secs = if rate > 0.0 && remaining > 0 {
                 remaining as f64 / rate
             } else {

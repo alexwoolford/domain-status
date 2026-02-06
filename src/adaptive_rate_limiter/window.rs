@@ -78,7 +78,12 @@ impl OutcomeWindow {
             })
             .count();
 
-        error_count as f64 / recent.len() as f64
+        // Safe cast: window size is typically 100-200, well within f64 precision
+        // Computing error rate (0.0-1.0) for adaptive rate limiting
+        #[allow(clippy::cast_precision_loss)]
+        {
+            error_count as f64 / recent.len() as f64
+        }
     }
 
     /// Gets the total number of requests in the recent window.
@@ -98,6 +103,9 @@ mod tests {
     use super::*;
     use tokio::time::{sleep, Duration as TokioDuration};
 
+    // Allow float comparisons in tests - we're testing exact constant values
+    // like 0.0, 0.5, 1.0 which are precisely representable in f64
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_record_success() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -108,6 +116,7 @@ mod tests {
         assert_eq!(window.error_rate().await, 0.0);
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_record_rate_limited() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -118,6 +127,7 @@ mod tests {
         assert_eq!(window.error_rate().await, 1.0); // 100% error rate
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_record_timeout() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -128,6 +138,7 @@ mod tests {
         assert_eq!(window.error_rate().await, 1.0); // 100% error rate
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_error_rate_mixed() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -142,6 +153,7 @@ mod tests {
         assert_eq!(window.error_rate().await, 0.5); // 2 errors / 4 requests = 50%
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_error_rate_only_success() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -153,6 +165,7 @@ mod tests {
         assert_eq!(window.error_rate().await, 0.0);
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_error_rate_only_errors() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -164,6 +177,7 @@ mod tests {
         assert_eq!(window.error_rate().await, 1.0); // 100% error rate
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_empty_error_rate() {
         let window = OutcomeWindow::new(100, Duration::from_secs(30));
@@ -186,6 +200,7 @@ mod tests {
         assert_eq!(window.request_count().await, 5);
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_time_expiration() {
         let window = OutcomeWindow::new(100, Duration::from_millis(50));
@@ -261,6 +276,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::float_cmp)]
     #[tokio::test]
     async fn test_outcome_window_new_creation() {
         let window = OutcomeWindow::new(50, Duration::from_secs(60));

@@ -103,6 +103,9 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
 /// - TCP connection fails
 /// - TLS handshake fails
 /// - Certificate parsing fails
+// Large function handling comprehensive TLS certificate extraction with connection setup and certificate parsing.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo> {
     log::debug!("Attempting to get SSL info for domain: {domain}");
 
@@ -220,11 +223,11 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
                 }
             };
 
-            let oids = extract_certificate_oids(&cert).unwrap_or_else(|_| Vec::new());
+            let oids = extract_certificate_oids(&cert);
             let unique_oids: HashSet<String> = oids.into_iter().collect();
 
             // Extract Subject Alternative Names (SANs)
-            let sans = extract_certificate_sans(&cert).unwrap_or_else(|_| Vec::new());
+            let sans = extract_certificate_sans(&cert);
             if !sans.is_empty() {
                 log::debug!(
                     "Found {} SAN(s) for domain {}: {:?}",

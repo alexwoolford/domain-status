@@ -124,6 +124,9 @@ impl AdaptiveRateLimiter {
                         if request_count >= 10 {
                             let new_rps = if error_rate > error_threshold {
                                 // Multiplicative decrease: reduce by 50%
+                                // Safe cast: current is u32 (max 4.3B), * 0.5 fits in f64 precision
+                                // Result is clamped to min_rps (u32), so truncation is impossible
+                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
                                 let decreased = (current as f64 * 0.5).max(min_rps as f64) as u32;
                                 log::info!(
                                     "Adaptive rate limiter: error rate {:.1}% > threshold {:.1}%, reducing RPS {} → {}",
@@ -135,8 +138,9 @@ impl AdaptiveRateLimiter {
                                 decreased
                             } else if error_rate < error_threshold * 0.5 {
                                 // Additive increase: increase by 15% (only if errors are low)
-                                // Capped at max_rps to allow adaptation while preventing runaway increases
-                                // The cast to u32 is safe because max_rps is already a u32, so the result will never exceed u32::MAX
+                                // Safe cast: current is u32, * 1.15 still fits in u32 range
+                                // Result is clamped to max_rps (u32) below, preventing any overflow
+                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
                                 let increased_calc = (current as f64 * 1.15) as u32;
                                 let increased = increased_calc
                                     .max(current.saturating_add(1)) // At least +1, but prevent overflow
@@ -186,7 +190,11 @@ mod tests {
         assert_eq!(limiter.current_rps(), 10);
         assert_eq!(limiter.min_rps, 1);
         assert_eq!(limiter.max_rps, 10);
-        assert_eq!(limiter.error_threshold, 0.2);
+        // Allow float comparison for exact constant values in tests
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(limiter.error_threshold, 0.2);
+        }
     }
 
     #[tokio::test]
@@ -202,7 +210,11 @@ mod tests {
         assert_eq!(limiter.current_rps(), 20);
         assert_eq!(limiter.min_rps, 5);
         assert_eq!(limiter.max_rps, 50);
-        assert_eq!(limiter.error_threshold, 0.3);
+        // Allow float comparison for exact constant values in tests
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(limiter.error_threshold, 0.3);
+        }
     }
 
     #[tokio::test]

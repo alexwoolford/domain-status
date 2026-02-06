@@ -20,6 +20,9 @@ use crate::fetch::{resolve_redirect_chain, ProcessingContext};
 /// # Errors
 ///
 /// Returns an error if redirect resolution, HTTP request, or response handling fails.
+// Large function handling HTTP request orchestration with redirect tracking and error context attachment.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn handle_http_request(
     ctx: &ProcessingContext,
     url: &str,

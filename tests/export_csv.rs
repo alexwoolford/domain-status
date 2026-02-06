@@ -690,6 +690,9 @@ async fn test_export_csv_comma_separated_lists() {
     );
 }
 
+// Large test function handling comprehensive CSV export validation with all column presence checks.
+// Consider refactoring into smaller focused test functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_export_csv_all_columns_present() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");

@@ -14,13 +14,21 @@ use super::super::types::{
 use crate::error_handling::{ErrorType, InfoType, WarningType};
 
 /// JSON status endpoint with detailed progress information
+// Large function handling comprehensive status JSON output with all error, warning, info, and timing statistics.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn status_handler(State(state): State<StatusState>) -> Response {
     let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let elapsed = state.start_time.elapsed().as_secs_f64();
+    // Safe cast: converting usize to f64 for rate calculation
+    // Values are bounded by practical URL counts (< 10^15), well within f64 precision
     let rate = if elapsed > 0.0 {
-        completed as f64 / elapsed
+        #[allow(clippy::cast_precision_loss)]
+        {
+            completed as f64 / elapsed
+        }
     } else {
         0.0
     };
@@ -28,6 +36,9 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
     // Calculate percentage based on total URLs in file (completed + failed out of total)
     // This shows progress through all URLs in the file, not just attempted ones
     let processed = completed + failed;
+    // Safe cast: converting usize to f64 for percentage calculation
+    // Values are practical URL counts, precision loss is acceptable for display percentage
+    #[allow(clippy::cast_precision_loss)]
     let percentage = if total_urls_in_file > 0 {
         (processed as f64 / total_urls_in_file as f64) * 100.0
     } else {

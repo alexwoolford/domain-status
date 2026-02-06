@@ -39,6 +39,11 @@ use super::queries::{
 /// # Returns
 ///
 /// Returns the number of records exported, or an error if export fails.
+// Large function handling JSONL export with nested data structure construction.
+// Complex control flow for JSON object building and data transformation.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 pub async fn export_jsonl(
     db_path: &Path,
     output: Option<&PathBuf>,

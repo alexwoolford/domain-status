@@ -25,10 +25,15 @@ pub async fn print_and_save_final_statistics(
 ) -> Result<()> {
     // Calculate run statistics
     // All tasks have completed at this point, so counters should be final
+    // Safe casts: URL counts should be reasonable (< i32::MAX ~2B) for SQLite storage
+    // Realistic usage scenarios won't exceed this limit
+    #[allow(clippy::cast_possible_truncation)]
     let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
+    #[allow(clippy::cast_possible_truncation)]
     let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
     // Use actual failed_urls counter instead of calculating it
     // This ensures accuracy even if there are pending URLs
+    #[allow(clippy::cast_possible_truncation)]
     let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
 
     info!(

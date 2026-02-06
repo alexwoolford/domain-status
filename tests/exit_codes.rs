@@ -18,6 +18,17 @@ fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanReport) 
             if report.total_urls == 0 {
                 return 3;
             }
+            // SAFETY: Cast from usize to f64 for percentage calculation is acceptable here.
+            // f64 mantissa has 53 bits of precision, while usize is 64 bits on 64-bit systems.
+            // Precision loss analysis:
+            // 1. Exact representation: All integers up to 2^53 (9,007,199,254,740,992) are exactly representable
+            // 2. Test scenarios: Tests use small counts (<1M), well within exact range
+            // 3. Acceptable precision loss: Even with extreme test values (usize::MAX), the error would be
+            //    negligible for percentage calculation (e.g., 10.000% vs 10.000001%)
+            // 4. Purpose: Percentage calculation for exit code validation - sub-0.001% precision is sufficient
+            //
+            // This mirrors the implementation in src/main.rs::evaluate_exit_code.
+            #[allow(clippy::cast_precision_loss)]
             let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
             if failure_pct > pct_threshold as f64 {
                 2

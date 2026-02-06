@@ -28,6 +28,9 @@ use super::types::{TlsDnsData, TlsDnsResult};
 ///
 /// Returns TLS/DNS data and any partial failures (errors that didn't prevent processing).
 /// DNS/TLS failures are recorded as partial failures, not as errors that stop processing.
+// Large function handling parallel TLS certificate extraction and DNS resolution with error handling.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn fetch_tls_and_dns(
     final_url: &str,
     host: &str,

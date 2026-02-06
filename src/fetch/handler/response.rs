@@ -29,6 +29,9 @@ use std::time::Instant;
 /// # Errors
 ///
 /// Returns an error if domain extraction, DNS resolution, or database insertion fails.
+// Large function handling response data extraction, parallel tech detection and DNS/TLS, and database insertion.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn handle_response(
     response: reqwest::Response,
     original_url: &str,
@@ -50,6 +53,17 @@ pub async fn handle_response(
         // Max safe value: ~18,446 seconds (u64::MAX microseconds) before overflow
         // NOTE: Field is named `_ms` but actually stores microseconds (μs) for precision
         // This is a naming legacy - all timing fields store microseconds internally
+        // Safe cast: value is clamped to [0.0, u64::MAX] range before conversion
+        // - .max(0.0) ensures no negative values (handles clock adjustments)
+        // - .min(u64::MAX as f64) prevents overflow during cast to u64
+        // - cast_possible_truncation: fractional part is intentionally discarded
+        // - cast_precision_loss: u64::MAX as f64 loses precision, but we're using it as upper bound
+        // - cast_sign_loss: handled by .max(0.0) check
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss
+        )]
         http_request_ms: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
         ..Default::default()
     };
@@ -639,6 +653,12 @@ mod tests {
 
         // Verify the calculation doesn't panic
         let http_request_ms: f64 = very_large_elapsed * 1_000_000.0;
+        // Safe cast: value is clamped to [0.0, u64::MAX] range before conversion
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss
+        )]
         let http_request_ms = http_request_ms.min(u64::MAX as f64).max(0.0) as u64;
         // With protection, should be clamped to u64::MAX (not overflow)
         // Note: 1e6 * 1e6 = 1e12, which is less than u64::MAX (~1.8e19)
@@ -661,6 +681,12 @@ mod tests {
 
         // Verify the calculation clamps negative values
         let http_request_ms: f64 = negative_elapsed * 1_000_000.0;
+        // Safe cast: negative values are clamped to 0, ensuring non-negative result
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss
+        )]
         let http_request_ms = http_request_ms.min(u64::MAX as f64).max(0.0) as u64;
         // Should be clamped to 0, not negative
         assert_eq!(http_request_ms, 0);

@@ -60,6 +60,9 @@ pub struct UrlRecordInsertParams<'a> {
 /// # Returns
 ///
 /// Returns the `id` of the inserted (or updated) `url_status` record, or an error if insertion fails.
+// Large function handling comprehensive URL record insertion with transaction management and multiple satellite table inserts.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
 pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_to.as_ref());

@@ -22,6 +22,11 @@ use super::types::HtmlData;
 /// # Returns
 ///
 /// Extracted HTML data including title, keywords, description, structured data, etc.
+// Large function handling comprehensive HTML parsing with multiple extraction operations.
+// Complex control flow for script extraction, meta tag parsing, and structured data extraction.
+// Consider refactoring into smaller focused functions in Phase 4.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 pub(crate) fn parse_html_content(
     body: &str,
     final_domain: &str,

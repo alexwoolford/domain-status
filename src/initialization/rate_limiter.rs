@@ -101,12 +101,25 @@ pub fn init_rate_limiter(
                     if current_rps_value > 0 {
                         // Calculate how many permits to add based on elapsed time and current RPS
                         // For example, if RPS is 10 and 100ms elapsed, we should add 1 permit (10 * 0.1 = 1)
+                        // Safe cast: RPS is u32, max value is 4,294,967,295, well within f64 precision
+                        // Safe cast: truncating fractional permits is intentional for integer token count
+                        // Values are bounded by RPS * elapsed (typically small values < 1000)
+                        // Safe cast: permits_to_add is u32, fits exactly in f64 without precision loss
+                        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         let permits_to_add_f64 = current_rps_value as f64 * elapsed.as_secs_f64() + fractional_permits;
+                        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         let permits_to_add = permits_to_add_f64 as u32;
-                        fractional_permits = permits_to_add_f64 - permits_to_add as f64;
+                        #[allow(clippy::cast_precision_loss)]
+                        {
+                            fractional_permits = permits_to_add_f64 - permits_to_add as f64;
+                        }
 
                         if permits_to_add > 0 {
-                            permits.add_permits(permits_to_add as usize);
+                            // Safe cast: u32 always fits in usize on all supported platforms
+                            #[allow(clippy::cast_possible_truncation)]
+                            {
+                                permits.add_permits(permits_to_add as usize);
+                            }
                         }
                     }
 
