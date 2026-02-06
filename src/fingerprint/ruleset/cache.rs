@@ -14,17 +14,26 @@ const CACHE_DURATION: std::time::Duration =
     std::time::Duration::from_secs(crate::config::FINGERPRINT_CACHE_TTL_SECS);
 
 /// Loads ruleset from cache if it exists and is fresh
-pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<FingerprintRuleset> {
-    let metadata_path = cache_dir.join("metadata.json");
-    let technologies_path = cache_dir.join("technologies.json");
-    let categories_path = cache_dir.join("categories.json");
+///
+/// `cache_key` is a hash used for the cache directory name
+/// `expected_sources` is the actual source URLs/paths for validation (newline-separated for multiple sources)
+pub(crate) async fn load_from_cache(
+    cache_dir: &Path,
+    cache_key: &str,
+    expected_sources: &str,
+) -> Result<FingerprintRuleset> {
+    // Use hash-based subdirectory for cache
+    let cache_subdir = cache_dir.join(cache_key);
+    let metadata_path = cache_subdir.join("metadata.json");
+    let technologies_path = cache_subdir.join("technologies.json");
+    let categories_path = cache_subdir.join("categories.json");
 
     // Check if cache exists
     if !metadata_path.exists() || !technologies_path.exists() {
         return Err(anyhow::anyhow!(
-            "Cache not found at {} for source {}",
-            cache_dir.display(),
-            source
+            "Cache not found at {} for sources: {}",
+            cache_subdir.display(),
+            expected_sources
         ));
     }
 
@@ -33,38 +42,23 @@ pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<Fi
     let metadata: FingerprintMetadata = serde_json::from_str(&metadata_json)?;
 
     // Check if cache is for the same source(s)
-    // Handle both single source and merged sources (format: "merged:url1+url2")
-    if metadata.source != source {
-        // If source is a merged key, check if it matches the metadata source
-        // If metadata source is also merged, they should match exactly
-        // If source is a single URL but metadata is merged, that's a mismatch
-        if source.starts_with("merged:") || metadata.source.starts_with("merged:") {
-            // Both are merged keys - must match exactly
-            if metadata.source != source {
-                return Err(anyhow::anyhow!(
-                    "Cache source mismatch: expected '{}', got '{}'",
-                    source,
-                    metadata.source
-                ));
-            }
-        } else {
-            // Single source mismatch
-            return Err(anyhow::anyhow!(
-                "Cache source mismatch: expected '{}', got '{}'",
-                source,
-                metadata.source
-            ));
-        }
+    // metadata.source contains the human-readable source URLs
+    if metadata.source != expected_sources {
+        return Err(anyhow::anyhow!(
+            "Cache source mismatch: expected '{}', got '{}'",
+            expected_sources,
+            metadata.source
+        ));
     }
 
     // Check if cache is fresh
     if let Ok(age) = metadata.last_updated.elapsed() {
         if age > CACHE_DURATION {
             return Err(anyhow::anyhow!(
-                "Cache expired (age: {:?}, max: {:?}) for source {}",
+                "Cache expired (age: {:?}, max: {:?}) for sources: {}",
                 age,
                 CACHE_DURATION,
-                source
+                expected_sources
             ));
         }
     }
@@ -109,12 +103,20 @@ pub(crate) async fn load_from_cache(cache_dir: &Path, source: &str) -> Result<Fi
 }
 
 /// Saves ruleset to cache
-pub(crate) async fn save_to_cache(ruleset: &FingerprintRuleset, cache_dir: &Path) -> Result<()> {
-    fs::create_dir_all(cache_dir).await?;
+///
+/// `cache_key` is a hash used for the cache subdirectory name
+pub(crate) async fn save_to_cache(
+    ruleset: &FingerprintRuleset,
+    cache_dir: &Path,
+    cache_key: &str,
+) -> Result<()> {
+    // Use hash-based subdirectory
+    let cache_subdir = cache_dir.join(cache_key);
+    fs::create_dir_all(&cache_subdir).await?;
 
-    let metadata_path = cache_dir.join("metadata.json");
-    let technologies_path = cache_dir.join("technologies.json");
-    let categories_path = cache_dir.join("categories.json");
+    let metadata_path = cache_subdir.join("metadata.json");
+    let technologies_path = cache_subdir.join("technologies.json");
+    let categories_path = cache_subdir.join("categories.json");
 
     // Save metadata
     let metadata_json = serde_json::to_string_pretty(&ruleset.metadata)?;
@@ -152,7 +154,8 @@ mod tests {
     #[tokio::test]
     async fn test_load_from_cache_not_found() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let result = load_from_cache(temp_dir.path(), "test-source").await;
+        let cache_key = "test-hash";
+        let result = load_from_cache(temp_dir.path(), cache_key, "test-source").await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -166,15 +169,16 @@ mod tests {
     async fn test_load_from_cache_source_mismatch() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path();
+        let cache_key = "test-hash";
 
         // Save cache with one source
         let ruleset = create_test_ruleset("source1");
-        save_to_cache(&ruleset, cache_dir)
+        save_to_cache(&ruleset, cache_dir, cache_key)
             .await
             .expect("Failed to save cache");
 
         // Try to load with different source
-        let result = load_from_cache(cache_dir, "source2").await;
+        let result = load_from_cache(cache_dir, cache_key, "source2").await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -188,6 +192,11 @@ mod tests {
     async fn test_load_from_cache_expired() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path();
+        let cache_key = "test-hash";
+        let cache_subdir = cache_dir.join(cache_key);
+        tokio::fs::create_dir_all(&cache_subdir)
+            .await
+            .expect("Failed to create cache subdirectory");
 
         // Create expired metadata
         let expired_metadata = FingerprintMetadata {
@@ -197,19 +206,19 @@ mod tests {
         };
 
         // Save expired cache
-        let metadata_path = cache_dir.join("metadata.json");
+        let metadata_path = cache_subdir.join("metadata.json");
         let metadata_json = serde_json::to_string_pretty(&expired_metadata).unwrap();
         tokio::fs::write(&metadata_path, metadata_json)
             .await
             .expect("Failed to write metadata");
 
         // Create technologies file (required for cache to exist)
-        let technologies_path = cache_dir.join("technologies.json");
+        let technologies_path = cache_subdir.join("technologies.json");
         tokio::fs::write(&technologies_path, "{}")
             .await
             .expect("Failed to write technologies");
 
-        let result = load_from_cache(cache_dir, "test-source").await;
+        let result = load_from_cache(cache_dir, cache_key, "test-source").await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -223,13 +232,14 @@ mod tests {
     async fn test_save_and_load_from_cache_round_trip() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path();
+        let cache_key = "test-hash";
 
         let ruleset = create_test_ruleset("test-source");
-        save_to_cache(&ruleset, cache_dir)
+        save_to_cache(&ruleset, cache_dir, cache_key)
             .await
             .expect("Failed to save cache");
 
-        let loaded = load_from_cache(cache_dir, "test-source")
+        let loaded = load_from_cache(cache_dir, cache_key, "test-source")
             .await
             .expect("Failed to load cache");
 
@@ -241,19 +251,21 @@ mod tests {
     async fn test_load_from_cache_missing_categories() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path();
+        let cache_key = "test-hash";
 
         // Save cache without categories file
         let ruleset = create_test_ruleset("test-source");
-        save_to_cache(&ruleset, cache_dir)
+        save_to_cache(&ruleset, cache_dir, cache_key)
             .await
             .expect("Failed to save cache");
 
         // Delete categories file
-        let categories_path = cache_dir.join("categories.json");
+        let cache_subdir = cache_dir.join(cache_key);
+        let categories_path = cache_subdir.join("categories.json");
         let _ = tokio::fs::remove_file(&categories_path).await;
 
         // Should still load successfully (categories are optional)
-        let loaded = load_from_cache(cache_dir, "test-source")
+        let loaded = load_from_cache(cache_dir, cache_key, "test-source")
             .await
             .expect("Failed to load cache");
         assert!(loaded.categories.is_empty());
@@ -263,20 +275,25 @@ mod tests {
     async fn test_load_from_cache_invalid_metadata_json() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path();
+        let cache_key = "test-hash";
+        let cache_subdir = cache_dir.join(cache_key);
+        tokio::fs::create_dir_all(&cache_subdir)
+            .await
+            .expect("Failed to create cache subdirectory");
 
         // Create invalid metadata file
-        let metadata_path = cache_dir.join("metadata.json");
+        let metadata_path = cache_subdir.join("metadata.json");
         tokio::fs::write(&metadata_path, b"{ invalid json }")
             .await
             .expect("Failed to write invalid metadata");
 
         // Create technologies file (required for cache to exist)
-        let technologies_path = cache_dir.join("technologies.json");
+        let technologies_path = cache_subdir.join("technologies.json");
         tokio::fs::write(&technologies_path, "{}")
             .await
             .expect("Failed to write technologies");
 
-        let result = load_from_cache(cache_dir, "test-source").await;
+        let result = load_from_cache(cache_dir, cache_key, "test-source").await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -293,32 +310,36 @@ mod tests {
     async fn test_load_from_cache_merged_source() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path();
+        let cache_key = "merged-hash";
 
-        // Save cache with merged source
-        let ruleset = create_test_ruleset("merged:url1+url2");
-        save_to_cache(&ruleset, cache_dir)
+        // Save cache with merged source (format: "url1\nurl2" - newline-separated)
+        let merged_sources = "url1\nurl2";
+        let ruleset = create_test_ruleset(merged_sources);
+        save_to_cache(&ruleset, cache_dir, cache_key)
             .await
             .expect("Failed to save cache");
 
         // Load with matching merged source
-        let loaded = load_from_cache(cache_dir, "merged:url1+url2")
+        let loaded = load_from_cache(cache_dir, cache_key, merged_sources)
             .await
             .expect("Failed to load cache");
-        assert_eq!(loaded.metadata.source, "merged:url1+url2");
+        assert_eq!(loaded.metadata.source, merged_sources);
     }
 
     #[tokio::test]
     async fn test_save_to_cache_creates_directory() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_dir = temp_dir.path().join("nested").join("cache");
+        let cache_key = "test-hash";
 
         let ruleset = create_test_ruleset("test-source");
-        let result = save_to_cache(&ruleset, &cache_dir).await;
+        let result = save_to_cache(&ruleset, &cache_dir, cache_key).await;
         assert!(result.is_ok());
 
-        // Verify files were created
-        assert!(cache_dir.join("metadata.json").exists());
-        assert!(cache_dir.join("technologies.json").exists());
-        assert!(cache_dir.join("categories.json").exists());
+        // Verify files were created in subdirectory
+        let cache_subdir = cache_dir.join(cache_key);
+        assert!(cache_subdir.join("metadata.json").exists());
+        assert!(cache_subdir.join("technologies.json").exists());
+        assert!(cache_subdir.join("categories.json").exists());
     }
 }

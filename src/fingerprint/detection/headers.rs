@@ -23,7 +23,9 @@ pub async fn check_headers(
 ) -> anyhow::Result<Vec<HeaderMatchResult>> {
     let ruleset = get_ruleset()
         .await
-        .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
+        })?;
 
     let mut results = Vec::new();
 

@@ -13,6 +13,7 @@ mod github;
 mod local;
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
@@ -77,19 +78,30 @@ pub async fn init_ruleset(
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
 
     // Create a cache key from all sources
-    // Defensive check: sources should never be empty (either from parameter or DEFAULT_FINGERPRINTS_URLS)
+    // Use SHA256 hash to avoid URL character issues and ensure deterministic caching
+    // The actual sources are stored in metadata.source for human readability
     let cache_key = if sources.is_empty() {
         // Fallback to default cache key if sources is somehow empty (should never happen)
         log::warn!("Fingerprint sources is empty, using default cache key");
         "default".to_string()
     } else if sources.len() == 1 {
+        // Single source: use hash to handle special characters in URLs
+        format!("{:x}", Sha256::digest(sources[0].as_bytes()))
+    } else {
+        // Multiple sources: hash the joined sources (using newline as delimiter)
+        let combined = sources.join("\n");
+        format!("{:x}", Sha256::digest(combined.as_bytes()))
+    };
+
+    // Create expected_sources string for cache validation (newline-separated)
+    let expected_sources = if sources.len() == 1 {
         sources[0].clone()
     } else {
-        format!("merged:{}", sources.join("+"))
+        sources.join("\n")
     };
 
     // Try to load from cache first
-    if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key).await {
+    if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
         log::info!(
             "Loaded fingerprint ruleset from cache ({} sources)",
             sources.len()
@@ -111,7 +123,7 @@ pub async fn init_ruleset(
         "Fetching fingerprint ruleset from {} source(s)",
         sources.len()
     );
-    let ruleset = fetch_ruleset_from_multiple_sources(&sources, &cache_path).await?;
+    let ruleset = fetch_ruleset_from_multiple_sources(&sources, &cache_path, &cache_key).await?;
     let ruleset_arc = Arc::new(ruleset);
     *RULESET.write().await = Some(ruleset_arc.clone());
     Ok(ruleset_arc)
@@ -138,6 +150,7 @@ pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
 async fn fetch_ruleset_from_multiple_sources(
     sources: &[String],
     cache_dir: &Path,
+    cache_key: &str,
 ) -> Result<FingerprintRuleset> {
     let mut all_technologies = HashMap::new();
     let mut all_categories = HashMap::new();
@@ -271,7 +284,13 @@ async fn fetch_ruleset_from_multiple_sources(
         versions.join(";")
     };
 
-    let source_str = sources.join("+");
+    // Use newline separator for sources (human-readable and avoids URL character issues)
+    let source_str = if sources.len() == 1 {
+        sources[0].clone()
+    } else {
+        sources.join("\n")
+    };
+
     let metadata = FingerprintMetadata {
         source: source_str.clone(),
         version,
@@ -290,8 +309,8 @@ async fn fetch_ruleset_from_multiple_sources(
         metadata,
     };
 
-    // Cache it with the merged source key
-    save_to_cache(&ruleset, cache_dir).await?;
+    // Cache it with the hash-based cache key
+    save_to_cache(&ruleset, cache_dir, cache_key).await?;
 
     Ok(ruleset)
 }
@@ -310,8 +329,10 @@ mod tests {
             "https://invalid-url-that-does-not-exist-12345.com/technologies".to_string(),
             "https://another-invalid-url-67890.com/technologies".to_string(),
         ];
+        let cache_key = "test-hash";
 
-        let result = fetch_ruleset_from_multiple_sources(&invalid_sources, temp_dir.path()).await;
+        let result =
+            fetch_ruleset_from_multiple_sources(&invalid_sources, temp_dir.path(), cache_key).await;
 
         // Should return an error with helpful message
         assert!(result.is_err());
@@ -488,43 +509,90 @@ mod tests {
 
     #[test]
     fn test_cache_key_construction_single_source() {
-        // Test cache key construction for single source (line 80-81)
+        // Test cache key construction for single source (line 87-89)
+        // Should produce SHA256 hash of the source URL
         let sources = ["https://source.com".to_string()];
         let cache_key = if sources.len() == 1 {
-            sources[0].clone()
+            format!("{:x}", Sha256::digest(sources[0].as_bytes()))
         } else {
-            format!("merged:{}", sources.join("+"))
+            let combined = sources.join("\n");
+            format!("{:x}", Sha256::digest(combined.as_bytes()))
         };
-        assert_eq!(cache_key, "https://source.com");
+
+        // Verify it's a valid SHA256 hex string (64 characters)
+        assert_eq!(cache_key.len(), 64, "SHA256 hash should be 64 hex characters");
+        assert!(cache_key.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
+
+        // Verify the expected hash value for "https://source.com"
+        let expected_hash = "60ef962257f419d4576a713a49f7309f1797614577b1f16cc9a867a54f386619";
+        assert_eq!(cache_key, expected_hash);
     }
 
     #[test]
     fn test_cache_key_construction_multiple_sources() {
-        // Test cache key construction for multiple sources (line 82-83)
+        // Test cache key construction for multiple sources (line 90-93)
+        // Should produce SHA256 hash of newline-joined sources
         let sources = [
             "https://source1.com".to_string(),
             "https://source2.com".to_string(),
         ];
         let cache_key = if sources.len() == 1 {
-            sources[0].clone()
+            format!("{:x}", Sha256::digest(sources[0].as_bytes()))
         } else {
-            format!("merged:{}", sources.join("+"))
+            let combined = sources.join("\n");
+            format!("{:x}", Sha256::digest(combined.as_bytes()))
         };
-        assert_eq!(cache_key, "merged:https://source1.com+https://source2.com");
+
+        // Verify it's a valid SHA256 hex string (64 characters)
+        assert_eq!(cache_key.len(), 64, "SHA256 hash should be 64 hex characters");
+        assert!(cache_key.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
+
+        // Verify the expected hash value for "https://source1.com\nhttps://source2.com"
+        let expected_hash = "f3457c3dd40c5100f522ed2aba0f2fc774223660a93ce15d08b294d004293fea";
+        assert_eq!(cache_key, expected_hash);
     }
 
     #[test]
     fn test_cache_key_construction_empty_sources_fallback() {
-        // Test cache key construction fallback for empty sources (line 76-79)
+        // Test cache key construction fallback for empty sources (line 83-86)
         // This should never happen, but the code has defensive handling
         let sources: Vec<String> = vec![];
         let cache_key = if sources.is_empty() {
             "default".to_string()
         } else if sources.len() == 1 {
-            sources[0].clone()
+            format!("{:x}", Sha256::digest(sources[0].as_bytes()))
         } else {
-            format!("merged:{}", sources.join("+"))
+            let combined = sources.join("\n");
+            format!("{:x}", Sha256::digest(combined.as_bytes()))
         };
         assert_eq!(cache_key, "default");
+    }
+
+    #[test]
+    fn test_cache_key_hash_determinism() {
+        // Test that the same inputs always produce the same hash
+        let source = "https://example.com".to_string();
+
+        let hash1 = format!("{:x}", Sha256::digest(source.as_bytes()));
+        let hash2 = format!("{:x}", Sha256::digest(source.as_bytes()));
+
+        assert_eq!(hash1, hash2, "Hash should be deterministic");
+        assert_eq!(hash1.len(), 64, "Hash should be 64 hex characters");
+    }
+
+    #[test]
+    fn test_cache_key_handles_special_url_characters() {
+        // Test that hash handles URLs with special characters that would break string concatenation
+        let sources = [
+            "https://example.com/path?query=value&other=123".to_string(),
+            "https://example.com/path#fragment+with+special%20chars".to_string(),
+        ];
+
+        let combined = sources.join("\n");
+        let cache_key = format!("{:x}", Sha256::digest(combined.as_bytes()));
+
+        // Should produce valid hash regardless of special characters
+        assert_eq!(cache_key.len(), 64, "Hash should be 64 hex characters");
+        assert!(cache_key.chars().all(|c| c.is_ascii_hexdigit()), "Hash should only contain hex digits");
     }
 }

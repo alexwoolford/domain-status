@@ -134,7 +134,9 @@ pub async fn detect_technologies(
     // Add implied technologies (wappalyzergo adds these after each match)
     let ruleset = get_ruleset()
         .await
-        .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
+        })?;
 
     let mut implied_to_add = Vec::new();
     for tech_name in detected.keys() {

@@ -172,6 +172,25 @@ This creates an executable in `./target/release/domain_status` (or `domain_statu
 - **Status Server**: Optional HTTP server for monitoring long-running jobs with Prometheus metrics
 - **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
 
+## Error Handling and Exit Codes
+
+domain_status provides comprehensive error handling with clear exit codes:
+
+- **Exit Code 0**: Success or ignored failures (`--fail-on never`)
+- **Exit Code 1**: Configuration or initialization error
+- **Exit Code 2**: Failure threshold exceeded (policy-based)
+- **Exit Code 3**: Partial success (no URLs processed)
+
+See [docs/EXIT_CODES.md](docs/EXIT_CODES.md) for detailed exit code reference and [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) for error handling patterns.
+
+### Panic Safety Guarantee
+
+The application is designed to never panic during normal operation:
+- All regex patterns validated at program startup
+- Division operations guarded against divide-by-zero
+- Mutex operations use safe recovery strategies
+- Proper error handling throughout with actionable messages
+
 ## 💼 Use Cases
 
 **Domain Portfolio Management**: Check status of multiple domains, track redirects, verify SSL certificates, monitor domain expiration dates (with WHOIS enabled).

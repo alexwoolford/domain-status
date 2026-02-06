@@ -17,7 +17,8 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
 
     if parts.len() < 7 {
         log::debug!(
-            "Invalid GitHub URL format for SHA extraction: {} (length: {})",
+            "Invalid GitHub URL format for SHA extraction. Expected: \
+            'https://raw.githubusercontent.com/owner/repo/branch/path', got: '{}' (parsed {} parts)",
             repo_path,
             parts.len()
         );

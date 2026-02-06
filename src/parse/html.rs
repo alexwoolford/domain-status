@@ -17,39 +17,18 @@ const META_KEYWORDS_SELECTOR_STR: &str = "meta[name='keywords']";
 const META_DESCRIPTION_SELECTOR_STR: &str = "meta[name='description']";
 
 static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(TITLE_SELECTOR_STR).unwrap_or_else(|e| {
-        log::error!(
-            "Failed to parse title selector '{}': {}",
-            TITLE_SELECTOR_STR,
-            e
-        );
-        // Return a safe default selector that matches nothing
-        // This prevents panics while still allowing the code to run
-        // Use a known-valid selector that won't match anything: "*:not(*)"
-        crate::utils::parse_selector_unsafe("*:not(*)", "TITLE_SELECTOR fallback")
-    })
+    Selector::parse(TITLE_SELECTOR_STR)
+        .expect("TITLE_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
 });
 
 static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(META_KEYWORDS_SELECTOR_STR).unwrap_or_else(|e| {
-        log::error!(
-            "Failed to parse meta keywords selector '{}': {}",
-            META_KEYWORDS_SELECTOR_STR,
-            e
-        );
-        crate::utils::parse_selector_unsafe("*:not(*)", "META_KEYWORDS_SELECTOR fallback")
-    })
+    Selector::parse(META_KEYWORDS_SELECTOR_STR)
+        .expect("META_KEYWORDS_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
 });
 
 static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(META_DESCRIPTION_SELECTOR_STR).unwrap_or_else(|e| {
-        log::error!(
-            "Failed to parse meta description selector '{}': {}",
-            META_DESCRIPTION_SELECTOR_STR,
-            e
-        );
-        crate::utils::parse_selector_unsafe("*:not(*)", "META_DESCRIPTION_SELECTOR fallback")
-    })
+    Selector::parse(META_DESCRIPTION_SELECTOR_STR)
+        .expect("META_DESCRIPTION_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
 });
 
 /// Extracts the page title from an HTML document.
