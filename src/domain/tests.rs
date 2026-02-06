@@ -241,3 +241,127 @@ fn test_psl_domain_behavior() {
         }
     }
 }
+
+// Property-based tests using proptest
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn test_extract_domain_idempotent(
+        domain in "[a-z]{3,15}",
+        tld in "(com|org|net|co\\.uk)"
+    ) {
+        let url = format!("https://www.{}.{}", domain, tld);
+        let extractor = test_extractor();
+
+        let extracted = extract_domain(&extractor, &url);
+        if let Ok(d) = extracted {
+            // Extracting domain from a domain should return same domain
+            let url2 = format!("https://{}", d);
+            let extracted2 = extract_domain(&extractor, &url2);
+            prop_assert!(extracted2.is_ok(),
+                "Second extraction should succeed");
+            prop_assert_eq!(d, extracted2.unwrap(),
+                "Domain extraction should be idempotent");
+        }
+    }
+
+    #[test]
+    fn test_extract_domain_subdomains_preserve_root(
+        subdomain in prop::collection::vec("[a-z]{2,10}", 1..5),
+        domain in "[a-z]{3,15}",
+        tld in "(com|org|net)"
+    ) {
+        let root_url = format!("https://{}.{}", domain, tld);
+        let extractor = test_extractor();
+        let root_domain = extract_domain(&extractor, &root_url).ok();
+
+        if let Some(root) = root_domain {
+            // Adding subdomains shouldn't change root domain
+            let sub_url = format!("https://{}.{}.{}",
+                subdomain.join("."), domain, tld);
+            let sub_domain = extract_domain(&extractor, &sub_url).ok();
+
+            prop_assert_eq!(Some(root), sub_domain,
+                "Subdomains should extract to same root domain");
+        }
+    }
+
+    #[test]
+    fn test_domain_extraction_no_panic(url in "https?://[a-zA-Z0-9.-]{1,100}\\.[a-z]{2,10}.*") {
+        let extractor = test_extractor();
+        // Should not panic on any input
+        let _result = extract_domain(&extractor, &url);
+    }
+
+    #[test]
+    fn test_domain_extraction_with_ports(
+        domain in "[a-z]{3,15}",
+        tld in "(com|org|net)",
+        port in 1u16..=65535
+    ) {
+        let url = format!("https://{}.{}:{}", domain, tld, port);
+        let extractor = test_extractor();
+        let result = extract_domain(&extractor, &url);
+
+        // Port should not affect domain extraction
+        prop_assert!(result.is_ok());
+        if let Ok(extracted) = result {
+            prop_assert!(!extracted.contains(':'),
+                "Extracted domain should not contain port");
+            prop_assert_eq!(extracted, format!("{}.{}", domain, tld));
+        }
+    }
+
+    #[test]
+    fn test_domain_extraction_with_paths(
+        domain in "[a-z]{3,15}",
+        tld in "(com|org|net)",
+        path in prop::collection::vec("[a-z]{1,10}", 0..5)
+    ) {
+        let url = format!("https://{}.{}/{}", domain, tld, path.join("/"));
+        let extractor = test_extractor();
+        let result = extract_domain(&extractor, &url);
+
+        // Path should not affect domain extraction
+        prop_assert!(result.is_ok());
+        if let Ok(extracted) = result {
+            prop_assert_eq!(extracted, format!("{}.{}", domain, tld));
+        }
+    }
+
+    #[test]
+    fn test_domain_extraction_scheme_independence(
+        domain in "[a-z]{3,15}",
+        tld in "(com|org|net)",
+        scheme in "(http|https)"
+    ) {
+        let url = format!("{}://{}.{}", scheme, domain, tld);
+        let extractor = test_extractor();
+        let result = extract_domain(&extractor, &url);
+
+        // Scheme should not affect extracted domain
+        prop_assert!(result.is_ok());
+        if let Ok(extracted) = result {
+            prop_assert_eq!(extracted, format!("{}.{}", domain, tld));
+        }
+    }
+
+    #[test]
+    fn test_domain_extraction_with_query(
+        domain in "[a-z]{3,15}",
+        tld in "(com|org|net)",
+        key in "[a-z]{1,10}",
+        value in "[a-z]{1,10}"
+    ) {
+        let url = format!("https://{}.{}?{}={}", domain, tld, key, value);
+        let extractor = test_extractor();
+        let result = extract_domain(&extractor, &url);
+
+        // Query string should not affect domain extraction
+        prop_assert!(result.is_ok());
+        if let Ok(extracted) = result {
+            prop_assert_eq!(extracted, format!("{}.{}", domain, tld));
+        }
+    }
+}

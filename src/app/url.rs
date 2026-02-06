@@ -350,4 +350,108 @@ mod tests {
             "Should reject URL that exceeds limit after normalization"
         );
     }
+
+    // Property-based tests using proptest
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn test_url_normalization_idempotent(url in "[a-z]{3,20}\\.[a-z]{2,5}") {
+            let normalized1 = validate_and_normalize_url(&url);
+            if let Some(n1) = normalized1 {
+                let normalized2 = validate_and_normalize_url(&n1);
+                prop_assert_eq!(Some(n1.clone()), normalized2,
+                    "Normalizing twice should produce same result");
+            }
+        }
+
+        #[test]
+        fn test_url_length_validation(
+            domain in "[a-z]{3,20}\\.[a-z]{2,5}",
+            path in prop::collection::vec("[a-z]{1,10}", 0..200)
+        ) {
+            let url = format!("https://{}/{}", domain, path.join("/"));
+            let result = validate_and_normalize_url(&url);
+
+            if url.len() <= 2048 {
+                prop_assert!(result.is_some(),
+                    "Valid URL under limit should normalize successfully");
+            } else {
+                prop_assert!(result.is_none(),
+                    "URL over 2048 chars should be rejected");
+            }
+        }
+
+        #[test]
+        fn test_url_scheme_handling(domain in "[a-z]{3,20}\\.[a-z]{2,5}") {
+            // URLs without scheme should get https:// prefix
+            let no_scheme = validate_and_normalize_url(&domain);
+            prop_assert!(no_scheme.is_some());
+            prop_assert!(no_scheme.unwrap().starts_with("https://"));
+
+            // HTTP URLs should preserve scheme
+            let http_url = format!("http://{}", domain);
+            let with_http = validate_and_normalize_url(&http_url);
+            prop_assert!(with_http.is_some());
+            prop_assert!(with_http.unwrap().starts_with("http://"));
+        }
+
+        #[test]
+        fn test_url_special_chars_no_panic(
+            domain in "[a-z]{3,20}\\.[a-z]{2,5}",
+            path in "[^/]{0,100}"
+        ) {
+            let url = format!("https://{}/{}", domain, path);
+            // Should not panic on any input
+            let _result = validate_and_normalize_url(&url);
+        }
+
+        #[test]
+        fn test_url_with_query_and_fragment(
+            domain in "[a-z]{3,20}\\.[a-z]{2,5}",
+            query in "[a-z]{0,50}",
+            fragment in "[a-z]{0,50}"
+        ) {
+            let url = format!("{}?query={}&key=value#{}", domain, query, fragment);
+            let result = validate_and_normalize_url(&url);
+
+            if let Some(normalized) = result {
+                prop_assert!(normalized.starts_with("https://"));
+                prop_assert!(normalized.contains(&domain));
+            }
+        }
+
+        #[test]
+        fn test_url_port_validation(
+            domain in "[a-z]{3,20}\\.[a-z]{2,5}",
+            port in 1u16..=65535
+        ) {
+            let url = format!("{}:{}", domain, port);
+            let result = validate_and_normalize_url(&url);
+
+            // Should normalize successfully for valid ports
+            prop_assert!(result.is_some());
+            if let Some(normalized) = result {
+                prop_assert!(normalized.contains(&port.to_string()));
+            }
+        }
+
+        #[test]
+        fn test_url_subdomain_normalization(
+            subdomain in "[a-z]{2,10}",
+            domain in "[a-z]{3,15}",
+            tld in "(com|org|net)"
+        ) {
+            let url = format!("{}.{}.{}", subdomain, domain, tld);
+            let result = validate_and_normalize_url(&url);
+
+            prop_assert!(result.is_some());
+            if let Some(normalized) = result {
+                prop_assert!(normalized.starts_with("https://"));
+                prop_assert!(normalized.contains(&subdomain));
+                prop_assert!(normalized.contains(&domain));
+                prop_assert!(normalized.contains(&tld));
+            }
+        }
+    }
 }

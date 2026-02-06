@@ -142,3 +142,289 @@ pub fn analyze_security(
 
     warnings
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_is_weak_tls_secure_versions() {
+        // TLS 1.2 and above are secure
+        assert!(!is_weak_tls("TLSv1.2"));
+        assert!(!is_weak_tls("TLSv1.3"));
+        assert!(!is_weak_tls("TLS 1.2"));
+        assert!(!is_weak_tls("TLS 1.3"));
+    }
+
+    #[test]
+    fn test_is_weak_tls_insecure_versions() {
+        // TLS 1.1 and below are weak
+        assert!(is_weak_tls("TLSv1.1"));
+        assert!(is_weak_tls("TLSv1.0"));
+        assert!(is_weak_tls("TLS 1.1"));
+        assert!(is_weak_tls("TLS 1.0"));
+        assert!(is_weak_tls("SSLv3"));
+        assert!(is_weak_tls("SSL 3.0"));
+    }
+
+    #[test]
+    fn test_is_weak_tls_format_variations() {
+        // Different format variations
+        assert!(!is_weak_tls("tlsv1.3"));
+        assert!(!is_weak_tls("tls1.2"));
+        assert!(is_weak_tls("tlsv1_1"));
+        assert!(is_weak_tls("ssl3"));
+    }
+
+    #[test]
+    fn test_is_weak_tls_unknown_defaults_to_weak() {
+        // Unknown versions should default to weak for safety
+        assert!(is_weak_tls("TLS 0.9"));
+        assert!(is_weak_tls("Unknown"));
+        assert!(is_weak_tls(""));
+    }
+
+    #[test]
+    fn test_analyze_security_https_no_warnings() {
+        let security_headers = HashMap::new();
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &None, // no TLS version provided
+            &security_headers,
+            &None, // no certificate
+            &None,
+            &None,
+            &None,
+        );
+
+        // Should have warnings for missing security headers, but not for HTTPS
+        assert!(!warnings.contains(&SecurityWarning::NoHttps));
+    }
+
+    #[test]
+    fn test_analyze_security_http_generates_warning() {
+        let security_headers = HashMap::new();
+
+        let warnings = analyze_security(
+            "http://example.com", // HTTP not HTTPS
+            &None,
+            &security_headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        assert!(warnings.contains(&SecurityWarning::NoHttps));
+    }
+
+    #[test]
+    fn test_analyze_security_missing_security_headers() {
+        let security_headers = HashMap::new(); // Empty headers
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        // Should warn about missing security headers
+        assert!(warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
+    }
+
+    #[test]
+    fn test_analyze_security_with_all_headers() {
+        let mut security_headers = HashMap::new();
+        security_headers.insert(
+            "strict-transport-security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+        security_headers.insert(
+            "content-security-policy".to_string(),
+            "default-src 'self'".to_string(),
+        );
+        security_headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
+        security_headers.insert("x-frame-options".to_string(), "DENY".to_string());
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        // Should not warn about missing headers
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingFrameOptions));
+    }
+
+    #[test]
+    fn test_analyze_security_weak_tls() {
+        let security_headers = HashMap::new();
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.0".to_string()), // Weak TLS version
+            &security_headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        assert!(warnings.contains(&SecurityWarning::WeakTls));
+    }
+
+    #[test]
+    fn test_analyze_security_strong_tls() {
+        let security_headers = HashMap::new();
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()), // Strong TLS version
+            &security_headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        assert!(!warnings.contains(&SecurityWarning::WeakTls));
+    }
+
+    #[test]
+    fn test_analyze_security_expired_certificate() {
+        let security_headers = HashMap::new();
+
+        // Certificate expired 30 days ago
+        let expired_date = NaiveDate::from_ymd_opt(2020, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &Some("CN=example.com".to_string()),
+            &Some("CN=Let's Encrypt".to_string()),
+            &Some(expired_date),
+            &None,
+        );
+
+        assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
+    }
+
+    #[test]
+    fn test_analyze_security_self_signed_certificate() {
+        let security_headers = HashMap::new();
+
+        // Certificate valid in the future
+        let future_date = NaiveDate::from_ymd_opt(2030, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        // Subject == Issuer means self-signed
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &Some("CN=example.com".to_string()),
+            &Some("CN=example.com".to_string()), // Same as subject = self-signed
+            &Some(future_date),
+            &None,
+        );
+
+        assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
+    }
+
+    #[test]
+    fn test_analyze_security_valid_certificate() {
+        let security_headers = HashMap::new();
+
+        // Certificate valid in the future
+        let future_date = NaiveDate::from_ymd_opt(2030, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &Some("CN=example.com".to_string()),
+            &Some("CN=Let's Encrypt Authority X3".to_string()),
+            &Some(future_date),
+            &None,
+        );
+
+        // Should not have invalid certificate warning
+        assert!(!warnings.contains(&SecurityWarning::InvalidCertificate));
+    }
+
+    #[test]
+    fn test_analyze_security_https_no_cert_info() {
+        let security_headers = HashMap::new();
+
+        // HTTPS but no certificate info (extraction failed)
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &None, // No certificate info
+            &None,
+            &None,
+            &None,
+        );
+
+        // Should warn about invalid certificate (couldn't extract)
+        assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
+    }
+
+    #[test]
+    fn test_analyze_security_case_insensitive_headers() {
+        let mut security_headers = HashMap::new();
+        // Headers with different casing
+        security_headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+        security_headers.insert(
+            "Content-Security-Policy".to_string(),
+            "default-src 'self'".to_string(),
+        );
+        security_headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
+        security_headers.insert("X-Frame-Options".to_string(), "DENY".to_string());
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some("TLSv1.3".to_string()),
+            &security_headers,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        // Should not warn about missing headers (case-insensitive matching)
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingFrameOptions));
+    }
+}
