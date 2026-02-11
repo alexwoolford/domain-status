@@ -62,8 +62,11 @@ async fn fetch_latest_chrome_version() -> String {
 
 /// Attempts to fetch Chrome version from a specific source.
 async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
+    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
 
     let response = client.get(url).send().await?;

@@ -63,8 +63,11 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         reqwest::header::HeaderValue::from_static("domain_status/0.1.0"),
     );
 
+    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .default_headers(headers)
         .build()
         .ok()?;

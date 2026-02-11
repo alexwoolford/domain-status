@@ -28,8 +28,11 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
     // SSRF protection: validate URL before fetching
     validate_url_safe(url).with_context(|| format!("Unsafe ruleset URL rejected: {}", url))?;
 
+    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
 
     // Check if URL points to a directory (GitHub) or a file
