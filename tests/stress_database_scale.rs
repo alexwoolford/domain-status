@@ -165,14 +165,14 @@ async fn test_database_growth_moderate() {
     println!("Testing query performance...");
 
     let query_start = Instant::now();
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM urls")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status")
         .fetch_one(pool.as_ref())
         .await
-        .expect("Failed to count urls");
+        .expect("Failed to count url_status");
     let count_elapsed = query_start.elapsed();
 
     println!("  COUNT(*) query: {:.2}ms", count_elapsed.as_millis());
-    println!("  Total rows in urls table: {}", count);
+    println!("  Total rows in url_status table: {}", count);
     println!();
 
     // Extrapolate to production scale
@@ -280,10 +280,10 @@ async fn test_database_performance_degradation() {
         // Measure query performance at intervals
         if (i + 1) % 1000 == 0 {
             let query_start = Instant::now();
-            let _count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM urls")
+            let _count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status")
                 .fetch_one(pool.as_ref())
                 .await
-                .expect("Failed to count");
+                .expect("Failed to count url_status");
             let query_elapsed = query_start.elapsed();
 
             query_times.push((i + 1, query_elapsed));

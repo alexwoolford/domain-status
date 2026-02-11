@@ -67,7 +67,7 @@ async fn start_redirect_server(_total_hops: usize) -> String {
 
     let app = Router::new()
         .route(
-            "/redirect/:hop",
+            "/redirect/{hop}",
             get({
                 let counter = hop_counter.clone();
                 move |Path(hop): Path<usize>| async move {
