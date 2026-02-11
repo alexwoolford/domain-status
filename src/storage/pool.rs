@@ -7,10 +7,13 @@
 
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::{error, info};
-use sqlx::{Pool, Sqlite, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{Pool, Sqlite};
 
 use crate::error_handling::DatabaseError;
 
@@ -43,7 +46,23 @@ pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool,
         }
     }
 
-    let pool = SqlitePool::connect(&format!("sqlite:{}", db_path_str))
+    // FIX: Configure pool explicitly instead of using defaults
+    // - acquire_timeout: 5s (fail fast instead of blocking workers for 30s)
+    // - max_connections: 30 (match default max_concurrency)
+    // - idle_timeout: 60s (clean up unused connections)
+    let db_url = format!("sqlite:{}", db_path_str);
+    let options = SqliteConnectOptions::from_str(&db_url)
+        .map_err(|e| {
+            error!("Failed to parse database URL: {e}");
+            DatabaseError::FileCreationError(format!("Invalid database path: {}", e))
+        })?
+        .create_if_missing(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(30) // Match default max_concurrency
+        .acquire_timeout(Duration::from_secs(5)) // Fail fast instead of blocking 30s
+        .idle_timeout(Some(Duration::from_secs(60))) // Clean up idle connections
+        .connect_with(options)
         .await
         .map_err(|e| {
             error!("Failed to connect to database: {e}");
