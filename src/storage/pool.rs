@@ -78,6 +78,18 @@ pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool,
             DatabaseError::SqlError(e)
         })?;
 
+    // Configure WAL autocheckpoint (P1 operational fix)
+    // Checkpoint every 1000 pages (~4MB with 4KB pages)
+    // This prevents unbounded WAL growth during bulk operations
+    // Default is 1000 pages; explicitly set for clarity and documentation
+    sqlx::query("PRAGMA wal_autocheckpoint=1000")
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to set WAL autocheckpoint: {e}");
+            DatabaseError::SqlError(e)
+        })?;
+
     // Enable foreign key enforcement (required for ON DELETE CASCADE to work)
     // Without this, foreign key constraints are parsed but not enforced
     sqlx::query("PRAGMA foreign_keys=ON")

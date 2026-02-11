@@ -26,6 +26,15 @@ pub const DB_PATH: &str = "./domain_status.db";
 /// Reduced to 3s - most DNS queries complete in <1s, 3s provides good buffer while failing fast
 /// This significantly reduces time wasted on slow/unresponsive DNS servers
 pub const DNS_TIMEOUT_SECS: u64 = 3;
+
+// DNS record size limits
+/// Maximum total size of concatenated DNS TXT records in bytes (1KB)
+/// Prevents memory exhaustion from DNS tunneling attacks (e.g., 500KB of data in TXT records)
+/// Most legitimate TXT records (SPF, DMARC, DKIM) are <512 bytes
+/// Large enterprise SPF records occasionally reach 1KB; this provides reasonable headroom
+/// TXT records exceeding this limit are truncated with a warning logged
+pub const MAX_TXT_RECORD_SIZE: usize = 1024;
+
 /// TCP connection timeout in seconds
 pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
 /// TLS handshake timeout in seconds
@@ -86,6 +95,11 @@ pub const MAX_ERROR_MESSAGE_LENGTH: usize = 2000;
 /// Prevents database bloat from very long header values (e.g., accept-ch headers)
 /// Header values longer than this are truncated
 pub const MAX_HEADER_VALUE_LENGTH: usize = 1000;
+/// Maximum number of HTTP response headers to process
+/// Prevents memory exhaustion from header bomb attacks (e.g., malicious sites sending 10K+ headers)
+/// Most legitimate sites have <50 headers; 100 provides ample headroom
+/// Headers beyond this limit are ignored with a warning logged
+pub const MAX_HEADER_COUNT: usize = 100;
 // Note: JavaScript execution constants removed - we don't execute JavaScript
 // We match JS patterns as text (like WappalyzerGo) instead of executing JavaScript
 
