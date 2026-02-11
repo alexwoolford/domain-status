@@ -8,6 +8,7 @@ use sqlx::{Row, SqlitePool};
 use crate::error_handling::DatabaseError;
 
 use super::super::models::{UrlFailureRecord, UrlPartialFailureRecord};
+use super::utils::insert_key_value_batch;
 
 /// Inserts a URL failure record into the database with retry logic.
 ///
@@ -117,28 +118,30 @@ async fn insert_failure_response_headers(
     failure_id: i64,
     response_headers: &[(String, String)],
 ) -> Result<(), DatabaseError> {
-    for (name, value) in response_headers {
-        sqlx::query(
-            "INSERT INTO url_failure_response_headers (url_failure_id, header_name, header_value)
-             VALUES (?, ?, ?)
-             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
-        )
-        .bind(failure_id)
-        .bind(name)
-        .bind(value)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "Failed to insert response header for failure_id {} (header: {}): {}",
-                failure_id,
-                name,
-                e
-            );
-            DatabaseError::SqlError(e)
-        })?;
+    if response_headers.is_empty() {
+        return Ok(());
     }
-    Ok(())
+
+    insert_key_value_batch(
+        tx,
+        "url_failure_response_headers",
+        "url_failure_id",
+        "header_name",
+        "header_value",
+        failure_id,
+        response_headers,
+        Some("ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "Failed to insert {} response headers for failure_id {}: {}",
+            response_headers.len(),
+            failure_id,
+            e
+        );
+        DatabaseError::SqlError(e)
+    })
 }
 
 /// Inserts request headers for a failure record.
@@ -157,28 +160,30 @@ async fn insert_failure_request_headers(
     failure_id: i64,
     request_headers: &[(String, String)],
 ) -> Result<(), DatabaseError> {
-    for (name, value) in request_headers {
-        sqlx::query(
-            "INSERT INTO url_failure_request_headers (url_failure_id, header_name, header_value)
-             VALUES (?, ?, ?)
-             ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value",
-        )
-        .bind(failure_id)
-        .bind(name)
-        .bind(value)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "Failed to insert request header for failure_id {} (header: {}): {}",
-                failure_id,
-                name,
-                e
-            );
-            DatabaseError::SqlError(e)
-        })?;
+    if request_headers.is_empty() {
+        return Ok(());
     }
-    Ok(())
+
+    insert_key_value_batch(
+        tx,
+        "url_failure_request_headers",
+        "url_failure_id",
+        "header_name",
+        "header_value",
+        failure_id,
+        request_headers,
+        Some("ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "Failed to insert {} request headers for failure_id {}: {}",
+            request_headers.len(),
+            failure_id,
+            e
+        );
+        DatabaseError::SqlError(e)
+    })
 }
 
 /// Inserts all satellite data for a failure record.
