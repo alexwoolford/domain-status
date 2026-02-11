@@ -30,6 +30,10 @@ pub const DNS_TIMEOUT_SECS: u64 = 3;
 pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
 /// TLS handshake timeout in seconds
 pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 5;
+/// WHOIS lookup timeout in seconds
+/// Most WHOIS queries complete in <2s. Set to 5s to provide buffer while preventing worker blocking.
+/// Without this, whois-service defaults to 30s which could consume most of URL_PROCESSING_TIMEOUT.
+pub const WHOIS_TIMEOUT_SECS: u64 = 5;
 
 /// Default User-Agent string for HTTP requests.
 ///

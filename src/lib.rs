@@ -53,7 +53,7 @@ mod storage;
 mod tls;
 mod user_agent;
 mod utils;
-mod whois;
+pub mod whois;
 
 // Re-export public API
 pub use config::{Config, FailOn, LogFormat, LogLevel};
@@ -64,6 +64,8 @@ pub use storage::{
 };
 // Re-export insert types for testing
 pub use storage::insert::{insert_url_record, UrlRecordInsertParams};
+// Re-export whois types for testing
+pub use whois::{lookup_whois, WhoisResult};
 
 // Internal run module (contains the main scanning logic)
 mod run {
