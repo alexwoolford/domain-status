@@ -7,26 +7,26 @@
     clippy::manual_flatten
 )]
 //!
-//! **VULNERABILITY FOUND**: No limit on HTTP header COUNT in response processing.
+//! **VULNERABILITY FOUND AND FIXED**: HTTP header count now limited to 100.
 //!
-//! **ROOT CAUSE**:
-//! - src/fetch/handler/request.rs:108-112 extracts headers without count limit
-//! - Header VALUES are truncated to 1000 chars (MAX_HEADER_VALUE_SIZE)
-//! - But header COUNT is unlimited
-//! - Malicious server can send 10,000 headers × 1KB each = 10MB before body
+//! **ROOT CAUSE** (Historical):
+//! - src/fetch/handler/request.rs:108-112 extracted headers without count limit
+//! - Header VALUES were truncated to 1000 chars (MAX_HEADER_VALUE_SIZE)
+//! - But header COUNT was unlimited
+//! - Malicious server could send 10,000 headers × 1KB each = 10MB before body
 //!
-//! **Attack Vector**:
+//! **FIX IMPLEMENTED** (v0.1.9+):
+//! - MAX_HEADER_COUNT = 100 (src/config/constants.rs:93)
+//! - Enforced in src/fetch/handler/request.rs:106-124 with take(MAX_HEADER_COUNT)
+//! - Excess headers are ignored with logged warning (potential malicious behavior)
+//!
+//! **Attack Vector** (Now Mitigated):
 //! - Adversary detects scanning activity (User-Agent pattern, timing)
 //! - Returns HTTP response with thousands of headers
-//! - Scanner allocates memory for each header
-//! - With concurrent requests, memory exhaustion possible
+//! - Scanner now processes only first 100 headers, logs warning
+//! - Memory usage bounded at ~100KB per response
 //!
-//! **Impact**: Memory exhaustion, scanner crash, DoS under concurrent load
-//!
-//! **Recommended Fix**:
-//! - Add MAX_HEADER_COUNT = 100 to src/config/constants.rs
-//! - Enforce limit in src/fetch/handler/request.rs header extraction
-//! - Log warning when limit exceeded (potential malicious behavior)
+//! **Impact**: Vulnerability mitigated - memory exhaustion prevented
 
 use axum::http::HeaderMap;
 use axum::{response::IntoResponse, routing::get, Router};
