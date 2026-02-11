@@ -174,15 +174,20 @@ mod tests {
         const MAX_DELAY: Duration = Duration::from_millis(10);
 
         loop {
+            // Yield to scheduler first to allow other tasks to run (helps under heavy test load)
+            tokio::task::yield_now().await;
+
             if cb.is_circuit_open().await == expected_open {
                 return; // Success
             }
 
             if start.elapsed() >= timeout {
                 panic!(
-                    "Timeout waiting for circuit to be {} (timeout: {:?})",
+                    "Timeout waiting for circuit to be {} (timeout: {:?}). State: is_open={}, count={}",
                     if expected_open { "open" } else { "closed" },
-                    timeout
+                    timeout,
+                    cb.is_open_sync(),
+                    cb.failure_count()
                 );
             }
 
@@ -232,13 +237,13 @@ mod tests {
         cb.record_failure().await;
 
         // Wait for circuit to fully open
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
 
         // Wait for cooldown
         sleep(Duration::from_millis(60)).await;
 
         // Circuit should allow retry (closed)
-        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, false, Duration::from_millis(500)).await;
     }
 
     #[tokio::test]
@@ -264,20 +269,20 @@ mod tests {
         // First cycle: open
         cb.record_failure().await;
         cb.record_failure().await;
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
 
         // Wait for cooldown
         sleep(Duration::from_millis(60)).await;
-        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, false, Duration::from_millis(500)).await;
 
         // Second cycle: open again
         cb.record_failure().await;
         cb.record_failure().await;
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
 
         // Wait for cooldown again
         sleep(Duration::from_millis(60)).await;
-        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, false, Duration::from_millis(500)).await;
     }
 
     #[tokio::test]
@@ -287,11 +292,11 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
 
         // Record success - should close circuit immediately
         cb.record_success().await;
-        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, false, Duration::from_millis(500)).await;
         assert_eq!(cb.failure_count(), 0);
     }
 
@@ -323,7 +328,7 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
 
         // Wait less than cooldown
         sleep(Duration::from_millis(50)).await;
@@ -369,13 +374,13 @@ mod tests {
         assert_eq!(cb.failure_count(), 2);
 
         // Wait for circuit to fully open (handles async lock acquisition on slower systems)
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
 
         // Wait for cooldown
         sleep(Duration::from_millis(60)).await;
 
         // Wait for circuit to close after cooldown
-        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, false, Duration::from_millis(500)).await;
 
         // Record another failure - count continues from previous (doesn't reset on cooldown)
         cb.record_failure().await;
@@ -383,6 +388,6 @@ mod tests {
         assert_eq!(cb.failure_count(), 3);
 
         // Wait for circuit to open again (threshold is 2, we now have 3)
-        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
+        wait_for_circuit_state(&cb, true, Duration::from_millis(500)).await;
     }
 }

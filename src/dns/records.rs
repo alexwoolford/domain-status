@@ -78,12 +78,27 @@ pub async fn lookup_txt_records(
                 .filter_map(|rdata| {
                     if let RData::TXT(txt) = rdata {
                         // TXT records can contain multiple strings - join them
-                        Some(
-                            txt.iter()
-                                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                                .collect::<Vec<String>>()
-                                .join(""),
-                        )
+                        let concatenated: String = txt
+                            .iter()
+                            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                            .collect::<Vec<String>>()
+                            .join("");
+
+                        // Truncate to MAX_TXT_RECORD_SIZE to prevent memory exhaustion from DNS tunneling
+                        let original_len = concatenated.len();
+                        let truncated = if original_len > crate::config::MAX_TXT_RECORD_SIZE {
+                            log::warn!(
+                                "TXT record for {} is {} bytes (limit: {}), truncating (potential DNS tunneling attack)",
+                                domain,
+                                original_len,
+                                crate::config::MAX_TXT_RECORD_SIZE
+                            );
+                            concatenated[..crate::config::MAX_TXT_RECORD_SIZE].to_string()
+                        } else {
+                            concatenated
+                        };
+
+                        Some(truncated)
                     } else {
                         None
                     }

@@ -105,11 +105,25 @@ pub async fn handle_http_request(
 
             // Extract headers BEFORE calling error_for_status() (which consumes response)
             // This allows us to capture headers even for error responses (4xx/5xx)
+            // Limit header count to prevent memory exhaustion from header bomb attacks
+            let header_count = response.headers().len();
             let response_headers: Vec<(String, String)> = response
                 .headers()
                 .iter()
+                .take(crate::config::MAX_HEADER_COUNT)
                 .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
                 .collect();
+
+            // Warn if response exceeded header count limit (potential header bomb attack)
+            if header_count > crate::config::MAX_HEADER_COUNT {
+                log::warn!(
+                    "Response from {} has {} headers (limit: {}), ignoring excess headers (potential header bomb attack)",
+                    url,
+                    header_count,
+                    crate::config::MAX_HEADER_COUNT
+                );
+            }
+
             let response_headers_str = serialize_json_with_default(&response_headers, "[]");
 
             match response.error_for_status() {
