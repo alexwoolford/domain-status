@@ -11,7 +11,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::time::Duration;
@@ -249,14 +249,11 @@ impl From<ScanCommand> for Config {
     }
 }
 
-// Large function handling comprehensive CLI command parsing, initialization, and execution orchestration.
-// Consider refactoring into smaller focused functions in Phase 4.
-#[allow(clippy::too_many_lines)]
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Load environment variables from .env file (if it exists)
-    // This allows setting MAXMIND_LICENSE_KEY in .env without exporting it manually
-    // Try loading from current directory first, then from the executable's directory
+/// Loads environment variables from .env file if it exists.
+///
+/// Tries loading from current directory first, then from the executable's directory.
+/// This allows setting configuration like MAXMIND_LICENSE_KEY in .env.
+fn load_environment() {
     if dotenvy::dotenv().is_err() {
         // If .env not found in current dir, try next to the executable
         if let Ok(exe_path) = std::env::current_exe() {
@@ -268,155 +265,182 @@ async fn main() -> Result<()> {
             }
         }
     }
+}
 
-    // Parse command-line arguments
+/// Initializes file logger for scan operations.
+///
+/// Returns an error if logger initialization fails.
+fn init_scan_logging(log_level: &LogLevel, log_file: &Path) -> Result<()> {
+    init_logger_to_file(log_level.clone().into(), log_file)
+        .context("Failed to initialize file logger")?;
+    eprintln!("📝 Logs: {}", log_file.display());
+    log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
+    Ok(())
+}
+
+/// Creates and configures a progress bar for scan operations.
+fn create_progress_bar() -> Result<Arc<ProgressBar>> {
+    let pb = Arc::new(ProgressBar::new(0));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
+            .context("Failed to create progress bar template")?
+            .progress_chars("█▓░"),
+    );
+    pb.enable_steady_tick(Duration::from_millis(100));
+    Ok(pb)
+}
+
+/// Creates a progress callback for updating the progress bar during scan.
+fn create_progress_callback(
+    pb: Arc<ProgressBar>,
+) -> Arc<dyn Fn(usize, usize, usize) + Send + Sync> {
+    Arc::new(move |completed, failed, total| {
+        pb.set_length(total as u64);
+        pb.set_position((completed + failed) as u64);
+        pb.set_message(format!("✓{} ✗{}", completed, failed));
+    })
+}
+
+/// Executes the scan and prints the results summary.
+///
+/// Returns the exit code based on the scan results and fail-on policy.
+async fn execute_scan_with_reporting(config: &Config, _pb: Arc<ProgressBar>) -> Result<()> {
+    match run_scan(config.clone()).await {
+        Ok(report) => {
+            println!(
+                "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+                report.total_urls,
+                if report.total_urls == 1 { "" } else { "s" },
+                report.successful,
+                report.failed,
+                report.elapsed_seconds
+            );
+            println!("Results saved in {}", report.db_path.display());
+            println!("💡 Tip: Use `domain_status export --format csv` to export data, or query the database directly.");
+
+            let exit_code =
+                evaluate_exit_code(&config.fail_on, config.fail_on_pct_threshold, &report);
+            if exit_code != 0 {
+                process::exit(exit_code);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("domain_status error: {:#}", e);
+            process::exit(1);
+        }
+    }
+}
+
+/// Handles export command execution for CSV, JSONL, and Parquet formats.
+async fn execute_export_command(export_cmd: ExportCommand) -> Result<()> {
+    // Initialize logger for export command
+    init_logger_with(LogLevel::Info.into(), LogFormat::Plain)
+        .context("Failed to initialize logger")?;
+    log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
+
+    // Determine output path: default to file, allow "-" for stdout
+    let output_path = if let Some(ref path_str) = export_cmd.output {
+        if path_str == "-" {
+            None // stdout
+        } else {
+            Some(PathBuf::from(path_str))
+        }
+    } else {
+        // Default to file based on format
+        let extension = match export_cmd.format {
+            ExportFormat::Csv => "csv",
+            ExportFormat::Jsonl => "jsonl",
+            ExportFormat::Parquet => "parquet",
+        };
+        Some(PathBuf::from(format!("domain_status_export.{}", extension)))
+    };
+
+    // Handle export format
+    match export_cmd.format {
+        ExportFormat::Csv => {
+            let count = export_csv(
+                &export_cmd.db_path,
+                output_path.as_ref(),
+                export_cmd.run_id.as_deref(),
+                export_cmd.domain.as_deref(),
+                export_cmd.status,
+                export_cmd.since,
+            )
+            .await
+            .context("Failed to export CSV")?;
+
+            if let Some(ref path) = output_path {
+                eprintln!("✅ Exported {} records to {}", count, path.display());
+            } else {
+                eprintln!("✅ Exported {} records to CSV", count);
+            }
+            Ok(())
+        }
+        ExportFormat::Jsonl => {
+            use domain_status::export::export_jsonl;
+            match export_jsonl(
+                &export_cmd.db_path,
+                output_path.as_ref(),
+                export_cmd.run_id.as_deref(),
+                export_cmd.domain.as_deref(),
+                export_cmd.status,
+                export_cmd.since,
+            )
+            .await
+            {
+                Ok(count) => {
+                    if let Some(ref path) = output_path {
+                        eprintln!("✅ Exported {} records to {}", count, path.display());
+                    } else {
+                        eprintln!("✅ Exported {} records to JSONL format", count);
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to export JSONL: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        ExportFormat::Parquet => {
+            eprintln!("Parquet export not yet implemented");
+            process::exit(1);
+        }
+    }
+}
+
+/// Main entry point for the domain_status CLI tool.
+///
+/// Handles scan and export commands with proper initialization and error handling.
+#[tokio::main]
+async fn main() -> Result<()> {
+    load_environment();
     let cli_command = CliCommand::parse();
 
     match cli_command {
         CliCommand::Scan(scan_cmd) => {
             let mut config: Config = scan_cmd.into();
 
-            // Initialize file logger with timestamps
-            let log_level = config.log_level.clone();
+            // Initialize logging
             let log_file = config
                 .log_file
                 .as_ref()
                 .context("Configuration error: log_file not set")?;
-            init_logger_to_file(log_level.into(), log_file)
-                .context("Failed to initialize file logger")?;
-            eprintln!("📝 Logs: {}", log_file.display());
-            log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
+            init_scan_logging(&config.log_level, log_file)?;
 
-            // Create progress bar
-            let pb = Arc::new(ProgressBar::new(0));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}")
-                    .context("Failed to create progress bar template")?
-                    .progress_chars("█▓░"),
-            );
-            pb.enable_steady_tick(Duration::from_millis(100));
-
-            // Set up progress callback
-            let pb_for_callback = Arc::clone(&pb);
-            config.progress_callback = Some(Arc::new(move |completed, failed, total| {
-                pb_for_callback.set_length(total as u64);
-                pb_for_callback.set_position((completed + failed) as u64);
-                pb_for_callback.set_message(format!("✓{} ✗{}", completed, failed));
-            }));
+            // Set up progress bar and callback
+            let pb = create_progress_bar()?;
+            config.progress_callback = Some(create_progress_callback(Arc::clone(&pb)));
 
             // Initialize crypto provider for TLS operations
             init_crypto_provider();
 
-            // Run the scan using the library
-            match run_scan(config.clone()).await {
-                Ok(report) => {
-                    // Print user-friendly summary
-                    println!(
-                        "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
-                        report.total_urls,
-                        if report.total_urls == 1 { "" } else { "s" },
-                        report.successful,
-                        report.failed,
-                        report.elapsed_seconds
-                    );
-                    println!("Results saved in {}", report.db_path.display());
-                    println!("💡 Tip: Use `domain_status export --format csv` to export data, or query the database directly.");
-
-                    // Evaluate exit code based on --fail-on policy
-                    let exit_code =
-                        evaluate_exit_code(&config.fail_on, config.fail_on_pct_threshold, &report);
-                    if exit_code != 0 {
-                        process::exit(exit_code);
-                    }
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!("domain_status error: {:#}", e);
-                    process::exit(1); // Configuration error or scan initialization failure
-                }
-            }
+            // Execute scan and print results
+            execute_scan_with_reporting(&config, pb).await
         }
-        CliCommand::Export(export_cmd) => {
-            // Handle export command
-            // Initialize logger for export command
-            let log_level = LogLevel::Info;
-            let log_format = LogFormat::Plain;
-            init_logger_with(log_level.into(), log_format)
-                .context("Failed to initialize logger")?;
-            log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
-
-            // Determine output path: default to file, allow "-" for stdout
-            let output_path = if let Some(ref path_str) = export_cmd.output {
-                if path_str == "-" {
-                    None // stdout
-                } else {
-                    Some(PathBuf::from(path_str))
-                }
-            } else {
-                // Default to file based on format
-                let extension = match export_cmd.format {
-                    ExportFormat::Csv => "csv",
-                    ExportFormat::Jsonl => "jsonl",
-                    ExportFormat::Parquet => "parquet",
-                };
-                Some(PathBuf::from(format!("domain_status_export.{}", extension)))
-            };
-
-            // Handle export format
-            match export_cmd.format {
-                ExportFormat::Csv => {
-                    let count = export_csv(
-                        &export_cmd.db_path,
-                        output_path.as_ref(),
-                        export_cmd.run_id.as_deref(),
-                        export_cmd.domain.as_deref(),
-                        export_cmd.status,
-                        export_cmd.since,
-                    )
-                    .await
-                    .context("Failed to export CSV")?;
-                    // Always write status messages to stderr to avoid polluting stdout
-                    if let Some(ref path) = output_path {
-                        eprintln!("✅ Exported {} records to {}", count, path.display());
-                    } else {
-                        eprintln!("✅ Exported {} records to CSV", count);
-                    }
-                    Ok(())
-                }
-                ExportFormat::Jsonl => {
-                    use domain_status::export::export_jsonl;
-                    match export_jsonl(
-                        &export_cmd.db_path,
-                        output_path.as_ref(),
-                        export_cmd.run_id.as_deref(),
-                        export_cmd.domain.as_deref(),
-                        export_cmd.status,
-                        export_cmd.since,
-                    )
-                    .await
-                    {
-                        Ok(count) => {
-                            // Always write status messages to stderr to avoid polluting stdout
-                            if let Some(ref path) = output_path {
-                                eprintln!("✅ Exported {} records to {}", count, path.display());
-                            } else {
-                                eprintln!("✅ Exported {} records to JSONL format", count);
-                            }
-                            Ok(())
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Failed to export JSONL: {}", e);
-                            process::exit(1);
-                        }
-                    }
-                }
-                ExportFormat::Parquet => {
-                    eprintln!("Parquet export not yet implemented");
-                    process::exit(1);
-                }
-            }
-        }
+        CliCommand::Export(export_cmd) => execute_export_command(export_cmd).await,
     }
 }
 

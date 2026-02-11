@@ -30,8 +30,6 @@ pub use detection::{detect_technologies, get_technology_category, DetectedTechno
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
-pub use patterns::get_regex_cache_stats;
-#[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use ruleset::{get_ruleset_metadata, init_ruleset};
 
 #[cfg(test)]

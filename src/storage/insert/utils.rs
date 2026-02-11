@@ -170,6 +170,138 @@ pub(crate) fn build_batch_insert_query(
     query
 }
 
+/// Generic batch insert helper for key-value satellite tables.
+///
+/// This function eliminates code duplication across headers, DNS records, and other
+/// satellite tables by providing a single implementation for batch insertion with
+/// consistent error handling.
+///
+/// # Arguments
+///
+/// * `tx` - Database transaction
+/// * `table_name` - Name of the table to insert into
+/// * `parent_id_column` - Name of the parent ID column (e.g., "url_status_id")
+/// * `key_column` - Name of the key column (e.g., "header_name", "nameserver")
+/// * `value_column` - Name of the value column (e.g., "header_value")
+/// * `parent_id` - The parent record ID
+/// * `data` - Slice of (key, value) tuples to insert
+/// * `conflict_clause` - Optional conflict resolution clause
+///
+/// # Returns
+///
+/// `Result<(), sqlx::Error>` - Ok on success, Err on database error
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let headers = vec![("Server", "nginx"), ("X-Powered-By", "PHP")];
+/// insert_key_value_batch(
+///     &mut tx,
+///     "url_http_headers",
+///     "url_status_id",
+///     "header_name",
+///     "header_value",
+///     url_status_id,
+///     &headers,
+///     Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
+/// ).await?;
+/// ```
+#[allow(clippy::too_many_arguments)] // 8 parameters needed for generic flexibility
+pub(crate) async fn insert_key_value_batch<K, V>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    table_name: &str,
+    parent_id_column: &str,
+    key_column: &str,
+    value_column: &str,
+    parent_id: i64,
+    data: &[(K, V)],
+    conflict_clause: Option<&str>,
+) -> Result<(), sqlx::Error>
+where
+    K: for<'q> sqlx::Encode<'q, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite> + Clone,
+    V: for<'q> sqlx::Encode<'q, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite> + Clone,
+{
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    // Build the SQL query
+    let query = build_batch_insert_query(
+        table_name,
+        &[parent_id_column, key_column, value_column],
+        data.len(),
+        conflict_clause,
+    );
+
+    // Bind parameters
+    let mut query_builder = sqlx::query(&query);
+    for (key, value) in data {
+        query_builder = query_builder
+            .bind(parent_id)
+            .bind(key.clone())
+            .bind(value.clone());
+    }
+
+    // Execute
+    query_builder.execute(&mut **tx).await?;
+
+    Ok(())
+}
+
+/// Generic batch insert helper for single-column satellite tables.
+///
+/// This function is similar to `insert_key_value_batch` but for tables with
+/// only one data column (e.g., nameservers, redirect chains).
+///
+/// # Arguments
+///
+/// * `tx` - Database transaction
+/// * `table_name` - Name of the table to insert into
+/// * `parent_id_column` - Name of the parent ID column (e.g., "url_status_id")
+/// * `value_column` - Name of the value column (e.g., "nameserver")
+/// * `parent_id` - The parent record ID
+/// * `data` - Slice of values to insert
+/// * `conflict_clause` - Optional conflict resolution clause
+///
+/// # Returns
+///
+/// `Result<(), sqlx::Error>` - Ok on success, Err on database error
+pub(crate) async fn insert_single_column_batch<V>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    table_name: &str,
+    parent_id_column: &str,
+    value_column: &str,
+    parent_id: i64,
+    data: &[V],
+    conflict_clause: Option<&str>,
+) -> Result<(), sqlx::Error>
+where
+    V: for<'q> sqlx::Encode<'q, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite> + Clone,
+{
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    // Build the SQL query
+    let query = build_batch_insert_query(
+        table_name,
+        &[parent_id_column, value_column],
+        data.len(),
+        conflict_clause,
+    );
+
+    // Bind parameters
+    let mut query_builder = sqlx::query(&query);
+    for value in data {
+        query_builder = query_builder.bind(parent_id).bind(value.clone());
+    }
+
+    // Execute
+    query_builder.execute(&mut **tx).await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

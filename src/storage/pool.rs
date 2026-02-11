@@ -12,26 +12,11 @@ use std::sync::Arc;
 use log::{error, info};
 use sqlx::{Pool, Sqlite, SqlitePool};
 
-use crate::config::DB_PATH;
 use crate::error_handling::DatabaseError;
 
 /// Type alias for database connection pool.
 /// Used throughout the codebase for consistency.
 pub type DbPool = Arc<Pool<Sqlite>>;
-
-/// Initializes and returns a database connection pool.
-///
-/// Creates the database file if it doesn't exist and enables WAL mode
-/// for better concurrent access.
-///
-/// Uses the `DOMAIN_STATUS_DB_PATH` environment variable if set, otherwise falls back to the default.
-///
-/// Note: For library usage, prefer `init_db_pool_with_path` which accepts a path directly.
-#[allow(dead_code)] // Kept for backward compatibility, but prefer init_db_pool_with_path
-pub async fn init_db_pool() -> Result<DbPool, DatabaseError> {
-    let db_path = std::env::var("DOMAIN_STATUS_DB_PATH").unwrap_or_else(|_| DB_PATH.to_string());
-    init_db_pool_with_path(&std::path::PathBuf::from(&db_path)).await
-}
 
 /// Initializes and returns a database connection pool with an explicit path.
 ///
