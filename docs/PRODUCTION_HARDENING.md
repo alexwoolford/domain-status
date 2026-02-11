@@ -16,9 +16,9 @@ This guide documents operational best practices, scalability limits, and recomme
 
 ## Critical Configuration
 
-### Security Defaults (Implemented in v0.1.9+)
+### Security Defaults
 
-The following security limits are now enforced by default:
+The following security limits are enforced by default:
 
 | Limit | Value | Purpose | Config Constant |
 |-------|-------|---------|----------------|
@@ -403,7 +403,7 @@ find ~/.cache/domain_status/whois/ -name "*.json" -printf '%T+ %p\n' | sort | he
 
 ## Scalability Limits
 
-### Known Limits (as of v0.1.9)
+### Known Limits
 
 | Limit | Value | Behavior Beyond Limit |
 |-------|-------|----------------------|
