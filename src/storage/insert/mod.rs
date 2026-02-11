@@ -24,4 +24,4 @@ pub use enrichment::{
 pub use failure::{insert_url_failure, insert_url_partial_failure};
 pub use record::insert_batch_record;
 pub use run::{insert_run_metadata, query_run_history, update_run_stats, RunSummary};
-pub use url::insert_url_record;
+pub use url::{insert_url_record, UrlRecordInsertParams};

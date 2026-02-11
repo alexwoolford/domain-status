@@ -19,30 +19,55 @@ use chrono::NaiveDateTime;
 /// is stored as milliseconds since Unix epoch. All string fields that can be
 /// empty are stored as `TEXT NOT NULL` with empty strings as fallback.
 pub struct UrlRecord {
+    /// The original domain/URL before any redirects
     pub initial_domain: String,
+    /// The final domain/URL after following redirects
     pub final_domain: String,
+    /// The resolved IP address of the final domain
     pub ip_address: String,
+    /// Reverse DNS lookup result for the IP address
     pub reverse_dns_name: Option<String>,
+    /// HTTP status code (e.g., 200, 404, 500)
     pub status: u16,
+    /// Human-readable status description
     pub status_desc: String,
+    /// Response time in seconds
     pub response_time: f64,
+    /// HTML page title
     pub title: String,
+    /// HTML meta keywords
     pub keywords: Option<String>,
+    /// HTML meta description
     pub description: Option<String>,
+    /// TLS version (e.g., "TLSv1.3")
     pub tls_version: Option<String>,
+    /// SSL certificate subject (e.g., "CN=example.com")
     pub ssl_cert_subject: Option<String>,
+    /// SSL certificate issuer
     pub ssl_cert_issuer: Option<String>,
+    /// SSL certificate valid from date
     pub ssl_cert_valid_from: Option<NaiveDateTime>,
+    /// SSL certificate valid to date
     pub ssl_cert_valid_to: Option<NaiveDateTime>,
+    /// Whether the page is mobile-friendly
     pub is_mobile_friendly: bool,
+    /// Timestamp of the check (milliseconds since Unix epoch)
     pub timestamp: i64,
+    /// JSON array of DNS nameservers
     pub nameservers: Option<String>,
+    /// JSON array of TXT DNS records
     pub txt_records: Option<String>,
+    /// JSON array of MX DNS records
     pub mx_records: Option<String>,
+    /// SPF record content
     pub spf_record: Option<String>,
+    /// DMARC record content
     pub dmarc_record: Option<String>,
+    /// TLS cipher suite used
     pub cipher_suite: Option<String>,
+    /// TLS key exchange algorithm
     pub key_algorithm: Option<String>,
+    /// ID of the scan run this record belongs to
     pub run_id: Option<String>,
 }
 
