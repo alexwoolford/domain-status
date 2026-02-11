@@ -323,14 +323,15 @@ domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.technol
 Environment variables can be set in a `.env` file (in the current directory or next to the executable) or exported in your shell.
 
 **Configuration Precedence** (highest to lowest):
-1. **Command-line arguments** (e.g., `--db-path`, `--geoip`) - always take precedence
-2. **Environment variables** (from `.env` file or shell) - used when CLI args not provided
+1. **Command-line arguments** - always take precedence
+2. **Environment variables** (for specific features like GeoIP, GitHub API) - used when CLI args not provided
 3. **Default values** - fallback when neither CLI args nor env vars are set
+
+Most configuration is done via CLI arguments. Environment variables are used only for API keys and advanced logging.
 
 **Available Environment Variables:**
 
 - `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
-- `DOMAIN_STATUS_DB_PATH`: Override default database path. **Note:** CLI argument `--db-path` takes precedence over this variable.
 - `GITHUB_TOKEN`: (Optional) GitHub personal access token for fingerprint ruleset downloads. Increases GitHub API rate limit from 60 to 5000 requests/hour. Only needed if using GitHub-hosted fingerprint rulesets.
 - `RUST_LOG`: (Optional) Advanced logging control. Overrides `--log-level` CLI argument if set. Format: `domain_status=debug,reqwest=info`. See [env_logger documentation](https://docs.rs/env_logger/) for details.
 
@@ -338,9 +339,13 @@ Environment variables can be set in a `.env` file (in the current directory or n
 ```bash
 # Copy .env.example to .env and customize
 MAXMIND_LICENSE_KEY=your_license_key_here
-DOMAIN_STATUS_DB_PATH=./my_database.db
 GITHUB_TOKEN=your_github_token_here
 ```
+
+**Other Configuration:**
+
+- Database path: Use `--db-path` CLI argument (default: `./domain_status.db`)
+- All scanning options: Use CLI arguments (run `domain_status scan --help` for full list)
 
 ### URL Input
 
