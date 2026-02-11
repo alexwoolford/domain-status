@@ -202,7 +202,7 @@ jobs:
           cache-on-failure: true
 
       - name: Run ignored tests (requires network)
-        run: cargo test --all-features --all-targets --locked -- --ignored
+        run: cargo test --all-features --all-targets --locked -- --ignored --skip stress_
         env:
           # GitHub Actions automatically provides GITHUB_TOKEN (increases API rate limit from 60 to 5000 req/hour)
           # No need to create this secret manually - it's provided automatically
@@ -211,5 +211,6 @@ jobs:
         # - Full end-to-end scan pipeline (tests/integration_test.rs)
         # - TLS certificate fetching from real domains (src/tls/mod.rs)
         # They are marked #[ignore] to avoid network calls in regular test runs
-        # NOTE: Removed continue-on-error to catch real bugs (like config validation)
-        # If network flakiness becomes an issue, consider retry logic instead
+        # Stress tests (tests/stress_*.rs) are excluded via --skip stress_
+        # These are documentation tests demonstrating attack vectors, not CI tests
+        # Run stress tests manually: cargo test --test 'stress_*' -- --ignored --nocapture
