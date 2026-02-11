@@ -214,6 +214,7 @@ async fn count_orphaned_satellites(pool: &SqlitePool) -> i64 {
 //-----------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg(not(tarpaulin))] // Exclude from coverage - uses 1-microsecond timeout incompatible with instrumentation overhead
 async fn test_cancellation_during_simple_insert() {
     let pool = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
@@ -281,6 +282,7 @@ async fn test_cancellation_during_simple_insert() {
 //-----------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg(not(tarpaulin))] // Exclude from coverage - uses 100-microsecond timeout incompatible with instrumentation overhead
 async fn test_cancellation_during_satellite_writes() {
     let pool = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
@@ -663,6 +665,7 @@ async fn test_recovery_after_interruption() {
 //-----------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg(not(tarpaulin))] // Exclude from coverage - uses 1-microsecond timeouts in stress loop incompatible with instrumentation overhead
 async fn test_database_integrity_after_stress() {
     let pool = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
@@ -804,6 +807,7 @@ async fn test_database_integrity_after_stress() {
 //-----------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg(not(tarpaulin))] // Exclude from coverage - uses 1-microsecond timeout incompatible with instrumentation overhead
 async fn test_wal_checkpoint_with_cancellation() {
     let pool = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
