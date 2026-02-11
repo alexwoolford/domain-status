@@ -350,6 +350,7 @@ async fn test_cancellation_during_satellite_writes() {
 //-----------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg(not(tarpaulin))] // Exclude from coverage - timing-sensitive test incompatible with instrumentation overhead
 async fn test_concurrent_cancellations() {
     let pool = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;

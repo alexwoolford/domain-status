@@ -12,6 +12,9 @@ documentation = "https://docs.rs/domain_status"
 keywords = ["url", "scraper", "domain", "status", "monitoring"]
 categories = ["web-programming", "command-line-utilities", "development-tools"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
 [lints.clippy]
 # === Correctness (prevent bugs) ===
 cast_possible_truncation = "warn"        # usize→u32, u64→u32 truncation
