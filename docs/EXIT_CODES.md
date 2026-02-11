@@ -30,7 +30,7 @@ Exits with code 2 if failure percentage exceeds threshold set by `--fail-on-pct-
 ### `errors-only`
 Exits with code 2 only for critical errors (timeouts, DNS failures, certificate issues).
 - **Use Case**: Distinguish between critical errors and expected failures (404s)
-- **Status**: Currently behaves like `any-failure` (future enhancement)
+- **Note**: Currently behaves like `any-failure`
 
 ## Error Type Categories
 
@@ -65,9 +65,3 @@ echo $?  # 0 if ≤5% failed, 2 if >5% failed, 3 if no URLs processed
 domain_status scan nonexistent.txt
 echo $?  # 1 (file not found)
 ```
-
-## Implementation Details
-
-- **Exit code evaluation**: `src/main.rs::evaluate_exit_code()` (lines 420-462)
-- **Error categorization**: `src/error_handling/categorization.rs::categorize_reqwest_error()`
-- **Exit code tests**: `tests/exit_codes.rs`

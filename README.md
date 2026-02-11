@@ -181,7 +181,7 @@ domain_status provides comprehensive error handling with clear exit codes:
 - **Exit Code 2**: Failure threshold exceeded (policy-based)
 - **Exit Code 3**: Partial success (no URLs processed)
 
-See [docs/EXIT_CODES.md](docs/EXIT_CODES.md) for detailed exit code reference and [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) for error handling patterns.
+See [docs/EXIT_CODES.md](docs/EXIT_CODES.md) for detailed exit code reference.
 
 ### Panic Safety Guarantee
 
