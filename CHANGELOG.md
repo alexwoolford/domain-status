@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-02-11
+
+### Added
+- Production hardening: Security limits for header count (100), TXT record size (1KB), response body (2MB), and redirect hops (10)
+- Production operations guide with retention policies, concurrency tuning, and scaling strategies
+- Stress tests documenting attack vectors (header bombs, DNS tunneling, database scaling, concurrency limits)
+- Cancellation safety tests for async transaction handling and graceful shutdown
+- Documentation on operational limits and monitoring recommendations
+
+### Changed
+- Marked slow integration tests as `#[ignore]` to prevent CI timeouts
+- Distilled documentation to remove internal meta-documentation and historical narrative
+- Simplified testing guide for contributors
+
+### Fixed
+- Property-based domain tests now use minimum 5-character patterns to avoid PSL edge cases
+- Excluded timing-sensitive cancellation tests from coverage runs to prevent instrumentation-related failures
+- Documentation inaccuracies in PRODUCTION_HARDENING.md (table names, feature status)
+
+### Security
+- Header bomb protection: Limits HTTP header count to prevent resource exhaustion
+- DNS tunneling protection: TXT records capped at 1KB to prevent abuse
+- Circuit breaker for database writes to handle overload gracefully
+- CLI warning when concurrency exceeds connection pool size
+
 ## [0.1.6] - 2025-01-09
 
 ### Added
@@ -67,7 +92,8 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/alexwoolford/domain_status/compare/v0.1.6...v0.1.10
 [0.1.6]: https://github.com/alexwoolford/domain_status/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/alexwoolford/domain_status/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/alexwoolford/domain_status/releases/tag/v0.1.4
