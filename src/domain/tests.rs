@@ -246,9 +246,6 @@ fn test_psl_domain_behavior() {
 use proptest::prelude::*;
 
 proptest! {
-    // Configure proptest to use fewer cases and a fixed seed for reproducibility
-    #![proptest_config(ProptestConfig::with_cases(100))]
-
     #[test]
     fn test_extract_domain_idempotent(
         domain in "[a-z]{5,15}",  // Avoid very short domains that might not be in PSL
