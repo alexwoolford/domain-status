@@ -69,7 +69,7 @@ RETENTION_DAYS="${2:-30}"
 echo "Cleaning up runs older than ${RETENTION_DAYS} days from ${DB_PATH}"
 
 # Count rows before cleanup
-BEFORE=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM urls;")
+BEFORE=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM url_status;")
 
 # Delete old runs (cascade deletes related records)
 sqlite3 "$DB_PATH" <<EOF
@@ -78,7 +78,7 @@ WHERE start_time_ms < (strftime('%s', 'now', '-${RETENTION_DAYS} days') * 1000);
 EOF
 
 # Count rows after cleanup
-AFTER=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM urls;")
+AFTER=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM url_status;")
 DELETED=$((BEFORE - AFTER))
 
 echo "Deleted ${DELETED} URL records"
@@ -206,15 +206,15 @@ tokio::spawn(async move {
 });
 ```
 
-**Immediate Action**: Add CLI validation:
+**CLI Warning** (implemented in `src/main.rs:428-436`):
 
-```rust
-// src/cli.rs or wherever max_concurrent is parsed
-if max_concurrent > 30 {
-    eprintln!("WARNING: --max-concurrent {} exceeds database pool size (30).", max_concurrent);
-    eprintln!("This may cause increased timeouts and reduced throughput.");
-    eprintln!("For high concurrency, consider batching requests or multiple runs.");
-}
+The tool automatically warns users when `--max-concurrent` exceeds the pool size:
+
+```bash
+$ domain_status scan --input-file urls.txt --max-concurrent 100
+⚠️  WARNING: --max-concurrency 100 exceeds database connection pool size (30).
+   This may cause increased timeouts and reduced throughput.
+   Consider: --max-concurrent 30 (optimal) or batch your URLs into separate runs.
 ```
 
 ---
