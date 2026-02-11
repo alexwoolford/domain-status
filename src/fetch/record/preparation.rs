@@ -104,15 +104,24 @@ pub async fn prepare_record_for_insertion(
         // WHOIS lookup (async, can be slow)
         async {
             if params.ctx.config.enable_whois {
+                use crate::config::WHOIS_TIMEOUT_SECS;
+                use tokio::time::{timeout, Duration};
+
                 let whois_start = Instant::now();
                 log::debug!(
                     "Performing WHOIS lookup for domain: {}",
                     params.resp_data.final_domain
                 );
-                let result = match crate::whois::lookup_whois(&params.resp_data.final_domain, None)
-                    .await
+
+                // FIX: Wrap WHOIS lookup in explicit timeout to prevent worker blocking
+                // whois-service defaults to 30s timeout which is too long for our 35s URL_PROCESSING_TIMEOUT
+                let result = match timeout(
+                    Duration::from_secs(WHOIS_TIMEOUT_SECS),
+                    crate::whois::lookup_whois(&params.resp_data.final_domain, None),
+                )
+                .await
                 {
-                    Ok(Some(whois_result)) => {
+                    Ok(Ok(Some(whois_result))) => {
                         log::debug!(
                             "WHOIS lookup successful for {}: registrar={:?}, creation={:?}, expiration={:?}",
                             params.resp_data.final_domain,
@@ -122,18 +131,26 @@ pub async fn prepare_record_for_insertion(
                         );
                         Some(whois_result)
                     }
-                    Ok(None) => {
+                    Ok(Ok(None)) => {
                         log::info!(
                             "WHOIS lookup returned no data for {}",
                             params.resp_data.final_domain
                         );
                         None
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         log::warn!(
                             "WHOIS lookup failed for {}: {}",
                             params.resp_data.final_domain,
                             e
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "WHOIS lookup timed out after {}s for {}",
+                            WHOIS_TIMEOUT_SECS,
+                            params.resp_data.final_domain
                         );
                         None
                     }
