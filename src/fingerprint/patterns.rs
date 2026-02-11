@@ -9,7 +9,6 @@ use lru::LruCache;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Maximum number of compiled regex patterns to cache.
@@ -23,16 +22,6 @@ use std::sync::{Arc, Mutex};
 /// - Typical production usage sees ~1000-3000 unique regex patterns
 /// - 10k provides ample headroom without memory concerns (each compiled regex is ~1-5KB)
 const MAX_REGEX_CACHE_SIZE: usize = 10_000;
-
-/// Cache statistics for monitoring and optimization.
-#[derive(Debug, Default)]
-struct CacheStats {
-    hits: AtomicU64,
-    misses: AtomicU64,
-    evictions: AtomicU64,
-}
-
-static CACHE_STATS: Lazy<CacheStats> = Lazy::new(CacheStats::default);
 
 /// Global cache for compiled regex patterns.
 /// This cache is shared across all threads and persists for the lifetime of the program.
@@ -298,11 +287,9 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
 
     // Check cache first (LRU automatically promotes accessed items to most recently used)
     if let Some(cached) = cache.get(cache_key) {
-        CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
         return Some(cached.clone());
     }
     drop(cache); // Release lock before compilation
-    CACHE_STATS.misses.fetch_add(1, Ordering::Relaxed);
 
     // Compile regex (this is expensive, so we cache it)
     match regex::Regex::new(&case_insensitive_pattern) {
@@ -311,7 +298,6 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
             let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             // Check again in case another thread compiled it while we were waiting
             if let Some(cached) = cache.get(cache_key) {
-                CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
                 Some(cached.clone())
             } else {
                 let re_clone = re.clone();
@@ -319,7 +305,6 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
                 // This happens automatically when cache is full - the least recently used entry
                 // is removed to make room for the new one
                 if let Some(_evicted) = cache.put(cache_key.to_string(), re) {
-                    CACHE_STATS.evictions.fetch_add(1, Ordering::Relaxed);
                     log::debug!(
                         "Regex cache evicted least recently used pattern (cache full, capacity: {})",
                         MAX_REGEX_CACHE_SIZE
@@ -330,46 +315,6 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
         }
         Err(_) => None, // Compilation failed
     }
-}
-
-/// Returns regex cache statistics for monitoring and optimization.
-///
-/// This function provides insights into cache performance:
-/// - **Hit rate**: `hits / (hits + misses)` - higher is better (ideally >90%)
-/// - **Eviction count**: If high, consider increasing cache size
-/// - **Current size**: How many patterns are currently cached
-///
-/// # Returns
-///
-/// A tuple of `(current_size, capacity, hits, misses, evictions)` where:
-/// - `current_size`: Number of patterns currently in cache
-/// - `capacity`: Maximum cache size (MAX_REGEX_CACHE_SIZE)
-/// - `hits`: Total cache hits (successful retrievals)
-/// - `misses`: Total cache misses (patterns not found, required compilation)
-/// - `evictions`: Total evictions (patterns removed when cache was full)
-///
-/// # Example
-///
-/// ```ignore
-/// // This function is internal; use it via crate::fingerprint::get_regex_cache_stats
-/// let (size, capacity, hits, misses, evictions) = get_regex_cache_stats();
-/// let hit_rate = if hits + misses > 0 {
-///     hits as f64 / (hits + misses) as f64
-/// } else {
-///     0.0
-/// };
-/// println!("Cache: {}/{} entries, hit rate: {:.1}%, evictions: {}",
-///          size, capacity, hit_rate * 100.0, evictions);
-/// ```
-#[allow(dead_code)] // Public API function for external monitoring
-pub fn get_regex_cache_stats() -> (usize, usize, u64, u64, u64) {
-    let cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let current_size = cache.len();
-    let capacity = cache.cap().get();
-    let hits = CACHE_STATS.hits.load(Ordering::Relaxed);
-    let misses = CACHE_STATS.misses.load(Ordering::Relaxed);
-    let evictions = CACHE_STATS.evictions.load(Ordering::Relaxed);
-    (current_size, capacity, hits, misses, evictions)
 }
 
 /// Handles empty pattern matching (matches anything).
@@ -685,12 +630,6 @@ mod tests {
     fn clear_regex_cache() {
         let mut cache = REGEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         cache.clear();
-        // Reset stats counters to ensure clean test state
-        // Note: In parallel test execution, other tests may still increment these,
-        // but resetting them gives each test a better baseline
-        CACHE_STATS.hits.store(0, Ordering::Relaxed);
-        CACHE_STATS.misses.store(0, Ordering::Relaxed);
-        CACHE_STATS.evictions.store(0, Ordering::Relaxed);
     }
 
     #[test]
@@ -1280,12 +1219,7 @@ mod tests {
         // Note: With 10k cache size, filling to capacity is impractical for unit tests.
         // This test verifies the cache stores and retrieves patterns correctly.
         //
-        // IMPORTANT: We avoid relying on global stats because parallel tests can reset them.
-        // Instead, we verify behavior: patterns match correctly, which proves caching works.
-
-        // Verify capacity is set correctly
-        let (_, capacity, _, _, _) = get_regex_cache_stats();
-        assert_eq!(capacity, MAX_REGEX_CACHE_SIZE);
+        // We verify behavior: patterns match correctly, which proves caching works.
 
         // Use unique patterns with timestamp + thread ID hash to avoid conflicts
         use std::hash::{Hash, Hasher};
@@ -1337,28 +1271,6 @@ mod tests {
             !matches_pattern(&pattern1, "completely_different_value").matched,
             "Pattern should not match unrelated text"
         );
-    }
-
-    #[test]
-    fn test_regex_cache_stats() {
-        // Test that cache stats function returns valid values
-        // Note: This test only verifies the function works and returns consistent values.
-        // It does NOT rely on global stats because parallel tests can affect them.
-
-        // Verify capacity is always set correctly (this is constant)
-        let (_, capacity, _, _, _) = get_regex_cache_stats();
-        assert_eq!(capacity, MAX_REGEX_CACHE_SIZE);
-
-        // Verify stats function returns tuple of correct types (doesn't panic)
-        let (size, cap, hits, misses, evictions) = get_regex_cache_stats();
-
-        // All values should be non-negative (they're u64/usize)
-        // We can't assert specific values because parallel tests affect them
-        let _ = size; // size may be 0 if cache was just cleared
-        assert_eq!(cap, MAX_REGEX_CACHE_SIZE);
-        let _ = hits; // hits may be 0
-        let _ = misses; // misses may be 0
-        let _ = evictions; // evictions may be 0
     }
 
     #[test]
