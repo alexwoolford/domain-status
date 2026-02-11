@@ -3,7 +3,7 @@
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
-use super::super::super::utils::build_batch_insert_query;
+use super::super::super::utils::insert_key_value_batch;
 
 /// Inserts security headers into url_security_headers table using batch insert.
 pub(crate) async fn insert_security_headers(
@@ -18,23 +18,18 @@ pub(crate) async fn insert_security_headers(
     // Convert HashMap to Vec for consistent ordering
     let headers: Vec<(&String, &String)> = security_headers.iter().collect();
 
-    // Batch insert: build VALUES clause for all security headers
-    let query = build_batch_insert_query(
+    if let Err(e) = insert_key_value_batch(
+        tx,
         "url_security_headers",
-        &["url_status_id", "header_name", "header_value"],
-        headers.len(),
+        "url_status_id",
+        "header_name",
+        "header_value",
+        url_status_id,
+        &headers,
         Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
-    );
-
-    let mut query_builder = sqlx::query(&query);
-    for (header_name, header_value) in &headers {
-        query_builder = query_builder
-            .bind(url_status_id)
-            .bind(*header_name)
-            .bind(*header_value);
-    }
-
-    if let Err(e) = query_builder.execute(&mut **tx).await {
+    )
+    .await
+    {
         log::warn!(
             "Failed to batch insert {} security headers for url_status_id {}: {}",
             headers.len(),
@@ -57,23 +52,18 @@ pub(crate) async fn insert_http_headers(
     // Convert HashMap to Vec for consistent ordering
     let headers: Vec<(&String, &String)> = http_headers.iter().collect();
 
-    // Batch insert: build VALUES clause for all HTTP headers
-    let query = build_batch_insert_query(
+    if let Err(e) = insert_key_value_batch(
+        tx,
         "url_http_headers",
-        &["url_status_id", "header_name", "header_value"],
-        headers.len(),
+        "url_status_id",
+        "header_name",
+        "header_value",
+        url_status_id,
+        &headers,
         Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
-    );
-
-    let mut query_builder = sqlx::query(&query);
-    for (header_name, header_value) in &headers {
-        query_builder = query_builder
-            .bind(url_status_id)
-            .bind(*header_name)
-            .bind(*header_value);
-    }
-
-    if let Err(e) = query_builder.execute(&mut **tx).await {
+    )
+    .await
+    {
         log::warn!(
             "Failed to batch insert {} HTTP headers for url_status_id {}: {}",
             headers.len(),

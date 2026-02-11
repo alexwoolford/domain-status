@@ -4,7 +4,8 @@ use sqlx::Sqlite;
 use sqlx::Transaction;
 
 use super::super::super::utils::{
-    build_batch_insert_query, detect_txt_type, parse_json_array, parse_mx_json_array,
+    detect_txt_type, insert_key_value_batch, insert_single_column_batch, parse_json_array,
+    parse_mx_json_array,
 };
 
 /// Inserts nameservers into url_nameservers table using batch insert.
@@ -18,21 +19,17 @@ pub(crate) async fn insert_nameservers(
             return;
         }
 
-        // Batch insert: build VALUES clause for all nameservers
-        // SQLite supports up to 500 parameters per query, so we can safely batch
-        let query = build_batch_insert_query(
+        if let Err(e) = insert_single_column_batch(
+            tx,
             "url_nameservers",
-            &["url_status_id", "nameserver"],
-            ns.len(),
+            "url_status_id",
+            "nameserver",
+            url_status_id,
+            &ns,
             Some("ON CONFLICT(url_status_id, nameserver) DO NOTHING"),
-        );
-
-        let mut query_builder = sqlx::query(&query);
-        for nameserver in &ns {
-            query_builder = query_builder.bind(url_status_id).bind(nameserver);
-        }
-
-        if let Err(e) = query_builder.execute(&mut **tx).await {
+        )
+        .await
+        {
             log::warn!(
                 "Failed to batch insert {} nameservers for url_status_id {}: {}",
                 ns.len(),
@@ -55,26 +52,23 @@ pub(crate) async fn insert_txt_records(
         }
 
         // Pre-compute record types for all TXT records
-        let txt_with_types: Vec<(&String, &'static str)> =
-            txts.iter().map(|txt| (txt, detect_txt_type(txt))).collect();
+        let txt_with_types: Vec<(&String, String)> = txts
+            .iter()
+            .map(|txt| (txt, detect_txt_type(txt).to_string()))
+            .collect();
 
-        // Batch insert: build VALUES clause for all TXT records
-        let query = build_batch_insert_query(
+        if let Err(e) = insert_key_value_batch(
+            tx,
             "url_txt_records",
-            &["url_status_id", "record_value", "record_type"],
-            txt_with_types.len(),
+            "url_status_id",
+            "record_value",
+            "record_type",
+            url_status_id,
+            &txt_with_types,
             None,
-        );
-
-        let mut query_builder = sqlx::query(&query);
-        for (txt, record_type) in &txt_with_types {
-            query_builder = query_builder
-                .bind(url_status_id)
-                .bind(*txt)
-                .bind(record_type);
-        }
-
-        if let Err(e) = query_builder.execute(&mut **tx).await {
+        )
+        .await
+        {
             log::warn!(
                 "Failed to batch insert {} TXT records for url_status_id {}: {}",
                 txt_with_types.len(),
@@ -96,23 +90,18 @@ pub(crate) async fn insert_mx_records(
             return;
         }
 
-        // Batch insert: build VALUES clause for all MX records
-        let query = build_batch_insert_query(
+        if let Err(e) = insert_key_value_batch(
+            tx,
             "url_mx_records",
-            &["url_status_id", "priority", "mail_exchange"],
-            mx_records.len(),
+            "url_status_id",
+            "priority",
+            "mail_exchange",
+            url_status_id,
+            &mx_records,
             Some("ON CONFLICT(url_status_id, priority, mail_exchange) DO NOTHING"),
-        );
-
-        let mut query_builder = sqlx::query(&query);
-        for (priority, mail_exchange) in &mx_records {
-            query_builder = query_builder
-                .bind(url_status_id)
-                .bind(priority)
-                .bind(mail_exchange);
-        }
-
-        if let Err(e) = query_builder.execute(&mut **tx).await {
+        )
+        .await
+        {
             log::warn!(
                 "Failed to batch insert {} MX records for url_status_id {}: {}",
                 mx_records.len(),
