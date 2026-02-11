@@ -169,8 +169,11 @@ pub(crate) async fn load_from_url(
 
 /// Downloads GeoIP database with size limit enforcement
 async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
+    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300)) // 5 minutes for large file
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
 
     let response = client.get(url).send().await?;

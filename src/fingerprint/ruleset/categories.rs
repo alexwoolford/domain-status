@@ -12,8 +12,11 @@ use crate::fingerprint::models::Category;
 
 /// Fetches categories.json from a URL
 pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, String>> {
+    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
 
     // Convert technologies URL to categories URL
