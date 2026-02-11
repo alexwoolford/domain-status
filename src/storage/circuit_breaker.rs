@@ -152,6 +152,46 @@ mod tests {
     use super::*;
     use tokio::time::sleep;
 
+    /// Helper function to wait for circuit breaker to reach expected state.
+    ///
+    /// Polls the circuit state with exponential backoff to handle async lock acquisition
+    /// timing issues on different platforms (especially Windows CI).
+    ///
+    /// # Arguments
+    /// * `cb` - Circuit breaker to check
+    /// * `expected_open` - Expected state (true = open, false = closed)
+    /// * `timeout` - Maximum time to wait
+    ///
+    /// # Panics
+    /// Panics if timeout is reached before reaching expected state
+    async fn wait_for_circuit_state(
+        cb: &DbWriteCircuitBreaker,
+        expected_open: bool,
+        timeout: Duration,
+    ) {
+        let start = Instant::now();
+        let mut delay = Duration::from_micros(100);
+        const MAX_DELAY: Duration = Duration::from_millis(10);
+
+        loop {
+            if cb.is_circuit_open().await == expected_open {
+                return; // Success
+            }
+
+            if start.elapsed() >= timeout {
+                panic!(
+                    "Timeout waiting for circuit to be {} (timeout: {:?})",
+                    if expected_open { "open" } else { "closed" },
+                    timeout
+                );
+            }
+
+            // Exponential backoff to reduce CPU usage while waiting
+            sleep(delay).await;
+            delay = (delay * 2).min(MAX_DELAY);
+        }
+    }
+
     #[tokio::test]
     async fn test_circuit_breaker_opens_after_threshold() {
         let cb = DbWriteCircuitBreaker::with_threshold(3, Duration::from_millis(100));
@@ -190,15 +230,15 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
-        // Yield to ensure circuit is fully opened (Windows timing issue)
-        tokio::task::yield_now().await;
-        assert!(cb.is_circuit_open().await);
+
+        // Wait for circuit to fully open
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
 
         // Wait for cooldown
         sleep(Duration::from_millis(60)).await;
 
         // Circuit should allow retry (closed)
-        assert!(!cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
     }
 
     #[tokio::test]
@@ -224,24 +264,20 @@ mod tests {
         // First cycle: open
         cb.record_failure().await;
         cb.record_failure().await;
-        // Yield to ensure circuit is fully opened (Windows timing issue)
-        tokio::task::yield_now().await;
-        assert!(cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
 
         // Wait for cooldown
         sleep(Duration::from_millis(60)).await;
-        assert!(!cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
 
         // Second cycle: open again
         cb.record_failure().await;
         cb.record_failure().await;
-        // Yield to ensure circuit is fully opened (Windows timing issue)
-        tokio::task::yield_now().await;
-        assert!(cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
 
         // Wait for cooldown again
         sleep(Duration::from_millis(60)).await;
-        assert!(!cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
     }
 
     #[tokio::test]
@@ -251,13 +287,11 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
-        // Yield to ensure circuit is fully opened (Windows timing issue)
-        tokio::task::yield_now().await;
-        assert!(cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
 
         // Record success - should close circuit immediately
         cb.record_success().await;
-        assert!(!cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
         assert_eq!(cb.failure_count(), 0);
     }
 
@@ -289,9 +323,7 @@ mod tests {
         // Open circuit
         cb.record_failure().await;
         cb.record_failure().await;
-        // Yield to ensure circuit is fully opened (Windows timing issue)
-        tokio::task::yield_now().await;
-        assert!(cb.is_circuit_open().await);
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
 
         // Wait less than cooldown
         sleep(Duration::from_millis(50)).await;
@@ -335,19 +367,22 @@ mod tests {
         cb.record_failure().await;
         cb.record_failure().await;
         assert_eq!(cb.failure_count(), 2);
-        // Yield to ensure circuit is fully opened (Windows timing issue)
-        tokio::task::yield_now().await;
-        assert!(cb.is_circuit_open().await);
+
+        // Wait for circuit to fully open (handles async lock acquisition on slower systems)
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
 
         // Wait for cooldown
         sleep(Duration::from_millis(60)).await;
-        assert!(!cb.is_circuit_open().await);
+
+        // Wait for circuit to close after cooldown
+        wait_for_circuit_state(&cb, false, Duration::from_millis(100)).await;
 
         // Record another failure - count continues from previous (doesn't reset on cooldown)
         cb.record_failure().await;
         // Failure count continues: was 2, now 3
         assert_eq!(cb.failure_count(), 3);
-        // Circuit should open again (threshold is 2, we now have 3)
-        assert!(cb.is_circuit_open().await);
+
+        // Wait for circuit to open again (threshold is 2, we now have 3)
+        wait_for_circuit_state(&cb, true, Duration::from_millis(100)).await;
     }
 }
