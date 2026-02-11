@@ -7,14 +7,18 @@
     clippy::manual_flatten
 )]
 //!
-//! **VULNERABILITY FOUND**: No size limit on TXT record concatenation.
+//! **VULNERABILITY FOUND AND FIXED**: TXT record size now limited to 1KB.
 //!
-//! **ROOT CAUSE**:
-//! - src/dns/records.rs:80-86 concatenates all TXT record chunks without size limit
+//! **ROOT CAUSE** (Historical):
+//! - src/dns/records.rs:80-86 concatenated all TXT record chunks without size limit
 //! - DNS TXT records can be split across multiple 255-byte chunks
 //! - A single TXT record can contain up to 64KB per UDP packet (RFC 1035)
 //! - With EDNS0, TXT records can be much larger (up to 4KB per response typically)
-//! - No MAX_TXT_RECORD_SIZE constant defined
+//!
+//! **FIX IMPLEMENTED** (v0.1.9+):
+//! - MAX_TXT_RECORD_SIZE = 1024 bytes (src/config/constants.rs:36)
+//! - Enforced in src/dns/records.rs:87-101 with truncation and warning
+//! - Records exceeding 1KB are truncated with logged warning
 //!
 //! **Attack Vector**:
 //! - Adversary controls DNS server for scanned domain
