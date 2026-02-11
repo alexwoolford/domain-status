@@ -352,7 +352,7 @@ mod run {
             tokio::spawn(async move {
                 if let Err(e) = crate::status_server::start_status_server(port, status_state).await
                 {
-                    log::warn!("Status server error: {}", e);
+                    log::warn!("Failed to run status server: {}", e);
                 }
             });
         }
@@ -527,7 +527,11 @@ mod run {
                             &failed_urls_clone,
                             total_urls_for_callback,
                         );
-                        log::warn!("Timeout processing URL {}", url_for_logging.as_ref());
+                        log::warn!(
+                            "Failed to process URL {} (timeout after {}s)",
+                            url_for_logging.as_ref(),
+                            URL_PROCESSING_TIMEOUT.as_secs()
+                        );
 
                         let elapsed = process_start.elapsed().as_secs_f64();
                         let timeout_error = anyhow::anyhow!(
@@ -625,7 +629,7 @@ mod run {
         while let Some(task_result) = tasks.next().await {
             if let Err(join_error) = task_result {
                 failed_urls.fetch_add(1, Ordering::SeqCst);
-                log::warn!("Task panicked: {:?}", join_error);
+                log::warn!("Failed to join task (panicked): {:?}", join_error);
             }
         }
 

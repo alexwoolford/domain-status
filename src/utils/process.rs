@@ -95,7 +95,12 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
     let final_result = match result {
         Ok(()) => Ok(()),
         Err(e) => {
-            log::error!("Error processing URL {} after retries: {e}", url.as_ref());
+            log::error!(
+                "Failed to process URL {} after {} retries: {}",
+                url.as_ref(),
+                retry_count,
+                e
+            );
             Err(e)
         }
     };
