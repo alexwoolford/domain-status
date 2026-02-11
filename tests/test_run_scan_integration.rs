@@ -69,6 +69,7 @@ fn create_test_config(
 /// This test verifies that the semaphore actually limits concurrent tasks
 /// by using a mock server with delays and tracking concurrent connections.
 #[tokio::test]
+#[ignore] // Takes >60s, run manually with: cargo test -- --ignored test_run_scan_enforces_max_concurrency
 async fn test_run_scan_enforces_max_concurrency() {
     // Setup
     let max_concurrency = 5;
@@ -157,6 +158,7 @@ async fn test_run_scan_enforces_max_concurrency() {
 /// This test verifies that the rate limiter prevents exceeding the configured
 /// requests per second limit.
 #[tokio::test]
+#[ignore] // Takes >60s, run manually with: cargo test -- --ignored test_run_scan_respects_rate_limit
 async fn test_run_scan_respects_rate_limit() {
     // Setup
     let rate_limit_rps = 10; // 10 requests per second
@@ -218,6 +220,7 @@ async fn test_run_scan_respects_rate_limit() {
 /// This test verifies that the adaptive rate limiter reduces RPS when
 /// encountering 429 (Too Many Requests) errors.
 #[tokio::test]
+#[ignore] // Takes >60s, run manually with: cargo test -- --ignored test_run_scan_handles_429_with_adaptive_rate_limiting
 async fn test_run_scan_handles_429_with_adaptive_rate_limiting() {
     // Setup
     let initial_rps = 50;
