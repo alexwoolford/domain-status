@@ -26,9 +26,11 @@ Give it a list of URLs → it fetches HTTP status, TLS certificates, DNS records
 - [Installation](#-installation)
 - [Features](#-features)
 - [Use Cases](#-use-cases)
+- [Limitations](#️-limitations)
 - [Usage](#-usage)
 - [Output & Results](#-output--results)
 - [Database Schema](#-database-schema)
+- [Error Handling & Exit Codes](#error-handling-and-exit-codes)
 - [Monitoring](#-monitoring)
 - [Advanced Topics](#-advanced-topics)
 - [Troubleshooting](#-troubleshooting)
@@ -204,6 +206,31 @@ The application is designed to never panic during normal operation:
 **Research**: Bulk analysis of web technologies, DNS configurations, geographic distribution of infrastructure, technology adoption patterns.
 
 Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many checks in one sweep, ensuring consistency and saving time.
+
+## ⚠️ Limitations
+
+**What This Tool Does NOT Do:**
+
+- **No JavaScript Execution**: Analyzes initial HTML response only (like WappalyzerGo). Does not execute JavaScript, render pages, or interact with dynamic content. This means:
+  - Single-page apps (SPAs) that load content via JS may appear empty
+  - Client-side rendered technologies may not be detected
+  - JavaScript-based redirects are not followed
+
+- **Rate Limiting**: Processing speed is constrained by:
+  - Target server response times and rate limits
+  - Adaptive rate limiter (backs off on errors)
+  - WHOIS lookups add ~1 second per domain
+  - Typical throughput: 0.5-2 URLs/sec with default settings
+
+- **Not a Full Browser**: This is a CLI scanner, not a browser automation tool. It:
+  - Cannot click buttons or fill forms
+  - Cannot capture screenshots
+  - Cannot handle authentication flows
+  - Works best for public, server-rendered content
+
+**Best For**: Public websites with server-rendered HTML, bulk analysis, infrastructure monitoring, competitive research.
+
+**Not Ideal For**: SPAs requiring JavaScript, authenticated sites, sites with heavy client-side rendering.
 
 ## 📖 Usage
 
@@ -513,6 +540,57 @@ The database uses a **star schema** design pattern with:
 - Normalized structure for efficient storage and analytics
 
 For complete database schema documentation including entity-relationship diagrams, table descriptions, indexes, constraints, and query examples, see [DATABASE.md](DATABASE.md).
+
+### Database Capabilities Highlights
+
+Beyond basic URL status checks, the database enables powerful analytical capabilities:
+
+#### 🔗 Graph Analysis
+- **Certificate Ownership Mapping**: Find domains sharing SSL certificates via `url_certificate_sans` table - indicates common ownership or infrastructure
+- **Analytics-Based Linking**: Connect domains using the same Google Analytics, Facebook Pixel, or GTM IDs via `url_analytics_ids` - reveals common management
+- **Infrastructure Relationships**: Discover domains on shared hosting, CDNs, or managed by the same team
+
+**Example**: Find all domains sharing a certificate with example.com:
+```sql
+SELECT DISTINCT us2.final_domain
+FROM url_certificate_sans san1
+JOIN url_certificate_sans san2 ON san1.domain_name = san2.domain_name
+JOIN url_status us1 ON san1.url_status_id = us1.id
+JOIN url_status us2 ON san2.url_status_id = us2.id
+WHERE us1.final_domain = 'example.com' AND us1.id != us2.id;
+```
+
+#### 📊 Pre-Built Analyst Views
+- **`url_status_enriched`**: Convenient 1:1 joins with GeoIP and WHOIS data
+- **`url_observations`**: Unified timeline of successes and failures for easy analysis
+
+```sql
+-- Get all observations from a run (success + failure)
+SELECT outcome, final_domain, http_status, error_type
+FROM url_observations
+WHERE run_id = 'run_123'
+ORDER BY observed_at_ms;
+```
+
+#### 📈 Time-Series Tracking
+- Compare technology stacks between runs (track migrations: WordPress → React)
+- Monitor infrastructure changes (new CDNs, certificate updates, DNS changes)
+- Track domain status over time (identify reliability patterns)
+
+**Example**: Compare technologies between two runs:
+```sql
+SELECT ut1.technology_name,
+       COUNT(DISTINCT us1.id) as run1_count,
+       COUNT(DISTINCT us2.id) as run2_count
+FROM url_status us1
+JOIN url_technologies ut1 ON us1.id = ut1.url_status_id
+LEFT JOIN url_status us2 ON us1.final_domain = us2.final_domain AND us2.run_id = 'run_456'
+LEFT JOIN url_technologies ut2 ON us2.id = ut2.url_status_id AND ut1.technology_name = ut2.technology_name
+WHERE us1.run_id = 'run_123'
+GROUP BY ut1.technology_name;
+```
+
+For more examples and detailed schema documentation, see [DATABASE.md](DATABASE.md).
 
 ### Querying Run History
 
@@ -852,7 +930,7 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 
 ## 🔨 Development
 
-See [AGENTS.md](AGENTS.md) for development guidelines and conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and conventions.
 
 See [TESTING.md](TESTING.md) for detailed information about:
 - Test structure (unit, integration, e2e)
