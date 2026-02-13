@@ -19,7 +19,8 @@ static MIGRATIONS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 /// without the migrations directory.
 ///
 /// In development builds, it uses the source migrations directory directly (faster).
-/// In distributed binaries, it extracts embedded migrations to a temp directory.
+/// In distributed binaries, it extracts embedded migrations to a temp directory
+/// (wrapped in spawn_blocking to avoid blocking the tokio runtime).
 pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
     // In development, try to use the source migrations directory first (faster)
     let source_migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
@@ -32,21 +33,30 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
     } else {
         // Extract embedded migrations to temp directory for distributed binaries
         // Keep temp_dir in scope for the entire function to ensure files stay available
-        let _temp_dir = TempDir::new()?;
-        let migrations_path = _temp_dir.path().join("migrations");
-        std::fs::create_dir_all(&migrations_path)?;
+        let temp_dir = TempDir::new()?;
+        let migrations_path = temp_dir.path().join("migrations");
 
-        // Extract all migration files
-        for file in MIGRATIONS_DIR.files() {
-            let file_path = migrations_path.join(file.path());
-            if let Some(parent) = file_path.parent() {
-                std::fs::create_dir_all(parent)?;
+        // Wrap blocking filesystem operations in spawn_blocking to avoid blocking tokio runtime.
+        // This is a one-time startup operation with small files, so impact is minimal.
+        let migrations_path_for_task = migrations_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), std::io::Error> {
+            std::fs::create_dir_all(&migrations_path_for_task)?;
+
+            // Extract all migration files
+            for file in MIGRATIONS_DIR.files() {
+                let file_path = migrations_path_for_task.join(file.path());
+                if let Some(parent) = file_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&file_path, file.contents())?;
             }
-            std::fs::write(&file_path, file.contents())?;
-        }
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Task panicked during migration extraction: {}", e))??;
 
         // Run migrations from the temp directory
-        // _temp_dir stays alive for the entire function, so files remain accessible
+        // temp_dir stays alive for the entire function, so files remain accessible
         let migrator = sqlx::migrate::Migrator::new(migrations_path.as_path()).await?;
         migrator.run(pool).await?;
         Ok(())

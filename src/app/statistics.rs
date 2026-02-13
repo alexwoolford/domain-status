@@ -42,16 +42,16 @@ pub async fn print_and_save_final_statistics(
     );
 
     // Update run statistics in database
-    database::update_run_stats(
-        pool,
+    let stats = database::RunStats {
         run_id,
         total_urls,
         successful_urls,
-        failed_urls_count,
+        failed_urls: failed_urls_count,
         elapsed_seconds,
-    )
-    .await
-    .context("Failed to update run statistics")?;
+    };
+    database::update_run_stats(pool, &stats)
+        .await
+        .context("Failed to update run statistics")?;
 
     // Print processing statistics
     print_error_statistics(error_stats);
@@ -235,18 +235,18 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Insert initial run record using insert_run_metadata
-        use crate::storage::insert_run_metadata;
-        insert_run_metadata(
-            &pool,
+        use crate::storage::{insert_run_metadata, RunMetadata};
+        let meta = RunMetadata {
             run_id,
-            chrono::Utc::now().timestamp_millis(),
-            "0.1.4", // Test version
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("Failed to insert run");
+            start_time_ms: chrono::Utc::now().timestamp_millis(),
+            version: "0.1.4",
+            fingerprints_source: None,
+            fingerprints_version: None,
+            geoip_version: None,
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .expect("Failed to insert run");
 
         // Call function
         let result = print_and_save_final_statistics(
@@ -308,18 +308,18 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Insert initial run record using insert_run_metadata
-        use crate::storage::insert_run_metadata;
-        insert_run_metadata(
-            &pool,
+        use crate::storage::{insert_run_metadata, RunMetadata};
+        let meta = RunMetadata {
             run_id,
-            chrono::Utc::now().timestamp_millis(),
-            "0.1.4", // Test version
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("Failed to insert run");
+            start_time_ms: chrono::Utc::now().timestamp_millis(),
+            version: "0.1.4",
+            fingerprints_source: None,
+            fingerprints_version: None,
+            geoip_version: None,
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .expect("Failed to insert run");
 
         let result = print_and_save_final_statistics(
             &pool,

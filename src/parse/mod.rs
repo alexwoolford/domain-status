@@ -15,11 +15,13 @@ mod social;
 mod structured;
 
 // Re-export public API
-pub use analytics::{extract_analytics_ids, AnalyticsId};
+#[allow(unused_imports)] // Public API re-export
+pub use analytics::{extract_analytics_ids, AnalyticsId, AnalyticsProvider};
 pub use html::{
     extract_meta_description, extract_meta_keywords, extract_title, is_mobile_friendly,
 };
-pub use social::{extract_social_media_links, SocialMediaLink};
+#[allow(unused_imports)] // Public API re-export
+pub use social::{extract_social_media_links, SocialMediaLink, SocialPlatform};
 pub use structured::{extract_structured_data, StructuredData};
 
 #[cfg(test)]

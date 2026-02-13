@@ -218,7 +218,7 @@ pub async fn handle_http_request(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::fetch::context::ProcessingContext;
+    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
     use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::utils::TimingStats;
     use hickory_resolver::{config::ResolverOpts, TokioResolver};
@@ -256,16 +256,9 @@ mod tests {
         );
 
         ProcessingContext::new(
-            client,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            None,
-            false,
-            db_circuit_breaker,
-            pool,
-            timing_stats,
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, db_circuit_breaker),
+            ConfigContext::new(error_stats, timing_stats, None, false),
         )
     }
 
@@ -509,16 +502,9 @@ mod tests {
         );
 
         let ctx = ProcessingContext::new(
-            client,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            None,
-            false,
-            db_circuit_breaker,
-            pool,
-            timing_stats,
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, db_circuit_breaker),
+            ConfigContext::new(error_stats, timing_stats, None, false),
         );
 
         let start_time = std::time::Instant::now();

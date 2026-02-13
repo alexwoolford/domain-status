@@ -4,10 +4,11 @@
 //! associated context and satellite data.
 
 use crate::domain::extract_domain;
+use crate::error_handling::DatabaseError;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
-use anyhow::{Error, Result};
+use anyhow::Error;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -56,7 +57,7 @@ pub struct FailureRecordParams<'a> {
 // Large function handling comprehensive failure recording with context extraction and database insertion.
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
-pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), anyhow::Error> {
+pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), DatabaseError> {
     // Check if circuit breaker is open (database writes are blocked)
     if params.circuit_breaker.is_circuit_open().await {
         log::warn!(
@@ -211,7 +212,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), a
         final_url: final_url.map(|s| s.to_string()),
         domain,
         final_domain,
-        error_type: error_type.as_str().to_string(),
+        error_type,
         error_message,
         http_status,
         retry_count: params.retry_count,
@@ -233,7 +234,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), a
         Err(e) => {
             // Record failure in circuit breaker
             params.circuit_breaker.record_failure().await;
-            Err(anyhow::anyhow!("Failed to insert failure record: {}", e))
+            Err(e)
         }
     }
 }

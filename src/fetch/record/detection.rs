@@ -38,10 +38,22 @@ pub(crate) async fn detect_technologies_safely(
             }
         }
         Err(e) => {
-            log::warn!(
-                "Failed to detect technologies for {}: {e}",
-                resp_data.final_domain
-            );
+            match &e {
+                crate::error_handling::FingerprintError::RulesetNotInitialized => {
+                    log::warn!(
+                        "Technology detection skipped for {}: {}",
+                        resp_data.final_domain,
+                        e
+                    );
+                }
+                crate::error_handling::FingerprintError::DetectionFailed(_) => {
+                    log::warn!(
+                        "Failed to detect technologies for {}: {}",
+                        resp_data.final_domain,
+                        e
+                    );
+                }
+            }
             error_stats.increment_error(crate::error_handling::ErrorType::TechnologyDetectionError);
             Vec::new()
         }

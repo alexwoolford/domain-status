@@ -1,4 +1,7 @@
 //! WHOIS cache management.
+//!
+//! Uses async I/O via `tokio::fs` to avoid blocking the tokio runtime
+//! during cache operations (called per-domain during scanning).
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -9,15 +12,21 @@ use super::types::{WhoisCacheEntry, WhoisResult};
 /// Default cache TTL: 7 days (WHOIS data changes infrequently)
 pub(crate) const CACHE_TTL_SECS: u64 = crate::config::WHOIS_CACHE_TTL_SECS;
 
-/// Loads a cached WHOIS result from disk
-pub(crate) fn load_from_cache(cache_path: &Path, domain: &str) -> Result<Option<WhoisCacheEntry>> {
+/// Loads a cached WHOIS result from disk (async to avoid blocking tokio runtime)
+pub(crate) async fn load_from_cache(
+    cache_path: &Path,
+    domain: &str,
+) -> Result<Option<WhoisCacheEntry>> {
     let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
 
-    if !cache_file.exists() {
+    // Use tokio::fs for non-blocking existence check
+    if !tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
         return Ok(None);
     }
 
-    let content = std::fs::read_to_string(&cache_file).context("Failed to read cache file")?;
+    let content = tokio::fs::read_to_string(&cache_file)
+        .await
+        .context("Failed to read cache file")?;
     let entry: WhoisCacheEntry =
         serde_json::from_str(&content).context("Failed to parse cache file")?;
 
@@ -25,16 +34,28 @@ pub(crate) fn load_from_cache(cache_path: &Path, domain: &str) -> Result<Option<
     let age = entry.cached_at.elapsed().unwrap_or_default();
     if age.as_secs() > CACHE_TTL_SECS {
         // Cache expired, delete it
-        let _ = std::fs::remove_file(&cache_file);
+        if let Err(e) = tokio::fs::remove_file(&cache_file).await {
+            log::debug!(
+                "Failed to remove expired WHOIS cache file {}: {}",
+                cache_file.display(),
+                e
+            );
+        }
         return Ok(None);
     }
 
     Ok(Some(entry))
 }
 
-/// Saves a WHOIS result to disk cache
-pub(crate) fn save_to_cache(cache_path: &Path, domain: &str, result: &WhoisResult) -> Result<()> {
-    std::fs::create_dir_all(cache_path).context("Failed to create cache directory")?;
+/// Saves a WHOIS result to disk cache (async to avoid blocking tokio runtime)
+pub(crate) async fn save_to_cache(
+    cache_path: &Path,
+    domain: &str,
+    result: &WhoisResult,
+) -> Result<()> {
+    tokio::fs::create_dir_all(cache_path)
+        .await
+        .context("Failed to create cache directory")?;
 
     let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
     let entry = WhoisCacheEntry {
@@ -45,7 +66,9 @@ pub(crate) fn save_to_cache(cache_path: &Path, domain: &str, result: &WhoisResul
 
     let content =
         serde_json::to_string_pretty(&entry).context("Failed to serialize cache entry")?;
-    std::fs::write(&cache_file, content).context("Failed to write cache file")?;
+    tokio::fs::write(&cache_file, content)
+        .await
+        .context("Failed to write cache file")?;
 
     Ok(())
 }
@@ -73,47 +96,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_save_to_cache() {
+    #[tokio::test]
+    async fn test_save_to_cache() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
 
         // Should succeed
-        assert!(save_to_cache(cache_path, domain, &result).is_ok());
+        assert!(save_to_cache(cache_path, domain, &result).await.is_ok());
 
         // Verify file was created
         let cache_file = cache_path.join("example_com.json");
         assert!(cache_file.exists(), "Cache file should be created");
     }
 
-    #[test]
-    fn test_load_from_cache_not_found() {
+    #[tokio::test]
+    async fn test_load_from_cache_not_found() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "nonexistent.com";
 
         // Should return None for non-existent cache
-        let result = load_from_cache(cache_path, domain).expect("Should not error");
+        let result = load_from_cache(cache_path, domain)
+            .await
+            .expect("Should not error");
         assert!(
             result.is_none(),
             "Should return None for non-existent cache"
         );
     }
 
-    #[test]
-    fn test_load_from_cache_found() {
+    #[tokio::test]
+    async fn test_load_from_cache_found() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
 
         // Save to cache first
-        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+        save_to_cache(cache_path, domain, &result)
+            .await
+            .expect("Should save to cache");
 
         // Load from cache
-        let cached = load_from_cache(cache_path, domain).expect("Should load from cache");
+        let cached = load_from_cache(cache_path, domain)
+            .await
+            .expect("Should load from cache");
         assert!(cached.is_some(), "Should find cached entry");
 
         let entry = cached.unwrap();
@@ -125,15 +154,17 @@ mod tests {
         assert_eq!(whois_result.registrar, Some("Test Registrar".to_string()));
     }
 
-    #[test]
-    fn test_load_from_cache_expired() {
+    #[tokio::test]
+    async fn test_load_from_cache_expired() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
 
         // Save to cache
-        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+        save_to_cache(cache_path, domain, &result)
+            .await
+            .expect("Should save to cache");
 
         // Manually create an expired cache entry
         let cache_file = cache_path.join("example_com.json");
@@ -146,28 +177,32 @@ mod tests {
         std::fs::write(&cache_file, content).expect("Should write file");
 
         // Load should return None and delete expired cache
-        let cached = load_from_cache(cache_path, domain).expect("Should handle expired cache");
+        let cached = load_from_cache(cache_path, domain)
+            .await
+            .expect("Should handle expired cache");
         assert!(cached.is_none(), "Should return None for expired cache");
         assert!(!cache_file.exists(), "Expired cache file should be deleted");
     }
 
-    #[test]
-    fn test_cache_domain_name_sanitization() {
+    #[tokio::test]
+    async fn test_cache_domain_name_sanitization() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
 
         // Save to cache
-        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+        save_to_cache(cache_path, domain, &result)
+            .await
+            .expect("Should save to cache");
 
         // Verify file name uses underscores instead of dots
         let cache_file = cache_path.join("example_com.json");
         assert!(cache_file.exists(), "Cache file should use sanitized name");
     }
 
-    #[test]
-    fn test_cache_invalid_json() {
+    #[tokio::test]
+    async fn test_cache_invalid_json() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
@@ -178,12 +213,12 @@ mod tests {
         std::fs::write(&cache_file, "invalid json").expect("Should write file");
 
         // Load should return error
-        let result = load_from_cache(cache_path, domain);
+        let result = load_from_cache(cache_path, domain).await;
         assert!(result.is_err(), "Should error on invalid JSON");
     }
 
-    #[test]
-    fn test_cache_expired_deletes_file() {
+    #[tokio::test]
+    async fn test_cache_expired_deletes_file() {
         // Test that expired cache files are deleted (critical for disk space management)
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
@@ -191,7 +226,9 @@ mod tests {
         let result = create_test_whois_result();
 
         // Save to cache
-        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+        save_to_cache(cache_path, domain, &result)
+            .await
+            .expect("Should save to cache");
         let cache_file = cache_path.join("example_com.json");
         assert!(cache_file.exists(), "Cache file should exist");
 
@@ -205,7 +242,9 @@ mod tests {
         std::fs::write(&cache_file, content).expect("Should write file");
 
         // Load should return None AND delete the expired file
-        let cached = load_from_cache(cache_path, domain).expect("Should handle expired cache");
+        let cached = load_from_cache(cache_path, domain)
+            .await
+            .expect("Should handle expired cache");
         assert!(cached.is_none(), "Should return None for expired cache");
         assert!(
             !cache_file.exists(),
@@ -213,8 +252,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cache_missing_fields_handles_gracefully() {
+    #[tokio::test]
+    async fn test_cache_missing_fields_handles_gracefully() {
         // Test that cache files with missing required fields are handled gracefully
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
@@ -227,12 +266,12 @@ mod tests {
             .expect("Should write file");
 
         // Load should return error (missing required field)
-        let result = load_from_cache(cache_path, domain);
+        let result = load_from_cache(cache_path, domain).await;
         assert!(result.is_err(), "Should error on missing required fields");
     }
 
-    #[test]
-    fn test_cache_fresh_returns_data() {
+    #[tokio::test]
+    async fn test_cache_fresh_returns_data() {
         // Test that fresh cache (within TTL) returns data correctly
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
@@ -240,10 +279,14 @@ mod tests {
         let result = create_test_whois_result();
 
         // Save to cache
-        save_to_cache(cache_path, domain, &result).expect("Should save to cache");
+        save_to_cache(cache_path, domain, &result)
+            .await
+            .expect("Should save to cache");
 
         // Load immediately (should be fresh)
-        let cached = load_from_cache(cache_path, domain).expect("Should load from cache");
+        let cached = load_from_cache(cache_path, domain)
+            .await
+            .expect("Should load from cache");
         assert!(cached.is_some(), "Should return cached data when fresh");
 
         let entry = cached.unwrap();
@@ -257,8 +300,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cache_near_expiration_still_valid() {
+    #[tokio::test]
+    async fn test_cache_near_expiration_still_valid() {
         // Test that cache just before expiration is still valid
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
@@ -277,7 +320,9 @@ mod tests {
         std::fs::write(&cache_file, content).expect("Should write file");
 
         // Load should return cached data (still valid)
-        let cached = load_from_cache(cache_path, domain).expect("Should load from cache");
+        let cached = load_from_cache(cache_path, domain)
+            .await
+            .expect("Should load from cache");
         assert!(
             cached.is_some(),
             "Should return cached data when just before expiration"

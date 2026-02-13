@@ -6,14 +6,14 @@
 /// TLS and DNS resolution results.
 #[derive(Debug)]
 pub(crate) struct TlsDnsData {
-    pub(crate) tls_version: Option<String>,
+    pub(crate) tls_version: Option<crate::models::TlsVersion>,
     pub(crate) subject: Option<String>,
     pub(crate) issuer: Option<String>,
     pub(crate) valid_from: Option<chrono::NaiveDateTime>,
     pub(crate) valid_to: Option<chrono::NaiveDateTime>,
     pub(crate) oids: Option<std::collections::HashSet<String>>,
     pub(crate) cipher_suite: Option<String>,
-    pub(crate) key_algorithm: Option<String>,
+    pub(crate) key_algorithm: Option<crate::models::KeyAlgorithm>,
     pub(crate) subject_alternative_names: Option<Vec<String>>,
     pub(crate) ip_address: String,
     pub(crate) reverse_dns_name: Option<String>,

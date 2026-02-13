@@ -260,7 +260,13 @@ fn load_environment() {
             if let Some(exe_dir) = exe_path.parent() {
                 let env_path = exe_dir.join(".env");
                 if env_path.exists() {
-                    let _ = dotenvy::from_path(&env_path);
+                    if let Err(e) = dotenvy::from_path(&env_path) {
+                        eprintln!(
+                            "Warning: Failed to load .env from {}: {}",
+                            env_path.display(),
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -357,19 +363,30 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<()> {
         Some(PathBuf::from(format!("domain_status_export.{}", extension)))
     };
 
+    // Convert CLI ExportFormat to library ExportFormat
+    let lib_format = match export_cmd.format {
+        ExportFormat::Csv => domain_status::export::ExportFormat::Csv,
+        ExportFormat::Jsonl => domain_status::export::ExportFormat::Jsonl,
+        ExportFormat::Parquet => domain_status::export::ExportFormat::Parquet,
+    };
+
+    // Build export options from CLI args
+    let export_opts = domain_status::export::ExportOptions {
+        db_path: export_cmd.db_path.clone(),
+        output: output_path.clone(),
+        format: lib_format,
+        run_id: export_cmd.run_id.clone(),
+        domain: export_cmd.domain.clone(),
+        status: export_cmd.status,
+        since: export_cmd.since,
+    };
+
     // Handle export format
     match export_cmd.format {
         ExportFormat::Csv => {
-            let count = export_csv(
-                &export_cmd.db_path,
-                output_path.as_ref(),
-                export_cmd.run_id.as_deref(),
-                export_cmd.domain.as_deref(),
-                export_cmd.status,
-                export_cmd.since,
-            )
-            .await
-            .context("Failed to export CSV")?;
+            let count = export_csv(&export_opts)
+                .await
+                .context("Failed to export CSV")?;
 
             if let Some(ref path) = output_path {
                 eprintln!("✅ Exported {} records to {}", count, path.display());
@@ -380,16 +397,7 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<()> {
         }
         ExportFormat::Jsonl => {
             use domain_status::export::export_jsonl;
-            match export_jsonl(
-                &export_cmd.db_path,
-                output_path.as_ref(),
-                export_cmd.run_id.as_deref(),
-                export_cmd.domain.as_deref(),
-                export_cmd.status,
-                export_cmd.since,
-            )
-            .await
-            {
+            match export_jsonl(&export_opts).await {
                 Ok(count) => {
                     if let Some(ref path) = output_path {
                         eprintln!("✅ Exported {} records to {}", count, path.display());

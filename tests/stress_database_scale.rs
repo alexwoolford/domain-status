@@ -61,7 +61,7 @@ fn create_test_record(domain: &str, run_id: &str) -> UrlRecord {
         title: format!("Test {}", domain),
         keywords: Some("test".to_string()),
         description: Some("Test record".to_string()),
-        tls_version: Some("TLSv1.3".to_string()),
+        tls_version: Some(domain_status::TlsVersion::Tls13),
         ssl_cert_subject: Some(format!("CN={}", domain)),
         ssl_cert_issuer: Some("CN=Test CA".to_string()),
         ssl_cert_valid_from: NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -78,7 +78,7 @@ fn create_test_record(domain: &str, run_id: &str) -> UrlRecord {
         spf_record: Some("v=spf1 include:_spf.example.com ~all".to_string()),
         dmarc_record: Some("v=DMARC1; p=quarantine".to_string()),
         cipher_suite: Some("TLS_AES_128_GCM_SHA256".to_string()),
-        key_algorithm: Some("RSA".to_string()),
+        key_algorithm: Some(domain_status::KeyAlgorithm::RSA),
         run_id: Some(run_id.to_string()),
     }
 }

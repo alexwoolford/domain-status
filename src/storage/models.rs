@@ -8,6 +8,8 @@
 
 use chrono::NaiveDateTime;
 
+use crate::error_handling::ErrorType;
+
 /// Represents a complete URL status record for database insertion.
 ///
 /// Contains all data extracted from a URL check including HTTP response details,
@@ -39,8 +41,8 @@ pub struct UrlRecord {
     pub keywords: Option<String>,
     /// HTML meta description
     pub description: Option<String>,
-    /// TLS version (e.g., "TLSv1.3")
-    pub tls_version: Option<String>,
+    /// TLS version
+    pub tls_version: Option<crate::models::TlsVersion>,
     /// SSL certificate subject (e.g., "CN=example.com")
     pub ssl_cert_subject: Option<String>,
     /// SSL certificate issuer
@@ -66,7 +68,7 @@ pub struct UrlRecord {
     /// TLS cipher suite used
     pub cipher_suite: Option<String>,
     /// TLS key exchange algorithm
-    pub key_algorithm: Option<String>,
+    pub key_algorithm: Option<crate::models::KeyAlgorithm>,
     /// ID of the scan run this record belongs to
     pub run_id: Option<String>,
 }
@@ -86,7 +88,7 @@ pub struct UrlFailureRecord {
     pub final_url: Option<String>,    // URL after redirects (if any)
     pub domain: String,               // Initial domain extracted from original URL
     pub final_domain: Option<String>, // Final domain after redirects (if any)
-    pub error_type: String,           // ErrorType enum value as string
+    pub error_type: ErrorType,        // Categorized error type
     pub error_message: String,        // Full error message
     pub http_status: Option<u16>,     // HTTP status code if available (e.g., 403, 500)
     pub retry_count: u32,             // Number of retry attempts made
@@ -110,7 +112,7 @@ pub struct UrlFailureRecord {
 /// is stored as milliseconds since Unix epoch.
 pub struct UrlPartialFailureRecord {
     pub url_status_id: i64,     // Foreign key to url_status.id
-    pub error_type: String,     // ErrorType enum value (DNS/TLS errors)
+    pub error_type: ErrorType,  // Categorized error type (DNS/TLS errors)
     pub error_message: String,  // Full error message
     pub timestamp: i64,         // When the failure occurred
     pub run_id: Option<String>, // Foreign key to runs.run_id

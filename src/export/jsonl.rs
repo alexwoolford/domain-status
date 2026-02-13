@@ -9,7 +9,6 @@ use futures::TryStreamExt;
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
 
 use crate::storage::init_db_pool_with_path;
 
@@ -44,15 +43,8 @@ use super::queries::{
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::cognitive_complexity)]
-pub async fn export_jsonl(
-    db_path: &Path,
-    output: Option<&PathBuf>,
-    run_id: Option<&str>,
-    domain: Option<&str>,
-    status: Option<u16>,
-    since: Option<i64>,
-) -> Result<usize> {
-    let pool = init_db_pool_with_path(db_path)
+pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
+    let pool = init_db_pool_with_path(&opts.db_path)
         .await
         .context("Failed to initialize database pool")?;
 
@@ -66,15 +58,27 @@ pub async fn export_jsonl(
     );
 
     // Use shared WHERE clause builder
-    build_where_clause(&mut query_builder, run_id, domain, status, since);
+    build_where_clause(
+        &mut query_builder,
+        opts.run_id.as_deref(),
+        opts.domain.as_deref(),
+        opts.status,
+        opts.since,
+    );
 
     query_builder.push(" ORDER BY us.observed_at_ms DESC");
 
-    let mut writer: Box<dyn Write> = if let Some(output_path) = output {
-        let file = std::fs::File::create(output_path).context(format!(
-            "Failed to create output file: {}",
-            output_path.display()
-        ))?;
+    let mut writer: Box<dyn Write> = if let Some(output_path) = opts.output.as_ref() {
+        // Use async file creation to avoid blocking tokio runtime, then convert to std::fs::File
+        // for use with serde_json::to_writer which requires sync Write trait
+        let file = tokio::fs::File::create(output_path)
+            .await
+            .context(format!(
+                "Failed to create output file: {}",
+                output_path.display()
+            ))?
+            .into_std()
+            .await;
         Box::new(file)
     } else {
         // Wrap stdout to ignore broken pipe errors (e.g., when piped to jq that exits early)
@@ -510,6 +514,7 @@ pub async fn export_jsonl(
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::{ExportFormat, ExportOptions};
     use super::*;
     use crate::storage::migrations::run_migrations;
     use sqlx::SqlitePool;
@@ -573,14 +578,15 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(
-            std::path::Path::new(":memory:"),
-            Some(&output_path),
-            None,
-            None,
-            None,
-            None,
-        )
+        let count = export_jsonl(&ExportOptions {
+            db_path: std::path::Path::new(":memory:").to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
         .await;
 
         // This will fail because we can't use :memory: with a path
@@ -607,9 +613,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1, "Should export 1 record");
 
@@ -673,14 +687,15 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(
-            db_path,
-            Some(&output_path),
-            Some("test-run-1"),
-            None,
-            None,
-            None,
-        )
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: Some("test-run-1".to_string()),
+            domain: None,
+            status: None,
+            since: None,
+        })
         .await
         .expect("Should export successfully");
 
@@ -718,14 +733,15 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(
-            db_path,
-            Some(&output_path),
-            None,
-            Some("example.com"),
-            None,
-            None,
-        )
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: Some("example.com".to_string()),
+            status: None,
+            since: None,
+        })
         .await
         .expect("Should export successfully");
 
@@ -752,9 +768,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, Some(404), None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: Some(404),
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1, "Should export only 1 record matching status");
     }
@@ -801,14 +825,15 @@ mod tests {
         let output_path = temp_file.path().to_path_buf();
 
         // Filter by timestamp after the first record
-        let count = export_jsonl(
-            db_path,
-            Some(&output_path),
-            None,
-            None,
-            None,
-            Some(1704100000000i64), // Between the two timestamps
-        )
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: Some(1704100000000i64), // Between the two timestamps
+        })
         .await
         .expect("Should export successfully");
 
@@ -857,9 +882,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1);
 
@@ -893,9 +926,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully even with empty database");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully even with empty database");
 
         assert_eq!(count, 0, "Should export 0 records from empty database");
     }
@@ -916,10 +957,15 @@ mod tests {
         drop(pool);
 
         // Export to stdout (None output path)
-        let count = export_jsonl(
-            db_path, None, // stdout
-            None, None, None, None,
-        )
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: None, // stdout
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
         .await
         .expect("Should export to stdout successfully");
 
@@ -968,9 +1014,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1);
 
@@ -1006,7 +1060,16 @@ mod tests {
         // Use an invalid path (directory instead of file)
         let invalid_path = std::path::PathBuf::from("/invalid/path/that/does/not/exist.jsonl");
 
-        let result = export_jsonl(db_path, Some(&invalid_path), None, None, None, None).await;
+        let result = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(invalid_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await;
 
         // Should fail with file creation error
         assert!(result.is_err(), "Should fail when file cannot be created");
@@ -1064,9 +1127,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1);
 
@@ -1105,9 +1176,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1);
 
@@ -1182,9 +1261,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully even with NULL values");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully even with NULL values");
 
         assert_eq!(count, 1);
 
@@ -1235,9 +1322,17 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let output_path = temp_file.path().to_path_buf();
 
-        let count = export_jsonl(db_path, Some(&output_path), None, None, None, None)
-            .await
-            .expect("Should export successfully");
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
 
         assert_eq!(count, 1);
 

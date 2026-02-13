@@ -25,7 +25,7 @@ pub async fn insert_social_media_links(
              identifier=excluded.identifier",
         )
         .bind(url_status_id)
-        .bind(&link.platform)
+        .bind(link.platform.as_str())
         .bind(&link.url)
         .bind(&link.identifier)
         .execute(pool)
@@ -34,7 +34,7 @@ pub async fn insert_social_media_links(
             log::warn!(
                 "Failed to insert social media link {} for platform {}: {}",
                 link.url,
-                link.platform,
+                link.platform.as_str(),
                 e
             );
         }
@@ -47,6 +47,7 @@ pub async fn insert_social_media_links(
 mod tests {
     use super::*;
     use crate::parse::SocialMediaLink;
+    use crate::parse::SocialPlatform;
     use sqlx::Row;
 
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
@@ -58,12 +59,12 @@ mod tests {
 
         let links = vec![
             SocialMediaLink {
-                platform: "Twitter".to_string(),
+                platform: SocialPlatform::Twitter,
                 url: "https://twitter.com/example".to_string(),
                 identifier: Some("example".to_string()),
             },
             SocialMediaLink {
-                platform: "LinkedIn".to_string(),
+                platform: SocialPlatform::LinkedIn,
                 url: "https://linkedin.com/company/example".to_string(),
                 identifier: Some("example".to_string()),
             },
@@ -121,7 +122,7 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let mut link = SocialMediaLink {
-            platform: "Twitter".to_string(),
+            platform: SocialPlatform::Twitter,
             url: "https://twitter.com/example".to_string(),
             identifier: Some("example".to_string()),
         };
@@ -165,7 +166,7 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let links = vec![SocialMediaLink {
-            platform: "GitHub".to_string(),
+            platform: SocialPlatform::GitHub,
             url: "https://github.com/example".to_string(),
             identifier: None,
         }];

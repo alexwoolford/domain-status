@@ -9,10 +9,10 @@ mod headers;
 mod matching;
 mod utils;
 
-use anyhow::Result;
 use reqwest::header::HeaderMap;
 use std::collections::{HashMap, HashSet};
 
+use crate::error_handling::FingerprintError;
 use crate::fingerprint::ruleset::get_ruleset;
 
 use body::check_body;
@@ -61,11 +61,11 @@ pub async fn detect_technologies(
     headers: &HeaderMap,
     url: &str,
     _script_tag_ids: &HashSet<String>,
-) -> Result<Vec<DetectedTechnology>> {
+) -> Result<Vec<DetectedTechnology>, FingerprintError> {
     // Get the ruleset (needed for implied technologies and exclusions later)
     let _ = get_ruleset()
         .await
-        .ok_or_else(|| anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() first"))?;
+        .ok_or(FingerprintError::RulesetNotInitialized)?;
 
     // Extract and normalize cookies and headers
     let cookies = extract_cookies_from_headers(headers);
@@ -135,9 +135,9 @@ pub async fn detect_technologies(
     }
 
     // Add implied technologies (wappalyzergo adds these after each match)
-    let ruleset = get_ruleset().await.ok_or_else(|| {
-        anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
-    })?;
+    let ruleset = get_ruleset()
+        .await
+        .ok_or(FingerprintError::RulesetNotInitialized)?;
 
     let mut implied_to_add = Vec::new();
     for tech_name in detected.keys() {

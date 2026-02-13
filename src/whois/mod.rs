@@ -38,8 +38,8 @@ pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Opti
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
 
-    // Check cache first
-    if let Some(cached) = load_from_cache(&cache_path, domain)? {
+    // Check cache first (async to avoid blocking tokio runtime)
+    if let Some(cached) = load_from_cache(&cache_path, domain).await? {
         log::debug!("WHOIS cache hit for {}", domain);
         return Ok(Some(cached.result.into()));
     }
@@ -55,8 +55,8 @@ pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Opti
             log::debug!("WHOIS lookup successful for {}", domain);
             let result = convert_parsed_data(&response);
 
-            // Cache the result
-            save_to_cache(&cache_path, domain, &result)?;
+            // Cache the result (async to avoid blocking tokio runtime)
+            save_to_cache(&cache_path, domain, &result).await?;
 
             Ok(Some(result))
         }

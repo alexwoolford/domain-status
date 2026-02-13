@@ -19,7 +19,7 @@ mod request;
 mod response;
 mod utils;
 
-pub use context::ProcessingContext;
+pub use context::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
 #[allow(unused_imports)] // Public API re-export, even if not used in tests
 pub use handler::{handle_http_request, handle_response};
 pub use redirects::resolve_redirect_chain;

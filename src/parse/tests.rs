@@ -208,7 +208,7 @@ fn test_extract_analytics_ids_gtm_data_layer_format() {
     assert!(!ids.is_empty(), "Should find GTM ID in dataLayer format");
     let gtm_ids: Vec<&str> = ids
         .iter()
-        .filter(|id| id.provider == "Google Tag Manager")
+        .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
         .map(|id| id.id.as_str())
         .collect();
     assert!(
@@ -228,7 +228,7 @@ fn test_extract_analytics_ids_gtm_json_format() {
     assert!(!ids.is_empty(), "Should find GTM ID in JSON format");
     let gtm_ids: Vec<&str> = ids
         .iter()
-        .filter(|id| id.provider == "Google Tag Manager")
+        .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
         .map(|id| id.id.as_str())
         .collect();
     assert!(
@@ -249,7 +249,7 @@ fn test_extract_analytics_ids_gtm_url_format() {
     assert!(!ids.is_empty(), "Should find GTM IDs in URL format");
     let gtm_ids: Vec<&str> = ids
         .iter()
-        .filter(|id| id.provider == "Google Tag Manager")
+        .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
         .map(|id| id.id.as_str())
         .collect();
     assert!(
@@ -278,7 +278,7 @@ fn test_extract_analytics_ids_gtm_rejects_false_positives() {
     let ids = extract_analytics_ids(html);
     let gtm_ids: Vec<&str> = ids
         .iter()
-        .filter(|id| id.provider == "Google Tag Manager")
+        .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
         .map(|id| id.id.as_str())
         .collect();
     // Should NOT match any of these false positives

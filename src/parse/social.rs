@@ -5,6 +5,7 @@
 
 use regex::Regex;
 use scraper::{Html, Selector};
+use std::fmt;
 use std::sync::LazyLock;
 
 // Regex patterns for social media links
@@ -21,10 +22,52 @@ const REDDIT_URL_PATTERN: &str = r"https?://(?:www\.)?reddit\.com/(?:r|u)/([^/?#
 
 const ANCHOR_SELECTOR_STR: &str = "a[href]";
 
+/// Supported social media platforms.
+///
+/// Eliminates primitive obsession by replacing raw `String` platform names
+/// with a type-safe enum, preventing typos and enabling exhaustive matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SocialPlatform {
+    LinkedIn,
+    Twitter,
+    Facebook,
+    Instagram,
+    YouTube,
+    GitHub,
+    TikTok,
+    Pinterest,
+    Snapchat,
+    Reddit,
+}
+
+impl SocialPlatform {
+    /// Returns the platform name as a string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SocialPlatform::LinkedIn => "LinkedIn",
+            SocialPlatform::Twitter => "Twitter",
+            SocialPlatform::Facebook => "Facebook",
+            SocialPlatform::Instagram => "Instagram",
+            SocialPlatform::YouTube => "YouTube",
+            SocialPlatform::GitHub => "GitHub",
+            SocialPlatform::TikTok => "TikTok",
+            SocialPlatform::Pinterest => "Pinterest",
+            SocialPlatform::Snapchat => "Snapchat",
+            SocialPlatform::Reddit => "Reddit",
+        }
+    }
+}
+
+impl fmt::Display for SocialPlatform {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Social media link information
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SocialMediaLink {
-    pub platform: String,
+    pub platform: SocialPlatform,
     pub url: String,
     pub identifier: Option<String>, // Username, handle, or ID extracted from URL
 }
@@ -104,18 +147,18 @@ pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
     let mut links = Vec::new();
     let mut seen_urls = std::collections::HashSet::new();
 
-    // Pattern matching: (regex, platform_name)
-    let patterns: Vec<(&LazyLock<Regex>, &str)> = vec![
-        (&LINKEDIN_RE, "LinkedIn"),
-        (&TWITTER_RE, "Twitter"),
-        (&FACEBOOK_RE, "Facebook"),
-        (&INSTAGRAM_RE, "Instagram"),
-        (&YOUTUBE_RE, "YouTube"),
-        (&GITHUB_RE, "GitHub"),
-        (&TIKTOK_RE, "TikTok"),
-        (&PINTEREST_RE, "Pinterest"),
-        (&SNAPCHAT_RE, "Snapchat"),
-        (&REDDIT_RE, "Reddit"),
+    // Pattern matching: (regex, platform)
+    let patterns: Vec<(&LazyLock<Regex>, SocialPlatform)> = vec![
+        (&LINKEDIN_RE, SocialPlatform::LinkedIn),
+        (&TWITTER_RE, SocialPlatform::Twitter),
+        (&FACEBOOK_RE, SocialPlatform::Facebook),
+        (&INSTAGRAM_RE, SocialPlatform::Instagram),
+        (&YOUTUBE_RE, SocialPlatform::YouTube),
+        (&GITHUB_RE, SocialPlatform::GitHub),
+        (&TIKTOK_RE, SocialPlatform::TikTok),
+        (&PINTEREST_RE, SocialPlatform::Pinterest),
+        (&SNAPCHAT_RE, SocialPlatform::Snapchat),
+        (&REDDIT_RE, SocialPlatform::Reddit),
     ];
 
     for element in document.select(&ANCHOR_SELECTOR) {
@@ -126,7 +169,7 @@ pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
             }
 
             // Try each pattern
-            for (re, platform_name) in &patterns {
+            for (re, platform) in &patterns {
                 if let Some(caps) = re.captures(href) {
                     let identifier = caps.get(1).map(|m| m.as_str().to_string());
                     let full_url = if href.starts_with("http://") || href.starts_with("https://") {
@@ -142,7 +185,7 @@ pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
 
                     seen_urls.insert(href.to_string());
                     links.push(SocialMediaLink {
-                        platform: platform_name.to_string(),
+                        platform: *platform,
                         url: full_url,
                         identifier,
                     });
@@ -166,7 +209,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "LinkedIn");
+        assert_eq!(links[0].platform, SocialPlatform::LinkedIn);
         assert_eq!(links[0].url, "https://www.linkedin.com/company/example");
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
@@ -178,7 +221,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "Twitter");
+        assert_eq!(links[0].platform, SocialPlatform::Twitter);
         assert_eq!(links[0].url, "https://twitter.com/example");
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
@@ -190,7 +233,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "Twitter");
+        assert_eq!(links[0].platform, SocialPlatform::Twitter);
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
 
@@ -201,7 +244,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "Facebook");
+        assert_eq!(links[0].platform, SocialPlatform::Facebook);
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
 
@@ -212,7 +255,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "Instagram");
+        assert_eq!(links[0].platform, SocialPlatform::Instagram);
     }
 
     #[test]
@@ -222,7 +265,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "YouTube");
+        assert_eq!(links[0].platform, SocialPlatform::YouTube);
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
 
@@ -233,7 +276,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "GitHub");
+        assert_eq!(links[0].platform, SocialPlatform::GitHub);
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
 
@@ -244,7 +287,7 @@ mod tests {
         );
         let links = extract_social_media_links(&html);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].platform, "TikTok");
+        assert_eq!(links[0].platform, SocialPlatform::TikTok);
         assert_eq!(links[0].identifier, Some("example".to_string()));
     }
 

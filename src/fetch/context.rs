@@ -105,24 +105,15 @@ impl ConfigContext {
 }
 
 impl ProcessingContext {
-    /// Creates a new `ProcessingContext` with the given resources.
-    #[allow(clippy::too_many_arguments)] // All arguments are necessary for context setup
-    pub fn new(
-        client: Arc<reqwest::Client>,
-        redirect_client: Arc<reqwest::Client>,
-        extractor: Arc<psl::List>,
-        resolver: Arc<TokioResolver>,
-        error_stats: Arc<ProcessingStats>,
-        run_id: Option<String>,
-        enable_whois: bool,
-        db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
-        pool: DbPool,
-        timing_stats: Arc<TimingStats>,
-    ) -> Self {
+    /// Creates a new `ProcessingContext` from pre-built sub-contexts.
+    ///
+    /// Accepts the three sub-structs directly, eliminating the 10-argument
+    /// constructor and the `clippy::too_many_arguments` suppression.
+    pub fn new(network: NetworkContext, db: DatabaseContext, config: ConfigContext) -> Self {
         Self {
-            network: NetworkContext::new(client, redirect_client, extractor, resolver),
-            db: DatabaseContext::new(pool, db_circuit_breaker),
-            config: ConfigContext::new(error_stats, timing_stats, run_id, enable_whois),
+            network,
+            db,
+            config,
         }
     }
 }
@@ -175,16 +166,19 @@ mod tests {
 
         // Create context
         let context = ProcessingContext::new(
-            client.clone(),
-            redirect_client.clone(),
-            extractor.clone(),
-            resolver.clone(),
-            error_stats.clone(),
-            run_id.clone(),
-            enable_whois,
-            db_circuit_breaker.clone(),
-            pool.clone(),
-            timing_stats.clone(),
+            NetworkContext::new(
+                client.clone(),
+                redirect_client.clone(),
+                extractor.clone(),
+                resolver.clone(),
+            ),
+            DatabaseContext::new(pool.clone(), db_circuit_breaker.clone()),
+            ConfigContext::new(
+                error_stats.clone(),
+                timing_stats.clone(),
+                run_id.clone(),
+                enable_whois,
+            ),
         );
 
         // Verify all fields are set correctly
@@ -246,16 +240,9 @@ mod tests {
         let timing_stats = Arc::new(TimingStats::new());
 
         let context = ProcessingContext::new(
-            client,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            run_id,
-            enable_whois,
-            db_circuit_breaker,
-            pool,
-            timing_stats,
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, db_circuit_breaker),
+            ConfigContext::new(error_stats, timing_stats, run_id, enable_whois),
         );
 
         assert_eq!(context.config.run_id, None);

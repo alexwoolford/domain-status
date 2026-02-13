@@ -6,28 +6,32 @@ use sqlx::{Row, SqlitePool};
 
 use crate::error_handling::DatabaseError;
 
+/// Metadata for a scan run, recorded at start.
+pub struct RunMetadata<'a> {
+    pub run_id: &'a str,
+    pub start_time_ms: i64,
+    pub version: &'a str,
+    pub fingerprints_source: Option<&'a str>,
+    pub fingerprints_version: Option<&'a str>,
+    pub geoip_version: Option<&'a str>,
+}
+
+/// Statistics for a completed scan run, recorded at end.
+pub struct RunStats<'a> {
+    pub run_id: &'a str,
+    pub total_urls: i32,
+    pub successful_urls: i32,
+    pub failed_urls: i32,
+    pub elapsed_seconds: f64,
+}
+
 /// Inserts or updates run metadata in the runs table.
 ///
 /// This should be called at the start of a run to record run-level information
 /// like application version, fingerprints_source, fingerprints_version, and geoip_version.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `run_id` - Unique identifier for this run
-/// * `start_time_ms` - Start time as milliseconds since Unix epoch
-/// * `version` - Application version (e.g., "0.1.4") from Cargo.toml
-/// * `fingerprints_source` - Source URL of the fingerprint ruleset
-/// * `fingerprints_version` - Version/commit hash of the fingerprint ruleset
-/// * `geoip_version` - Version/build date of the GeoIP database (None if GeoIP disabled)
 pub async fn insert_run_metadata(
     pool: &SqlitePool,
-    run_id: &str,
-    start_time_ms: i64,
-    version: &str,
-    fingerprints_source: Option<&str>,
-    fingerprints_version: Option<&str>,
-    geoip_version: Option<&str>,
+    meta: &RunMetadata<'_>,
 ) -> Result<(), DatabaseError> {
     sqlx::query(
         "INSERT INTO runs (run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time_ms)
@@ -39,12 +43,12 @@ pub async fn insert_run_metadata(
              geoip_version=excluded.geoip_version,
              start_time_ms=excluded.start_time_ms",
     )
-    .bind(run_id)
-    .bind(version)
-    .bind(fingerprints_source)
-    .bind(fingerprints_version)
-    .bind(geoip_version)
-    .bind(start_time_ms)
+    .bind(meta.run_id)
+    .bind(meta.version)
+    .bind(meta.fingerprints_source)
+    .bind(meta.fingerprints_version)
+    .bind(meta.geoip_version)
+    .bind(meta.start_time_ms)
     .execute(pool)
     .await
     .map_err(DatabaseError::SqlError)?;
@@ -57,11 +61,7 @@ pub async fn insert_run_metadata(
 /// Stores all statistics from a ScanReport including elapsed time for easy querying.
 pub async fn update_run_stats(
     pool: &SqlitePool,
-    run_id: &str,
-    total_urls: i32,
-    successful_urls: i32,
-    failed_urls: i32,
-    elapsed_seconds: f64,
+    stats: &RunStats<'_>,
 ) -> Result<(), DatabaseError> {
     let end_time_ms = chrono::Utc::now().timestamp_millis();
 
@@ -71,11 +71,11 @@ pub async fn update_run_stats(
          WHERE run_id = ?",
     )
     .bind(end_time_ms)
-    .bind(total_urls)
-    .bind(successful_urls)
-    .bind(failed_urls)
-    .bind(elapsed_seconds)
-    .bind(run_id)
+    .bind(stats.total_urls)
+    .bind(stats.successful_urls)
+    .bind(stats.failed_urls)
+    .bind(stats.elapsed_seconds)
+    .bind(stats.run_id)
     .execute(pool)
     .await
     .map_err(DatabaseError::SqlError)?;
@@ -180,16 +180,15 @@ mod tests {
     async fn test_insert_run_metadata_basic() {
         let pool = create_test_pool().await;
 
-        let result = insert_run_metadata(
-            &pool,
-            "test-run-123",
-            1704067200000, // 2024-01-01 00:00:00 UTC
-            "0.1.4",
-            Some("https://github.com/wappalyzer/wappalyzer"),
-            Some("abc123def456"),
-            Some("2024-01-01"),
-        )
-        .await;
+        let meta = RunMetadata {
+            run_id: "test-run-123",
+            start_time_ms: 1704067200000, // 2024-01-01 00:00:00 UTC
+            version: "0.1.4",
+            fingerprints_source: Some("https://github.com/wappalyzer/wappalyzer"),
+            fingerprints_version: Some("abc123def456"),
+            geoip_version: Some("2024-01-01"),
+        };
+        let result = insert_run_metadata(&pool, &meta).await;
 
         assert!(result.is_ok());
 
@@ -222,16 +221,15 @@ mod tests {
     async fn test_insert_run_metadata_with_none_values() {
         let pool = create_test_pool().await;
 
-        let result = insert_run_metadata(
-            &pool,
-            "test-run-456",
-            1704067200000,
-            "0.1.4",
-            None,
-            None,
-            None,
-        )
-        .await;
+        let meta = RunMetadata {
+            run_id: "test-run-456",
+            start_time_ms: 1704067200000,
+            version: "0.1.4",
+            fingerprints_source: None,
+            fingerprints_version: None,
+            geoip_version: None,
+        };
+        let result = insert_run_metadata(&pool, &meta).await;
 
         assert!(result.is_ok());
 
@@ -258,29 +256,28 @@ mod tests {
         let pool = create_test_pool().await;
 
         // Insert initial metadata
-        insert_run_metadata(
-            &pool,
-            "test-run-789",
-            1704067200000,
-            "0.1.4",
-            Some("https://github.com/wappalyzer/wappalyzer"),
-            Some("abc123"),
-            Some("2024-01-01"),
-        )
-        .await
-        .expect("Failed to insert initial metadata");
+        let meta1 = RunMetadata {
+            run_id: "test-run-789",
+            start_time_ms: 1704067200000,
+            version: "0.1.4",
+            fingerprints_source: Some("https://github.com/wappalyzer/wappalyzer"),
+            fingerprints_version: Some("abc123"),
+            geoip_version: Some("2024-01-01"),
+        };
+        insert_run_metadata(&pool, &meta1)
+            .await
+            .expect("Failed to insert initial metadata");
 
         // Update with new values
-        let result = insert_run_metadata(
-            &pool,
-            "test-run-789",
-            1704153600000, // New start time
-            "0.1.5",       // Updated version
-            Some("https://github.com/wappalyzer/wappalyzer"),
-            Some("def456"),     // Updated version
-            Some("2024-01-02"), // Updated GeoIP version
-        )
-        .await;
+        let meta2 = RunMetadata {
+            run_id: "test-run-789",
+            start_time_ms: 1704153600000, // New start time
+            version: "0.1.5",             // Updated version
+            fingerprints_source: Some("https://github.com/wappalyzer/wappalyzer"),
+            fingerprints_version: Some("def456"), // Updated version
+            geoip_version: Some("2024-01-02"),    // Updated GeoIP version
+        };
+        let result = insert_run_metadata(&pool, &meta2).await;
 
         assert!(result.is_ok());
 
@@ -322,20 +319,27 @@ mod tests {
         let pool = create_test_pool().await;
 
         // First insert run metadata
-        insert_run_metadata(
-            &pool,
-            "test-run-stats",
-            1704067200000,
-            "0.1.4",
-            Some("https://github.com/wappalyzer/wappalyzer"),
-            Some("abc123"),
-            None,
-        )
-        .await
-        .expect("Failed to insert run metadata");
+        let meta = RunMetadata {
+            run_id: "test-run-stats",
+            start_time_ms: 1704067200000,
+            version: "0.1.4",
+            fingerprints_source: Some("https://github.com/wappalyzer/wappalyzer"),
+            fingerprints_version: Some("abc123"),
+            geoip_version: None,
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .expect("Failed to insert run metadata");
 
         // Update run stats
-        let result = update_run_stats(&pool, "test-run-stats", 100, 95, 5, 10.5).await;
+        let stats = RunStats {
+            run_id: "test-run-stats",
+            total_urls: 100,
+            successful_urls: 95,
+            failed_urls: 5,
+            elapsed_seconds: 10.5,
+        };
+        let result = update_run_stats(&pool, &stats).await;
 
         assert!(result.is_ok());
 
@@ -361,20 +365,27 @@ mod tests {
         let pool = create_test_pool().await;
 
         // Insert run metadata
-        insert_run_metadata(
-            &pool,
-            "test-run-zero",
-            1704067200000,
-            "0.1.4",
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("Failed to insert run metadata");
+        let meta = RunMetadata {
+            run_id: "test-run-zero",
+            start_time_ms: 1704067200000,
+            version: "0.1.4",
+            fingerprints_source: None,
+            fingerprints_version: None,
+            geoip_version: None,
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .expect("Failed to insert run metadata");
 
         // Update with zero values
-        let result = update_run_stats(&pool, "test-run-zero", 0, 0, 0, 0.0).await;
+        let stats = RunStats {
+            run_id: "test-run-zero",
+            total_urls: 0,
+            successful_urls: 0,
+            failed_urls: 0,
+            elapsed_seconds: 0.0,
+        };
+        let result = update_run_stats(&pool, &stats).await;
 
         assert!(result.is_ok());
 
@@ -398,7 +409,14 @@ mod tests {
         let pool = create_test_pool().await;
 
         // Try to update stats for non-existent run
-        let result = update_run_stats(&pool, "nonexistent-run", 100, 95, 5, 15.0).await;
+        let stats = RunStats {
+            run_id: "nonexistent-run",
+            total_urls: 100,
+            successful_urls: 95,
+            failed_urls: 5,
+            elapsed_seconds: 15.0,
+        };
+        let result = update_run_stats(&pool, &stats).await;
 
         // Should succeed but update 0 rows
         assert!(result.is_ok());
@@ -418,20 +436,27 @@ mod tests {
         let pool = create_test_pool().await;
 
         // Step 1: Insert run metadata at start
-        insert_run_metadata(
-            &pool,
-            "complete-run",
-            1704067200000,
-            "0.1.4",
-            Some("https://github.com/wappalyzer/wappalyzer"),
-            Some("abc123"),
-            Some("2024-01-01"),
-        )
-        .await
-        .expect("Failed to insert run metadata");
+        let meta = RunMetadata {
+            run_id: "complete-run",
+            start_time_ms: 1704067200000,
+            version: "0.1.4",
+            fingerprints_source: Some("https://github.com/wappalyzer/wappalyzer"),
+            fingerprints_version: Some("abc123"),
+            geoip_version: Some("2024-01-01"),
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .expect("Failed to insert run metadata");
 
         // Step 2: Update stats at end
-        let result = update_run_stats(&pool, "complete-run", 50, 48, 2, 25.3).await;
+        let stats = RunStats {
+            run_id: "complete-run",
+            total_urls: 50,
+            successful_urls: 48,
+            failed_urls: 2,
+            elapsed_seconds: 25.3,
+        };
+        let result = update_run_stats(&pool, &stats).await;
         assert!(result.is_ok());
 
         // Verify complete record
@@ -470,18 +495,25 @@ mod tests {
         // Create multiple completed runs
         for i in 0..5 {
             let run_id = format!("test-run-limit-{}", i);
-            insert_run_metadata(
-                &pool,
-                &run_id,
-                1704067200000 + (i * 1000),
-                "0.1.4",
-                None,
-                None,
-                None,
-            )
-            .await
-            .expect("Failed to insert run metadata");
-            update_run_stats(&pool, &run_id, 10, 9, 1, 5.0)
+            let meta = RunMetadata {
+                run_id: &run_id,
+                start_time_ms: 1704067200000 + (i as i64 * 1000),
+                version: "0.1.4",
+                fingerprints_source: None,
+                fingerprints_version: None,
+                geoip_version: None,
+            };
+            insert_run_metadata(&pool, &meta)
+                .await
+                .expect("Failed to insert run metadata");
+            let stats = RunStats {
+                run_id: &run_id,
+                total_urls: 10,
+                successful_urls: 9,
+                failed_urls: 1,
+                elapsed_seconds: 5.0,
+            };
+            update_run_stats(&pool, &stats)
                 .await
                 .expect("Failed to update run stats");
         }
@@ -506,18 +538,25 @@ mod tests {
         // Create multiple completed runs
         for i in 0..5 {
             let run_id = format!("test-run-unlimited-{}", i);
-            insert_run_metadata(
-                &pool,
-                &run_id,
-                1704067200000 + (i * 1000),
-                "0.1.4",
-                None,
-                None,
-                None,
-            )
-            .await
-            .expect("Failed to insert run metadata");
-            update_run_stats(&pool, &run_id, 10, 9, 1, 5.0)
+            let meta = RunMetadata {
+                run_id: &run_id,
+                start_time_ms: 1704067200000 + (i as i64 * 1000),
+                version: "0.1.4",
+                fingerprints_source: None,
+                fingerprints_version: None,
+                geoip_version: None,
+            };
+            insert_run_metadata(&pool, &meta)
+                .await
+                .expect("Failed to insert run metadata");
+            let stats = RunStats {
+                run_id: &run_id,
+                total_urls: 10,
+                successful_urls: 9,
+                failed_urls: 1,
+                elapsed_seconds: 5.0,
+            };
+            update_run_stats(&pool, &stats)
                 .await
                 .expect("Failed to update run stats");
         }
@@ -536,17 +575,17 @@ mod tests {
         let pool = create_test_pool().await;
 
         // Create a run but don't complete it (no end_time_ms)
-        insert_run_metadata(
-            &pool,
-            "test-run-incomplete",
-            1704067200000,
-            "0.1.4",
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("Failed to insert run metadata");
+        let meta = RunMetadata {
+            run_id: "test-run-incomplete",
+            start_time_ms: 1704067200000,
+            version: "0.1.4",
+            fingerprints_source: None,
+            fingerprints_version: None,
+            geoip_version: None,
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .expect("Failed to insert run metadata");
         // Don't call update_run_stats - this keeps end_time_ms as NULL
 
         // Query should return empty (only completed runs are returned)
@@ -570,10 +609,25 @@ mod tests {
         let start_times = [1704067200000, 1704067300000, 1704067400000]; // Increasing times
 
         for (run_id, start_time) in run_ids.iter().zip(start_times.iter()) {
-            insert_run_metadata(&pool, run_id, *start_time, "0.1.4", None, None, None)
+            let meta = RunMetadata {
+                run_id,
+                start_time_ms: *start_time,
+                version: "0.1.4",
+                fingerprints_source: None,
+                fingerprints_version: None,
+                geoip_version: None,
+            };
+            insert_run_metadata(&pool, &meta)
                 .await
                 .expect("Failed to insert run metadata");
-            update_run_stats(&pool, run_id, 10, 9, 1, 5.0)
+            let stats = RunStats {
+                run_id,
+                total_urls: 10,
+                successful_urls: 9,
+                failed_urls: 1,
+                elapsed_seconds: 5.0,
+            };
+            update_run_stats(&pool, &stats)
                 .await
                 .expect("Failed to update run stats");
         }

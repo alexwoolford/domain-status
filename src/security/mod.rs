@@ -19,20 +19,17 @@ pub use url_validation::validate_url_safe;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::TlsVersion;
     use std::collections::HashMap;
 
     #[test]
     fn test_is_weak_tls() {
-        assert!(!analysis::is_weak_tls("TLSv1.3"));
-        assert!(!analysis::is_weak_tls("TLSv1.2"));
-        assert!(!analysis::is_weak_tls("TLSv1_3")); // Format used by rustls
-        assert!(!analysis::is_weak_tls("TLSv1_2")); // Format used by rustls
-        assert!(!analysis::is_weak_tls("TLS 1.3"));
-        assert!(!analysis::is_weak_tls("TLS 1.2"));
-        assert!(analysis::is_weak_tls("TLSv1.1"));
-        assert!(analysis::is_weak_tls("TLSv1.0"));
-        assert!(analysis::is_weak_tls("SSLv3"));
-        assert!(analysis::is_weak_tls("SSLv2"));
+        assert!(!TlsVersion::Tls13.is_weak());
+        assert!(!TlsVersion::Tls12.is_weak());
+        assert!(TlsVersion::Tls11.is_weak());
+        assert!(TlsVersion::Tls10.is_weak());
+        assert!(TlsVersion::Ssl30.is_weak());
+        assert!(TlsVersion::Unknown.is_weak()); // SSLv2 -> Unknown
     }
 
     #[test]
@@ -60,7 +57,7 @@ mod tests {
         );
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.1".to_string()),
+            &Some(TlsVersion::Tls11),
             &headers,
             &None,
             &None,
@@ -75,7 +72,7 @@ mod tests {
         let headers = HashMap::new();
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &None,
             &None,
@@ -110,7 +107,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -122,24 +119,15 @@ mod tests {
 
     #[test]
     fn test_is_weak_tls_edge_cases() {
-        // Test various TLS version formats
-        assert!(!analysis::is_weak_tls("TLSv1.3"));
-        assert!(!analysis::is_weak_tls("TLSv1.2"));
-        assert!(!analysis::is_weak_tls("tlsv1.3")); // Lowercase
-        assert!(!analysis::is_weak_tls("TLS 1.3")); // With space
-        assert!(!analysis::is_weak_tls("TLS1.3")); // No 'v'
-        assert!(!analysis::is_weak_tls("tls1.2")); // Lowercase, no 'v'
+        // Secure versions
+        assert!(!TlsVersion::Tls13.is_weak());
+        assert!(!TlsVersion::Tls12.is_weak());
 
         // Weak versions
-        assert!(analysis::is_weak_tls("TLSv1.1"));
-        assert!(analysis::is_weak_tls("TLSv1.0"));
-        assert!(analysis::is_weak_tls("tls1.1")); // Lowercase
-        assert!(analysis::is_weak_tls("TLS 1.1")); // With space
-        assert!(analysis::is_weak_tls("SSLv3"));
-        assert!(analysis::is_weak_tls("SSLv2"));
-        assert!(analysis::is_weak_tls("ssl3")); // Lowercase
-        assert!(analysis::is_weak_tls("")); // Empty string is weak
-        assert!(analysis::is_weak_tls("unknown")); // Unknown version is weak
+        assert!(TlsVersion::Tls11.is_weak());
+        assert!(TlsVersion::Tls10.is_weak());
+        assert!(TlsVersion::Ssl30.is_weak());
+        assert!(TlsVersion::Unknown.is_weak());
     }
 
     #[test]
@@ -163,7 +151,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -190,7 +178,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -220,7 +208,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -250,7 +238,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -284,7 +272,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -306,7 +294,7 @@ mod tests {
 
         let warnings = analyze_security(
             "http://example.com",
-            &Some("TLSv1.1".to_string()),
+            &Some(TlsVersion::Tls11),
             &headers,
             &None,
             &None,
@@ -363,7 +351,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.1".to_string()),
+            &Some(TlsVersion::Tls11),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -390,7 +378,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.0".to_string()),
+            &Some(TlsVersion::Tls10),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -431,7 +419,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()),
@@ -469,7 +457,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some(subject.to_string()),
             &Some(issuer.to_string()),
@@ -500,7 +488,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some(subject.to_string()),
             &Some(issuer.to_string()),
@@ -531,7 +519,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some(subject.to_string()),
             &Some(issuer.to_string()),
@@ -566,7 +554,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &Some("CN=Let's Encrypt".to_string()), // Different issuer (not self-signed)
@@ -586,7 +574,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &None, // No certificate subject (extraction failed)
             &None, // No certificate issuer
@@ -636,7 +624,7 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some(subject.to_string()),
             &Some(issuer.to_string()),
@@ -667,7 +655,7 @@ mod tests {
         // Have subject and valid_to, but missing issuer
         let warnings = analyze_security(
             "https://example.com",
-            &Some("TLSv1.3".to_string()),
+            &Some(TlsVersion::Tls13),
             &headers,
             &Some("CN=example.com".to_string()),
             &None, // Missing issuer - can't check validity

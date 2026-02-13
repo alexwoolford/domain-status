@@ -29,8 +29,15 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
+    /// Acquires a permit from the rate limiter, blocking until one is available.
+    ///
+    /// If the semaphore is closed (e.g., during shutdown), the acquire is skipped
+    /// and a warning is logged. This prevents requests from flooding the target
+    /// during shutdown race conditions.
     pub async fn acquire(&self) {
-        let _ = self.permits.acquire().await;
+        if self.permits.acquire().await.is_err() {
+            log::warn!("Rate limiter semaphore closed, skipping throttle");
+        }
     }
 
     /// Updates the current RPS value (for adaptive rate limiting).

@@ -1,4 +1,9 @@
 //! Record building utilities.
+//!
+//! These functions are optimized to minimize clones in the hot path:
+//! - `build_url_record` clones ~15 small strings (unavoidable for UrlRecord fields)
+//! - `build_batch_record` takes ownership and **moves** large collections (HashMaps, Vecs)
+//!   instead of cloning them, saving ~5-10KB of allocations per URL
 
 use crate::database::UrlRecord;
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
@@ -6,6 +11,11 @@ use crate::fetch::response::{HtmlData, ResponseData};
 use crate::storage::BatchRecord;
 
 /// Builds a UrlRecord from extracted response data.
+///
+/// This function clones string fields from the input data. While this involves
+/// ~15 small string allocations, these are necessary to create an independent
+/// UrlRecord. The expensive HashMap/Vec data is handled by `build_batch_record`
+/// which takes ownership to avoid cloning.
 pub(crate) fn build_url_record(
     resp_data: &ResponseData,
     html_data: &HtmlData,
@@ -37,7 +47,7 @@ pub(crate) fn build_url_record(
             .as_ref()
             .filter(|d| !d.is_empty())
             .cloned(),
-        tls_version: tls_dns_data.tls_version.clone(),
+        tls_version: tls_dns_data.tls_version,
         ssl_cert_subject: tls_dns_data.subject.clone(),
         ssl_cert_issuer: tls_dns_data.issuer.clone(),
         ssl_cert_valid_from: tls_dns_data.valid_from,
@@ -57,17 +67,18 @@ pub(crate) fn build_url_record(
 
 /// Parameters for building a BatchRecord.
 ///
-/// This struct groups all parameters needed to build a batch record, reducing
-/// function argument count and improving maintainability.
-pub struct BatchRecordParams<'a> {
+/// This struct **owns** the response, HTML, and TLS/DNS data to enable moving
+/// large collections (HashMaps, Vecs) into the BatchRecord instead of cloning.
+/// This eliminates ~5-10KB of heap allocations per URL in the hot path.
+pub struct BatchRecordParams {
     /// The URL record to include in the batch
     pub record: UrlRecord,
-    /// Response data (headers, status, etc.)
-    pub resp_data: &'a ResponseData,
-    /// HTML parsing results
-    pub html_data: &'a HtmlData,
-    /// TLS and DNS data
-    pub tls_dns_data: &'a TlsDnsData,
+    /// Response data (headers, status, etc.) - owned to move HashMaps
+    pub resp_data: ResponseData,
+    /// HTML parsing results - owned to move Vecs
+    pub html_data: HtmlData,
+    /// TLS and DNS data - owned to move HashSet and Vec
+    pub tls_dns_data: TlsDnsData,
     /// Detected technologies
     pub technologies_vec: Vec<crate::fingerprint::DetectedTechnology>,
     /// Redirect chain URLs
@@ -83,17 +94,25 @@ pub struct BatchRecordParams<'a> {
     /// Timestamp for the record
     pub timestamp: i64,
     /// Run identifier
-    pub run_id: &'a Option<String>,
+    pub run_id: Option<String>,
 }
 
 /// Builds a BatchRecord from all extracted data.
 ///
+/// Takes ownership of params to **move** large collections instead of cloning:
+/// - `security_headers` and `http_headers` HashMaps from ResponseData
+/// - `oids` HashSet and `subject_alternative_names` Vec from TlsDnsData
+/// - `analytics_ids`, `structured_data`, `social_media_links` from HtmlData
+///
+/// This saves ~5-10KB of heap allocations per URL compared to cloning.
+///
 /// # Arguments
 ///
-/// * `params` - Parameters for building the batch record
-pub(crate) fn build_batch_record(params: BatchRecordParams<'_>) -> BatchRecord {
+/// * `params` - Parameters for building the batch record (ownership transferred)
+pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
+    // Move OIDs HashSet instead of cloning (avoids HashSet allocation)
     let oids_set: std::collections::HashSet<String> =
-        params.tls_dns_data.oids.clone().unwrap_or_default();
+        params.tls_dns_data.oids.take().unwrap_or_default();
 
     let partial_failure_records: Vec<crate::storage::models::UrlPartialFailureRecord> = params
         .partial_failures
@@ -101,7 +120,7 @@ pub(crate) fn build_batch_record(params: BatchRecordParams<'_>) -> BatchRecord {
         .map(|(error_type, error_message)| {
             crate::storage::models::UrlPartialFailureRecord {
                 url_status_id: 0, // Will be set when record is inserted
-                error_type: error_type.as_str().to_string(),
+                error_type,
                 error_message,
                 timestamp: params.timestamp,
                 run_id: params.run_id.clone(),
@@ -109,24 +128,35 @@ pub(crate) fn build_batch_record(params: BatchRecordParams<'_>) -> BatchRecord {
         })
         .collect();
 
+    // Move SANs Vec instead of cloning (avoids Vec allocation)
     let sans_vec: Vec<String> = params
         .tls_dns_data
         .subject_alternative_names
-        .clone()
+        .take()
         .unwrap_or_default();
+
+    // Move analytics_ids, structured_data, social_media_links instead of cloning
+    let analytics_ids = std::mem::take(&mut params.html_data.analytics_ids);
+    let structured_data = std::mem::take(&mut params.html_data.structured_data);
+    let social_media_links = std::mem::take(&mut params.html_data.social_media_links);
+
+    // Move security_headers and http_headers HashMaps instead of cloning
+    // These are the most expensive clones (~2-5KB each for typical responses)
+    let security_headers = std::mem::take(&mut params.resp_data.security_headers);
+    let http_headers = std::mem::take(&mut params.resp_data.http_headers);
 
     BatchRecord {
         url_record: params.record,
-        security_headers: params.resp_data.security_headers.clone(),
-        http_headers: params.resp_data.http_headers.clone(),
+        security_headers,
+        http_headers,
         oids: oids_set,
         redirect_chain: params.redirect_chain,
         technologies: params.technologies_vec,
         subject_alternative_names: sans_vec,
-        analytics_ids: params.html_data.analytics_ids.clone(),
+        analytics_ids,
         geoip: params.geoip_data,
-        structured_data: Some(params.html_data.structured_data.clone()),
-        social_media_links: params.html_data.social_media_links.clone(),
+        structured_data: Some(structured_data),
+        social_media_links,
         security_warnings: params.security_warnings,
         whois: params.whois_data,
         partial_failures: partial_failure_records,
@@ -186,7 +216,7 @@ mod tests {
 
     fn create_test_tls_dns_data() -> TlsDnsData {
         TlsDnsData {
-            tls_version: Some("TLSv1.3".to_string()),
+            tls_version: Some(crate::models::TlsVersion::Tls13),
             subject: Some("CN=example.com".to_string()),
             issuer: Some("CN=Let's Encrypt".to_string()),
             valid_from: Some(
@@ -197,7 +227,7 @@ mod tests {
             ),
             oids: Some(HashSet::new()),
             cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
-            key_algorithm: Some("RSA".to_string()),
+            key_algorithm: Some(crate::models::KeyAlgorithm::RSA),
             subject_alternative_names: Some(vec!["example.com".to_string()]),
             ip_address: "192.0.2.1".to_string(),
             reverse_dns_name: Some("example.com".to_string()),
@@ -239,7 +269,7 @@ mod tests {
         assert_eq!(record.title, "Test Page");
         assert_eq!(record.keywords, Some("test, keywords".to_string()));
         assert_eq!(record.description, Some("Test description".to_string()));
-        assert_eq!(record.tls_version, Some("TLSv1.3".to_string()));
+        assert_eq!(record.tls_version, Some(crate::models::TlsVersion::Tls13));
         assert_eq!(record.run_id, run_id);
     }
 
@@ -336,9 +366,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: technologies.clone(),
             redirect_chain,
             partial_failures,
@@ -346,7 +376,7 @@ mod tests {
             security_warnings,
             whois_data,
             timestamp: 1234567890,
-            run_id: &run_id,
+            run_id,
         });
 
         assert_eq!(batch_record.url_record.final_domain, "example.com");
@@ -379,9 +409,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain: vec![],
             partial_failures: vec![],
@@ -389,7 +419,7 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &None,
+            run_id: None,
         });
 
         assert!(batch_record.oids.is_empty());
@@ -415,9 +445,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain: vec![],
             partial_failures: vec![],
@@ -425,7 +455,7 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &None,
+            run_id: None,
         });
 
         assert!(batch_record.subject_alternative_names.is_empty());
@@ -458,9 +488,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain: vec![],
             partial_failures,
@@ -468,17 +498,17 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &None,
+            run_id: None,
         });
 
         assert_eq!(batch_record.partial_failures.len(), 2);
         assert_eq!(
             batch_record.partial_failures[0].error_type,
-            ErrorType::DnsNsLookupError.as_str()
+            ErrorType::DnsNsLookupError
         );
         assert_eq!(
             batch_record.partial_failures[1].error_type,
-            ErrorType::DnsTxtLookupError.as_str()
+            ErrorType::DnsTxtLookupError
         );
     }
 
@@ -534,9 +564,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain: vec![],
             partial_failures: vec![],
@@ -544,7 +574,7 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &None,
+            run_id: None,
         });
 
         // Duplicate OIDs should be deduplicated by HashSet
@@ -578,9 +608,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain: vec![],
             partial_failures: vec![],
@@ -588,7 +618,7 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &None,
+            run_id: None,
         });
 
         // SANs are Vec, so duplicates are preserved (this is intentional - matches cert data)
@@ -622,9 +652,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain,
             partial_failures: vec![],
@@ -632,7 +662,7 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &None,
+            run_id: None,
         });
 
         // Large redirect chain should be preserved
@@ -670,9 +700,9 @@ mod tests {
 
         let batch_record = build_batch_record(BatchRecordParams {
             record: url_record,
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
+            resp_data,
+            html_data,
+            tls_dns_data,
             technologies_vec: vec![],
             redirect_chain: vec![],
             partial_failures,
@@ -680,7 +710,7 @@ mod tests {
             security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
-            run_id: &run_id,
+            run_id: run_id.clone(),
         });
 
         // Run ID should be propagated to partial failure records
