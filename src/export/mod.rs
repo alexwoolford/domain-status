@@ -6,6 +6,7 @@
 mod csv;
 mod jsonl;
 mod queries;
+mod row;
 mod types;
 
 pub use csv::export_csv;

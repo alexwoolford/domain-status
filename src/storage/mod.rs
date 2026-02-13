@@ -21,7 +21,6 @@ pub mod record;
 mod test_helpers;
 
 // Re-export commonly used items
-pub use failure::record_url_failure;
 pub use insert::{
     insert_run_metadata, query_run_history, update_run_stats, RunMetadata, RunStats, RunSummary,
 };

@@ -6,35 +6,31 @@
 use anyhow::{Context, Result};
 use csv::Writer;
 use futures::TryStreamExt;
-use sqlx::Row;
 use std::io::{self, Write};
 
 use crate::storage::init_db_pool_with_path;
 
-// Import shared helper functions and utilities
-use super::queries::{
-    build_where_clause, fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list,
-    fetch_string_list, IgnoreBrokenPipe,
-};
+use super::queries::{build_where_clause, IgnoreBrokenPipe};
+use super::row::{build_export_row, build_url, extract_main_row_data};
+
+/// Format a timestamp (milliseconds since epoch) as a date string.
+fn format_date(ts_ms: Option<i64>) -> String {
+    ts_ms
+        .and_then(|ts| chrono::DateTime::from_timestamp(ts / 1000, 0))
+        .map(|dt| dt.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
 
 /// Exports data to CSV format.
 ///
 /// # Arguments
 ///
-/// * `db_path` - Path to the SQLite database
-/// * `output` - Output file path (or stdout if None)
-/// * `run_id` - Optional filter by run ID
-/// * `domain` - Optional filter by domain
-/// * `status` - Optional filter by HTTP status code
-/// * `since` - Optional filter by timestamp (milliseconds since epoch)
+/// * `opts` - Export options including database path, output, and filters
 ///
 /// # Returns
 ///
 /// Returns the number of records exported, or an error if export fails.
-// Large function handling CSV export with comprehensive data flattening and formatting.
-// Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path)
         .await
@@ -49,7 +45,6 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
          FROM url_status us",
     );
 
-    // Use shared WHERE clause builder
     build_where_clause(
         &mut query_builder,
         opts.run_id.as_deref(),
@@ -61,8 +56,6 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     query_builder.push(" ORDER BY us.observed_at_ms DESC");
 
     let mut writer: Writer<Box<dyn Write>> = if let Some(output_path) = opts.output.as_ref() {
-        // Use async file creation to avoid blocking tokio runtime, then convert to std::fs::File
-        // for use with csv::Writer which requires sync Write trait
         let file = tokio::fs::File::create(output_path)
             .await
             .context(format!(
@@ -73,10 +66,10 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
             .await;
         Writer::from_writer(Box::new(file) as Box<dyn Write>)
     } else {
-        // Wrap stdout to ignore broken pipe errors (e.g., when piped to jq that exits early)
         Writer::from_writer(Box::new(IgnoreBrokenPipe::new(io::stdout())) as Box<dyn Write>)
     };
 
+    // Write CSV header
     writer.write_record([
         "url",
         "initial_domain",
@@ -143,284 +136,98 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let mut record_count = 0;
 
     while let Some(row) = rows.try_next().await? {
-        let url_status_id: i64 = row.get("id");
-        let initial_domain: String = row.get("initial_domain");
-        let final_domain: String = row.get("final_domain");
-        let ip_address: String = row.get("ip_address");
-        let reverse_dns: Option<String> = row.get("reverse_dns_name");
-        let status: u16 = row.get("http_status");
-        let status_desc: String = row.get("http_status_text");
-        let response_time: f64 = row.get("response_time_seconds");
-        let title: String = row.get("title");
-        let keywords: Option<String> = row.get("keywords");
-        let description: Option<String> = row.get("description");
-        let is_mobile_friendly: bool = row.get("is_mobile_friendly");
-        let tls_version: Option<String> = row.get("tls_version");
-        let ssl_cert_subject: Option<String> = row.get("ssl_cert_subject");
-        let ssl_cert_issuer: Option<String> = row.get("ssl_cert_issuer");
-        let ssl_cert_valid_to: Option<i64> = row.get("ssl_cert_valid_to_ms");
-        let cipher_suite: Option<String> = row.get("cipher_suite");
-        let key_algorithm: Option<String> = row.get("key_algorithm");
-        let spf_record: Option<String> = row.get("spf_record");
-        let dmarc_record: Option<String> = row.get("dmarc_record");
-        let timestamp: i64 = row.get("observed_at_ms");
-        let run_id: Option<String> = row.get("run_id");
+        // Extract main row data and build the complete export row
+        let main = extract_main_row_data(&row);
+        let export_row = build_export_row(&pool, main).await?;
 
-        let redirect_rows = sqlx::query(
-            "SELECT redirect_url, sequence_order FROM url_redirect_chain
-             WHERE url_status_id = ? ORDER BY sequence_order",
-        )
-        .bind(url_status_id)
-        .fetch_all(pool.as_ref())
-        .await?;
-
-        let redirect_count = redirect_rows.len();
-        let final_redirect_url = redirect_rows
-            .last()
-            .map(|r| r.get::<String, _>("redirect_url"))
-            .unwrap_or_else(|| final_domain.clone());
-
-        // Format technologies as "Technology:version" or "Technology" for backward compatibility
-        let (technologies_str, technology_count) = fetch_string_list(
-            &pool,
-            "SELECT CASE WHEN technology_version IS NOT NULL THEN technology_name || ':' || technology_version ELSE technology_name END as technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name, technology_version",
-            url_status_id,
-        ).await?;
-
-        let nameserver_count = fetch_count_query(
-            &pool,
-            "SELECT COUNT(*) FROM url_nameservers WHERE url_status_id = ?",
-            url_status_id,
-        )
-        .await?;
-
-        let txt_count = fetch_count_query(
-            &pool,
-            "SELECT COUNT(*) FROM url_txt_records WHERE url_status_id = ?",
-            url_status_id,
-        )
-        .await?;
-
-        let mx_count = fetch_count_query(
-            &pool,
-            "SELECT COUNT(*) FROM url_mx_records WHERE url_status_id = ?",
-            url_status_id,
-        )
-        .await?;
-
-        let (certificate_sans_str, certificate_san_count) = fetch_string_list(
-            &pool,
-            "SELECT san_value FROM url_certificate_sans WHERE url_status_id = ? ORDER BY san_value",
-            url_status_id,
-        )
-        .await?;
-
-        let (oids_str, oid_count) = fetch_string_list(
-            &pool,
-            "SELECT oid FROM url_certificate_oids WHERE url_status_id = ? ORDER BY oid",
-            url_status_id,
-        )
-        .await?;
-
-        let (analytics_ids_str, analytics_count) = fetch_key_value_list(
-            &pool,
-            "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id",
-            "provider",
-            "tracking_id",
-            url_status_id,
-        ).await?;
-
-        let (social_media_links_str, social_media_count) = fetch_key_value_list(
-            &pool,
-            "SELECT platform, profile_url FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
-            "platform",
-            "profile_url",
-            url_status_id,
-        ).await?;
-
-        let (security_warnings_str, security_warning_count) = fetch_string_list(
-            &pool,
-            "SELECT warning_code FROM url_security_warnings WHERE url_status_id = ? ORDER BY warning_code",
-            url_status_id,
-        ).await?;
-
-        let (structured_data_types_str, _) = fetch_string_list(
-            &pool,
-            "SELECT DISTINCT data_type FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type",
-            url_status_id,
-        ).await?;
-        let structured_data_count = fetch_count_query(
-            &pool,
-            "SELECT COUNT(*) FROM url_structured_data WHERE url_status_id = ?",
-            url_status_id,
-        )
-        .await?;
-
-        const HTTP_KEY_HEADERS: &[&str] = &[
-            "Content-Type",
-            "Server",
-            "X-Powered-By",
-            "X-Frame-Options",
-            "X-Content-Type-Options",
-            "Strict-Transport-Security",
-            "Content-Security-Policy",
-        ];
-        let (http_headers_str, http_header_count) =
-            fetch_filtered_http_headers(&pool, "url_http_headers", url_status_id, HTTP_KEY_HEADERS)
-                .await?;
-
-        const SECURITY_KEY_HEADERS: &[&str] = &[
-            "Content-Security-Policy",
-            "X-Frame-Options",
-            "X-Content-Type-Options",
-            "Strict-Transport-Security",
-            "Referrer-Policy",
-            "Permissions-Policy",
-        ];
-        let (security_headers_str, security_header_count) = fetch_filtered_http_headers(
-            &pool,
-            "url_security_headers",
-            url_status_id,
-            SECURITY_KEY_HEADERS,
-        )
-        .await?;
-
-        let geoip_row = sqlx::query(
-            "SELECT country_code, country_name, region, city, latitude, longitude, asn, asn_org
-             FROM url_geoip WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_optional(pool.as_ref())
-        .await?;
-
-        let (
-            geoip_country_code,
-            geoip_country_name,
-            geoip_region,
-            geoip_city,
-            geoip_latitude,
-            geoip_longitude,
-            geoip_asn,
-            geoip_asn_org,
-        ) = if let Some(row) = geoip_row {
-            (
-                row.get::<Option<String>, _>("country_code"),
-                row.get::<Option<String>, _>("country_name"),
-                row.get::<Option<String>, _>("region"),
-                row.get::<Option<String>, _>("city"),
-                row.get::<Option<f64>, _>("latitude"),
-                row.get::<Option<f64>, _>("longitude"),
-                row.get::<Option<i32>, _>("asn"),
-                row.get::<Option<String>, _>("asn_org"),
-            )
+        // Build URL and final redirect URL (use final_domain if no redirects)
+        let url = build_url(&export_row.main.final_domain);
+        let final_redirect_url = if export_row.final_redirect_url.is_empty() {
+            export_row.main.final_domain.clone()
         } else {
-            (None, None, None, None, None, None, None, None)
+            export_row.final_redirect_url.clone()
         };
 
-        let whois_row = sqlx::query(
-            "SELECT registrar, creation_date_ms, expiration_date_ms, registrant_country
-             FROM url_whois WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_optional(pool.as_ref())
-        .await?;
-
-        let (whois_registrar, whois_creation_date, whois_expiration_date, whois_registrant_country) =
-            if let Some(row) = whois_row {
-                (
-                    row.get::<Option<String>, _>("registrar"),
-                    row.get::<Option<i64>, _>("creation_date_ms"),
-                    row.get::<Option<i64>, _>("expiration_date_ms"),
-                    row.get::<Option<String>, _>("registrant_country"),
-                )
-            } else {
-                (None, None, None, None)
-            };
-
-        let url = format!("https://{}", final_domain);
-
-        let ssl_cert_valid_to_str = ssl_cert_valid_to
-            .map(|ts| {
-                chrono::DateTime::from_timestamp(ts / 1000, 0)
-                    .map(|dt| dt.format("%Y-%m-%d").to_string())
-                    .unwrap_or_else(|| ts.to_string())
-            })
-            .unwrap_or_default();
-
-        let whois_creation_str = whois_creation_date
-            .map(|ts| {
-                chrono::DateTime::from_timestamp(ts / 1000, 0)
-                    .map(|dt| dt.format("%Y-%m-%d").to_string())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        let whois_expiration_str = whois_expiration_date
-            .map(|ts| {
-                chrono::DateTime::from_timestamp(ts / 1000, 0)
-                    .map(|dt| dt.format("%Y-%m-%d").to_string())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
+        // Write CSV row
         writer.write_record(&[
             url,
-            initial_domain,
-            final_domain,
-            ip_address,
-            reverse_dns.unwrap_or_default(),
-            status.to_string(),
-            status_desc,
-            format!("{:.2}", response_time),
-            title,
-            keywords.unwrap_or_default(),
-            description.unwrap_or_default(),
-            if is_mobile_friendly { "true" } else { "false" }.to_string(),
-            redirect_count.to_string(),
+            export_row.main.initial_domain.clone(),
+            export_row.main.final_domain.clone(),
+            export_row.main.ip_address.clone(),
+            export_row.main.reverse_dns.clone().unwrap_or_default(),
+            export_row.main.status.to_string(),
+            export_row.main.status_desc.clone(),
+            format!("{:.2}", export_row.main.response_time),
+            export_row.main.title.clone(),
+            export_row.main.keywords.clone().unwrap_or_default(),
+            export_row.main.description.clone().unwrap_or_default(),
+            if export_row.main.is_mobile_friendly {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+            export_row.redirect_count.to_string(),
             final_redirect_url,
-            technologies_str,
-            technology_count.to_string(),
-            tls_version.unwrap_or_default(),
-            ssl_cert_subject.unwrap_or_default(),
-            ssl_cert_issuer.unwrap_or_default(),
-            ssl_cert_valid_to_str,
-            cipher_suite.unwrap_or_default(),
-            key_algorithm.unwrap_or_default(),
-            certificate_sans_str,
-            certificate_san_count.to_string(),
-            oids_str,
-            oid_count.to_string(),
-            nameserver_count.to_string(),
-            txt_count.to_string(),
-            mx_count.to_string(),
-            spf_record.unwrap_or_default(),
-            dmarc_record.unwrap_or_default(),
-            analytics_ids_str,
-            analytics_count.to_string(),
-            social_media_links_str,
-            social_media_count.to_string(),
-            security_warnings_str,
-            security_warning_count.to_string(),
-            structured_data_types_str,
-            structured_data_count.to_string(),
-            http_headers_str,
-            http_header_count.to_string(),
-            security_headers_str,
-            security_header_count.to_string(),
-            geoip_country_code.unwrap_or_default(),
-            geoip_country_name.unwrap_or_default(),
-            geoip_region.unwrap_or_default(),
-            geoip_city.unwrap_or_default(),
-            geoip_latitude.map(|v| v.to_string()).unwrap_or_default(),
-            geoip_longitude.map(|v| v.to_string()).unwrap_or_default(),
-            geoip_asn.map(|v| v.to_string()).unwrap_or_default(),
-            geoip_asn_org.unwrap_or_default(),
-            whois_registrar.unwrap_or_default(),
-            whois_creation_str,
-            whois_expiration_str,
-            whois_registrant_country.unwrap_or_default(),
-            timestamp.to_string(),
-            run_id.unwrap_or_default(),
+            export_row.technologies_str.clone(),
+            export_row.technology_count.to_string(),
+            export_row.main.tls_version.clone().unwrap_or_default(),
+            export_row.main.ssl_cert_subject.clone().unwrap_or_default(),
+            export_row.main.ssl_cert_issuer.clone().unwrap_or_default(),
+            format_date(export_row.main.ssl_cert_valid_to_ms),
+            export_row.main.cipher_suite.clone().unwrap_or_default(),
+            export_row.main.key_algorithm.clone().unwrap_or_default(),
+            export_row.certificate_sans_str.clone(),
+            export_row.certificate_san_count.to_string(),
+            export_row.oids_str.clone(),
+            export_row.oid_count.to_string(),
+            export_row.nameserver_count.to_string(),
+            export_row.txt_count.to_string(),
+            export_row.mx_count.to_string(),
+            export_row.main.spf_record.clone().unwrap_or_default(),
+            export_row.main.dmarc_record.clone().unwrap_or_default(),
+            export_row.analytics_ids_str.clone(),
+            export_row.analytics_count.to_string(),
+            export_row.social_media_links_str.clone(),
+            export_row.social_media_count.to_string(),
+            export_row.security_warnings_str.clone(),
+            export_row.security_warning_count.to_string(),
+            export_row.structured_data_types_str.clone(),
+            export_row.structured_data_count.to_string(),
+            export_row.http_headers_str.clone(),
+            export_row.http_header_count.to_string(),
+            export_row.security_headers_str.clone(),
+            export_row.security_header_count.to_string(),
+            export_row.geoip.country_code.clone().unwrap_or_default(),
+            export_row.geoip.country_name.clone().unwrap_or_default(),
+            export_row.geoip.region.clone().unwrap_or_default(),
+            export_row.geoip.city.clone().unwrap_or_default(),
+            export_row
+                .geoip
+                .latitude
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            export_row
+                .geoip
+                .longitude
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            export_row
+                .geoip
+                .asn
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            export_row.geoip.asn_org.clone().unwrap_or_default(),
+            export_row.whois.registrar.clone().unwrap_or_default(),
+            format_date(export_row.whois.creation_date_ms),
+            format_date(export_row.whois.expiration_date_ms),
+            export_row
+                .whois
+                .registrant_country
+                .clone()
+                .unwrap_or_default(),
+            export_row.main.timestamp.to_string(),
+            export_row.main.run_id.clone().unwrap_or_default(),
         ])?;
 
         record_count += 1;
@@ -433,9 +240,11 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::queries::{
+        fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
+    };
     use crate::storage::{migrations::run_migrations, DbPool};
-    use sqlx::SqlitePool;
+    use sqlx::{Row, SqlitePool};
     use std::sync::Arc;
 
     async fn create_test_pool() -> SqlitePool {
