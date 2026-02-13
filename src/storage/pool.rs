@@ -3,7 +3,7 @@
 //! This module initializes and configures the SQLite connection pool with:
 //! - WAL mode enabled for concurrent access
 //! - Connection limits and timeouts
-//! - Automatic database file creation
+//! - Automatic database file creation (via spawn_blocking to avoid blocking tokio runtime)
 
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
@@ -30,12 +30,24 @@ pub type DbPool = Arc<Pool<Sqlite>>;
 /// where configuration is passed explicitly rather than via environment variables.
 pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool, DatabaseError> {
     let db_path_str = db_path.to_string_lossy().to_string();
-    match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&db_path_str)
-    {
+
+    // Wrap blocking filesystem operation in spawn_blocking to avoid blocking tokio runtime.
+    // This is a one-time startup operation, so impact is low, but good practice.
+    let path_for_task = db_path_str.clone();
+    let file_creation_result = tokio::task::spawn_blocking(move || {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path_for_task)
+    })
+    .await
+    .map_err(|e| {
+        error!("Task panicked while creating database file: {e}");
+        DatabaseError::FileCreationError(format!("Task join error: {}", e))
+    })?;
+
+    match file_creation_result {
         Ok(_) => info!("Database file created successfully."),
         Err(ref e) if e.kind() == ErrorKind::AlreadyExists => {
             info!("Database file already exists.")

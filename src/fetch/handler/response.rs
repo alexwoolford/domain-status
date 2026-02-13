@@ -148,13 +148,19 @@ pub async fn handle_response(
         resp_data.initial_domain
     );
 
+    // Extract final_url for error logging before moving resp_data
+    // (we need this for error messages if database insert fails)
+    let final_url_for_logging = resp_data.final_url.clone();
+
     // Prepare record for insertion (enrichment lookups and batch record building)
+    // Takes ownership of resp_data, html_data, tls_dns_data, additional_dns to
+    // move large collections (HashMaps, Vecs) instead of cloning - saves ~5-10KB per URL
     let (batch_record, (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) =
         prepare_record_for_insertion(crate::fetch::record::RecordPreparationParams {
-            resp_data: &resp_data,
-            html_data: &html_data,
-            tls_dns_data: &tls_dns_data,
-            additional_dns: &additional_dns,
+            resp_data,
+            html_data,
+            tls_dns_data,
+            additional_dns,
             technologies_vec,
             partial_failures,
             redirect_chain: redirect_chain_vec,
@@ -176,7 +182,7 @@ pub async fn handle_response(
         .map_err(|e| {
             log::error!(
                 "Failed to insert record for URL {}: {}",
-                resp_data.final_url,
+                final_url_for_logging,
                 e
             );
             anyhow::anyhow!("Database write failed: {}", e)
@@ -196,7 +202,7 @@ pub async fn handle_response(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::fetch::context::ProcessingContext;
+    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
     use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::utils::TimingStats;
     use hickory_resolver::{config::ResolverOpts, TokioResolver};
@@ -234,16 +240,9 @@ mod tests {
         );
 
         ProcessingContext::new(
-            client,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            None,
-            false,
-            db_circuit_breaker,
-            pool,
-            timing_stats,
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, db_circuit_breaker),
+            ConfigContext::new(error_stats, timing_stats, None, false),
         )
     }
 
@@ -285,16 +284,14 @@ mod tests {
             .expect("Failed to run migrations");
 
         ProcessingContext::new(
-            client,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            Some("test-run".to_string()),
-            false, // Disable WHOIS for faster tests
-            db_circuit_breaker,
-            pool,
-            timing_stats,
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, db_circuit_breaker),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                Some("test-run".to_string()),
+                false,
+            ),
         )
     }
 
@@ -1078,16 +1075,14 @@ mod tests {
         let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let ctx = ProcessingContext::new(
-            client_arc,
-            redirect_client,
-            extractor,
-            resolver,
-            error_stats,
-            Some("test-run".to_string()),
-            false,
-            db_circuit_breaker,
-            pool, // Closed pool will cause insertion to fail
-            timing_stats,
+            NetworkContext::new(client_arc, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, db_circuit_breaker),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                Some("test-run".to_string()),
+                false,
+            ),
         );
 
         let start_time = std::time::Instant::now();

@@ -173,12 +173,22 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
     };
 
     log::debug!("Extracting TLS version for domain: {domain}");
-    let tls_version = tls_stream
-        .get_ref()
-        .1
-        .protocol_version()
-        .map(|v| format!("{v:?}"))
-        .unwrap_or_else(|| "Unknown".to_string());
+    let tls_version = {
+        use rustls::ProtocolVersion;
+        tls_stream
+            .get_ref()
+            .1
+            .protocol_version()
+            .map(|v| match v {
+                ProtocolVersion::TLSv1_0 => crate::models::TlsVersion::Tls10,
+                ProtocolVersion::TLSv1_1 => crate::models::TlsVersion::Tls11,
+                ProtocolVersion::TLSv1_2 => crate::models::TlsVersion::Tls12,
+                ProtocolVersion::TLSv1_3 => crate::models::TlsVersion::Tls13,
+                ProtocolVersion::SSLv2 | ProtocolVersion::SSLv3 => crate::models::TlsVersion::Ssl30,
+                _ => crate::models::TlsVersion::Unknown,
+            })
+            .unwrap_or(crate::models::TlsVersion::Unknown)
+    };
 
     // Extract negotiated cipher suite
     let cipher_suite = tls_stream
@@ -211,19 +221,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
             // Extract public key algorithm from certificate
             let key_algorithm = {
                 let oid_str = tbs_cert.subject_pki.algorithm.algorithm.to_string();
-                // Map OID to algorithm name
-                if oid_str.contains("1.2.840.113549.1.1.1") {
-                    "RSA".to_string()
-                } else if oid_str.contains("1.2.840.10045.2.1") {
-                    "ECDSA".to_string()
-                } else if oid_str.contains("1.3.101.112") {
-                    "Ed25519".to_string()
-                } else if oid_str.contains("1.3.101.113") {
-                    "Ed448".to_string()
-                } else {
-                    // Return OID if unknown
-                    oid_str
-                }
+                crate::models::KeyAlgorithm::from_oid(&oid_str)
             };
 
             let oids = extract_certificate_oids(&cert);

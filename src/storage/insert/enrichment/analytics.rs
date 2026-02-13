@@ -27,7 +27,7 @@ pub async fn insert_analytics_ids(
              ON CONFLICT(url_status_id, provider, tracking_id) DO NOTHING",
         )
         .bind(url_status_id)
-        .bind(&analytics_id.provider)
+        .bind(analytics_id.provider.as_str())
         .bind(&analytics_id.id)
         .execute(pool)
         .await
@@ -40,7 +40,7 @@ pub async fn insert_analytics_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::AnalyticsId;
+    use crate::parse::{AnalyticsId, AnalyticsProvider};
     use sqlx::Row;
 
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
@@ -52,11 +52,11 @@ mod tests {
 
         let analytics_ids = vec![
             AnalyticsId {
-                provider: "Google Analytics".to_string(),
+                provider: AnalyticsProvider::GoogleAnalytics,
                 id: "UA-123456-1".to_string(),
             },
             AnalyticsId {
-                provider: "Google Tag Manager".to_string(),
+                provider: AnalyticsProvider::GoogleTagManager,
                 id: "GTM-XXXXX".to_string(),
             },
         ];
@@ -107,7 +107,7 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let analytics_ids = vec![AnalyticsId {
-            provider: "Google Analytics".to_string(),
+            provider: AnalyticsProvider::GoogleAnalytics,
             id: "UA-123456-1".to_string(),
         }];
 
@@ -137,15 +137,15 @@ mod tests {
 
         let analytics_ids = vec![
             AnalyticsId {
-                provider: "Google Analytics".to_string(),
+                provider: AnalyticsProvider::GoogleAnalytics,
                 id: "UA-123456-1".to_string(),
             },
             AnalyticsId {
-                provider: "Google Analytics".to_string(),
+                provider: AnalyticsProvider::GoogleAnalytics,
                 id: "UA-789012-3".to_string(),
             },
             AnalyticsId {
-                provider: "Facebook Pixel".to_string(),
+                provider: AnalyticsProvider::FacebookPixel,
                 id: "123456789".to_string(),
             },
         ];

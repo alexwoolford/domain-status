@@ -41,6 +41,24 @@ pub enum DatabaseError {
     SqlError(#[from] sqlx::Error),
 }
 
+/// Error types for technology fingerprinting operations.
+///
+/// Distinguishes between configuration errors (ruleset not loaded) and
+/// runtime detection failures (pattern compilation, matching errors).
+#[derive(Error, Debug)]
+pub enum FingerprintError {
+    /// The fingerprint ruleset has not been initialized.
+    ///
+    /// This indicates a programming error -- `init_ruleset()` must be called
+    /// before `detect_technologies()`.
+    #[error("Ruleset not initialized. Call init_ruleset() first")]
+    RulesetNotInitialized,
+
+    /// A detection-phase error (e.g., regex compilation failure, pattern matching error).
+    #[error("Technology detection failed: {0}")]
+    DetectionFailed(#[from] anyhow::Error),
+}
+
 /// Types of errors that can occur during URL processing.
 ///
 /// This enum categorizes actual error conditions - failures that prevent successful
@@ -107,6 +125,12 @@ pub enum InfoType {
     BotDetection403, // Received 403 (likely bot detection)
     // Other notable events
     MultipleRedirects, // Multiple redirects in chain
+}
+
+impl std::fmt::Display for ErrorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl ErrorType {

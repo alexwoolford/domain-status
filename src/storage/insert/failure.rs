@@ -237,7 +237,7 @@ async fn insert_url_failure_impl(
     .bind(failure.final_url.as_ref())
     .bind(&failure.domain)
     .bind(failure.final_domain.as_ref())
-    .bind(&failure.error_type)
+    .bind(failure.error_type.as_str())
     .bind(&failure.error_message)
     .bind(failure.http_status.map(|s| s as i64))
     .bind(failure.retry_count as i64)
@@ -251,7 +251,7 @@ async fn insert_url_failure_impl(
             "Failed to insert URL failure record for url '{}' (domain: {}, error_type: {}, timestamp: {}): {} (SQL: INSERT INTO url_failures ... RETURNING id)",
             failure.url,
             failure.domain,
-            failure.error_type,
+            failure.error_type.as_str(),
             failure.timestamp,
             e
         );
@@ -341,7 +341,7 @@ pub async fn insert_url_partial_failure(
         RETURNING id",
     )
     .bind(partial_failure.url_status_id)
-    .bind(&partial_failure.error_type)
+    .bind(partial_failure.error_type.as_str())
     .bind(&partial_failure.error_message)
     .bind(partial_failure.timestamp)
     .bind(partial_failure.run_id.as_ref())
@@ -356,6 +356,7 @@ pub async fn insert_url_partial_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error_handling::ErrorType;
     use crate::storage::models::{UrlFailureRecord, UrlPartialFailureRecord};
     use sqlx::Row;
 
@@ -373,7 +374,7 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             domain: "example.com".to_string(),
             final_domain: Some("example.com".to_string()),
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "Connection timeout".to_string(),
             http_status: None,
             retry_count: 3,
@@ -405,7 +406,10 @@ mod tests {
             Some("https://example.com".to_string())
         );
         assert_eq!(row.get::<String, _>("initial_domain"), "example.com");
-        assert_eq!(row.get::<String, _>("error_type"), "HttpError");
+        assert_eq!(
+            row.get::<String, _>("error_type"),
+            ErrorType::HttpRequestOtherError.as_str()
+        );
         assert_eq!(row.get::<String, _>("error_message"), "Connection timeout");
         assert_eq!(row.get::<i64, _>("retry_count"), 3);
     }
@@ -419,7 +423,7 @@ mod tests {
             final_url: Some("https://www.example.com".to_string()),
             domain: "example.com".to_string(),
             final_domain: Some("www.example.com".to_string()),
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "500 Internal Server Error".to_string(),
             http_status: Some(500),
             retry_count: 0,
@@ -477,7 +481,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "403 Forbidden".to_string(),
             http_status: Some(403),
             retry_count: 1,
@@ -542,7 +546,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "404 Not Found".to_string(),
             http_status: Some(404),
             retry_count: 0,
@@ -577,7 +581,7 @@ mod tests {
 
         let partial_failure = UrlPartialFailureRecord {
             url_status_id,
-            error_type: "DnsError".to_string(),
+            error_type: ErrorType::DnsNsLookupError,
             error_message: "DNS lookup failed".to_string(),
             timestamp: 1704067200000,
             run_id: Some("test-run-789".to_string()),
@@ -598,7 +602,10 @@ mod tests {
         .expect("Failed to fetch partial failure record");
 
         assert_eq!(row.get::<i64, _>("url_status_id"), url_status_id);
-        assert_eq!(row.get::<String, _>("error_type"), "DnsError");
+        assert_eq!(
+            row.get::<String, _>("error_type"),
+            ErrorType::DnsNsLookupError.as_str()
+        );
         assert_eq!(row.get::<String, _>("error_message"), "DNS lookup failed");
         assert_eq!(
             row.get::<Option<String>, _>("run_id"),
@@ -613,7 +620,7 @@ mod tests {
 
         let partial_failure = UrlPartialFailureRecord {
             url_status_id,
-            error_type: "TlsError".to_string(),
+            error_type: ErrorType::TlsCertificateError,
             error_message: "Certificate validation failed".to_string(),
             timestamp: 1704067200000,
             run_id: None,
@@ -633,7 +640,10 @@ mod tests {
         .await
         .expect("Failed to fetch partial failure record");
 
-        assert_eq!(row.get::<String, _>("error_type"), "TlsError");
+        assert_eq!(
+            row.get::<String, _>("error_type"),
+            ErrorType::TlsCertificateError.as_str()
+        );
         assert_eq!(
             row.get::<String, _>("error_message"),
             "Certificate validation failed"
@@ -649,7 +659,7 @@ mod tests {
         // Insert multiple partial failures for the same URL status
         let failure1 = UrlPartialFailureRecord {
             url_status_id,
-            error_type: "DnsError".to_string(),
+            error_type: ErrorType::DnsNsLookupError,
             error_message: "DNS lookup failed".to_string(),
             timestamp: 1704067200000,
             run_id: None,
@@ -657,7 +667,7 @@ mod tests {
 
         let failure2 = UrlPartialFailureRecord {
             url_status_id,
-            error_type: "TlsError".to_string(),
+            error_type: ErrorType::TlsCertificateError,
             error_message: "TLS handshake failed".to_string(),
             timestamp: 1704067201000,
             run_id: None,
@@ -695,7 +705,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "Test error".to_string(),
             http_status: None,
             retry_count: 0,
@@ -726,7 +736,7 @@ mod tests {
             final_url: Some("https://www.example.com".to_string()),
             domain: "example.com".to_string(),
             final_domain: Some("www.example.com".to_string()),
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "500 Internal Server Error".to_string(),
             http_status: Some(500),
             retry_count: 0,
@@ -774,7 +784,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "Connection timeout".to_string(),
             http_status: None,
             retry_count: 0,
@@ -843,7 +853,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "Test error".to_string(),
             http_status: None,
             retry_count: 0,
@@ -901,7 +911,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "Test error".to_string(),
             http_status: None,
             retry_count: 0,
@@ -959,7 +969,7 @@ mod tests {
             final_url: None,
             domain: "example.com".to_string(),
             final_domain: None,
-            error_type: "HttpError".to_string(),
+            error_type: ErrorType::HttpRequestOtherError,
             error_message: "Test error".to_string(),
             http_status: None,
             retry_count: 0,

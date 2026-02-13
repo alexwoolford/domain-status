@@ -4,29 +4,46 @@
 //! including Google Analytics, Facebook Pixel, Google Tag Manager, and Google AdSense.
 
 use regex::Regex;
+use std::fmt;
 use std::sync::LazyLock;
 
-/// Analytics provider name constants.
+/// Supported analytics/tracking providers.
 ///
-/// These are `&'static str` constants that:
-/// - Live in the binary's data section (no heap allocation)
-/// - Are shared across all uses (no memory overhead)
-/// - Are compile-time checked (typos caught at compile time)
-/// - Improve maintainability (single source of truth)
-///
-/// When we need an owned `String` (e.g., for `AnalyticsId.provider`), we convert
-/// these constants using `.to_string()`, but the constant itself is never allocated.
-const PROVIDER_GOOGLE_ANALYTICS: &str = "Google Analytics";
-const PROVIDER_GOOGLE_ANALYTICS_4: &str = "Google Analytics 4";
-const PROVIDER_FACEBOOK_PIXEL: &str = "Facebook Pixel";
-const PROVIDER_GOOGLE_TAG_MANAGER: &str = "Google Tag Manager";
-const PROVIDER_GOOGLE_ADSENSE: &str = "Google AdSense";
+/// Eliminates primitive obsession by replacing raw `String` provider names
+/// with a type-safe enum, preventing typos and enabling exhaustive matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AnalyticsProvider {
+    GoogleAnalytics,
+    GoogleAnalytics4,
+    FacebookPixel,
+    GoogleTagManager,
+    GoogleAdSense,
+}
+
+impl AnalyticsProvider {
+    /// Returns the provider name as a string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AnalyticsProvider::GoogleAnalytics => "Google Analytics",
+            AnalyticsProvider::GoogleAnalytics4 => "Google Analytics 4",
+            AnalyticsProvider::FacebookPixel => "Facebook Pixel",
+            AnalyticsProvider::GoogleTagManager => "Google Tag Manager",
+            AnalyticsProvider::GoogleAdSense => "Google AdSense",
+        }
+    }
+}
+
+impl fmt::Display for AnalyticsProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Analytics/Tracking ID extracted from HTML/JavaScript.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AnalyticsId {
-    /// Analytics provider (e.g., "Google Analytics", "Facebook Pixel", "Google Tag Manager", "AdSense")
-    pub provider: String,
+    /// Analytics provider
+    pub provider: AnalyticsProvider,
     /// The tracking ID (e.g., "UA-123456-1", "G-XXXXXXXXXX", "1234567890", "GTM-XXXXX")
     pub id: String,
 }
@@ -83,7 +100,7 @@ fn is_valid_gtm_id(id: &str) -> bool {
 #[allow(clippy::too_many_lines)]
 pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     let mut analytics_ids = Vec::new();
-    let mut seen_ids = std::collections::HashSet::<(String, String)>::new();
+    let mut seen_ids = std::collections::HashSet::<(AnalyticsProvider, String)>::new();
 
     // Google Analytics (Universal Analytics): ga('create', 'UA-XXXXX-Y')
     // Pattern: ga('create', 'UA-XXXXX-Y') or ga("create", "UA-XXXXX-Y")
@@ -94,10 +111,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in GA_UA_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = (PROVIDER_GOOGLE_ANALYTICS.to_string(), id_str.clone());
+            let key = (AnalyticsProvider::GoogleAnalytics, id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: PROVIDER_GOOGLE_ANALYTICS.to_string(),
+                    provider: AnalyticsProvider::GoogleAnalytics,
                     id: id_str,
                 });
             }
@@ -113,10 +130,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in GA4_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = (PROVIDER_GOOGLE_ANALYTICS_4.to_string(), id_str.clone());
+            let key = (AnalyticsProvider::GoogleAnalytics4, id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: PROVIDER_GOOGLE_ANALYTICS_4.to_string(),
+                    provider: AnalyticsProvider::GoogleAnalytics4,
                     id: id_str,
                 });
             }
@@ -132,10 +149,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in FB_PIXEL_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = id.as_str().to_string();
-            let key = (PROVIDER_FACEBOOK_PIXEL.to_string(), id_str.clone());
+            let key = (AnalyticsProvider::FacebookPixel, id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: PROVIDER_FACEBOOK_PIXEL.to_string(),
+                    provider: AnalyticsProvider::FacebookPixel,
                     id: id_str,
                 });
             }
@@ -161,10 +178,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
             // Validate: must start with uppercase GTM- and contain only uppercase letters/numbers
             // Filter out common false positives like "gtm-company", "gtm-industry", etc.
             if is_valid_gtm_id(&id_str) {
-                let key = (PROVIDER_GOOGLE_TAG_MANAGER.to_string(), id_str.clone());
+                let key = (AnalyticsProvider::GoogleTagManager, id_str.clone());
                 if seen_ids.insert(key) {
                     analytics_ids.push(AnalyticsId {
-                        provider: PROVIDER_GOOGLE_TAG_MANAGER.to_string(),
+                        provider: AnalyticsProvider::GoogleTagManager,
                         id: id_str,
                     });
                 }
@@ -184,10 +201,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
             let id_str = id.as_str().to_string();
             // Validate: must start with uppercase GTM- and contain only uppercase letters/numbers
             if is_valid_gtm_id(&id_str) {
-                let key = (PROVIDER_GOOGLE_TAG_MANAGER.to_string(), id_str.clone());
+                let key = (AnalyticsProvider::GoogleTagManager, id_str.clone());
                 if seen_ids.insert(key) {
                     analytics_ids.push(AnalyticsId {
-                        provider: PROVIDER_GOOGLE_TAG_MANAGER.to_string(),
+                        provider: AnalyticsProvider::GoogleTagManager,
                         id: id_str,
                     });
                 }
@@ -206,10 +223,10 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     for cap in ADSENSE_PATTERN.captures_iter(html) {
         if let Some(id) = cap.get(1) {
             let id_str = format!("pub-{}", id.as_str());
-            let key = (PROVIDER_GOOGLE_ADSENSE.to_string(), id_str.clone());
+            let key = (AnalyticsProvider::GoogleAdSense, id_str.clone());
             if seen_ids.insert(key) {
                 analytics_ids.push(AnalyticsId {
-                    provider: PROVIDER_GOOGLE_ADSENSE.to_string(),
+                    provider: AnalyticsProvider::GoogleAdSense,
                     id: id_str,
                 });
             }
@@ -232,7 +249,7 @@ mod tests {
         "#;
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, "Google Analytics");
+        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAnalytics);
         assert_eq!(ids[0].id, "UA-123456-1");
     }
 
@@ -245,7 +262,7 @@ mod tests {
         "#;
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, "Google Analytics");
+        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAnalytics);
         assert_eq!(ids[0].id, "UA-654321-2");
     }
 
@@ -258,7 +275,7 @@ mod tests {
         "#;
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, "Google Analytics 4");
+        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAnalytics4);
         assert_eq!(ids[0].id, "G-ABCDEFGHIJ");
     }
 
@@ -271,7 +288,7 @@ mod tests {
         "#;
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, "Facebook Pixel");
+        assert_eq!(ids[0].provider, AnalyticsProvider::FacebookPixel);
         assert_eq!(ids[0].id, "1234567890");
     }
 
@@ -291,7 +308,7 @@ mod tests {
         assert!(!ids.is_empty());
         assert!(ids
             .iter()
-            .any(|id| id.provider == "Google Tag Manager" && id.id == "GTM-XXXXX"));
+            .any(|id| id.provider == AnalyticsProvider::GoogleTagManager && id.id == "GTM-XXXXX"));
     }
 
     #[test]
@@ -301,7 +318,7 @@ mod tests {
         "#;
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, "Google AdSense");
+        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAdSense);
         assert_eq!(ids[0].id, "pub-1234567890123456");
     }
 
@@ -316,9 +333,15 @@ mod tests {
         "#;
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 3);
-        assert!(ids.iter().any(|id| id.provider == "Google Analytics"));
-        assert!(ids.iter().any(|id| id.provider == "Google Analytics 4"));
-        assert!(ids.iter().any(|id| id.provider == "Facebook Pixel"));
+        assert!(ids
+            .iter()
+            .any(|id| id.provider == AnalyticsProvider::GoogleAnalytics));
+        assert!(ids
+            .iter()
+            .any(|id| id.provider == AnalyticsProvider::GoogleAnalytics4));
+        assert!(ids
+            .iter()
+            .any(|id| id.provider == AnalyticsProvider::FacebookPixel));
     }
 
     #[test]

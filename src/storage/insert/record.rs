@@ -388,7 +388,9 @@ async fn insert_enrichment_data(
 mod tests {
     use super::*;
     use crate::geoip::GeoIpResult;
-    use crate::parse::{AnalyticsId, SocialMediaLink, StructuredData};
+    use crate::parse::{
+        AnalyticsId, AnalyticsProvider, SocialMediaLink, SocialPlatform, StructuredData,
+    };
     use crate::security::SecurityWarning;
     use crate::storage::models::UrlRecord;
     use crate::whois::WhoisResult;
@@ -422,7 +424,7 @@ mod tests {
             title: "Example Domain".to_string(),
             keywords: Some("example, test".to_string()),
             description: Some("Example description".to_string()),
-            tls_version: Some("TLSv1.3".to_string()),
+            tls_version: Some(crate::models::TlsVersion::Tls13),
             ssl_cert_subject: Some("CN=example.com".to_string()),
             ssl_cert_issuer: Some("CN=Let's Encrypt".to_string()),
             ssl_cert_valid_from: NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -439,7 +441,7 @@ mod tests {
             spf_record: Some("v=spf1 include:_spf.example.com ~all".to_string()),
             dmarc_record: Some("v=dmarc1; p=none".to_string()),
             cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
-            key_algorithm: Some("RSA".to_string()),
+            key_algorithm: Some(crate::models::KeyAlgorithm::RSA),
             run_id: Some("test-run-123".to_string()),
         }
     }
@@ -525,7 +527,7 @@ mod tests {
                 "www.example.com".to_string(),
             ],
             analytics_ids: vec![AnalyticsId {
-                provider: "Google Analytics".to_string(),
+                provider: AnalyticsProvider::GoogleAnalytics,
                 id: "UA-123456-1".to_string(),
             }],
             geoip: None,
@@ -647,7 +649,7 @@ mod tests {
             geoip: Some(("93.184.216.34".to_string(), geoip_result)),
             structured_data: Some(structured_data),
             social_media_links: vec![SocialMediaLink {
-                platform: "LinkedIn".to_string(),
+                platform: SocialPlatform::LinkedIn,
                 url: "https://www.linkedin.com/company/example".to_string(),
                 identifier: Some("example".to_string()),
             }],

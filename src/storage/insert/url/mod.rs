@@ -118,7 +118,7 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     .bind(&params.record.title)
     .bind(&params.record.keywords)
     .bind(&params.record.description)
-    .bind(&params.record.tls_version)
+    .bind(params.record.tls_version.as_ref().map(|v| v.as_str()))
     .bind(&params.record.ssl_cert_subject)
     .bind(&params.record.ssl_cert_issuer)
     .bind(valid_from_millis)
@@ -128,7 +128,7 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     .bind(&params.record.spf_record)
     .bind(&params.record.dmarc_record)
     .bind(&params.record.cipher_suite)
-    .bind(&params.record.key_algorithm)
+    .bind(params.record.key_algorithm.as_ref().map(|k| k.as_str()))
     .bind(&params.record.run_id)
     .fetch_one(&mut *tx)
     .await
@@ -245,7 +245,7 @@ mod tests {
             title: "Example Domain".to_string(),
             keywords: Some("example, test".to_string()),
             description: Some("Example description".to_string()),
-            tls_version: Some("TLSv1.3".to_string()),
+            tls_version: Some(crate::models::TlsVersion::Tls13),
             ssl_cert_subject: Some("CN=example.com".to_string()),
             ssl_cert_issuer: Some("CN=Let's Encrypt".to_string()),
             ssl_cert_valid_from: NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -262,7 +262,7 @@ mod tests {
             spf_record: Some("v=spf1 include:_spf.example.com ~all".to_string()),
             dmarc_record: Some("v=DMARC1; p=none".to_string()),
             cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
-            key_algorithm: Some("ECDSA".to_string()),
+            key_algorithm: Some(crate::models::KeyAlgorithm::ECDSA),
             run_id: Some("test-run-1".to_string()),
         }
     }

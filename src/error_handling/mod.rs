@@ -51,7 +51,9 @@ mod types;
 // Re-export public API
 pub use categorization::{categorize_reqwest_error, get_retry_strategy, update_error_stats};
 pub use stats::ProcessingStats;
-pub use types::{DatabaseError, ErrorType, InfoType, InitializationError, WarningType};
+pub use types::{
+    DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, WarningType,
+};
 
 #[cfg(test)]
 mod tests {

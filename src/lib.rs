@@ -57,7 +57,8 @@ pub mod whois;
 
 // Re-export public API
 pub use config::{Config, FailOn, LogFormat, LogLevel};
-pub use error_handling::DatabaseError;
+pub use error_handling::{DatabaseError, FingerprintError};
+pub use models::{KeyAlgorithm, TlsVersion};
 pub use run::{run_scan, ScanReport};
 pub use storage::{
     init_db_pool_with_path, query_run_history, run_migrations, RunSummary, UrlRecord,
@@ -92,10 +93,12 @@ mod run {
         URL_PROCESSING_TIMEOUT,
     };
     use crate::error_handling::{ErrorType, ProcessingStats};
-    use crate::fetch::ProcessingContext;
+    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
     use crate::initialization::*;
     use crate::storage::init_db_pool_with_path;
-    use crate::storage::{insert_run_metadata, record_url_failure, update_run_stats};
+    use crate::storage::{
+        insert_run_metadata, record_url_failure, update_run_stats, RunMetadata, RunStats,
+    };
     use crate::utils::{ProcessUrlResult, TimingStats};
 
     /// Results of a URL scanning run.
@@ -312,20 +315,17 @@ mod run {
         let run_id = format!("run_{}", start_time_epoch);
         info!("Starting run: {}", run_id);
 
-        let fingerprints_source = Some(ruleset.metadata.source.as_str());
-        let fingerprints_version = Some(ruleset.metadata.version.as_str());
-        let geoip_version = geoip_metadata.as_ref().map(|m| m.version.as_str());
-        insert_run_metadata(
-            &pool,
-            &run_id,
-            start_time_epoch,
-            env!("CARGO_PKG_VERSION"), // Get version from Cargo.toml at compile time
-            fingerprints_source,
-            fingerprints_version,
-            geoip_version,
-        )
-        .await
-        .context("Failed to insert run metadata")?;
+        let meta = RunMetadata {
+            run_id: &run_id,
+            start_time_ms: start_time_epoch,
+            version: env!("CARGO_PKG_VERSION"),
+            fingerprints_source: Some(ruleset.metadata.source.as_str()),
+            fingerprints_version: Some(ruleset.metadata.version.as_str()),
+            geoip_version: geoip_metadata.as_ref().map(|m| m.version.as_str()),
+        };
+        insert_run_metadata(&pool, &meta)
+            .await
+            .context("Failed to insert run metadata")?;
 
         let start_time = std::time::Instant::now();
         let start_time_arc = Arc::new(start_time);
@@ -365,16 +365,19 @@ mod run {
         }
 
         let shared_ctx = Arc::new(ProcessingContext::new(
-            Arc::clone(&client),
-            Arc::clone(&redirect_client),
-            Arc::clone(&extractor),
-            Arc::clone(&resolver),
-            error_stats.clone(),
-            Some(run_id.clone()),
-            config.enable_whois,
-            Arc::clone(&db_circuit_breaker),
-            Arc::clone(&pool),
-            Arc::clone(&timing_stats),
+            NetworkContext::new(
+                Arc::clone(&client),
+                Arc::clone(&redirect_client),
+                Arc::clone(&extractor),
+                Arc::clone(&resolver),
+            ),
+            DatabaseContext::new(Arc::clone(&pool), Arc::clone(&db_circuit_breaker)),
+            ConfigContext::new(
+                error_stats.clone(),
+                Arc::clone(&timing_stats),
+                Some(run_id.clone()),
+                config.enable_whois,
+            ),
         ));
 
         let mut consecutive_errors = 0;
@@ -667,16 +670,16 @@ mod run {
         #[allow(clippy::cast_possible_truncation)]
         let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
 
-        update_run_stats(
-            &pool,
-            &run_id,
+        let stats = RunStats {
+            run_id: &run_id,
             total_urls,
             successful_urls,
-            failed_urls_count,
+            failed_urls: failed_urls_count,
             elapsed_seconds,
-        )
-        .await
-        .context("Failed to update run statistics")?;
+        };
+        update_run_stats(&pool, &stats)
+            .await
+            .context("Failed to update run statistics")?;
 
         if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .execute(pool.as_ref())

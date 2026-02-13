@@ -1,6 +1,6 @@
 //! Tests for CSV export functionality.
 
-use domain_status::export::export_csv;
+use domain_status::export::{export_csv, ExportFormat, ExportOptions};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -159,9 +159,17 @@ async fn test_export_csv_basic() {
     drop(pool); // Close connection before export
 
     // Export CSV
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 2, "Should export 2 records");
 
@@ -223,14 +231,15 @@ async fn test_export_csv_filter_by_run_id() {
     drop(pool);
 
     // Export only run_1
-    let count = export_csv(
-        &db_path,
-        Some(&output_path),
-        Some("run_1"),
-        None,
-        None,
-        None,
-    )
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: Some("run_1".to_string()),
+        domain: None,
+        status: None,
+        since: None,
+    })
     .await
     .expect("Export should succeed");
 
@@ -270,14 +279,15 @@ async fn test_export_csv_filter_by_domain() {
     drop(pool);
 
     // Filter by domain
-    let count = export_csv(
-        &db_path,
-        Some(&output_path),
-        None,
-        Some("example.com"),
-        None,
-        None,
-    )
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: Some("example.com".to_string()),
+        status: None,
+        since: None,
+    })
     .await
     .expect("Export should succeed");
 
@@ -309,9 +319,17 @@ async fn test_export_csv_filter_by_status() {
     drop(pool);
 
     // Filter by status 200
-    let count = export_csv(&db_path, Some(&output_path), None, None, Some(200), None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: Some(200),
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 1, "Should export only 1 record with status 200");
 
@@ -335,9 +353,17 @@ async fn test_export_csv_empty_database() {
     drop(pool);
 
     // Export from empty database
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed even with empty database");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed even with empty database");
 
     assert_eq!(count, 0, "Should export 0 records from empty database");
 
@@ -363,9 +389,17 @@ async fn test_export_csv_missing_relationships() {
     drop(pool);
 
     // Export should handle missing relationships gracefully
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed even with missing relationships");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed even with missing relationships");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -391,9 +425,17 @@ async fn test_export_csv_all_enrichment_data() {
 
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -471,14 +513,15 @@ async fn test_export_csv_filter_combinations() {
     drop(pool);
 
     // Filter by run_id AND status
-    let count = export_csv(
-        &db_path,
-        Some(&output_path),
-        Some("run_1"),
-        None,
-        Some(200),
-        None,
-    )
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: Some("run_1".to_string()),
+        domain: None,
+        status: Some(200),
+        since: None,
+    })
     .await
     .expect("Export should succeed");
 
@@ -519,14 +562,15 @@ async fn test_export_csv_filter_by_since() {
 
     // Filter by since (after 2022-01-01)
     let since_timestamp = 1640995200000i64; // 2022-01-01
-    let count = export_csv(
-        &db_path,
-        Some(&output_path),
-        None,
-        None,
-        None,
-        Some(since_timestamp),
-    )
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: Some(since_timestamp),
+    })
     .await
     .expect("Export should succeed");
 
@@ -558,9 +602,17 @@ async fn test_export_csv_stdout() {
     // Use a temporary file instead of stdout to avoid polluting test output
     // This tests the same code path (writing to a file) without stdout pollution
     let stdout_test_path = temp_dir.path().join("stdout_test.csv");
-    let count = export_csv(&db_path, Some(&stdout_test_path), None, None, None, None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(stdout_test_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -611,9 +663,17 @@ async fn test_export_csv_date_formatting() {
 
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -674,9 +734,17 @@ async fn test_export_csv_comma_separated_lists() {
 
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -715,9 +783,17 @@ async fn test_export_csv_all_columns_present() {
     create_test_url_with_enrichment(&pool, "full.com", None).await;
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should succeed");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -853,9 +929,17 @@ async fn test_export_csv_null_handling() {
 
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should handle NULL values");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should handle NULL values");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -906,9 +990,17 @@ async fn test_export_csv_redirect_chain_edge_cases() {
     // No redirects (should use final_domain as final_redirect_url)
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should handle no redirects");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should handle no redirects");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -941,9 +1033,17 @@ async fn test_export_csv_redirect_chain_edge_cases() {
     drop(pool2);
 
     let output_path2 = temp_dir.path().join("output2.csv");
-    let count = export_csv(&db_path, Some(&output_path2), None, None, None, None)
-        .await
-        .expect("Export should handle multiple redirects");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path2.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should handle multiple redirects");
 
     assert_eq!(count, 2, "Should export 2 records");
 
@@ -1057,9 +1157,17 @@ async fn test_export_csv_header_filtering() {
 
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should filter headers");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should filter headers");
 
     assert_eq!(count, 1, "Should export 1 record");
 
@@ -1122,9 +1230,17 @@ async fn test_export_csv_unicode_and_special_chars() {
 
     drop(pool);
 
-    let count = export_csv(&db_path, Some(&output_path), None, None, None, None)
-        .await
-        .expect("Export should handle unicode and special chars");
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should handle unicode and special chars");
 
     assert_eq!(count, 1, "Should export 1 record");
 

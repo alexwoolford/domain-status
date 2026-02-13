@@ -8,7 +8,6 @@ use csv::Writer;
 use futures::TryStreamExt;
 use sqlx::Row;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
 
 use crate::storage::init_db_pool_with_path;
 
@@ -35,15 +34,9 @@ use super::queries::{
 // Large function handling CSV export with comprehensive data flattening and formatting.
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
-pub async fn export_csv(
-    db_path: &Path,
-    output: Option<&PathBuf>,
-    run_id: Option<&str>,
-    domain: Option<&str>,
-    status: Option<u16>,
-    since: Option<i64>,
-) -> Result<usize> {
-    let pool = init_db_pool_with_path(db_path)
+#[allow(clippy::cognitive_complexity)]
+pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
+    let pool = init_db_pool_with_path(&opts.db_path)
         .await
         .context("Failed to initialize database pool")?;
 
@@ -57,15 +50,27 @@ pub async fn export_csv(
     );
 
     // Use shared WHERE clause builder
-    build_where_clause(&mut query_builder, run_id, domain, status, since);
+    build_where_clause(
+        &mut query_builder,
+        opts.run_id.as_deref(),
+        opts.domain.as_deref(),
+        opts.status,
+        opts.since,
+    );
 
     query_builder.push(" ORDER BY us.observed_at_ms DESC");
 
-    let mut writer: Writer<Box<dyn Write>> = if let Some(output_path) = output {
-        let file = std::fs::File::create(output_path).context(format!(
-            "Failed to create output file: {}",
-            output_path.display()
-        ))?;
+    let mut writer: Writer<Box<dyn Write>> = if let Some(output_path) = opts.output.as_ref() {
+        // Use async file creation to avoid blocking tokio runtime, then convert to std::fs::File
+        // for use with csv::Writer which requires sync Write trait
+        let file = tokio::fs::File::create(output_path)
+            .await
+            .context(format!(
+                "Failed to create output file: {}",
+                output_path.display()
+            ))?
+            .into_std()
+            .await;
         Writer::from_writer(Box::new(file) as Box<dyn Write>)
     } else {
         // Wrap stdout to ignore broken pipe errors (e.g., when piped to jq that exits early)
