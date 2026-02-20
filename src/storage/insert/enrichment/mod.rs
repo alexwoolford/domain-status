@@ -9,6 +9,7 @@
 //! - Analytics/tracking IDs
 
 mod analytics;
+mod favicon;
 mod geoip;
 mod security;
 mod social;
@@ -16,6 +17,7 @@ mod structured;
 mod whois;
 
 pub use analytics::insert_analytics_ids;
+pub use favicon::insert_favicon_data;
 pub use geoip::insert_geoip_data;
 pub use security::insert_security_warnings;
 pub use social::insert_social_media_links;

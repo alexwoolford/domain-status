@@ -141,8 +141,10 @@ pub async fn init_scan_resources(
         None
     };
 
-    // Initialize database
-    let pool = init_db_pool_with_path(&config.db_path)
+    // Initialize database -- size the pool to match concurrency so workers don't starve
+    #[allow(clippy::cast_possible_truncation)]
+    let pool_size = (config.max_concurrency as u32).max(1);
+    let pool = init_db_pool_with_path(&config.db_path, pool_size)
         .await
         .context("Failed to initialize database pool")?;
 

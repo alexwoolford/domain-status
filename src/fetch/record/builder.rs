@@ -95,6 +95,8 @@ pub struct BatchRecordParams {
     pub timestamp: i64,
     /// Run identifier
     pub run_id: Option<String>,
+    /// Favicon data (hash + base64)
+    pub favicon: Option<crate::fetch::favicon::FaviconData>,
 }
 
 /// Builds a BatchRecord from all extracted data.
@@ -160,6 +162,7 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         security_warnings: params.security_warnings,
         whois: params.whois_data,
         partial_failures: partial_failure_records,
+        favicon: params.favicon,
     }
 }
 
@@ -211,6 +214,7 @@ mod tests {
             script_content: String::new(),
             script_tag_ids: HashSet::new(),
             html_text: "Test content".to_string(),
+            favicon_url: None,
         }
     }
 
@@ -377,6 +381,7 @@ mod tests {
             whois_data,
             timestamp: 1234567890,
             run_id,
+            favicon: None,
         });
 
         assert_eq!(batch_record.url_record.final_domain, "example.com");
@@ -420,6 +425,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
+            favicon: None,
         });
 
         assert!(batch_record.oids.is_empty());
@@ -456,6 +462,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
+            favicon: None,
         });
 
         assert!(batch_record.subject_alternative_names.is_empty());
@@ -499,6 +506,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
+            favicon: None,
         });
 
         assert_eq!(batch_record.partial_failures.len(), 2);
@@ -575,6 +583,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
+            favicon: None,
         });
 
         // Duplicate OIDs should be deduplicated by HashSet
@@ -619,6 +628,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
+            favicon: None,
         });
 
         // SANs are Vec, so duplicates are preserved (this is intentional - matches cert data)
@@ -663,6 +673,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
+            favicon: None,
         });
 
         // Large redirect chain should be preserved
@@ -711,6 +722,7 @@ mod tests {
             whois_data: None,
             timestamp: 1234567890,
             run_id: run_id.clone(),
+            favicon: None,
         });
 
         // Run ID should be propagated to partial failure records

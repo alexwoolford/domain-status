@@ -203,6 +203,19 @@ pub(crate) fn parse_html_content(
         );
     }
 
+    // Extract favicon URL from <link rel="icon"> or <link rel="shortcut icon">
+    let favicon_selector = crate::utils::parse_selector_with_fallback(
+        r#"link[rel~="icon"], link[rel="shortcut icon"]"#,
+        "favicon link extraction",
+    );
+    let favicon_url = document.select(&favicon_selector).find_map(|el| {
+        el.value()
+            .attr("href")
+            .filter(|href| !href.is_empty())
+            .map(|href| href.to_string())
+    });
+    debug!("Extracted favicon URL for {final_domain}: {favicon_url:?}");
+
     // Extract text content (limited for performance)
     // Note: Iterator::take() limits the number of items (text nodes), not characters
     // We need to collect and truncate manually to limit by character count
@@ -229,6 +242,7 @@ pub(crate) fn parse_html_content(
         script_content,
         script_tag_ids,
         html_text,
+        favicon_url,
     }
 }
 
@@ -703,5 +717,69 @@ mod tests {
         assert!(result.meta_tags.contains_key("http-equiv:refresh"));
         assert!(result.meta_tags.contains_key("http-equiv:content-type"));
         assert_eq!(result.meta_tags.len(), 5);
+    }
+
+    #[test]
+    fn test_parse_html_content_favicon_link_rel_icon() {
+        let html = r#"
+            <html>
+                <head>
+                    <link rel="icon" href="/img/favicon.png">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+        assert_eq!(result.favicon_url, Some("/img/favicon.png".to_string()));
+    }
+
+    #[test]
+    fn test_parse_html_content_favicon_shortcut_icon() {
+        let html = r#"
+            <html>
+                <head>
+                    <link rel="shortcut icon" href="https://cdn.example.com/favicon.ico">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+        assert_eq!(
+            result.favicon_url,
+            Some("https://cdn.example.com/favicon.ico".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_html_content_favicon_none_when_missing() {
+        let html = r#"
+            <html>
+                <head>
+                    <title>No Favicon</title>
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+        assert_eq!(result.favicon_url, None);
+    }
+
+    #[test]
+    fn test_parse_html_content_favicon_prefers_first() {
+        let html = r#"
+            <html>
+                <head>
+                    <link rel="icon" href="/first.png">
+                    <link rel="icon" href="/second.png">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+        assert_eq!(result.favicon_url, Some("/first.png".to_string()));
     }
 }

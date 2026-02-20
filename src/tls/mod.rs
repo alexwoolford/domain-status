@@ -84,9 +84,16 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
 
 /// Retrieves SSL/TLS certificate information for a domain.
 ///
-/// This function establishes a TLS connection to the domain and extracts
+/// This function establishes a **separate** TLS connection to the domain and extracts
 /// certificate details including version, subject, issuer, validity period, and OIDs.
 /// OIDs are extracted from Certificate Policies, Extended Key Usage, and other extensions.
+///
+/// **Known inefficiency:** This opens a second TCP+TLS connection per HTTPS URL,
+/// independent of the reqwest connection used for the HTTP request. Eliminating this
+/// duplication requires injecting a certificate-capturing `ServerCertVerifier` into
+/// reqwest's `ClientBuilder::use_preconfigured_tls()` and sharing the captured cert
+/// data via a concurrent map keyed by host. This is a non-trivial refactoring tracked
+/// as a future optimization.
 ///
 /// # Arguments
 ///

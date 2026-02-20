@@ -3,7 +3,6 @@
 //! This module provides timing instrumentation to identify bottlenecks in URL processing.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Timing metrics for a single URL processing operation.
@@ -40,32 +39,34 @@ pub struct UrlTimingMetrics {
 ///
 /// All times are stored in microseconds for precision, then converted to milliseconds
 /// only when displaying to users.
+/// AtomicU64 can be mutated through &self (interior mutability), so individual
+/// Arc wrappers are unnecessary when the whole struct is already in Arc<TimingStats>.
 #[derive(Debug, Default)]
 pub struct TimingStats {
     /// Total number of URLs processed
-    pub count: Arc<AtomicU64>,
+    pub count: AtomicU64,
     /// Sum of HTTP request times in microseconds (for average calculation)
-    pub http_request_sum_ms: Arc<AtomicU64>,
+    pub http_request_sum_ms: AtomicU64,
     /// Sum of DNS forward lookup times in microseconds
-    pub dns_forward_sum_ms: Arc<AtomicU64>,
+    pub dns_forward_sum_ms: AtomicU64,
     /// Sum of DNS reverse lookup times in microseconds
-    pub dns_reverse_sum_ms: Arc<AtomicU64>,
+    pub dns_reverse_sum_ms: AtomicU64,
     /// Sum of DNS additional records times in microseconds
-    pub dns_additional_sum_ms: Arc<AtomicU64>,
+    pub dns_additional_sum_ms: AtomicU64,
     /// Sum of TLS handshake times in microseconds
-    pub tls_handshake_sum_ms: Arc<AtomicU64>,
+    pub tls_handshake_sum_ms: AtomicU64,
     /// Sum of HTML parsing times in microseconds
-    pub html_parsing_sum_ms: Arc<AtomicU64>,
+    pub html_parsing_sum_ms: AtomicU64,
     /// Sum of technology detection times in microseconds
-    pub tech_detection_sum_ms: Arc<AtomicU64>,
+    pub tech_detection_sum_ms: AtomicU64,
     /// Sum of GeoIP lookup times in microseconds
-    pub geoip_lookup_sum_ms: Arc<AtomicU64>,
+    pub geoip_lookup_sum_ms: AtomicU64,
     /// Sum of WHOIS lookup times in microseconds
-    pub whois_lookup_sum_ms: Arc<AtomicU64>,
+    pub whois_lookup_sum_ms: AtomicU64,
     /// Sum of security analysis times in microseconds
-    pub security_analysis_sum_ms: Arc<AtomicU64>,
+    pub security_analysis_sum_ms: AtomicU64,
     /// Sum of total processing times in microseconds
-    pub total_sum_ms: Arc<AtomicU64>,
+    pub total_sum_ms: AtomicU64,
 }
 
 impl TimingStats {

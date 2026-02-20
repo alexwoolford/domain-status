@@ -100,7 +100,7 @@ pub async fn handle_response(
     let timestamp = chrono::Utc::now().timestamp_millis();
     let redirect_chain_vec = redirect_chain.unwrap_or_default();
 
-    let (tech_result, dns_result) = tokio::join!(
+    let (tech_result, dns_result, favicon_result) = tokio::join!(
         // Technology detection (only needs HTML data and headers)
         async {
             use crate::fetch::record::detect_technologies_safely;
@@ -122,7 +122,13 @@ pub async fn handle_response(
                 ctx.config.run_id.as_deref(),
             )
             .await
-        }
+        },
+        // Favicon fetching (only needs HTML favicon_url and HTTP client)
+        crate::fetch::favicon::fetch_and_hash_favicon(
+            &ctx.network.client,
+            html_data.favicon_url.as_deref(),
+            final_url_str,
+        )
     );
 
     let (technologies_vec, tech_detection_ms) = tech_result;
@@ -167,6 +173,7 @@ pub async fn handle_response(
             elapsed,
             timestamp,
             ctx,
+            favicon: favicon_result,
         })
         .await;
 

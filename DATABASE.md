@@ -20,6 +20,7 @@ erDiagram
     url_status ||--o{ url_security_warnings : "has"
     url_status ||--o{ url_certificate_sans : "has"
     url_status ||--o{ url_analytics_ids : "has"
+    url_status ||--o| url_favicons : "has"
     url_status ||--o{ url_partial_failures : "has"
 
     runs {
@@ -205,6 +206,14 @@ erDiagram
         INTEGER url_failure_id FK
         TEXT header_name
         TEXT header_value
+    }
+
+    url_favicons {
+        INTEGER id PK
+        INTEGER url_status_id FK
+        TEXT favicon_url
+        INTEGER hash
+        TEXT base64_data
     }
 
     url_partial_failures {
@@ -913,6 +922,62 @@ JOIN url_analytics_ids analytics ON us.id = analytics.url_status_id
 WHERE analytics.provider = 'Google Analytics 4';
 ```
 
+#### `url_favicons` (One-to-One Table)
+Stores Shodan-compatible MurmurHash3 favicon hashes and base64-encoded favicon data. Favicon hashes are a high-value signal for threat intelligence: threat actors frequently reuse default favicons across C2 servers, phishing kits, and shadow IT. The hash format matches Shodan's `http.favicon.hash` exactly, enabling direct interoperability with global threat intelligence feeds.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER (PK) | Primary key, auto-increment |
+| `url_status_id` | INTEGER (FK) | Foreign key to `url_status.id` |
+| `favicon_url` | TEXT | URL the favicon was fetched from |
+| `hash` | INTEGER | MurmurHash3 (32-bit, signed) of the base64-encoded favicon bytes, Shodan-compatible |
+| `base64_data` | TEXT | Base64-encoded raw favicon bytes (for visual verification in dashboards) |
+
+**Constraints:**
+- `UNIQUE(url_status_id)` - One-to-one relationship with `url_status`
+- Foreign key with `ON DELETE CASCADE`
+
+**Indexes:**
+- `idx_url_favicons_hash` on `hash` (for queries like "find all domains sharing this favicon hash")
+
+**Notes:**
+- Favicons are discovered via a hybrid strategy: first by parsing `<link rel="icon">` / `<link rel="shortcut icon">` from the HTML, then falling back to `{origin}/favicon.ico` if no link tag is found. This mirrors real browser behavior.
+- Favicon downloads are capped at 50KB (`MAX_FAVICON_SIZE`) to prevent database bloat and tarpit attacks. Downloads exceeding this limit are aborted.
+- The hash is computed by base64-encoding the raw bytes with newlines inserted every 76 characters (plus a trailing newline), then computing MurmurHash3 (32-bit, seed 0) and casting to i32. This exactly matches Shodan's `http.favicon.hash` format.
+- Analysts can take a hash from this table and search Shodan directly: `http.favicon.hash:<hash>`.
+- If no favicon is found (404, timeout, or no icon link), this table will have no row for that URL.
+- Favicon fetching runs concurrently with technology detection and DNS/TLS lookups, so it does not increase per-URL processing time.
+
+**Query Examples:**
+```sql
+-- Find all domains sharing the same favicon (indicates shared infrastructure or phishing)
+SELECT uf.hash, GROUP_CONCAT(DISTINCT us.final_domain) as domains, COUNT(DISTINCT us.id) as count
+FROM url_favicons uf
+JOIN url_status us ON uf.url_status_id = us.id
+GROUP BY uf.hash
+HAVING count > 1
+ORDER BY count DESC;
+
+-- Look up domains using a known C2/phishing favicon hash
+SELECT us.final_domain, us.ip_address, uf.favicon_url
+FROM url_favicons uf
+JOIN url_status us ON uf.url_status_id = us.id
+WHERE uf.hash = -123456789;
+
+-- Count how many scanned domains have favicons
+SELECT
+    COUNT(*) as total_urls,
+    (SELECT COUNT(*) FROM url_favicons) as with_favicon,
+    ROUND(100.0 * (SELECT COUNT(*) FROM url_favicons) / COUNT(*), 1) as pct
+FROM url_status;
+
+-- Find favicons served from CDNs (favicon_url on a different domain)
+SELECT us.final_domain, uf.favicon_url, uf.hash
+FROM url_favicons uf
+JOIN url_status us ON uf.url_status_id = us.id
+WHERE uf.favicon_url NOT LIKE '%' || us.final_domain || '%';
+```
+
 #### `url_partial_failures` (Junction Table)
 Stores partial failures (DNS/TLS errors that didn't prevent URL processing). These are errors that occurred during supplementary data collection (DNS lookups, TLS certificate retrieval) but didn't prevent the URL from being successfully processed. The URL was processed and stored in `url_status`, but some optional data is missing.
 
@@ -1066,6 +1131,7 @@ The database uses a **star schema** design pattern:
 4. **One-to-One Tables**: Store single records per URL:
    - `url_geoip` - Geographic and network information (one-to-one with `url_status`)
    - `url_whois` - Domain registration information (one-to-one with `url_status`)
+   - `url_favicons` - Favicon hash and base64 data (one-to-one with `url_status`, Shodan-compatible)
 5. **Failure Tracking Tables**: Store detailed failure information separately from successful data:
    - `url_failures` - Main failure fact table (one failure record per failed URL)
    - `url_failure_redirect_chain` - Redirect chain before failure

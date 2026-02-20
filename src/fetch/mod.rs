@@ -12,6 +12,7 @@
 
 mod context;
 mod dns;
+pub(crate) mod favicon;
 mod handler;
 mod record;
 mod redirects;

@@ -76,6 +76,15 @@ pub const DEFAULT_USER_AGENT: &str =
 /// Responses larger than this are skipped to prevent memory exhaustion
 pub const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
 
+// Favicon fetch limits
+/// Maximum favicon size in bytes (50KB)
+/// Prevents database bloat and OOM from malicious tarpits disguised as favicon.ico
+/// Classic .ico files are 1-5KB; modern PNGs/SVGs can reach 100KB+
+pub const MAX_FAVICON_SIZE: usize = 50 * 1024;
+/// Favicon fetch timeout in seconds
+/// Favicons are small files; 5s is generous for a single image download
+pub const FAVICON_FETCH_TIMEOUT_SECS: u64 = 5;
+
 // Script content size limits
 /// Maximum script content size in bytes (100KB per script)
 /// Limits the amount of inline JavaScript we extract per script tag

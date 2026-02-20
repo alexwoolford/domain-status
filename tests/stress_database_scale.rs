@@ -97,7 +97,7 @@ async fn test_database_growth_moderate() {
 
     println!("=== Database Growth Test: Moderate Scale (1,000 URLs) ===\n");
 
-    let pool = init_db_pool_with_path(db_path)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())
@@ -234,7 +234,7 @@ async fn test_database_performance_degradation() {
     println!("Warning: This test takes 2-5 minutes to complete");
     println!();
 
-    let pool = init_db_pool_with_path(db_path)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())
@@ -340,7 +340,7 @@ async fn test_wal_growth_without_checkpointing() {
 
     println!("=== WAL Growth Test ===\n");
 
-    let pool = init_db_pool_with_path(db_path)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())

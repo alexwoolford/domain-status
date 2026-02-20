@@ -17,36 +17,26 @@ pub(crate) async fn insert_technologies(
         url_status_id
     );
 
-    // Batch optimization: Pre-fetch categories for unique technologies to avoid
-    // repeated ruleset lookups. This reduces lock contention since get_technology_category
-    // acquires a read lock on the ruleset for each call.
-    // Deduplicate technologies first (common case: same tech detected multiple times)
-    let mut unique_techs = std::collections::HashSet::new();
-    let mut category_map = std::collections::HashMap::new();
+    // Deduplicate technologies and pre-fetch categories in a single pass.
+    // This avoids sending duplicate INSERT queries to SQLite and reduces
+    // lock contention from repeated get_technology_category calls.
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped: Vec<(&DetectedTechnology, Option<String>)> = Vec::new();
     for tech in technologies {
-        // Use tech name as key for deduplication (same name + version = same tech)
         let key = if let Some(ref version) = tech.version {
             format!("{}:{}", tech.name, version)
         } else {
             tech.name.clone()
         };
-        if unique_techs.insert(key.clone()) {
-            // New tech, fetch category
-            category_map.insert(key, fingerprint::get_technology_category(&tech.name).await);
+        if seen.insert(key) {
+            let category = fingerprint::get_technology_category(&tech.name).await;
+            deduped.push((tech, category));
         }
     }
 
     let mut inserted_count = 0;
     let mut conflict_count = 0;
-    for tech in technologies {
-        // Use pre-fetched category
-        let key = if let Some(ref version) = tech.version {
-            format!("{}:{}", tech.name, version)
-        } else {
-            tech.name.clone()
-        };
-        let category = category_map.get(&key).cloned().flatten();
-
+    for (tech, category) in &deduped {
         // Insert with separate name and version columns
         // Use INSERT OR IGNORE since we have unique indexes that handle NULL versions
         match sqlx::query(
@@ -56,7 +46,7 @@ pub(crate) async fn insert_technologies(
         .bind(url_status_id)
         .bind(&tech.name)
         .bind(&tech.version)
-        .bind(&category)
+        .bind(category)
         .execute(&mut **tx)
         .await
         {
@@ -84,10 +74,11 @@ pub(crate) async fn insert_technologies(
     }
 
     log::debug!(
-        "Inserted {} technologies for url_status_id {} ({} conflicts, {} total)",
+        "Inserted {} technologies for url_status_id {} ({} conflicts, {} unique from {} total)",
         inserted_count,
         url_status_id,
         conflict_count,
+        deduped.len(),
         technologies.len()
     );
 }

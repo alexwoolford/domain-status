@@ -96,8 +96,7 @@ async fn test_pool_exhaustion_moderate() {
 
     println!("=== Pool Exhaustion Test: Moderate (50 workers, 30 connections) ===\n");
 
-    // Pool has max_connections=30 (from src/storage/pool.rs)
-    let pool = init_db_pool_with_path(db_path)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())
@@ -222,7 +221,7 @@ async fn test_pool_exhaustion_severe() {
 
     println!("=== Pool Exhaustion Test: Severe (100 workers, 30 connections) ===\n");
 
-    let pool = init_db_pool_with_path(db_path)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())
@@ -356,7 +355,7 @@ async fn test_pool_exhaustion_extreme() {
     println!("=== Pool Exhaustion Test: Extreme (200 workers, 30 connections) ===\n");
     println!("Simulating: User runs '--max-concurrent 200' on fast network\n");
 
-    let pool = init_db_pool_with_path(db_path)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())

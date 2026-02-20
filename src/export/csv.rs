@@ -32,7 +32,7 @@ fn format_date(ts_ms: Option<i64>) -> String {
 /// Returns the number of records exported, or an error if export fails.
 #[allow(clippy::too_many_lines)]
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
-    let pool = init_db_pool_with_path(&opts.db_path)
+    let pool = init_db_pool_with_path(&opts.db_path, 5)
         .await
         .context("Failed to initialize database pool")?;
 
@@ -126,6 +126,8 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "whois_creation_date",
         "whois_expiration_date",
         "whois_registrant_country",
+        "favicon_hash",
+        "favicon_url",
         "timestamp",
         "run_id",
     ])?;
@@ -226,6 +228,11 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
                 .registrant_country
                 .clone()
                 .unwrap_or_default(),
+            export_row
+                .favicon_hash
+                .map(|h| h.to_string())
+                .unwrap_or_default(),
+            export_row.favicon_url.clone().unwrap_or_default(),
             export_row.main.timestamp.to_string(),
             export_row.main.run_id.clone().unwrap_or_default(),
         ])?;
