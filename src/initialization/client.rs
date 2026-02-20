@@ -38,16 +38,15 @@ use reqwest::ClientBuilder;
 /// Returns a `reqwest::Error` if client creation fails.
 pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    use crate::security::safe_resolver::SafeResolver;
 
-    // Always allow invalid certificates to maximize data capture
-    // Certificate issues will be recorded as security warnings
-    // SECURITY: Disable redirects to prevent SSRF bypass via TOCTOU race conditions.
-    // After resolve_redirect_chain() validates the redirect chain, if this client
-    // followed redirects, a malicious server could redirect to an internal IP.
+    // SECURITY: SafeResolver validates that all DNS-resolved IPs are public before
+    // reqwest opens a TCP socket, closing the DNS-rebinding TOCTOU gap.
     let client = ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none()) // SECURITY: Prevent SSRF bypass
+        .dns_resolver(Arc::new(SafeResolver))
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(config.timeout_seconds))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .user_agent(config.user_agent.clone())
         .danger_accept_invalid_certs(true)
         .danger_accept_invalid_hostnames(true)
@@ -74,13 +73,15 @@ pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwes
 /// Returns a `reqwest::Error` if client creation fails.
 pub async fn init_redirect_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    use crate::security::safe_resolver::SafeResolver;
 
-    // Always allow invalid certificates to maximize data capture
-    // Certificate issues will be recorded as security warnings
+    // SECURITY: SafeResolver validates resolved IPs are public, preventing
+    // DNS-rebinding attacks during redirect resolution.
     let client = ClientBuilder::new()
+        .dns_resolver(Arc::new(SafeResolver))
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(config.timeout_seconds))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .user_agent(config.user_agent.clone())
         .danger_accept_invalid_certs(true)
         .danger_accept_invalid_hostnames(true)

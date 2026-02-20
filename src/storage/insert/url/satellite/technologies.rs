@@ -5,12 +5,18 @@ use sqlx::Transaction;
 
 use crate::fingerprint::{self, DetectedTechnology};
 
-/// Inserts technologies into url_technologies table.
+use super::super::super::utils::build_batch_insert_query;
+
+/// Inserts technologies into url_technologies table using batch INSERT.
 pub(crate) async fn insert_technologies(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     technologies: &[DetectedTechnology],
 ) {
+    if technologies.is_empty() {
+        return;
+    }
+
     log::debug!(
         "Inserting {} technologies for url_status_id {}",
         technologies.len(),
@@ -18,8 +24,6 @@ pub(crate) async fn insert_technologies(
     );
 
     // Deduplicate technologies and pre-fetch categories in a single pass.
-    // This avoids sending duplicate INSERT queries to SQLite and reduces
-    // lock contention from repeated get_technology_category calls.
     let mut seen = std::collections::HashSet::new();
     let mut deduped: Vec<(&DetectedTechnology, Option<String>)> = Vec::new();
     for tech in technologies {
@@ -34,53 +38,52 @@ pub(crate) async fn insert_technologies(
         }
     }
 
-    let mut inserted_count = 0;
-    let mut conflict_count = 0;
-    for (tech, category) in &deduped {
-        // Insert with separate name and version columns
-        // Use INSERT OR IGNORE since we have unique indexes that handle NULL versions
-        match sqlx::query(
-            "INSERT OR IGNORE INTO url_technologies (url_status_id, technology_name, technology_version, technology_category)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(url_status_id)
-        .bind(&tech.name)
-        .bind(&tech.version)
-        .bind(category)
-        .execute(&mut **tx)
-        .await
-        {
-            Ok(result) => {
-                if result.rows_affected() > 0 {
-                    inserted_count += 1;
-                } else {
-                    conflict_count += 1;
-                    log::debug!(
-                        "Technology '{}' already exists for url_status_id {} (conflict)",
-                        tech.name,
-                        url_status_id
-                    );
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "Failed to insert technology '{}' for url_status_id {}: {}",
-                    tech.name,
-                    url_status_id,
-                    e
-                );
-            }
-        }
+    if deduped.is_empty() {
+        return;
     }
 
-    log::debug!(
-        "Inserted {} technologies for url_status_id {} ({} conflicts, {} unique from {} total)",
-        inserted_count,
-        url_status_id,
-        conflict_count,
+    // Batch INSERT all technologies in a single query
+    let query_str = build_batch_insert_query(
+        "url_technologies",
+        &[
+            "url_status_id",
+            "technology_name",
+            "technology_version",
+            "technology_category",
+        ],
         deduped.len(),
-        technologies.len()
+        Some("ON CONFLICT DO NOTHING"),
     );
+
+    let mut query = sqlx::query(&query_str);
+    for (tech, category) in &deduped {
+        query = query
+            .bind(url_status_id)
+            .bind(&tech.name)
+            .bind(&tech.version)
+            .bind(category);
+    }
+
+    match query.execute(&mut **tx).await {
+        Ok(result) => {
+            log::debug!(
+                "Batch inserted {} technologies for url_status_id {} ({} rows affected, {} unique from {} total)",
+                deduped.len(),
+                url_status_id,
+                result.rows_affected(),
+                deduped.len(),
+                technologies.len()
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to batch insert {} technologies for url_status_id {}: {}",
+                deduped.len(),
+                url_status_id,
+                e
+            );
+        }
+    }
 }
 
 #[cfg(test)]
