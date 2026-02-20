@@ -98,6 +98,7 @@ mod tests {
             script_content: String::new(),
             script_tag_ids: HashSet::new(),
             html_text: "".to_string(),
+            favicon_url: None,
         }
     }
 

@@ -45,6 +45,10 @@ pub struct EnrichmentInsertSummary {
     pub analytics_ids_inserted: bool,
     /// Whether analytics IDs insertion failed
     pub analytics_ids_failed: bool,
+    /// Whether favicon data was successfully inserted
+    pub favicon_inserted: bool,
+    /// Whether favicon data insertion failed
+    pub favicon_failed: bool,
 }
 
 impl EnrichmentInsertSummary {
@@ -57,6 +61,7 @@ impl EnrichmentInsertSummary {
             + if self.security_warnings_failed { 1 } else { 0 }
             + if self.whois_failed { 1 } else { 0 }
             + if self.analytics_ids_failed { 1 } else { 0 }
+            + if self.favicon_failed { 1 } else { 0 }
     }
 
     /// Returns true if any enrichment operations failed.
@@ -113,7 +118,7 @@ pub async fn insert_batch_record(
     // Log summary if there were any failures (for monitoring/debugging)
     if enrichment_summary.has_failures() {
         log::warn!(
-            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, security_warnings={}, whois={}, analytics_ids={}",
+            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, security_warnings={}, whois={}, analytics_ids={}, favicon={}",
             enrichment_summary.total_failures(),
             url_status_id,
             domain,
@@ -124,7 +129,8 @@ pub async fn insert_batch_record(
             if enrichment_summary.social_media_inserted { "ok" } else if enrichment_summary.social_media_failed { "failed" } else { "n/a" },
             if enrichment_summary.security_warnings_inserted { "ok" } else if enrichment_summary.security_warnings_failed { "failed" } else { "n/a" },
             if enrichment_summary.whois_inserted { "ok" } else if enrichment_summary.whois_failed { "failed" } else { "n/a" },
-            if enrichment_summary.analytics_ids_inserted { "ok" } else if enrichment_summary.analytics_ids_failed { "failed" } else { "n/a" }
+            if enrichment_summary.analytics_ids_inserted { "ok" } else if enrichment_summary.analytics_ids_failed { "failed" } else { "n/a" },
+            if enrichment_summary.favicon_inserted { "ok" } else if enrichment_summary.favicon_failed { "failed" } else { "n/a" }
         );
     }
 
@@ -336,6 +342,35 @@ async fn insert_analytics_ids_enrichment(
     }
 }
 
+/// Inserts favicon data for a record.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `url_status_id` - The ID of the main URL record
+/// * `favicon` - Optional favicon data
+/// * `summary` - Summary to update with insertion results
+async fn insert_favicon_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    favicon: &Option<crate::fetch::favicon::FaviconData>,
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if let Some(ref favicon_data) = favicon {
+        match insert::insert_favicon_data(pool, url_status_id, favicon_data).await {
+            Ok(_) => summary.favicon_inserted = true,
+            Err(e) => {
+                summary.favicon_failed = true;
+                log::warn!(
+                    "Failed to insert favicon data for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
 /// Inserts all enrichment data for a record.
 ///
 /// This function inserts enrichment data (GeoIP, WHOIS, structured data, etc.) after the main
@@ -380,6 +415,7 @@ async fn insert_enrichment_data(
     .await;
     insert_whois_enrichment(pool, url_status_id, &record.whois, &mut summary).await;
     insert_analytics_ids_enrichment(pool, url_status_id, &record.analytics_ids, &mut summary).await;
+    insert_favicon_enrichment(pool, url_status_id, &record.favicon, &mut summary).await;
 
     summary
 }
@@ -466,6 +502,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
+            favicon: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -536,6 +573,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
+            favicon: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -666,6 +704,7 @@ mod tests {
                 raw_text: None,
             }),
             partial_failures: vec![],
+            favicon: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -746,6 +785,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
+            favicon: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -815,6 +855,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![], // Empty for this test
+            favicon: None,
         };
 
         // Should succeed even if some enrichment fails
@@ -860,6 +901,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
+            favicon: None,
         };
 
         // Should succeed - main record and technologies should be inserted
@@ -905,6 +947,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
+            favicon: None,
         };
 
         // Should succeed even with no enrichment data
@@ -937,6 +980,7 @@ mod tests {
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
+            favicon: None,
         };
 
         // Should fail - main record insertion failure propagates
@@ -1037,6 +1081,8 @@ mod tests {
             whois_failed: false,
             analytics_ids_inserted: false,
             analytics_ids_failed: true,
+            favicon_inserted: false,
+            favicon_failed: false,
         };
         // Should count: 1 (partial) + 1 (structured) + 1 (security) + 1 (analytics) = 4
         assert_eq!(summary.total_failures(), 4);
@@ -1074,6 +1120,8 @@ mod tests {
             whois_failed: false,
             analytics_ids_inserted: true,
             analytics_ids_failed: false,
+            favicon_inserted: true,
+            favicon_failed: false,
         };
         assert_eq!(summary.total_failures(), 0);
         assert!(!summary.has_failures());

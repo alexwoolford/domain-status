@@ -87,7 +87,26 @@ pub(crate) async fn save_to_cache(
 async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
     use crate::config::MAX_WHOIS_CACHE_ENTRIES;
 
-    // Use blocking task for directory listing to avoid blocking the async runtime
+    // Lightweight guard: count .json files first without stat()ing each one.
+    // This avoids the expensive metadata collection in the common case (under limit).
+    let cache_path_for_count = cache_path.to_path_buf();
+    let file_count = tokio::task::spawn_blocking(move || -> usize {
+        std::fs::read_dir(&cache_path_for_count)
+            .map(|dir| {
+                dir.flatten()
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                    .count()
+            })
+            .unwrap_or(0)
+    })
+    .await
+    .unwrap_or(0);
+
+    if file_count <= MAX_WHOIS_CACHE_ENTRIES {
+        return Ok(()); // Under limit -- skip the expensive scan+sort
+    }
+
+    // Over limit: collect full metadata for sorting by modification time
     let cache_path_owned = cache_path.to_path_buf();
     let entries =
         tokio::task::spawn_blocking(move || -> Result<Vec<(std::path::PathBuf, SystemTime)>> {
@@ -100,7 +119,6 @@ async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "json") {
                     if let Ok(metadata) = entry.metadata() {
-                        // Use modified time for LRU-like behavior
                         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
                         files.push((path, modified));
                     }
@@ -114,7 +132,7 @@ async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
 
     let entry_count = entries.len();
     if entry_count <= MAX_WHOIS_CACHE_ENTRIES {
-        return Ok(()); // Within limit, nothing to do
+        return Ok(()); // Race: files were deleted between count and scan
     }
 
     // Sort by modification time (oldest first)

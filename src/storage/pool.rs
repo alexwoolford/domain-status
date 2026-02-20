@@ -26,9 +26,12 @@ pub type DbPool = Arc<Pool<Sqlite>>;
 /// Creates the database file if it doesn't exist and enables WAL mode
 /// for better concurrent access.
 ///
-/// This version accepts a path directly, making it suitable for library usage
-/// where configuration is passed explicitly rather than via environment variables.
-pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool, DatabaseError> {
+/// The pool is sized to match the given `max_connections` parameter (typically
+/// derived from `--max-concurrency`) so workers don't starve waiting for connections.
+pub async fn init_db_pool_with_path(
+    db_path: &std::path::Path,
+    max_connections: u32,
+) -> Result<DbPool, DatabaseError> {
     let db_path_str = db_path.to_string_lossy().to_string();
 
     // Wrap blocking filesystem operation in spawn_blocking to avoid blocking tokio runtime.
@@ -58,10 +61,6 @@ pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool,
         }
     }
 
-    // FIX: Configure pool explicitly instead of using defaults
-    // - acquire_timeout: 5s (fail fast instead of blocking workers for 30s)
-    // - max_connections: 30 (match default max_concurrency)
-    // - idle_timeout: 60s (clean up unused connections)
     let db_url = format!("sqlite:{}", db_path_str);
     let options = SqliteConnectOptions::from_str(&db_url)
         .map_err(|e| {
@@ -71,7 +70,7 @@ pub async fn init_db_pool_with_path(db_path: &std::path::Path) -> Result<DbPool,
         .create_if_missing(true);
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(30) // Match default max_concurrency
+        .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(5)) // Fail fast instead of blocking 30s
         .idle_timeout(Some(Duration::from_secs(60))) // Clean up idle connections
         .connect_with(options)
@@ -126,7 +125,7 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let db_path = temp_file.path();
 
-        let result = init_db_pool_with_path(db_path).await;
+        let result = init_db_pool_with_path(db_path, 5).await;
         assert!(result.is_ok(), "Pool initialization should succeed");
         let pool = result.unwrap();
         assert!(!pool.is_closed(), "Pool should be open");
@@ -141,7 +140,7 @@ mod tests {
         // Create the file first
         std::fs::File::create(db_path).expect("Failed to create file");
 
-        let result = init_db_pool_with_path(db_path).await;
+        let result = init_db_pool_with_path(db_path, 5).await;
         assert!(
             result.is_ok(),
             "Pool initialization should succeed with existing file"
@@ -155,7 +154,7 @@ mod tests {
         let invalid_path = temp_dir.path(); // This is a directory, not a file
 
         // This should fail when trying to connect (SQLite expects a file path)
-        let result = init_db_pool_with_path(invalid_path).await;
+        let result = init_db_pool_with_path(invalid_path, 5).await;
         // May succeed (SQLite creates a file in the directory) or fail depending on path format
         // The key is that it doesn't panic
         let _ = result;
@@ -167,7 +166,7 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let db_path = temp_file.path();
 
-        let pool = init_db_pool_with_path(db_path)
+        let pool = init_db_pool_with_path(db_path, 5)
             .await
             .expect("Failed to initialize pool");
 
@@ -191,7 +190,7 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let db_path = temp_file.path();
 
-        let pool = init_db_pool_with_path(db_path)
+        let pool = init_db_pool_with_path(db_path, 5)
             .await
             .expect("Failed to initialize pool");
 

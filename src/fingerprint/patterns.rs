@@ -109,24 +109,16 @@ pub(crate) fn check_meta_patterns(
     // we can match directly. But we need to handle prefixes correctly.
 
     // Check if key already has a prefix (property: or http-equiv:)
+    // Note: meta_tags keys are pre-normalized to lowercase in html.rs (lines 86, 94, 102),
+    // so exact HashMap::get() is sufficient -- no case-insensitive fallback needed.
     if meta_key_lower.starts_with("property:") {
         let key_without_prefix = meta_key_lower
             .strip_prefix("property:")
             .unwrap_or(&meta_key_lower);
-        // Try exact match first (normalized key)
         if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
-            }
-        }
-        // Also try case-insensitive match (in case HTML has different case)
-        for (stored_key, meta_value) in meta_tags.iter() {
-            if stored_key.to_lowercase() == format!("property:{}", key_without_prefix) {
-                let result = check_patterns(meta_value);
-                if result.matched {
-                    return result;
-                }
             }
         }
     } else if meta_key_lower.starts_with("http-equiv:") {
@@ -137,15 +129,6 @@ pub(crate) fn check_meta_patterns(
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
-            }
-        }
-        // Also try case-insensitive match
-        for (stored_key, meta_value) in meta_tags.iter() {
-            if stored_key.to_lowercase() == format!("http-equiv:{}", key_without_prefix) {
-                let result = check_patterns(meta_value);
-                if result.matched {
-                    return result;
-                }
             }
         }
     } else {

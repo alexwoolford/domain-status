@@ -895,6 +895,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "colored",
@@ -913,6 +914,7 @@ dependencies = [
  "lru",
  "maxminddb",
  "moka",
+ "murmurhash3",
  "once_cell",
  "pretty_assertions",
  "proptest",
@@ -2215,6 +2217,12 @@ dependencies = [
  "tagptr",
  "uuid",
 ]
+
+[[package]]
+name = "murmurhash3"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2983372caf4480544083767bf2d27defafe32af49ab4df3a0b7fc90793a3664"
 
 [[package]]
 name = "native-tls"

@@ -129,6 +129,11 @@ pub struct ExportRow {
 
     /// WHOIS data
     pub whois: WhoisData,
+
+    /// Favicon hash (Shodan-compatible MurmurHash3)
+    pub favicon_hash: Option<i32>,
+    /// Favicon URL
+    pub favicon_url: Option<String>,
 }
 
 /// Key HTTP headers to include in exports.
@@ -369,6 +374,22 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         WhoisData::default()
     };
 
+    // Fetch favicon data
+    let favicon_row =
+        sqlx::query("SELECT hash, favicon_url FROM url_favicons WHERE url_status_id = ?")
+            .bind(url_status_id)
+            .fetch_optional(pool.as_ref())
+            .await?;
+
+    let (favicon_hash, favicon_url) = if let Some(row) = favicon_row {
+        (
+            Some(row.get::<i32, _>("hash")),
+            Some(row.get::<String, _>("favicon_url")),
+        )
+    } else {
+        (None, None)
+    };
+
     // SAFETY: All count values are non-negative database counts that fit in usize.
     // These casts are safe because:
     // 1. SQL COUNT(*) always returns non-negative values
@@ -402,6 +423,8 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         security_header_count: security_header_count as usize,
         geoip,
         whois,
+        favicon_hash,
+        favicon_url,
     })
 }
 

@@ -32,6 +32,8 @@ pub struct RecordPreparationParams<'a> {
     pub timestamp: i64,
     /// Processing context (for enrichment lookups) - still borrowed (not owned data)
     pub ctx: &'a crate::fetch::ProcessingContext,
+    /// Favicon data (fetched in parallel with tech detection and DNS/TLS)
+    pub favicon: Option<crate::fetch::favicon::FaviconData>,
 }
 
 /// Prepares a complete record for database insertion.
@@ -188,6 +190,7 @@ pub async fn prepare_record_for_insertion(
         whois_data,
         timestamp: params.timestamp,
         run_id: params.ctx.config.run_id.clone(),
+        favicon: params.favicon,
     });
 
     (
@@ -275,6 +278,7 @@ mod tests {
             script_content: String::new(),
             script_tag_ids: std::collections::HashSet::new(),
             html_text: "Test".to_string(),
+            favicon_url: None,
         }
     }
 
@@ -326,6 +330,7 @@ mod tests {
                 elapsed: 1.0,
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
+                favicon: None,
             })
             .await;
 
@@ -374,6 +379,7 @@ mod tests {
                 elapsed: 1.0,
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
+                favicon: None,
             })
             .await;
 
@@ -411,6 +417,7 @@ mod tests {
                 elapsed: 1.0,
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
+                favicon: None,
             })
             .await;
         let elapsed = start.elapsed();
@@ -471,6 +478,7 @@ mod tests {
             elapsed: 1.0,
             timestamp: chrono::Utc::now().timestamp_millis(),
             ctx: &ctx,
+            favicon: None,
         })
         .await;
 
@@ -504,6 +512,7 @@ mod tests {
             elapsed: 1.0,
             timestamp: chrono::Utc::now().timestamp_millis(),
             ctx: &ctx,
+            favicon: None,
         })
         .await;
 
@@ -536,6 +545,7 @@ mod tests {
                 elapsed: 1.0,
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
+                favicon: None,
             })
             .await;
         let elapsed = start.elapsed();
@@ -588,6 +598,7 @@ mod tests {
             elapsed: 1.0,
             timestamp: chrono::Utc::now().timestamp_millis(),
             ctx: &ctx,
+            favicon: None,
         })
         .await;
 
@@ -622,6 +633,7 @@ mod tests {
                 elapsed: 1.0,
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
+                favicon: None,
             })
             .await;
 

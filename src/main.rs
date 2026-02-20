@@ -431,23 +431,6 @@ async fn main() -> Result<()> {
         CliCommand::Scan(scan_cmd) => {
             let mut config: Config = scan_cmd.into();
 
-            // Warn if max_concurrency exceeds database pool size (P1 operational warning)
-            if config.max_concurrency > 30 {
-                eprintln!(
-                    "⚠️  WARNING: --max-concurrency {} exceeds database connection pool size (30).",
-                    config.max_concurrency
-                );
-                eprintln!("   This may cause increased timeouts and reduced throughput.");
-                eprintln!(
-                    "   Workers will block waiting for database connections (5s timeout each)."
-                );
-                eprintln!("   For high concurrency, consider:");
-                eprintln!("   - Keeping max_concurrency ≤ 30 for optimal performance");
-                eprintln!("   - Splitting URLs into multiple batch runs");
-                eprintln!("   See docs/PRODUCTION_HARDENING.md for details.");
-                eprintln!();
-            }
-
             // Initialize logging
             let log_file = config
                 .log_file

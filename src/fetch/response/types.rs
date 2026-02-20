@@ -34,4 +34,5 @@ pub(crate) struct HtmlData {
     #[allow(dead_code)]
     // Kept for potential future use, but currently using html_body in detection
     pub(crate) html_text: String,
+    pub(crate) favicon_url: Option<String>, // Favicon URL extracted from <link rel="icon"> tags
 }

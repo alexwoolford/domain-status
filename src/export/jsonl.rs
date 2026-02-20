@@ -34,7 +34,7 @@ use super::row::{
 /// Returns the number of records exported, or an error if export fails.
 #[allow(clippy::too_many_lines)]
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
-    let pool = init_db_pool_with_path(&opts.db_path)
+    let pool = init_db_pool_with_path(&opts.db_path, 5)
         .await
         .context("Failed to initialize database pool")?;
 
@@ -234,6 +234,10 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "security_header_count": export_row.security_header_count,
             "geoip": geoip,
             "whois": whois,
+            "favicon": {
+                "hash": export_row.favicon_hash,
+                "url": export_row.favicon_url,
+            },
             "timestamp": export_row.main.timestamp,
             "run_id": export_row.main.run_id,
         });

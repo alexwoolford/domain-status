@@ -424,3 +424,22 @@ CREATE TABLE IF NOT EXISTS url_failure_request_headers (
     FOREIGN KEY (url_failure_id) REFERENCES url_failures(id) ON DELETE CASCADE,
     UNIQUE(url_failure_id, header_name)
 );
+
+-- ============================================================================
+-- SATELLITE: url_favicons (Shodan-compatible favicon hashes)
+-- Stores MurmurHash3 hash and base64-encoded favicon data for each URL.
+-- The hash matches Shodan's http.favicon.hash for direct interoperability
+-- with global threat intelligence feeds.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS url_favicons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url_status_id INTEGER NOT NULL,
+    favicon_url TEXT NOT NULL,       -- URL the favicon was fetched from
+    hash INTEGER NOT NULL,           -- MurmurHash3 (Shodan-compatible)
+    base64_data TEXT,                -- Base64-encoded favicon bytes
+
+    FOREIGN KEY (url_status_id) REFERENCES url_status(id) ON DELETE CASCADE,
+    UNIQUE(url_status_id)            -- 1:1 relationship
+);
+
+CREATE INDEX idx_url_favicons_hash ON url_favicons(hash);

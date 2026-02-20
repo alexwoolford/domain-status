@@ -66,8 +66,8 @@ async fn test_db_pool_default_acquire_timeout_blocks() {
     let temp_file = NamedTempFile::new().expect("Failed to create temp file");
     let db_path = temp_file.path();
 
-    // Initialize pool with DEFAULT settings (includes 30s acquire_timeout)
-    let pool = init_db_pool_with_path(db_path)
+    // Initialize pool with DEFAULT settings (includes 5s acquire_timeout)
+    let pool = init_db_pool_with_path(db_path, 30)
         .await
         .expect("Failed to init pool");
     run_migrations(pool.as_ref())
