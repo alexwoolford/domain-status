@@ -2,15 +2,46 @@
 //!
 //! Uses async I/O via `tokio::fs` to avoid blocking the tokio runtime
 //! during cache operations (called per-domain during scanning).
+//!
+//! An in-memory `AtomicUsize` tracks the cache file count so that the
+//! eviction check is O(1) per insert instead of O(N) directory scan.
 
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 use super::types::{WhoisCacheEntry, WhoisResult};
 
 /// Default cache TTL: 7 days (WHOIS data changes infrequently)
 pub(crate) const CACHE_TTL_SECS: u64 = crate::config::WHOIS_CACHE_TTL_SECS;
+
+/// In-memory count of .json files in the WHOIS cache directory.
+/// Initialized from disk on first use, then kept in sync via atomic increments/decrements.
+static CACHE_FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// Whether CACHE_FILE_COUNT has been initialized from disk.
+static CACHE_COUNT_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Initializes the in-memory cache file count from disk (called once on first save).
+async fn init_cache_count(cache_path: &Path) {
+    if CACHE_COUNT_INITIALIZED.load(Ordering::Acquire) {
+        return;
+    }
+    let path = cache_path.to_path_buf();
+    let count = tokio::task::spawn_blocking(move || {
+        std::fs::read_dir(&path)
+            .map(|dir| {
+                dir.flatten()
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                    .count()
+            })
+            .unwrap_or(0)
+    })
+    .await
+    .unwrap_or(0);
+    CACHE_FILE_COUNT.store(count, Ordering::Release);
+    CACHE_COUNT_INITIALIZED.store(true, Ordering::Release);
+}
 
 /// Loads a cached WHOIS result from disk (async to avoid blocking tokio runtime)
 pub(crate) async fn load_from_cache(
@@ -50,16 +81,24 @@ pub(crate) async fn load_from_cache(
 /// Saves a WHOIS result to disk cache (async to avoid blocking tokio runtime)
 ///
 /// Enforces MAX_WHOIS_CACHE_ENTRIES limit by evicting oldest entries when exceeded.
+/// Uses an in-memory atomic counter so the eviction check is O(1), not O(N) directory scan.
 pub(crate) async fn save_to_cache(
     cache_path: &Path,
     domain: &str,
     result: &WhoisResult,
 ) -> Result<()> {
+    use crate::config::MAX_WHOIS_CACHE_ENTRIES;
+
     tokio::fs::create_dir_all(cache_path)
         .await
         .context("Failed to create cache directory")?;
 
+    // Ensure in-memory counter is initialized from disk on first call
+    init_cache_count(cache_path).await;
+
     let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
+    let is_new = !tokio::fs::try_exists(&cache_file).await.unwrap_or(true);
+
     let entry = WhoisCacheEntry {
         result: result.into(),
         cached_at: SystemTime::now(),
@@ -72,9 +111,15 @@ pub(crate) async fn save_to_cache(
         .await
         .context("Failed to write cache file")?;
 
-    // Enforce cache size limit by evicting oldest entries
-    if let Err(e) = enforce_cache_limit(cache_path).await {
-        log::debug!("Failed to enforce WHOIS cache limit: {}", e);
+    if is_new {
+        CACHE_FILE_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // O(1) check: only trigger the expensive eviction sweep when over the limit
+    if CACHE_FILE_COUNT.load(Ordering::Relaxed) > MAX_WHOIS_CACHE_ENTRIES {
+        if let Err(e) = enforce_cache_limit(cache_path).await {
+            log::debug!("Failed to enforce WHOIS cache limit: {}", e);
+        }
     }
 
     Ok(())
@@ -82,31 +127,12 @@ pub(crate) async fn save_to_cache(
 
 /// Enforces MAX_WHOIS_CACHE_ENTRIES limit by evicting oldest entries.
 ///
-/// Collects all .json files in the cache directory, sorts by modification time,
-/// and deletes the oldest entries if the count exceeds the limit.
+/// Only called when the in-memory atomic counter exceeds the limit,
+/// so the expensive directory scan + stat + sort only runs when eviction is needed.
 async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
     use crate::config::MAX_WHOIS_CACHE_ENTRIES;
 
-    // Lightweight guard: count .json files first without stat()ing each one.
-    // This avoids the expensive metadata collection in the common case (under limit).
-    let cache_path_for_count = cache_path.to_path_buf();
-    let file_count = tokio::task::spawn_blocking(move || -> usize {
-        std::fs::read_dir(&cache_path_for_count)
-            .map(|dir| {
-                dir.flatten()
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
-                    .count()
-            })
-            .unwrap_or(0)
-    })
-    .await
-    .unwrap_or(0);
-
-    if file_count <= MAX_WHOIS_CACHE_ENTRIES {
-        return Ok(()); // Under limit -- skip the expensive scan+sort
-    }
-
-    // Over limit: collect full metadata for sorting by modification time
+    // Collect full metadata for sorting by modification time
     let cache_path_owned = cache_path.to_path_buf();
     let entries =
         tokio::task::spawn_blocking(move || -> Result<Vec<(std::path::PathBuf, SystemTime)>> {
@@ -131,8 +157,11 @@ async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
         .context("Blocking task panicked")??;
 
     let entry_count = entries.len();
+    // Re-sync the atomic counter from the authoritative disk scan
+    CACHE_FILE_COUNT.store(entry_count, Ordering::Relaxed);
+
     if entry_count <= MAX_WHOIS_CACHE_ENTRIES {
-        return Ok(()); // Race: files were deleted between count and scan
+        return Ok(()); // Under limit after re-sync
     }
 
     // Sort by modification time (oldest first)
@@ -148,11 +177,16 @@ async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
         to_delete
     );
 
+    let mut deleted = 0usize;
     for (path, _) in entries.into_iter().take(to_delete) {
         if let Err(e) = tokio::fs::remove_file(&path).await {
             log::debug!("Failed to evict WHOIS cache file {}: {}", path.display(), e);
+        } else {
+            deleted += 1;
         }
     }
+    // Decrement counter by actual number of files deleted
+    CACHE_FILE_COUNT.fetch_sub(deleted, Ordering::Relaxed);
 
     Ok(())
 }
