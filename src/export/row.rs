@@ -267,7 +267,136 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
 /// # Returns
 ///
 /// A complete `ExportRow` with all satellite data populated.
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+/// Fetch DNS satellite data (nameservers, TXT, MX records).
+async fn fetch_dns_records(
+    pool: &DbPool,
+    url_status_id: i64,
+) -> Result<(Vec<NameserverRecord>, Vec<TxtRecord>, Vec<MxRecord>)> {
+    let nameservers: Vec<NameserverRecord> = sqlx::query(
+        "SELECT nameserver FROM url_nameservers WHERE url_status_id = ? ORDER BY nameserver",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| NameserverRecord {
+        nameserver: r.get("nameserver"),
+    })
+    .collect();
+
+    let txt_records: Vec<TxtRecord> = sqlx::query(
+        "SELECT record_type, record_value FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type, record_value",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| TxtRecord {
+        record_type: r.get("record_type"),
+        record_value: r.get("record_value"),
+    })
+    .collect();
+
+    let mx_records: Vec<MxRecord> = sqlx::query(
+        "SELECT priority, mail_exchange FROM url_mx_records WHERE url_status_id = ? ORDER BY priority, mail_exchange",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| MxRecord {
+        priority: r.get("priority"),
+        mail_exchange: r.get("mail_exchange"),
+    })
+    .collect();
+
+    Ok((nameservers, txt_records, mx_records))
+}
+
+/// Fetch all HTTP/security headers (unfiltered) and partial failures.
+async fn fetch_headers_and_failures(
+    pool: &DbPool,
+    url_status_id: i64,
+) -> Result<(Vec<HttpHeader>, Vec<HttpHeader>, Vec<PartialFailure>)> {
+    let all_http_headers: Vec<HttpHeader> = sqlx::query(
+        "SELECT header_name, header_value FROM url_http_headers WHERE url_status_id = ? ORDER BY header_name",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| HttpHeader {
+        name: r.get("header_name"),
+        value: r.get("header_value"),
+    })
+    .collect();
+
+    let all_security_headers: Vec<HttpHeader> = sqlx::query(
+        "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ? ORDER BY header_name",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| HttpHeader {
+        name: r.get("header_name"),
+        value: r.get("header_value"),
+    })
+    .collect();
+
+    let partial_failures: Vec<PartialFailure> = sqlx::query(
+        "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ? ORDER BY observed_at_ms",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| PartialFailure {
+        error_type: r.get("error_type"),
+        error_message: r.get("error_message"),
+    })
+    .collect();
+
+    Ok((all_http_headers, all_security_headers, partial_failures))
+}
+
+/// Fetch social media links with identifiers and structured data entries.
+async fn fetch_social_and_structured(
+    pool: &DbPool,
+    url_status_id: i64,
+) -> Result<(Vec<SocialMediaLink>, Vec<StructuredDataEntry>)> {
+    let social_media_links: Vec<SocialMediaLink> = sqlx::query(
+        "SELECT platform, profile_url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| SocialMediaLink {
+        platform: r.get("platform"),
+        profile_url: r.get("profile_url"),
+        identifier: r.get("identifier"),
+    })
+    .collect();
+
+    let structured_data_entries: Vec<StructuredDataEntry> = sqlx::query(
+        "SELECT data_type, property_name, property_value FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type, property_name",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| StructuredDataEntry {
+        data_type: r.get("data_type"),
+        property_name: r.get("property_name"),
+        property_value: r.get("property_value"),
+    })
+    .collect();
+
+    Ok((social_media_links, structured_data_entries))
+}
+
+#[allow(clippy::too_many_lines)]
 pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<ExportRow> {
     let url_status_id = main.id;
 
@@ -320,52 +449,10 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
-    // Fetch DNS records (actual data + counts)
-    let nameserver_rows = sqlx::query(
-        "SELECT nameserver FROM url_nameservers WHERE url_status_id = ? ORDER BY nameserver",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let nameservers: Vec<NameserverRecord> = nameserver_rows
-        .iter()
-        .map(|r| NameserverRecord {
-            nameserver: r.get("nameserver"),
-        })
-        .collect();
+    // Fetch DNS records (actual data)
+    let (nameservers, txt_records, mx_records) = fetch_dns_records(pool, url_status_id).await?;
     let nameserver_count = nameservers.len() as i64;
-
-    let txt_rows = sqlx::query(
-        "SELECT record_type, record_value FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type, record_value",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let txt_records: Vec<TxtRecord> = txt_rows
-        .iter()
-        .map(|r| TxtRecord {
-            record_type: r.get("record_type"),
-            record_value: r.get("record_value"),
-        })
-        .collect();
     let txt_count = txt_records.len() as i64;
-
-    let mx_rows = sqlx::query(
-        "SELECT priority, mail_exchange FROM url_mx_records WHERE url_status_id = ? ORDER BY priority, mail_exchange",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let mx_records: Vec<MxRecord> = mx_rows
-        .iter()
-        .map(|r| MxRecord {
-            priority: r.get("priority"),
-            mail_exchange: r.get("mail_exchange"),
-        })
-        .collect();
     let mx_count = mx_records.len() as i64;
 
     // Fetch analytics IDs
@@ -388,22 +475,9 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
-    // Fetch social media links with identifiers
-    let social_media_rows = sqlx::query(
-        "SELECT platform, profile_url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let social_media_links: Vec<SocialMediaLink> = social_media_rows
-        .iter()
-        .map(|r| SocialMediaLink {
-            platform: r.get("platform"),
-            profile_url: r.get("profile_url"),
-            identifier: r.get("identifier"),
-        })
-        .collect();
+    // Fetch social media links with identifiers + structured data entries
+    let (social_media_links, structured_data_entries) =
+        fetch_social_and_structured(pool, url_status_id).await?;
 
     // Fetch security warnings
     let (security_warnings_str, security_warning_count) = fetch_string_list(
@@ -428,23 +502,6 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
-    // Fetch detailed structured data entries
-    let structured_data_rows = sqlx::query(
-        "SELECT data_type, property_name, property_value FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type, property_name",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let structured_data_entries: Vec<StructuredDataEntry> = structured_data_rows
-        .iter()
-        .map(|r| StructuredDataEntry {
-            data_type: r.get("data_type"),
-            property_name: r.get("property_name"),
-            property_value: r.get("property_value"),
-        })
-        .collect();
-
     // Fetch HTTP headers
     let (http_headers_str, http_header_count) =
         fetch_filtered_http_headers(pool, "url_http_headers", url_status_id, HTTP_KEY_HEADERS)
@@ -459,53 +516,9 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
-    // Fetch all HTTP headers (unfiltered)
-    let all_http_header_rows = sqlx::query(
-        "SELECT header_name, header_value FROM url_http_headers WHERE url_status_id = ? ORDER BY header_name",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let all_http_headers: Vec<HttpHeader> = all_http_header_rows
-        .iter()
-        .map(|r| HttpHeader {
-            name: r.get("header_name"),
-            value: r.get("header_value"),
-        })
-        .collect();
-
-    // Fetch all security headers (unfiltered)
-    let all_security_header_rows = sqlx::query(
-        "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ? ORDER BY header_name",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let all_security_headers: Vec<HttpHeader> = all_security_header_rows
-        .iter()
-        .map(|r| HttpHeader {
-            name: r.get("header_name"),
-            value: r.get("header_value"),
-        })
-        .collect();
-
-    // Fetch partial failures
-    let partial_failure_rows = sqlx::query(
-        "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ? ORDER BY observed_at_ms",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool.as_ref())
-    .await?;
-
-    let partial_failures: Vec<PartialFailure> = partial_failure_rows
-        .iter()
-        .map(|r| PartialFailure {
-            error_type: r.get("error_type"),
-            error_message: r.get("error_message"),
-        })
-        .collect();
+    // Fetch all headers (unfiltered) and partial failures
+    let (all_http_headers, all_security_headers, partial_failures) =
+        fetch_headers_and_failures(pool, url_status_id).await?;
 
     // Fetch GeoIP data
     let geoip_row = sqlx::query(

@@ -619,64 +619,45 @@ mod tests {
     }
 
     #[test]
-    fn test_build_where_clause_no_filters() {
-        // Test build_where_clause with no filters
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
-        build_where_clause(&mut query_builder, None, None, None, None);
-        // Verify the query can be built (no panic)
-        let _query = query_builder.build();
-        // The query should be valid SQL even with no WHERE clause
+    fn test_build_where_clause_no_filters_produces_no_where() {
+        let mut qb = sqlx::QueryBuilder::new("SELECT * FROM url_status us");
+        build_where_clause(&mut qb, None, None, None, None);
+        let sql = qb.sql();
+        assert!(
+            !sql.contains("WHERE"),
+            "No filters should produce no WHERE clause, got: {sql}"
+        );
     }
 
     #[test]
-    fn test_build_where_clause_run_id_only() {
-        // Test build_where_clause with only run_id
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
-        build_where_clause(&mut query_builder, Some("test-run-1"), None, None, None);
-        // Verify the query can be built
-        let _query = query_builder.build();
-    }
-
-    #[test]
-    fn test_build_where_clause_domain_only() {
-        // Test build_where_clause with only domain
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
-        build_where_clause(&mut query_builder, None, Some("example.com"), None, None);
-        // Verify the query can be built
-        let _query = query_builder.build();
-    }
-
-    #[test]
-    fn test_build_where_clause_status_only() {
-        // Test build_where_clause with only status
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
-        build_where_clause(&mut query_builder, None, None, Some(404), None);
-        // Verify the query can be built
-        let _query = query_builder.build();
-    }
-
-    #[test]
-    fn test_build_where_clause_since_only() {
-        // Test build_where_clause with only since
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
-        build_where_clause(&mut query_builder, None, None, None, Some(1704067200000i64));
-        // Verify the query can be built
-        let _query = query_builder.build();
-    }
-
-    #[test]
-    fn test_build_where_clause_all_filters() {
-        // Test build_where_clause with all filters
-        let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM url_status");
+    fn test_build_where_clause_all_filters_produces_correct_sql() {
+        let mut qb = sqlx::QueryBuilder::new("SELECT * FROM url_status us");
         build_where_clause(
-            &mut query_builder,
-            Some("test-run-1"),
+            &mut qb,
+            Some("run-1"),
             Some("example.com"),
             Some(200),
             Some(1704067200000i64),
         );
-        // Verify the query can be built with all filters
-        let _query = query_builder.build();
+        let sql = qb.sql();
+        // Should have WHERE and three ANDs (4 clauses joined)
+        assert!(sql.contains("WHERE"), "Should have WHERE clause");
+        assert_eq!(
+            sql.matches(" AND ").count(),
+            3,
+            "4 filters should produce 3 ANDs, got: {sql}"
+        );
+        // Should reference the correct columns
+        assert!(sql.contains("us.run_id"), "Should filter by run_id");
+        assert!(
+            sql.contains("us.initial_domain") && sql.contains("us.final_domain"),
+            "Should filter by both initial and final domain"
+        );
+        assert!(sql.contains("us.http_status"), "Should filter by status");
+        assert!(
+            sql.contains("us.observed_at_ms"),
+            "Should filter by timestamp"
+        );
     }
 
     #[tokio::test]
