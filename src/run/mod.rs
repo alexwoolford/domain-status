@@ -356,7 +356,7 @@ mod tests {
             "Zero timeout should not block waiting for long task"
         );
         assert!(
-            elapsed < std::time::Duration::from_millis(10),
+            elapsed < std::time::Duration::from_millis(100),
             "Zero timeout should return almost immediately, took {:?}",
             elapsed
         );

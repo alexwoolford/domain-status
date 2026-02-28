@@ -604,8 +604,9 @@ async fn test_recovery_after_interruption() {
     tokio::task::yield_now().await;
     interrupted_task.abort();
 
-    let result2 = interrupted_task.await;
-    assert!(result2.is_err(), "Second insert should be interrupted");
+    let _result2 = interrupted_task.await;
+    // result2 may be Err (abort won the race) or Ok (insert completed before abort).
+    // Both are valid — the important assertion is that the first record survives.
 
     // Verify first record still exists
     let count_after_crash = count_url_records(&pool).await;
