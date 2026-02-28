@@ -155,9 +155,32 @@ pub(crate) async fn fetch_filtered_http_headers(
     Ok((joined, total_count))
 }
 
+/// Build the complete export query with optional filters and ordering.
+///
+/// This is the single source of truth for the export SELECT query.
+/// All export formats (CSV, JSONL, Parquet) use this function.
+pub(crate) fn build_export_query<'a>(
+    run_id: Option<&'a str>,
+    domain: Option<&'a str>,
+    status: Option<u16>,
+    since: Option<i64>,
+) -> QueryBuilder<'a, sqlx::Sqlite> {
+    let mut qb = QueryBuilder::new(
+        "SELECT us.id, us.initial_domain, us.final_domain, us.ip_address, us.reverse_dns_name,
+                us.http_status, us.http_status_text, us.response_time_seconds, us.title, us.keywords,
+                us.description, us.is_mobile_friendly, us.tls_version, us.ssl_cert_subject,
+                us.ssl_cert_issuer, us.ssl_cert_valid_to_ms, us.cipher_suite, us.key_algorithm,
+                us.spf_record, us.dmarc_record, us.observed_at_ms, us.run_id
+         FROM url_status us",
+    );
+    build_where_clause(&mut qb, run_id, domain, status, since);
+    qb.push(" ORDER BY us.observed_at_ms DESC");
+    qb
+}
+
 /// Builds WHERE clause for export queries based on filter parameters.
 /// Modifies the query builder in place.
-pub(crate) fn build_where_clause<'a>(
+fn build_where_clause<'a>(
     query_builder: &mut QueryBuilder<'a, sqlx::Sqlite>,
     run_id: Option<&'a str>,
     domain: Option<&'a str>,

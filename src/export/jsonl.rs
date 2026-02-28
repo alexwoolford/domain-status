@@ -11,7 +11,7 @@ use std::io::{self, Write};
 
 use crate::storage::init_db_pool_with_path;
 
-use super::queries::{build_where_clause, IgnoreBrokenPipe};
+use super::queries::{build_export_query, IgnoreBrokenPipe};
 use super::row::{
     build_export_row, build_url, extract_main_row_data, parse_key_value_pairs, parse_string_list,
     parse_technologies,
@@ -38,24 +38,12 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
         .await
         .context("Failed to initialize database pool")?;
 
-    let mut query_builder = sqlx::QueryBuilder::new(
-        "SELECT us.id, us.initial_domain, us.final_domain, us.ip_address, us.reverse_dns_name,
-                us.http_status, us.http_status_text, us.response_time_seconds, us.title, us.keywords,
-                us.description, us.is_mobile_friendly, us.tls_version, us.ssl_cert_subject,
-                us.ssl_cert_issuer, us.ssl_cert_valid_to_ms, us.cipher_suite, us.key_algorithm,
-                us.spf_record, us.dmarc_record, us.observed_at_ms, us.run_id
-         FROM url_status us",
-    );
-
-    build_where_clause(
-        &mut query_builder,
+    let mut query_builder = build_export_query(
         opts.run_id.as_deref(),
         opts.domain.as_deref(),
         opts.status,
         opts.since,
     );
-
-    query_builder.push(" ORDER BY us.observed_at_ms DESC");
 
     let mut writer: Box<dyn Write> = if let Some(output_path) = opts.output.as_ref() {
         let file = tokio::fs::File::create(output_path)
