@@ -13,6 +13,56 @@ use super::queries::{
     fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
 };
 
+/// A single nameserver record.
+#[derive(Debug, Clone)]
+pub struct NameserverRecord {
+    pub nameserver: String,
+}
+
+/// A single DNS TXT record.
+#[derive(Debug, Clone)]
+pub struct TxtRecord {
+    pub record_type: String,
+    pub record_value: String,
+}
+
+/// A single DNS MX record.
+#[derive(Debug, Clone)]
+pub struct MxRecord {
+    pub priority: i64,
+    pub mail_exchange: String,
+}
+
+/// A single structured data entry (JSON-LD, Open Graph, Twitter Card).
+#[derive(Debug, Clone)]
+pub struct StructuredDataEntry {
+    pub data_type: String,
+    pub property_name: String,
+    pub property_value: String,
+}
+
+/// A single social media link with extracted identifier.
+#[derive(Debug, Clone)]
+pub struct SocialMediaLink {
+    pub platform: String,
+    pub profile_url: String,
+    pub identifier: Option<String>,
+}
+
+/// A partial failure (DNS/TLS error that didn't block processing).
+#[derive(Debug, Clone)]
+pub struct PartialFailure {
+    pub error_type: String,
+    pub error_message: String,
+}
+
+/// An HTTP header name-value pair.
+#[derive(Debug, Clone)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
 /// Main row data from the url_status table.
 #[derive(Debug)]
 pub struct MainRowData {
@@ -100,6 +150,11 @@ pub struct ExportRow {
     pub txt_count: usize,
     pub mx_count: usize,
 
+    /// Actual DNS records
+    pub nameservers: Vec<NameserverRecord>,
+    pub txt_records: Vec<TxtRecord>,
+    pub mx_records: Vec<MxRecord>,
+
     /// Analytics IDs (as "provider:tracking_id" strings)
     pub analytics_ids_str: String,
     pub analytics_count: usize,
@@ -107,6 +162,9 @@ pub struct ExportRow {
     /// Social media links (as "platform:url" strings)
     pub social_media_links_str: String,
     pub social_media_count: usize,
+
+    /// Social media links with identifiers
+    pub social_media_links: Vec<SocialMediaLink>,
 
     /// Security warnings
     pub security_warnings_str: String,
@@ -116,13 +174,24 @@ pub struct ExportRow {
     pub structured_data_types_str: String,
     pub structured_data_count: usize,
 
-    /// HTTP headers (key headers only)
+    /// Detailed structured data entries
+    pub structured_data_entries: Vec<StructuredDataEntry>,
+
+    /// HTTP headers (key headers only, for backward compat)
     pub http_headers_str: String,
     pub http_header_count: usize,
 
-    /// Security headers (key headers only)
+    /// Security headers (key headers only, for backward compat)
     pub security_headers_str: String,
     pub security_header_count: usize,
+
+    /// All HTTP headers (unfiltered)
+    pub all_http_headers: Vec<HttpHeader>,
+    /// All security headers (unfiltered)
+    pub all_security_headers: Vec<HttpHeader>,
+
+    /// Partial failures (DNS/TLS errors that didn't block processing)
+    pub partial_failures: Vec<PartialFailure>,
 
     /// GeoIP data
     pub geoip: GeoIpData,
@@ -198,7 +267,7 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
 /// # Returns
 ///
 /// A complete `ExportRow` with all satellite data populated.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<ExportRow> {
     let url_status_id = main.id;
 
@@ -251,27 +320,53 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
-    // Fetch DNS counts
-    let nameserver_count = fetch_count_query(
-        pool,
-        "SELECT COUNT(*) FROM url_nameservers WHERE url_status_id = ?",
-        url_status_id,
+    // Fetch DNS records (actual data + counts)
+    let nameserver_rows = sqlx::query(
+        "SELECT nameserver FROM url_nameservers WHERE url_status_id = ? ORDER BY nameserver",
     )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
     .await?;
 
-    let txt_count = fetch_count_query(
-        pool,
-        "SELECT COUNT(*) FROM url_txt_records WHERE url_status_id = ?",
-        url_status_id,
+    let nameservers: Vec<NameserverRecord> = nameserver_rows
+        .iter()
+        .map(|r| NameserverRecord {
+            nameserver: r.get("nameserver"),
+        })
+        .collect();
+    let nameserver_count = nameservers.len() as i64;
+
+    let txt_rows = sqlx::query(
+        "SELECT record_type, record_value FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type, record_value",
     )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
     .await?;
 
-    let mx_count = fetch_count_query(
-        pool,
-        "SELECT COUNT(*) FROM url_mx_records WHERE url_status_id = ?",
-        url_status_id,
+    let txt_records: Vec<TxtRecord> = txt_rows
+        .iter()
+        .map(|r| TxtRecord {
+            record_type: r.get("record_type"),
+            record_value: r.get("record_value"),
+        })
+        .collect();
+    let txt_count = txt_records.len() as i64;
+
+    let mx_rows = sqlx::query(
+        "SELECT priority, mail_exchange FROM url_mx_records WHERE url_status_id = ? ORDER BY priority, mail_exchange",
     )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
     .await?;
+
+    let mx_records: Vec<MxRecord> = mx_rows
+        .iter()
+        .map(|r| MxRecord {
+            priority: r.get("priority"),
+            mail_exchange: r.get("mail_exchange"),
+        })
+        .collect();
+    let mx_count = mx_records.len() as i64;
 
     // Fetch analytics IDs
     let (analytics_ids_str, analytics_count) = fetch_key_value_list(
@@ -283,7 +378,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
-    // Fetch social media links
+    // Fetch social media links (string format for backward compat)
     let (social_media_links_str, social_media_count) = fetch_key_value_list(
         pool,
         "SELECT platform, profile_url FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
@@ -292,6 +387,23 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         url_status_id,
     )
     .await?;
+
+    // Fetch social media links with identifiers
+    let social_media_rows = sqlx::query(
+        "SELECT platform, profile_url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?;
+
+    let social_media_links: Vec<SocialMediaLink> = social_media_rows
+        .iter()
+        .map(|r| SocialMediaLink {
+            platform: r.get("platform"),
+            profile_url: r.get("profile_url"),
+            identifier: r.get("identifier"),
+        })
+        .collect();
 
     // Fetch security warnings
     let (security_warnings_str, security_warning_count) = fetch_string_list(
@@ -316,12 +428,29 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
 
+    // Fetch detailed structured data entries
+    let structured_data_rows = sqlx::query(
+        "SELECT data_type, property_name, property_value FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type, property_name",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?;
+
+    let structured_data_entries: Vec<StructuredDataEntry> = structured_data_rows
+        .iter()
+        .map(|r| StructuredDataEntry {
+            data_type: r.get("data_type"),
+            property_name: r.get("property_name"),
+            property_value: r.get("property_value"),
+        })
+        .collect();
+
     // Fetch HTTP headers
     let (http_headers_str, http_header_count) =
         fetch_filtered_http_headers(pool, "url_http_headers", url_status_id, HTTP_KEY_HEADERS)
             .await?;
 
-    // Fetch security headers
+    // Fetch security headers (filtered, for backward compat)
     let (security_headers_str, security_header_count) = fetch_filtered_http_headers(
         pool,
         "url_security_headers",
@@ -329,6 +458,54 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         SECURITY_KEY_HEADERS,
     )
     .await?;
+
+    // Fetch all HTTP headers (unfiltered)
+    let all_http_header_rows = sqlx::query(
+        "SELECT header_name, header_value FROM url_http_headers WHERE url_status_id = ? ORDER BY header_name",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?;
+
+    let all_http_headers: Vec<HttpHeader> = all_http_header_rows
+        .iter()
+        .map(|r| HttpHeader {
+            name: r.get("header_name"),
+            value: r.get("header_value"),
+        })
+        .collect();
+
+    // Fetch all security headers (unfiltered)
+    let all_security_header_rows = sqlx::query(
+        "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ? ORDER BY header_name",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?;
+
+    let all_security_headers: Vec<HttpHeader> = all_security_header_rows
+        .iter()
+        .map(|r| HttpHeader {
+            name: r.get("header_name"),
+            value: r.get("header_value"),
+        })
+        .collect();
+
+    // Fetch partial failures
+    let partial_failure_rows = sqlx::query(
+        "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ? ORDER BY observed_at_ms",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?;
+
+    let partial_failures: Vec<PartialFailure> = partial_failure_rows
+        .iter()
+        .map(|r| PartialFailure {
+            error_type: r.get("error_type"),
+            error_message: r.get("error_message"),
+        })
+        .collect();
 
     // Fetch GeoIP data
     let geoip_row = sqlx::query(
@@ -409,18 +586,26 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         nameserver_count: nameserver_count as usize,
         txt_count: txt_count as usize,
         mx_count: mx_count as usize,
+        nameservers,
+        txt_records,
+        mx_records,
         analytics_ids_str,
         analytics_count,
         social_media_links_str,
         social_media_count,
+        social_media_links,
         security_warnings_str,
         security_warning_count,
         structured_data_types_str,
         structured_data_count: structured_data_count as usize,
+        structured_data_entries,
         http_headers_str,
         http_header_count: http_header_count as usize,
         security_headers_str,
         security_header_count: security_header_count as usize,
+        all_http_headers,
+        all_security_headers,
+        partial_failures,
         geoip,
         whois,
         favicon_hash,
@@ -480,6 +665,7 @@ pub fn parse_key_value_pairs(kv_str: &str) -> Vec<(String, String)> {
 ///
 /// The input string is in format "header1:value1;header2:value2;..."
 /// Note: values may contain colons, so we only split on the first colon.
+#[allow(dead_code)]
 pub fn parse_headers(headers_str: &str) -> HashMap<String, String> {
     if headers_str.is_empty() {
         return HashMap::new();

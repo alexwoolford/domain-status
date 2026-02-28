@@ -199,6 +199,7 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
             permit,
             request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
             adaptive_limiter: resources.adaptive_limiter.as_ref().map(Arc::clone),
+            per_domain_limiter: resources.per_domain_limiter.as_ref().map(Arc::clone),
             completed_urls: Arc::clone(&resources.completed_urls),
             failed_urls: Arc::clone(&resources.failed_urls),
             total_urls_for_callback: total_lines,
@@ -441,6 +442,7 @@ mod tests {
             status_port: None,
             log_file: None,
             progress_callback: None,
+            max_per_domain: 5,
         };
 
         let result = run_scan(config).await;
@@ -493,6 +495,7 @@ mod tests {
             status_port: None,
             log_file: None,
             progress_callback: None,
+            max_per_domain: 5,
         };
 
         let result = run_scan(config).await;

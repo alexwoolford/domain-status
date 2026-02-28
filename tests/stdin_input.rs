@@ -24,6 +24,7 @@ fn create_stdin_test_config(fail_on: domain_status::FailOn) -> Config {
         fail_on_pct_threshold: 10,
         log_file: None,
         progress_callback: None,
+        max_per_domain: 0, // Disable per-domain limiting for tests
     }
 }
 

@@ -159,6 +159,7 @@ mod tests {
             fail_on_pct_threshold: 10,
             log_file: None,
             progress_callback: None,
+            max_per_domain: 0, // Disable per-domain limiting for tests
         };
 
         // Run the scan using the library
