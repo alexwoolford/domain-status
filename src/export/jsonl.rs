@@ -262,16 +262,6 @@ mod tests {
     use std::io::Read;
     use tempfile::NamedTempFile;
 
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("Failed to create test database pool");
-        run_migrations(&pool)
-            .await
-            .expect("Failed to run migrations");
-        pool
-    }
-
     async fn create_test_run(pool: &SqlitePool, run_id: &str) {
         sqlx::query(
             "INSERT INTO runs (run_id, start_time_ms) VALUES (?, ?)
@@ -309,30 +299,6 @@ mod tests {
         .await
         .expect("Failed to insert test URL status")
         .get::<i64, _>(0)
-    }
-
-    #[tokio::test]
-    async fn test_export_jsonl_basic() {
-        let pool = create_test_pool().await;
-        let _url_id = create_test_url_status(&pool, "example.com", 200).await;
-
-        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let output_path = temp_file.path().to_path_buf();
-
-        let count = export_jsonl(&ExportOptions {
-            db_path: std::path::Path::new(":memory:").to_path_buf(),
-            output: Some(output_path.clone()),
-            format: ExportFormat::Jsonl,
-            run_id: None,
-            domain: None,
-            status: None,
-            since: None,
-        })
-        .await;
-
-        // This will fail because we can't use :memory: with a path
-        // We need to use a real file path for the database
-        assert!(count.is_err(), "Should fail with memory database");
     }
 
     #[tokio::test]
@@ -1172,7 +1138,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_export_jsonl_dns_records_populated() {
+    async fn test_export_jsonl_all_satellite_data() {
+        // Single comprehensive test: one DB setup, one export, all assertions.
+        // Validates DNS records, social media identifiers, partial failures,
+        // structured data entries, and unfiltered headers in a single pass.
         let (temp_db, _url_id) = create_fully_populated_db().await;
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
@@ -1189,221 +1158,82 @@ mod tests {
         })
         .await
         .expect("Should export successfully");
-
         assert_eq!(count, 1);
 
-        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .expect("Failed to read output file");
-
-        let json_obj: serde_json::Value =
-            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
-
-        // Verify nameservers are actual strings, not just a count
-        let dns = &json_obj["dns"];
-        let nameservers = dns["nameservers"]
-            .as_array()
-            .expect("nameservers should be array");
-        assert_eq!(nameservers.len(), 2, "Should have 2 nameservers");
-        assert!(
-            nameservers.contains(&serde_json::json!("ns1.example.com")),
-            "Should contain ns1"
-        );
-        assert!(
-            nameservers.contains(&serde_json::json!("ns2.example.com")),
-            "Should contain ns2"
-        );
-
-        // Verify TXT records have type and content
-        let txt_records = dns["txt_records"]
-            .as_array()
-            .expect("txt_records should be array");
-        assert_eq!(txt_records.len(), 2, "Should have 2 TXT records");
-        let spf_record = txt_records
-            .iter()
-            .find(|r| r["record_type"] == "SPF")
-            .expect("Should have SPF record");
-        assert!(
-            spf_record["content"].as_str().unwrap().contains("v=spf1"),
-            "SPF content should contain v=spf1"
-        );
-
-        // Verify MX records have priority and mail_exchange
-        let mx_records = dns["mx_records"]
-            .as_array()
-            .expect("mx_records should be array");
-        assert_eq!(mx_records.len(), 2, "Should have 2 MX records");
-        assert_eq!(mx_records[0]["priority"], 10);
-        assert_eq!(mx_records[0]["mail_exchange"], "mail.example.com");
-    }
-
-    #[tokio::test]
-    async fn test_export_jsonl_social_media_identifiers() {
-        let (temp_db, _url_id) = create_fully_populated_db().await;
-
-        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let output_path = temp_file.path().to_path_buf();
-
-        export_jsonl(&ExportOptions {
-            db_path: temp_db.path().to_path_buf(),
-            output: Some(output_path.clone()),
-            format: ExportFormat::Jsonl,
-            run_id: None,
-            domain: None,
-            status: None,
-            since: None,
-        })
-        .await
-        .expect("Should export successfully");
-
         let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
-        let json_obj: serde_json::Value =
+        let j: serde_json::Value =
             serde_json::from_str(contents.trim()).expect("Should be valid JSON");
 
-        let social = json_obj["social_media_links"]
-            .as_array()
-            .expect("social_media_links should be array");
-        assert_eq!(social.len(), 2);
+        // --- DNS: nameservers are actual strings, not just a count ---
+        let dns = &j["dns"];
+        let nameservers = dns["nameservers"].as_array().expect("array");
+        assert_eq!(nameservers.len(), 2);
+        assert!(nameservers.contains(&serde_json::json!("ns1.example.com")));
+        assert!(nameservers.contains(&serde_json::json!("ns2.example.com")));
 
+        // --- DNS: TXT records have type + content ---
+        let txt = dns["txt_records"].as_array().expect("array");
+        assert_eq!(txt.len(), 2);
+        let spf = txt.iter().find(|r| r["record_type"] == "SPF").expect("SPF");
+        assert!(spf["content"].as_str().unwrap().contains("v=spf1"));
+
+        // --- DNS: MX records have priority + mail_exchange ---
+        let mx = dns["mx_records"].as_array().expect("array");
+        assert_eq!(mx.len(), 2);
+        assert_eq!(mx[0]["priority"], 10);
+        assert_eq!(mx[0]["mail_exchange"], "mail.example.com");
+
+        // --- Social media: identifier present when extracted, null otherwise ---
+        let social = j["social_media_links"].as_array().expect("array");
+        assert_eq!(social.len(), 2);
         let linkedin = social
             .iter()
             .find(|s| s["platform"] == "LinkedIn")
-            .expect("Should have LinkedIn");
-        assert_eq!(
-            linkedin["identifier"], "example",
-            "LinkedIn should have identifier"
-        );
+            .expect("LinkedIn");
+        assert_eq!(linkedin["identifier"], "example");
         assert_eq!(linkedin["url"], "https://linkedin.com/company/example");
-
         let twitter = social
             .iter()
             .find(|s| s["platform"] == "Twitter")
-            .expect("Should have Twitter");
-        assert!(
-            twitter["identifier"].is_null(),
-            "Twitter identifier should be null"
-        );
-    }
+            .expect("Twitter");
+        assert!(twitter["identifier"].is_null());
 
-    #[tokio::test]
-    async fn test_export_jsonl_partial_failures() {
-        let (temp_db, _url_id) = create_fully_populated_db().await;
-
-        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let output_path = temp_file.path().to_path_buf();
-
-        export_jsonl(&ExportOptions {
-            db_path: temp_db.path().to_path_buf(),
-            output: Some(output_path.clone()),
-            format: ExportFormat::Jsonl,
-            run_id: None,
-            domain: None,
-            status: None,
-            since: None,
-        })
-        .await
-        .expect("Should export successfully");
-
-        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
-        let json_obj: serde_json::Value =
-            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
-
-        let failures = json_obj["partial_failures"]
-            .as_array()
-            .expect("partial_failures should be array");
-        assert_eq!(failures.len(), 1, "Should have 1 partial failure");
+        // --- Partial failures: error_type + error_message ---
+        let failures = j["partial_failures"].as_array().expect("array");
+        assert_eq!(failures.len(), 1);
         assert_eq!(failures[0]["error_type"], "DNS NS lookup error");
-        assert!(
-            failures[0]["error_message"]
-                .as_str()
-                .unwrap()
-                .contains("Timeout"),
-            "Error message should contain 'Timeout'"
-        );
-    }
+        assert!(failures[0]["error_message"]
+            .as_str()
+            .unwrap()
+            .contains("Timeout"));
 
-    #[tokio::test]
-    async fn test_export_jsonl_structured_data_entries() {
-        let (temp_db, _url_id) = create_fully_populated_db().await;
-
-        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let output_path = temp_file.path().to_path_buf();
-
-        export_jsonl(&ExportOptions {
-            db_path: temp_db.path().to_path_buf(),
-            output: Some(output_path.clone()),
-            format: ExportFormat::Jsonl,
-            run_id: None,
-            domain: None,
-            status: None,
-            since: None,
-        })
-        .await
-        .expect("Should export successfully");
-
-        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
-        let json_obj: serde_json::Value =
-            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
-
-        let entries = json_obj["structured_data"]["entries"]
-            .as_array()
-            .expect("structured_data.entries should be array");
-        assert_eq!(entries.len(), 2, "Should have 2 structured data entries");
-
-        let og_entry = entries
+        // --- Structured data: entries with data_type, property_name, property_value ---
+        let entries = j["structured_data"]["entries"].as_array().expect("array");
+        assert_eq!(entries.len(), 2);
+        let og = entries
             .iter()
             .find(|e| e["data_type"] == "open_graph")
-            .expect("Should have open_graph entry");
-        assert_eq!(og_entry["property_name"], "og:title");
-        assert_eq!(og_entry["property_value"], "Example Page");
-    }
+            .expect("og");
+        assert_eq!(og["property_name"], "og:title");
+        assert_eq!(og["property_value"], "Example Page");
 
-    #[tokio::test]
-    async fn test_export_jsonl_unfiltered_headers() {
-        let (temp_db, _url_id) = create_fully_populated_db().await;
-
-        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let output_path = temp_file.path().to_path_buf();
-
-        export_jsonl(&ExportOptions {
-            db_path: temp_db.path().to_path_buf(),
-            output: Some(output_path.clone()),
-            format: ExportFormat::Jsonl,
-            run_id: None,
-            domain: None,
-            status: None,
-            since: None,
-        })
-        .await
-        .expect("Should export successfully");
-
-        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
-        let json_obj: serde_json::Value =
-            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
-
-        // http_headers should include ALL headers, including X-Custom-Header
-        let headers = json_obj["http_headers"]
-            .as_array()
-            .expect("http_headers should be array");
+        // --- HTTP headers: unfiltered (all 3, including custom) ---
+        let headers = j["http_headers"].as_array().expect("array");
         assert_eq!(
             headers.len(),
             3,
-            "Should have all 3 HTTP headers (not filtered)"
+            "Should include ALL headers, not just whitelisted"
         );
-
         let custom = headers
             .iter()
             .find(|h| h["name"] == "X-Custom-Header")
-            .expect("Should include X-Custom-Header (previously filtered out)");
+            .expect("custom");
         assert_eq!(custom["value"], "custom-value");
 
-        // Security headers
-        let sec_headers = json_obj["security_headers"]
-            .as_array()
-            .expect("security_headers should be array");
-        assert_eq!(sec_headers.len(), 1);
-        assert_eq!(sec_headers[0]["name"], "Strict-Transport-Security");
+        // --- Security headers ---
+        let sec = j["security_headers"].as_array().expect("array");
+        assert_eq!(sec.len(), 1);
+        assert_eq!(sec[0]["name"], "Strict-Transport-Security");
     }
 
     #[tokio::test]

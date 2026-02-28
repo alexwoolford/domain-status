@@ -128,19 +128,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_per_domain_limiter_basic() {
-        let limiter = PerDomainLimiter::new(2);
-        let _permit1 = limiter.acquire("example.com").await.unwrap();
-        let _permit2 = limiter.acquire("example.com").await.unwrap();
-        // moka entry_count is eventually consistent; just verify permits were acquired
-    }
+    async fn test_per_domain_limiter_exact_capacity() {
+        // Acquire exactly max_per_domain permits — all should succeed immediately.
+        // The (max_per_domain + 1)th should block.
+        let limiter = Arc::new(PerDomainLimiter::new(3));
 
-    #[tokio::test]
-    async fn test_per_domain_limiter_different_domains() {
-        let limiter = PerDomainLimiter::new(1);
-        let _permit1 = limiter.acquire("a.com").await.unwrap();
-        let _permit2 = limiter.acquire("b.com").await.unwrap();
-        // Both domains acquired concurrently — verifies independent semaphores
+        let p1 = tokio::time::timeout(Duration::from_millis(50), limiter.acquire("example.com"))
+            .await
+            .expect("1st permit should not block")
+            .expect("1st permit should succeed");
+        let p2 = tokio::time::timeout(Duration::from_millis(50), limiter.acquire("example.com"))
+            .await
+            .expect("2nd permit should not block")
+            .expect("2nd permit should succeed");
+        let p3 = tokio::time::timeout(Duration::from_millis(50), limiter.acquire("example.com"))
+            .await
+            .expect("3rd permit should not block")
+            .expect("3rd permit should succeed");
+
+        // 4th should block (capacity exhausted)
+        let limiter_clone = Arc::clone(&limiter);
+        let fourth = tokio::time::timeout(
+            Duration::from_millis(50),
+            limiter_clone.acquire("example.com"),
+        )
+        .await;
+        assert!(fourth.is_err(), "4th permit should timeout (capacity = 3)");
+
+        // Release one, then 4th should succeed
+        drop(p1);
+        let _p4 = tokio::time::timeout(Duration::from_millis(50), limiter.acquire("example.com"))
+            .await
+            .expect("4th permit should succeed after release")
+            .expect("acquire should not error");
+
+        // Keep permits alive so they're not dropped before assertions
+        drop(p2);
+        drop(p3);
     }
 
     #[tokio::test]

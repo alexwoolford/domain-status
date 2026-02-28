@@ -295,8 +295,40 @@ fn new_three_string_list_builder(f1: &str, f2: &str, f3: &str) -> ListBuilder<St
 
 use super::row::ExportRow;
 
+/// Append an optional string to a StringBuilder.
+fn append_opt_str(builder: &mut StringBuilder, value: &Option<String>) {
+    match value {
+        Some(v) => builder.append_value(v),
+        None => builder.append_null(),
+    }
+}
+
+/// Append an optional i64 to an Int64Builder.
+fn append_opt_i64(builder: &mut Int64Builder, value: Option<i64>) {
+    match value {
+        Some(v) => builder.append_value(v),
+        None => builder.append_null(),
+    }
+}
+
+/// Append an optional f64 to a Float64Builder.
+fn append_opt_f64(builder: &mut Float64Builder, value: Option<f64>) {
+    match value {
+        Some(v) => builder.append_value(v),
+        None => builder.append_null(),
+    }
+}
+
+/// Append an optional i32 to an Int32Builder.
+fn append_opt_i32(builder: &mut Int32Builder, value: Option<i32>) {
+    match value {
+        Some(v) => builder.append_value(v),
+        None => builder.append_null(),
+    }
+}
+
 /// Write a batch of ExportRows as a RecordBatch to the Parquet writer.
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)]
 fn write_batch(
     writer: &mut ArrowWriter<File>,
     schema: &Arc<Schema>,
@@ -426,10 +458,7 @@ fn write_batch(
         initial_domain_b.append_value(&row.main.initial_domain);
         final_domain_b.append_value(&row.main.final_domain);
         ip_address_b.append_value(&row.main.ip_address);
-        match &row.main.reverse_dns {
-            Some(v) => reverse_dns_b.append_value(v),
-            None => reverse_dns_b.append_null(),
-        }
+        append_opt_str(&mut reverse_dns_b, &row.main.reverse_dns);
 
         // SAFETY: HTTP status codes fit in i32 (max 599)
         #[allow(clippy::cast_possible_wrap)]
@@ -437,14 +466,8 @@ fn write_batch(
         http_status_text_b.append_value(&row.main.status_desc);
         response_time_b.append_value(row.main.response_time);
         title_b.append_value(&row.main.title);
-        match &row.main.keywords {
-            Some(v) => keywords_b.append_value(v),
-            None => keywords_b.append_null(),
-        }
-        match &row.main.description {
-            Some(v) => description_b.append_value(v),
-            None => description_b.append_null(),
-        }
+        append_opt_str(&mut keywords_b, &row.main.keywords);
+        append_opt_str(&mut description_b, &row.main.description);
         is_mobile_friendly_b.append_value(row.main.is_mobile_friendly);
 
         // SAFETY: redirect_count is a small Vec length that fits in i32
@@ -478,43 +501,24 @@ fn write_batch(
                 .field_builder::<StringBuilder>(0)
                 .unwrap()
                 .append_value(name);
-            let version_builder = technologies_b
-                .values()
-                .field_builder::<StringBuilder>(1)
-                .unwrap();
-            match version {
-                Some(v) => version_builder.append_value(v),
-                None => version_builder.append_null(),
-            }
+            append_opt_str(
+                technologies_b
+                    .values()
+                    .field_builder::<StringBuilder>(1)
+                    .unwrap(),
+                &version.clone(),
+            );
             technologies_b.values().append(true);
         }
         technologies_b.append(true);
 
         // TLS
-        match &row.main.tls_version {
-            Some(v) => tls_version_b.append_value(v),
-            None => tls_version_b.append_null(),
-        }
-        match &row.main.ssl_cert_subject {
-            Some(v) => ssl_cert_subject_b.append_value(v),
-            None => ssl_cert_subject_b.append_null(),
-        }
-        match &row.main.ssl_cert_issuer {
-            Some(v) => ssl_cert_issuer_b.append_value(v),
-            None => ssl_cert_issuer_b.append_null(),
-        }
-        match row.main.ssl_cert_valid_to_ms {
-            Some(v) => ssl_cert_valid_to_b.append_value(v),
-            None => ssl_cert_valid_to_b.append_null(),
-        }
-        match &row.main.cipher_suite {
-            Some(v) => cipher_suite_b.append_value(v),
-            None => cipher_suite_b.append_null(),
-        }
-        match &row.main.key_algorithm {
-            Some(v) => key_algorithm_b.append_value(v),
-            None => key_algorithm_b.append_null(),
-        }
+        append_opt_str(&mut tls_version_b, &row.main.tls_version);
+        append_opt_str(&mut ssl_cert_subject_b, &row.main.ssl_cert_subject);
+        append_opt_str(&mut ssl_cert_issuer_b, &row.main.ssl_cert_issuer);
+        append_opt_i64(&mut ssl_cert_valid_to_b, row.main.ssl_cert_valid_to_ms);
+        append_opt_str(&mut cipher_suite_b, &row.main.cipher_suite);
+        append_opt_str(&mut key_algorithm_b, &row.main.key_algorithm);
 
         // Certificate SANs
         for san in super::row::parse_string_list(&row.certificate_sans_str) {
@@ -529,14 +533,8 @@ fn write_batch(
         cert_oids_b.append(true);
 
         // DNS
-        match &row.main.spf_record {
-            Some(v) => spf_record_b.append_value(v),
-            None => spf_record_b.append_null(),
-        }
-        match &row.main.dmarc_record {
-            Some(v) => dmarc_record_b.append_value(v),
-            None => dmarc_record_b.append_null(),
-        }
+        append_opt_str(&mut spf_record_b, &row.main.spf_record);
+        append_opt_str(&mut dmarc_record_b, &row.main.dmarc_record);
 
         // Nameservers
         for ns in &row.nameservers {
@@ -605,14 +603,13 @@ fn write_batch(
                 .field_builder::<StringBuilder>(1)
                 .unwrap()
                 .append_value(&link.profile_url);
-            let id_builder = social_media_b
-                .values()
-                .field_builder::<StringBuilder>(2)
-                .unwrap();
-            match &link.identifier {
-                Some(id) => id_builder.append_value(id),
-                None => id_builder.append_null(),
-            }
+            append_opt_str(
+                social_media_b
+                    .values()
+                    .field_builder::<StringBuilder>(2)
+                    .unwrap(),
+                &link.identifier,
+            );
             social_media_b.values().append(true);
         }
         social_media_b.append(true);
@@ -693,73 +690,28 @@ fn write_batch(
         partial_failures_b.append(true);
 
         // GeoIP
-        match &row.geoip.country_code {
-            Some(v) => geoip_cc_b.append_value(v),
-            None => geoip_cc_b.append_null(),
-        }
-        match &row.geoip.country_name {
-            Some(v) => geoip_cn_b.append_value(v),
-            None => geoip_cn_b.append_null(),
-        }
-        match &row.geoip.region {
-            Some(v) => geoip_region_b.append_value(v),
-            None => geoip_region_b.append_null(),
-        }
-        match &row.geoip.city {
-            Some(v) => geoip_city_b.append_value(v),
-            None => geoip_city_b.append_null(),
-        }
-        match row.geoip.latitude {
-            Some(v) => geoip_lat_b.append_value(v),
-            None => geoip_lat_b.append_null(),
-        }
-        match row.geoip.longitude {
-            Some(v) => geoip_lon_b.append_value(v),
-            None => geoip_lon_b.append_null(),
-        }
-        match row.geoip.asn {
-            Some(v) => geoip_asn_b.append_value(v),
-            None => geoip_asn_b.append_null(),
-        }
-        match &row.geoip.asn_org {
-            Some(v) => geoip_asn_org_b.append_value(v),
-            None => geoip_asn_org_b.append_null(),
-        }
+        append_opt_str(&mut geoip_cc_b, &row.geoip.country_code);
+        append_opt_str(&mut geoip_cn_b, &row.geoip.country_name);
+        append_opt_str(&mut geoip_region_b, &row.geoip.region);
+        append_opt_str(&mut geoip_city_b, &row.geoip.city);
+        append_opt_f64(&mut geoip_lat_b, row.geoip.latitude);
+        append_opt_f64(&mut geoip_lon_b, row.geoip.longitude);
+        append_opt_i64(&mut geoip_asn_b, row.geoip.asn);
+        append_opt_str(&mut geoip_asn_org_b, &row.geoip.asn_org);
 
         // WHOIS
-        match &row.whois.registrar {
-            Some(v) => whois_registrar_b.append_value(v),
-            None => whois_registrar_b.append_null(),
-        }
-        match row.whois.creation_date_ms {
-            Some(v) => whois_creation_b.append_value(v),
-            None => whois_creation_b.append_null(),
-        }
-        match row.whois.expiration_date_ms {
-            Some(v) => whois_expiration_b.append_value(v),
-            None => whois_expiration_b.append_null(),
-        }
-        match &row.whois.registrant_country {
-            Some(v) => whois_country_b.append_value(v),
-            None => whois_country_b.append_null(),
-        }
+        append_opt_str(&mut whois_registrar_b, &row.whois.registrar);
+        append_opt_i64(&mut whois_creation_b, row.whois.creation_date_ms);
+        append_opt_i64(&mut whois_expiration_b, row.whois.expiration_date_ms);
+        append_opt_str(&mut whois_country_b, &row.whois.registrant_country);
 
         // Favicon
-        match row.favicon_hash {
-            Some(v) => favicon_hash_b.append_value(v),
-            None => favicon_hash_b.append_null(),
-        }
-        match &row.favicon_url {
-            Some(v) => favicon_url_b.append_value(v),
-            None => favicon_url_b.append_null(),
-        }
+        append_opt_i32(&mut favicon_hash_b, row.favicon_hash);
+        append_opt_str(&mut favicon_url_b, &row.favicon_url);
 
         // Metadata
         observed_at_b.append_value(row.main.timestamp);
-        match &row.main.run_id {
-            Some(v) => run_id_b.append_value(v),
-            None => run_id_b.append_null(),
-        }
+        append_opt_str(&mut run_id_b, &row.main.run_id);
     }
 
     // Build arrays in schema order
