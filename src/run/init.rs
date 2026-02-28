@@ -16,6 +16,7 @@ use crate::config::{Config, DEFAULT_USER_AGENT};
 use crate::error_handling::ProcessingStats;
 use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
 use crate::initialization::*;
+use crate::per_domain_limiter::PerDomainLimiter;
 use crate::storage::{init_db_pool_with_path, insert_run_metadata, RunMetadata};
 use crate::utils::TimingStats;
 
@@ -141,6 +142,18 @@ pub async fn init_scan_resources(
         None
     };
 
+    // Initialize per-domain rate limiter
+    let per_domain_limiter = if config.max_per_domain > 0 {
+        info!(
+            "Per-domain concurrency limit: {} concurrent requests per domain",
+            config.max_per_domain
+        );
+        Some(Arc::new(PerDomainLimiter::new(config.max_per_domain)))
+    } else {
+        info!("Per-domain concurrency limiting disabled");
+        None
+    };
+
     // Initialize database -- size the pool to match concurrency so workers don't starve
     #[allow(clippy::cast_possible_truncation)]
     let pool_size = (config.max_concurrency as u32).max(1);
@@ -246,6 +259,7 @@ pub async fn init_scan_resources(
         request_limiter,
         rate_limiter_shutdown,
         adaptive_limiter,
+        per_domain_limiter,
         error_stats,
         timing_stats,
         completed_urls,

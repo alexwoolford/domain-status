@@ -130,6 +130,17 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "favicon_url",
         "timestamp",
         "run_id",
+        // New columns: actual DNS records
+        "nameservers",
+        "txt_records",
+        "mx_records",
+        // New columns: detailed structured data
+        "structured_data_entries",
+        // New columns: social media identifiers
+        "social_media_identifiers",
+        // New columns: partial failures
+        "partial_failure_count",
+        "partial_failures",
     ])?;
 
     let query = query_builder.build();
@@ -235,6 +246,51 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
             export_row.favicon_url.clone().unwrap_or_default(),
             export_row.main.timestamp.to_string(),
             export_row.main.run_id.clone().unwrap_or_default(),
+            // New columns: actual DNS records
+            export_row
+                .nameservers
+                .iter()
+                .map(|ns| ns.nameserver.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            export_row
+                .txt_records
+                .iter()
+                .map(|r| format!("{}|{}", r.record_type, r.record_value))
+                .collect::<Vec<_>>()
+                .join(","),
+            export_row
+                .mx_records
+                .iter()
+                .map(|r| format!("{}:{}", r.priority, r.mail_exchange))
+                .collect::<Vec<_>>()
+                .join(","),
+            // New columns: detailed structured data
+            export_row
+                .structured_data_entries
+                .iter()
+                .map(|e| format!("{}|{}|{}", e.data_type, e.property_name, e.property_value))
+                .collect::<Vec<_>>()
+                .join(","),
+            // New columns: social media identifiers
+            export_row
+                .social_media_links
+                .iter()
+                .filter_map(|l| {
+                    l.identifier
+                        .as_ref()
+                        .map(|id| format!("{}:{}", l.platform, id))
+                })
+                .collect::<Vec<_>>()
+                .join(","),
+            // New columns: partial failures
+            export_row.partial_failures.len().to_string(),
+            export_row
+                .partial_failures
+                .iter()
+                .map(|f| format!("{}|{}", f.error_type, f.error_message))
+                .collect::<Vec<_>>()
+                .join(","),
         ])?;
 
         record_count += 1;
@@ -253,6 +309,7 @@ mod tests {
     use crate::storage::{migrations::run_migrations, DbPool};
     use sqlx::{Row, SqlitePool};
     use std::sync::Arc;
+    use tempfile::NamedTempFile;
 
     async fn create_test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:")
@@ -623,5 +680,113 @@ mod tests {
 
         assert_eq!(joined, "", "No matches should return empty string");
         assert_eq!(total_count, 1, "Total count should still count all headers");
+    }
+
+    #[tokio::test]
+    async fn test_csv_export_new_columns_populated() {
+        use super::super::csv::export_csv;
+        use super::super::types::{ExportFormat, ExportOptions};
+        use std::io::Read;
+
+        let temp_db = NamedTempFile::new().expect("temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        let url_id = create_test_url_status_default(&pool).await;
+
+        // Insert nameservers
+        sqlx::query("INSERT INTO url_nameservers (url_status_id, nameserver) VALUES (?, ?)")
+            .bind(url_id)
+            .bind("ns1.test.com")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert MX record
+        sqlx::query(
+            "INSERT INTO url_mx_records (url_status_id, priority, mail_exchange) VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind(10)
+        .bind("mail.test.com")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Insert social media with identifier
+        sqlx::query("INSERT INTO url_social_media_links (url_status_id, platform, profile_url, identifier) VALUES (?, ?, ?, ?)")
+            .bind(url_id)
+            .bind("GitHub")
+            .bind("https://github.com/testuser")
+            .bind("testuser")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert partial failure
+        sqlx::query("INSERT INTO url_partial_failures (url_status_id, error_type, error_message, observed_at_ms) VALUES (?, ?, ?, ?)")
+            .bind(url_id)
+            .bind("DNS error")
+            .bind("timeout")
+            .bind(1704067200000i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("temp output");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_csv(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Csv,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export CSV");
+
+        assert_eq!(count, 1);
+
+        let mut contents = String::new();
+        std::fs::File::open(&output_path)
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+
+        let lines: Vec<&str> = contents.trim().split('\n').collect();
+        assert_eq!(lines.len(), 2, "Should have header + 1 data row");
+
+        // Parse CSV to find new columns by header name
+        let headers: Vec<&str> = lines[0].split(',').collect();
+        let data: Vec<&str> = lines[1].split(',').collect();
+
+        // Find the nameservers column index
+        let ns_idx = headers
+            .iter()
+            .position(|h| *h == "nameservers")
+            .expect("Should have nameservers column");
+        assert!(data.len() > ns_idx, "Data row should have enough columns");
+        assert!(
+            data[ns_idx].contains("ns1.test.com"),
+            "nameservers column should contain ns1.test.com, got: {}",
+            data[ns_idx]
+        );
+
+        // Find partial_failure_count column
+        let pfc_idx = headers
+            .iter()
+            .position(|h| *h == "partial_failure_count")
+            .expect("Should have partial_failure_count column");
+        assert_eq!(data[pfc_idx], "1", "Should have 1 partial failure");
     }
 }

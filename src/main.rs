@@ -91,6 +91,15 @@ struct ScanCommand {
     #[arg(long, default_value_t = 15)]
     rate_limit_rps: u32,
 
+    /// Maximum concurrent requests per registered domain.
+    ///
+    /// Prevents overwhelming any single server even when global concurrency is high.
+    /// For example, if --max-concurrency is 30 and --max-per-domain is 3,
+    /// at most 3 concurrent requests will target any single domain at once.
+    /// Set to 0 to disable per-domain limiting.
+    #[arg(long, default_value_t = 5)]
+    max_per_domain: usize,
+
     /// Error rate threshold for adaptive rate limiting (0.0-1.0, default: 0.2 = 20%)
     ///
     /// When error rate (429s + timeouts) exceeds this threshold, RPS is reduced.
@@ -236,6 +245,7 @@ impl From<ScanCommand> for Config {
             timeout_seconds: cli.timeout_seconds,
             user_agent: cli.user_agent,
             rate_limit_rps: cli.rate_limit_rps,
+            max_per_domain: cli.max_per_domain,
             adaptive_error_threshold: cli.adaptive_error_threshold,
             fingerprints: cli.fingerprints,
             geoip: cli.geoip,
@@ -413,8 +423,21 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<()> {
             }
         }
         ExportFormat::Parquet => {
-            eprintln!("Parquet export not yet implemented");
-            process::exit(1);
+            use domain_status::export::export_parquet;
+            match export_parquet(&export_opts).await {
+                Ok(count) => {
+                    if let Some(ref path) = output_path {
+                        eprintln!("✅ Exported {} records to {}", count, path.display());
+                    } else {
+                        eprintln!("✅ Exported {} records to Parquet format", count);
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to export Parquet: {}", e);
+                    process::exit(1);
+                }
+            }
         }
     }
 }
@@ -683,6 +706,7 @@ mod tests {
             log_format: LogFormat::Json,
             db_path: PathBuf::from("custom.db"),
             max_concurrency: 50,
+            max_per_domain: 3,
             timeout_seconds: 20,
             user_agent: "Custom Agent".to_string(),
             rate_limit_rps: 25,
@@ -811,6 +835,7 @@ mod tests {
             log_format: LogFormat::Plain,
             db_path: PathBuf::from("./domain_status.db"),
             max_concurrency: 30,
+            max_per_domain: 5,
             timeout_seconds: 10,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             rate_limit_rps: 15,

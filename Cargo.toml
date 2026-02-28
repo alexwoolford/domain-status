@@ -99,6 +99,9 @@ psl = "^2.1"
 sha2 = "^0.10"
 base64 = "^0.22"
 murmurhash3 = "^0.0.5"
+# Parquet export (columnar format for analytics)
+arrow = { version = "^58", default-features = false }
+parquet = { version = "^58", default-features = false, features = ["arrow", "snap"] }
 # Note: With rust-version = "1.85", edition 2024 is available
 # No need to constrain base64ct or home - newer versions will work
 

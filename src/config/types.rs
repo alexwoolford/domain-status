@@ -161,6 +161,13 @@ pub struct Config {
     /// Enable WHOIS/RDAP lookup for domain registration information
     pub enable_whois: bool,
 
+    /// Maximum concurrent requests per registered domain (0 to disable).
+    ///
+    /// Prevents overwhelming any single server even when global concurrency is high.
+    /// For example, if `max_concurrency` is 30 and `max_per_domain` is 3,
+    /// at most 3 concurrent requests will target any single domain at once.
+    pub max_per_domain: usize,
+
     /// Exit code policy for handling failures
     pub fail_on: FailOn,
 
@@ -207,6 +214,7 @@ impl Default for Config {
             geoip: None,
             status_port: None,
             enable_whois: false,
+            max_per_domain: 5,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
             log_file: None,
@@ -231,6 +239,7 @@ impl std::fmt::Debug for Config {
             .field("geoip", &self.geoip)
             .field("status_port", &self.status_port)
             .field("enable_whois", &self.enable_whois)
+            .field("max_per_domain", &self.max_per_domain)
             .field("fail_on", &self.fail_on)
             .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
             .field("log_file", &self.log_file)

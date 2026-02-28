@@ -32,11 +32,26 @@ pub async fn process_url_task(params: UrlTaskParams) {
         permit: _permit, // Hold permit until task completes
         request_limiter,
         adaptive_limiter,
+        per_domain_limiter,
         completed_urls,
         failed_urls,
         total_urls_for_callback,
         progress_callback,
     } = params;
+
+    // Acquire per-domain permit if enabled (before global rate limiter)
+    let _domain_permit = if let Some(ref limiter) = per_domain_limiter {
+        let domain_key = crate::per_domain_limiter::extract_domain_key(url.as_ref());
+        match limiter.acquire(&domain_key).await {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                log::warn!("Per-domain semaphore closed for {}, skipping", url.as_ref());
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Apply rate limiting if configured
     if let Some(ref limiter) = request_limiter {

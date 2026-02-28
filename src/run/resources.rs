@@ -20,6 +20,7 @@ use crate::fetch::ProcessingContext;
 use crate::fingerprint::FingerprintRuleset;
 use crate::geoip::GeoIpMetadata;
 use crate::initialization::RateLimiter;
+use crate::per_domain_limiter::PerDomainLimiter;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
 
@@ -49,6 +50,8 @@ pub struct ScanResources {
     pub rate_limiter_shutdown: Option<CancellationToken>,
     /// Optional adaptive rate limiter that adjusts based on error rates
     pub adaptive_limiter: Option<Arc<AdaptiveRateLimiter>>,
+    /// Optional per-domain concurrency limiter
+    pub per_domain_limiter: Option<Arc<PerDomainLimiter>>,
 
     // Statistics tracking
     /// Error statistics tracker
@@ -135,6 +138,8 @@ pub struct UrlTaskParams {
     pub request_limiter: Option<Arc<RateLimiter>>,
     /// Optional adaptive rate limiter
     pub adaptive_limiter: Option<Arc<AdaptiveRateLimiter>>,
+    /// Optional per-domain concurrency limiter
+    pub per_domain_limiter: Option<Arc<PerDomainLimiter>>,
     /// Completed URL counter
     pub completed_urls: Arc<AtomicUsize>,
     /// Failed URL counter

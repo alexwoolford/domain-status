@@ -5,10 +5,12 @@
 
 mod csv;
 mod jsonl;
+mod parquet;
 mod queries;
 mod row;
 mod types;
 
 pub use csv::export_csv;
 pub use jsonl::export_jsonl;
+pub use parquet::export_parquet;
 pub use types::{ExportFormat, ExportOptions};

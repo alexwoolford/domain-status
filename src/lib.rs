@@ -47,6 +47,7 @@ mod geoip;
 pub mod initialization;
 mod models;
 mod parse;
+mod per_domain_limiter;
 mod run;
 mod security;
 mod status_server;

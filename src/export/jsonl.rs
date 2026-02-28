@@ -13,8 +13,8 @@ use crate::storage::init_db_pool_with_path;
 
 use super::queries::{build_where_clause, IgnoreBrokenPipe};
 use super::row::{
-    build_export_row, build_url, extract_main_row_data, parse_headers, parse_key_value_pairs,
-    parse_string_list, parse_technologies,
+    build_export_row, build_url, extract_main_row_data, parse_key_value_pairs, parse_string_list,
+    parse_technologies,
 };
 
 /// Exports data to JSONL format (JSON Lines).
@@ -124,27 +124,24 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             })
             .collect();
 
-        // Parse social media links into JSON array
-        let social_media_links: Vec<Value> =
-            parse_key_value_pairs(&export_row.social_media_links_str)
-                .into_iter()
-                .map(|(platform, url)| {
-                    json!({
-                        "platform": platform,
-                        "url": url
-                    })
+        // Build social media links with identifiers
+        let social_media_links: Vec<Value> = export_row
+            .social_media_links
+            .iter()
+            .map(|link| {
+                json!({
+                    "platform": link.platform,
+                    "url": link.profile_url,
+                    "identifier": link.identifier,
                 })
-                .collect();
+            })
+            .collect();
 
         // Parse security warnings
         let security_warnings = parse_string_list(&export_row.security_warnings_str);
 
         // Parse structured data types
         let structured_data_types = parse_string_list(&export_row.structured_data_types_str);
-
-        // Parse headers
-        let http_headers = parse_headers(&export_row.http_headers_str);
-        let security_headers = parse_headers(&export_row.security_headers_str);
 
         // Build GeoIP JSON (or null if no data)
         let geoip = if export_row.geoip.country_code.is_some()
@@ -213,8 +210,11 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             },
             "dns": {
                 "nameserver_count": export_row.nameserver_count,
+                "nameservers": export_row.nameservers.iter().map(|ns| &ns.nameserver).collect::<Vec<_>>(),
                 "txt_record_count": export_row.txt_count,
+                "txt_records": export_row.txt_records.iter().map(|r| json!({"record_type": r.record_type, "content": r.record_value})).collect::<Vec<_>>(),
                 "mx_record_count": export_row.mx_count,
+                "mx_records": export_row.mx_records.iter().map(|r| json!({"priority": r.priority, "mail_exchange": r.mail_exchange})).collect::<Vec<_>>(),
             },
             "spf_record": export_row.main.spf_record,
             "dmarc_record": export_row.main.dmarc_record,
@@ -227,11 +227,13 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "structured_data": {
                 "types": structured_data_types,
                 "count": export_row.structured_data_count,
+                "entries": export_row.structured_data_entries.iter().map(|e| json!({"data_type": e.data_type, "property_name": e.property_name, "property_value": e.property_value})).collect::<Vec<_>>(),
             },
-            "http_headers": http_headers,
+            "http_headers": export_row.all_http_headers.iter().map(|h| json!({"name": h.name, "value": h.value})).collect::<Vec<_>>(),
             "http_header_count": export_row.http_header_count,
-            "security_headers": security_headers,
+            "security_headers": export_row.all_security_headers.iter().map(|h| json!({"name": h.name, "value": h.value})).collect::<Vec<_>>(),
             "security_header_count": export_row.security_header_count,
+            "partial_failures": export_row.partial_failures.iter().map(|f| json!({"error_type": f.error_type, "error_message": f.error_message})).collect::<Vec<_>>(),
             "geoip": geoip,
             "whois": whois,
             "favicon": {
@@ -1088,5 +1090,371 @@ mod tests {
             .expect("Should be array");
         // Should handle colon in name correctly (may be split incorrectly, but shouldn't panic)
         assert!(!technologies.is_empty());
+    }
+
+    async fn insert_dns_data(pool: &SqlitePool, url_id: i64) {
+        for ns in &["ns1.example.com", "ns2.example.com"] {
+            sqlx::query("INSERT INTO url_nameservers (url_status_id, nameserver) VALUES (?, ?)")
+                .bind(url_id)
+                .bind(ns)
+                .execute(pool)
+                .await
+                .expect("insert nameserver");
+        }
+        for (rtype, val) in &[
+            ("SPF", "v=spf1 include:_spf.google.com ~all"),
+            ("DMARC", "v=DMARC1; p=reject; rua=mailto:dmarc@example.com"),
+        ] {
+            sqlx::query("INSERT INTO url_txt_records (url_status_id, record_type, record_value) VALUES (?, ?, ?)")
+                .bind(url_id).bind(rtype).bind(val)
+                .execute(pool).await.expect("insert txt");
+        }
+        for (pri, mx) in &[(10, "mail.example.com"), (20, "mail2.example.com")] {
+            sqlx::query("INSERT INTO url_mx_records (url_status_id, priority, mail_exchange) VALUES (?, ?, ?)")
+                .bind(url_id).bind(pri).bind(mx)
+                .execute(pool).await.expect("insert mx");
+        }
+    }
+
+    async fn insert_social_and_structured_data(pool: &SqlitePool, url_id: i64) {
+        for (dtype, prop, val) in &[
+            ("open_graph", "og:title", "Example Page"),
+            ("json_ld", "@type", "Organization"),
+        ] {
+            sqlx::query("INSERT INTO url_structured_data (url_status_id, data_type, property_name, property_value) VALUES (?, ?, ?, ?)")
+                .bind(url_id).bind(dtype).bind(prop).bind(val)
+                .execute(pool).await.expect("insert structured data");
+        }
+        sqlx::query("INSERT INTO url_social_media_links (url_status_id, platform, profile_url, identifier) VALUES (?, ?, ?, ?)")
+            .bind(url_id).bind("LinkedIn").bind("https://linkedin.com/company/example").bind("example")
+            .execute(pool).await.expect("insert social");
+        sqlx::query("INSERT INTO url_social_media_links (url_status_id, platform, profile_url, identifier) VALUES (?, ?, ?, ?)")
+            .bind(url_id).bind("Twitter").bind("https://twitter.com/example").bind::<Option<&str>>(None)
+            .execute(pool).await.expect("insert social");
+    }
+
+    async fn insert_headers_and_failures(pool: &SqlitePool, url_id: i64) {
+        sqlx::query("INSERT INTO url_partial_failures (url_status_id, error_type, error_message, observed_at_ms, run_id) VALUES (?, ?, ?, ?, ?)")
+            .bind(url_id).bind("DNS NS lookup error").bind("Timeout resolving NS records for example.com")
+            .bind(1704067200000i64).bind("test-run-1")
+            .execute(pool).await.expect("insert partial failure");
+        for (name, value) in &[
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Server", "nginx/1.24"),
+            ("X-Custom-Header", "custom-value"),
+        ] {
+            sqlx::query("INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
+                .bind(url_id).bind(name).bind(value)
+                .execute(pool).await.expect("insert http header");
+        }
+        sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
+            .bind(url_id).bind("Strict-Transport-Security").bind("max-age=31536000; includeSubDomains")
+            .execute(pool).await.expect("insert security header");
+    }
+
+    /// Helper to set up a fully-populated test database with all satellite data.
+    async fn create_fully_populated_db() -> (NamedTempFile, i64) {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let pool = SqlitePool::connect(&format!("sqlite:{}", temp_db.path().display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let url_id = create_test_url_status(&pool, "example.com", 200).await;
+        insert_dns_data(&pool, url_id).await;
+        insert_social_and_structured_data(&pool, url_id).await;
+        insert_headers_and_failures(&pool, url_id).await;
+
+        drop(pool);
+        (temp_db, url_id)
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_dns_records_populated() {
+        let (temp_db, _url_id) = create_fully_populated_db().await;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(&ExportOptions {
+            db_path: temp_db.path().to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
+
+        assert_eq!(count, 1);
+
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+
+        // Verify nameservers are actual strings, not just a count
+        let dns = &json_obj["dns"];
+        let nameservers = dns["nameservers"]
+            .as_array()
+            .expect("nameservers should be array");
+        assert_eq!(nameservers.len(), 2, "Should have 2 nameservers");
+        assert!(
+            nameservers.contains(&serde_json::json!("ns1.example.com")),
+            "Should contain ns1"
+        );
+        assert!(
+            nameservers.contains(&serde_json::json!("ns2.example.com")),
+            "Should contain ns2"
+        );
+
+        // Verify TXT records have type and content
+        let txt_records = dns["txt_records"]
+            .as_array()
+            .expect("txt_records should be array");
+        assert_eq!(txt_records.len(), 2, "Should have 2 TXT records");
+        let spf_record = txt_records
+            .iter()
+            .find(|r| r["record_type"] == "SPF")
+            .expect("Should have SPF record");
+        assert!(
+            spf_record["content"].as_str().unwrap().contains("v=spf1"),
+            "SPF content should contain v=spf1"
+        );
+
+        // Verify MX records have priority and mail_exchange
+        let mx_records = dns["mx_records"]
+            .as_array()
+            .expect("mx_records should be array");
+        assert_eq!(mx_records.len(), 2, "Should have 2 MX records");
+        assert_eq!(mx_records[0]["priority"], 10);
+        assert_eq!(mx_records[0]["mail_exchange"], "mail.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_social_media_identifiers() {
+        let (temp_db, _url_id) = create_fully_populated_db().await;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        export_jsonl(&ExportOptions {
+            db_path: temp_db.path().to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
+
+        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+
+        let social = json_obj["social_media_links"]
+            .as_array()
+            .expect("social_media_links should be array");
+        assert_eq!(social.len(), 2);
+
+        let linkedin = social
+            .iter()
+            .find(|s| s["platform"] == "LinkedIn")
+            .expect("Should have LinkedIn");
+        assert_eq!(
+            linkedin["identifier"], "example",
+            "LinkedIn should have identifier"
+        );
+        assert_eq!(linkedin["url"], "https://linkedin.com/company/example");
+
+        let twitter = social
+            .iter()
+            .find(|s| s["platform"] == "Twitter")
+            .expect("Should have Twitter");
+        assert!(
+            twitter["identifier"].is_null(),
+            "Twitter identifier should be null"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_partial_failures() {
+        let (temp_db, _url_id) = create_fully_populated_db().await;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        export_jsonl(&ExportOptions {
+            db_path: temp_db.path().to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
+
+        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+
+        let failures = json_obj["partial_failures"]
+            .as_array()
+            .expect("partial_failures should be array");
+        assert_eq!(failures.len(), 1, "Should have 1 partial failure");
+        assert_eq!(failures[0]["error_type"], "DNS NS lookup error");
+        assert!(
+            failures[0]["error_message"]
+                .as_str()
+                .unwrap()
+                .contains("Timeout"),
+            "Error message should contain 'Timeout'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_structured_data_entries() {
+        let (temp_db, _url_id) = create_fully_populated_db().await;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        export_jsonl(&ExportOptions {
+            db_path: temp_db.path().to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
+
+        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+
+        let entries = json_obj["structured_data"]["entries"]
+            .as_array()
+            .expect("structured_data.entries should be array");
+        assert_eq!(entries.len(), 2, "Should have 2 structured data entries");
+
+        let og_entry = entries
+            .iter()
+            .find(|e| e["data_type"] == "open_graph")
+            .expect("Should have open_graph entry");
+        assert_eq!(og_entry["property_name"], "og:title");
+        assert_eq!(og_entry["property_value"], "Example Page");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_unfiltered_headers() {
+        let (temp_db, _url_id) = create_fully_populated_db().await;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        export_jsonl(&ExportOptions {
+            db_path: temp_db.path().to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
+
+        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+
+        // http_headers should include ALL headers, including X-Custom-Header
+        let headers = json_obj["http_headers"]
+            .as_array()
+            .expect("http_headers should be array");
+        assert_eq!(
+            headers.len(),
+            3,
+            "Should have all 3 HTTP headers (not filtered)"
+        );
+
+        let custom = headers
+            .iter()
+            .find(|h| h["name"] == "X-Custom-Header")
+            .expect("Should include X-Custom-Header (previously filtered out)");
+        assert_eq!(custom["value"], "custom-value");
+
+        // Security headers
+        let sec_headers = json_obj["security_headers"]
+            .as_array()
+            .expect("security_headers should be array");
+        assert_eq!(sec_headers.len(), 1);
+        assert_eq!(sec_headers[0]["name"], "Strict-Transport-Security");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_empty_satellite_tables() {
+        // Verify that when no satellite data exists, arrays are empty (not errors)
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        // Create URL with no satellite data at all
+        let _url_id = create_test_url_status(&pool, "bare.example.com", 200).await;
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully even with empty satellites");
+
+        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output");
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+
+        // All arrays should be empty, not missing
+        assert_eq!(json_obj["dns"]["nameservers"].as_array().unwrap().len(), 0);
+        assert_eq!(json_obj["dns"]["txt_records"].as_array().unwrap().len(), 0);
+        assert_eq!(json_obj["dns"]["mx_records"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            json_obj["structured_data"]["entries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(json_obj["partial_failures"].as_array().unwrap().len(), 0);
+        assert_eq!(json_obj["http_headers"].as_array().unwrap().len(), 0);
+        assert_eq!(json_obj["security_headers"].as_array().unwrap().len(), 0);
     }
 }
