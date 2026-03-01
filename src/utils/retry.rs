@@ -31,6 +31,9 @@ use anyhow::Error;
 /// fragile string matching. Checks for specific error types (reqwest::Error, url::ParseError,
 /// sqlx::Error) via downcasting, which is more reliable than string matching.
 ///
+/// **Default behavior:** Unrecognized errors are NOT retried (fail-fast). Only
+/// explicitly-identified transient errors trigger retries.
+///
 /// # Examples
 ///
 /// ```rust,ignore
@@ -111,8 +114,10 @@ pub(crate) fn is_retriable_error(error: &Error) -> bool {
         }
     }
 
-    // Default: retry unknown errors (might be transient network issue)
-    true
+    // Default: do NOT retry unknown errors. If we can't identify the error type,
+    // it's safer to fail fast than to silently retry 3 times with backoff.
+    // All known-retriable cases (timeouts, DNS, 5xx, 429) are handled above.
+    false
 }
 
 #[cfg(test)]
@@ -120,11 +125,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_retriable_error_timeout() {
-        // Test timeout error via string matching (since creating actual reqwest::Error is complex)
+    fn test_is_retriable_error_timeout_string_only() {
+        // A string-only "timeout" error without a real reqwest::Error type
+        // is unrecognized and should NOT be retried (fail-fast for unknowns)
         let err = anyhow::anyhow!("Request timeout");
-        // Default is true for unknown errors (might be transient network issue)
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
@@ -182,74 +187,65 @@ mod tests {
 
     #[test]
     fn test_is_retriable_error_unknown() {
-        // Unknown error should default to retriable
+        // Unknown errors should NOT be retried — fail fast for unrecognized errors
         let err = anyhow::anyhow!("Some unknown error");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
     fn test_is_retriable_error_empty() {
-        // Empty error message should default to retriable
+        // Empty error message should NOT be retried
         let err = anyhow::anyhow!("");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
-    fn test_is_retriable_error_500() {
+    fn test_is_retriable_error_5xx_string_only() {
+        // Plain strings like "500 internal server error" are NOT matched by status code logic.
+        // Real 5xx errors come from reqwest with proper status codes (tested in async tests below).
         let err = anyhow::anyhow!("500 internal server error");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
-    fn test_is_retriable_error_502() {
-        let err = anyhow::anyhow!("502 bad gateway");
-        assert!(is_retriable_error(&err));
-    }
-
-    #[test]
-    fn test_is_retriable_error_503() {
-        let err = anyhow::anyhow!("503 service unavailable");
-        assert!(is_retriable_error(&err));
-    }
-
-    #[test]
-    fn test_is_retriable_error_429() {
+    fn test_is_retriable_error_429_string_only() {
+        // Same: plain "429" string doesn't trigger reqwest downcast.
+        // Real 429 errors are tested via httptest mock server below.
         let err = anyhow::anyhow!("429 too many requests");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
     fn test_is_retriable_error_400() {
-        // Test with "400" in message (should not be retriable)
+        // "400 bad request" as a plain string (not a real reqwest::Error with status code)
+        // doesn't match any known pattern, so it's treated as unknown → not retried.
+        // Real 400 errors come from reqwest with status codes and are caught on line 62.
         let err = anyhow::anyhow!("400 bad request");
-        // The function checks for "404" and "403" and "401" in messages, but not "400"
-        // So it defaults to retriable. We test the actual behavior.
-        // For true 400 errors, they would come from reqwest with status code, which is tested elsewhere
-        let result = is_retriable_error(&err);
-        // Default behavior for unknown errors is retriable
-        // This is acceptable - the important thing is 404/403/401 are handled
-        assert!(result);
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
     fn test_is_retriable_error_redirect() {
-        // Redirect errors are typically not retriable (handled separately)
+        // Plain string "Redirect error" is unrecognized → not retried.
+        // Real redirect errors come from reqwest and are caught via is_redirect().
         let err = anyhow::anyhow!("Redirect error");
-        // Default is true, but redirect-specific handling would make this false
-        // This tests the current behavior
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
-    fn test_is_retriable_error_connection_failure() {
+    fn test_is_retriable_error_connection_failure_string() {
+        // Plain string "Connection failed" is unrecognized → not retried.
+        // Real connection errors come from reqwest and are caught via is_connect().
         let err = anyhow::anyhow!("Connection failed");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
-    fn test_is_retriable_error_timeout_message() {
+    fn test_is_retriable_error_timeout_message_string() {
+        // Plain string "Request timed out" is unrecognized → not retried.
+        // Real timeouts come from reqwest and are caught via is_timeout().
         let err = anyhow::anyhow!("Request timed out");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     // Note: Error chain tests removed because anyhow's error wrapping makes downcast
@@ -301,14 +297,14 @@ mod tests {
 
     #[test]
     fn test_is_retriable_error_partial_message_match() {
-        // Test that partial message matches work correctly
+        // String patterns: "404"/"not found" → non-retriable; "dns" → retriable; others → not retried
         let err1 = anyhow::anyhow!("Error: 404 page not found");
         let err2 = anyhow::anyhow!("HTTP 500 internal server error occurred");
         let err3 = anyhow::anyhow!("DNS resolution failed for domain");
 
-        assert!(!is_retriable_error(&err1));
-        assert!(is_retriable_error(&err2));
-        assert!(is_retriable_error(&err3));
+        assert!(!is_retriable_error(&err1)); // matches "404" + "not found"
+        assert!(!is_retriable_error(&err2)); // "500" string doesn't trigger reqwest downcast → unknown → false
+        assert!(is_retriable_error(&err3)); // matches "dns"
     }
 
     #[test]
@@ -490,11 +486,9 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retriable_error_unknown_defaults_to_retriable() {
-        // Test that unknown errors default to retriable
-        // This is critical - conservative approach: retry unknown errors (might be transient)
-        // The code at line 115 defaults to true
+    fn test_is_retriable_error_unknown_defaults_to_not_retriable() {
+        // Unknown errors default to NOT retriable — fail fast rather than silently retry.
         let unknown_error = anyhow::anyhow!("Some completely unknown error type");
-        assert!(is_retriable_error(&unknown_error));
+        assert!(!is_retriable_error(&unknown_error));
     }
 }
