@@ -40,7 +40,7 @@ pub(crate) fn compute_shodan_favicon_hash(raw_bytes: &[u8]) -> i32 {
     formatted.push('\n');
 
     // MurmurHash3 32-bit with seed 0, cast to i32 for Shodan compatibility
-    let hash = murmurhash3::murmurhash3_x86_32(formatted.as_bytes(), 0);
+    let hash = murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0);
 
     // Reinterpret the u32 bits as i32 (Shodan stores as signed integer)
     hash as i32
