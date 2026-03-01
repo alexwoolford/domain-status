@@ -5,14 +5,13 @@
 //! loopback, or link-local addresses are rejected *before* reqwest opens a TCP
 //! socket, closing the TOCTOU / DNS-rebinding gap.
 
-use once_cell::sync::Lazy;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Semaphore;
 
 /// Concurrency limiter for DNS lookups (prevent resource exhaustion)
-static DNS_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(64)));
+static DNS_SEMAPHORE: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(64)));
 
 /// A DNS resolver that rejects private/loopback/link-local IPs.
 ///

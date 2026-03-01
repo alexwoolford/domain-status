@@ -6,8 +6,8 @@
 //! - Meta tag pattern matching with prefix support
 
 use moka::sync::Cache;
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Maximum number of compiled regex patterns to cache.
 ///
@@ -28,8 +28,8 @@ const MAX_REGEX_CACHE_SIZE: u64 = 10_000;
 ///
 /// Uses moka's lock-free concurrent cache for high-throughput concurrent access,
 /// avoiding the mutex contention that would occur with `std::sync::Mutex<LruCache>`.
-static REGEX_CACHE: Lazy<Cache<String, regex::Regex>> =
-    Lazy::new(|| Cache::new(MAX_REGEX_CACHE_SIZE));
+static REGEX_CACHE: LazyLock<Cache<String, regex::Regex>> =
+    LazyLock::new(|| Cache::new(MAX_REGEX_CACHE_SIZE));
 
 /// Result of meta pattern matching with optional version
 #[derive(Debug, Clone)]
