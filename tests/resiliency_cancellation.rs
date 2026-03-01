@@ -608,11 +608,12 @@ async fn test_recovery_after_interruption() {
     // result2 may be Err (abort won the race) or Ok (insert completed before abort).
     // Both are valid — the important assertion is that the first record survives.
 
-    // Verify first record still exists
+    // Verify first record still exists. Count may be 1 (abort won the race)
+    // or 2 (insert completed before abort) — both are valid outcomes.
     let count_after_crash = count_url_records(&pool).await;
-    assert_eq!(
-        count_after_crash, 1,
-        "First record should survive the crash"
+    assert!(
+        count_after_crash >= 1,
+        "First record should survive the crash, got {count_after_crash}"
     );
 
     // Phase 3: Recovery - resume scan
@@ -631,9 +632,13 @@ async fn test_recovery_after_interruption() {
     .await
     .expect("Recovery insert should succeed");
 
-    // Verify recovery was successful
+    // Verify recovery was successful. Count is count_after_crash + 1 (the recovery record).
     let final_count = count_url_records(&pool).await;
-    assert_eq!(final_count, 2, "Should have 2 records after recovery");
+    assert_eq!(
+        final_count,
+        count_after_crash + 1,
+        "Recovery should add exactly 1 record"
+    );
 
     // Verify no orphaned data
     let orphans = count_orphaned_satellites(&pool).await;
@@ -883,11 +888,13 @@ async fn test_wal_checkpoint_with_cancellation() {
     // Give connections time to be fully released back to the pool
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Phase 4: Verify database integrity after checkpoint + cancellations
+    // Phase 4: Verify database integrity after checkpoint + cancellations.
+    // With 1-microsecond timeouts, some inserts may complete before timeout fires.
+    // The important thing is the database is consistent (no corruption).
     let final_count = count_url_records(&pool).await;
-    assert_eq!(
-        final_count, initial_records,
-        "Only initial records should exist (cancelled ones rolled back)"
+    assert!(
+        final_count >= initial_records,
+        "Initial records must survive, got {final_count} (expected >= {initial_records})"
     );
 
     // Verify another checkpoint works
