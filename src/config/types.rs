@@ -34,12 +34,6 @@ pub enum FailOn {
     /// failures indicate a problem.
     #[value(name = "pct>")]
     PctGreaterThan,
-
-    /// Exit with error only on critical errors (timeouts, DNS failures, etc.)
-    ///
-    /// Warnings and non-critical failures (like 404s) don't trigger exit codes.
-    /// This is a future enhancement - currently behaves like `AnyFailure`.
-    ErrorsOnly,
 }
 
 /// Logging level for the application.
@@ -427,8 +421,7 @@ mod tests {
         // Test that all FailOn variants are distinct
         assert_ne!(FailOn::Never, FailOn::AnyFailure);
         assert_ne!(FailOn::AnyFailure, FailOn::PctGreaterThan);
-        assert_ne!(FailOn::PctGreaterThan, FailOn::ErrorsOnly);
-        assert_ne!(FailOn::ErrorsOnly, FailOn::Never);
+        assert_ne!(FailOn::PctGreaterThan, FailOn::Never);
     }
 
     // Config validation tests

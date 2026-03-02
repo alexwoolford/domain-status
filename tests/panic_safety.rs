@@ -18,12 +18,7 @@ fn test_config_default_values_are_valid() {
 fn test_config_fail_on_enum_variants_all_valid() {
     use domain_status::FailOn;
 
-    for variant in [
-        FailOn::Never,
-        FailOn::AnyFailure,
-        FailOn::PctGreaterThan,
-        FailOn::ErrorsOnly,
-    ] {
+    for variant in [FailOn::Never, FailOn::AnyFailure, FailOn::PctGreaterThan] {
         let mut config = Config::default();
         config.fail_on = variant.clone();
         assert!(

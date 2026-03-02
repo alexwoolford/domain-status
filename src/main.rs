@@ -159,7 +159,6 @@ struct ScanCommand {
     /// - `never`: Always return 0 (useful for monitoring/logging)
     /// - `any-failure`: Exit with code 2 if any URL failed (strict CI mode)
     /// - `pct>X`: Exit with code 2 if failure percentage exceeds X (e.g., `pct>10`)
-    /// - `errors-only`: Exit only on critical errors (future enhancement)
     ///
     /// Default: `never` (backward compatible)
     ///
@@ -508,15 +507,6 @@ pub fn evaluate_exit_code(
                 0
             }
         }
-        FailOn::ErrorsOnly => {
-            // Future enhancement: distinguish between critical errors and warnings
-            // For now, behave like AnyFailure
-            if report.failed > 0 {
-                2
-            } else {
-                0
-            }
-        }
     }
 }
 
@@ -648,42 +638,6 @@ mod tests {
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
             2,
             "PctGreaterThan policy should return 2 when failure rate exceeds threshold"
-        );
-    }
-
-    #[test]
-    fn test_evaluate_exit_code_errors_only_with_failures() {
-        let report = ScanReport {
-            total_urls: 10,
-            successful: 5,
-            failed: 5,
-            elapsed_seconds: 1.0,
-            db_path: std::path::PathBuf::from("test.db"),
-            run_id: "test-run-1".to_string(),
-        };
-
-        assert_eq!(
-            evaluate_exit_code(&FailOn::ErrorsOnly, 10, &report),
-            2,
-            "ErrorsOnly policy should return 2 when failures exist"
-        );
-    }
-
-    #[test]
-    fn test_evaluate_exit_code_errors_only_without_failures() {
-        let report = ScanReport {
-            total_urls: 10,
-            successful: 10,
-            failed: 0,
-            elapsed_seconds: 1.0,
-            db_path: std::path::PathBuf::from("test.db"),
-            run_id: "test-run-1".to_string(),
-        };
-
-        assert_eq!(
-            evaluate_exit_code(&FailOn::ErrorsOnly, 10, &report),
-            0,
-            "ErrorsOnly policy should return 0 when no failures"
         );
     }
 

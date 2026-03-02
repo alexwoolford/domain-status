@@ -87,17 +87,17 @@ domain_status_timing_security_analysis_ms {}
 # TYPE domain_status_timing_total_ms gauge
 domain_status_timing_total_ms {}
 "#,
-                micros_to_ms(avg.http_request_ms),
-                micros_to_ms(avg.dns_forward_ms),
-                micros_to_ms(avg.dns_reverse_ms),
-                micros_to_ms(avg.dns_additional_ms),
-                micros_to_ms(avg.tls_handshake_ms),
-                micros_to_ms(avg.html_parsing_ms),
-                micros_to_ms(avg.tech_detection_ms),
-                micros_to_ms(avg.geoip_lookup_ms),
-                micros_to_ms(avg.whois_lookup_ms),
-                micros_to_ms(avg.security_analysis_ms),
-                micros_to_ms(avg.total_ms),
+                micros_to_ms(avg.http_request_us),
+                micros_to_ms(avg.dns_forward_us),
+                micros_to_ms(avg.dns_reverse_us),
+                micros_to_ms(avg.dns_additional_us),
+                micros_to_ms(avg.tls_handshake_us),
+                micros_to_ms(avg.html_parsing_us),
+                micros_to_ms(avg.tech_detection_us),
+                micros_to_ms(avg.geoip_lookup_us),
+                micros_to_ms(avg.whois_lookup_us),
+                micros_to_ms(avg.security_analysis_us),
+                micros_to_ms(avg.total_us),
             )
         } else {
             String::new()

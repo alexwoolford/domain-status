@@ -36,15 +36,6 @@ fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanReport) 
                 0
             }
         }
-        FailOn::ErrorsOnly => {
-            // Future enhancement: distinguish between critical errors and warnings
-            // For now, behave like AnyFailure
-            if report.failed > 0 {
-                2
-            } else {
-                0
-            }
-        }
     }
 }
 
@@ -181,37 +172,5 @@ fn test_fail_on_pct_threshold_zero_urls() {
     assert_eq!(
         exit_code, 3,
         "Should return 3 (partial success) when no URLs processed"
-    );
-}
-
-#[test]
-fn test_fail_on_errors_only() {
-    use domain_status::ScanReport;
-
-    // Currently ErrorsOnly behaves like AnyFailure
-    let report = ScanReport {
-        total_urls: 10,
-        successful: 5,
-        failed: 5,
-        db_path: PathBuf::from("./test.db"),
-        run_id: "test_run".to_string(),
-        elapsed_seconds: 1.0,
-    };
-
-    let exit_code = match &FailOn::ErrorsOnly {
-        FailOn::Never => 0,
-        FailOn::AnyFailure | FailOn::ErrorsOnly => {
-            // Currently ErrorsOnly behaves like AnyFailure
-            if report.failed > 0 {
-                2
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
-    assert_eq!(
-        exit_code, 2,
-        "FailOn::ErrorsOnly should behave like AnyFailure for now"
     );
 }

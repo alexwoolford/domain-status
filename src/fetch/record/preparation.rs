@@ -40,7 +40,7 @@ pub struct RecordPreparationParams<'a> {
 ///
 /// Orchestrates enrichment lookups and batch record building.
 /// Technology detection is now done in parallel with DNS/TLS fetching.
-/// Returns the batch record and timing metrics: (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)
+/// Returns the batch record and timing metrics in microseconds: (geoip_lookup_us, whois_lookup_us, security_analysis_us)
 ///
 /// This function takes **ownership** of the response, HTML, and TLS/DNS data
 /// to enable moving large collections (HashMaps, Vecs) into the final BatchRecord
@@ -55,7 +55,7 @@ pub struct RecordPreparationParams<'a> {
 pub async fn prepare_record_for_insertion(
     params: RecordPreparationParams<'_>,
 ) -> (BatchRecord, (u64, u64, u64)) {
-    use crate::utils::duration_to_ms;
+    use crate::utils::duration_to_us;
     use std::time::Instant;
 
     // Build URL record (borrows data, clones ~15 small strings - unavoidable)
@@ -82,9 +82,9 @@ pub async fn prepare_record_for_insertion(
             let geoip_data =
                 geoip_result.map(|result| (params.tls_dns_data.ip_address.clone(), result));
             let geoip_elapsed = geoip_start.elapsed();
-            let geoip_lookup_ms = duration_to_ms(geoip_elapsed);
+            let geoip_lookup_us = duration_to_us(geoip_elapsed);
             // Debug: Log if GeoIP lookup is suspiciously fast (might indicate measurement issue)
-            if geoip_lookup_ms == 0 && geoip_data.is_some() {
+            if geoip_lookup_us == 0 && geoip_data.is_some() {
                 log::debug!(
                     "GeoIP lookup returned data but timing is 0ms (elapsed: {:?}, micros: {}, nanos: {})",
                     geoip_elapsed,
@@ -92,7 +92,7 @@ pub async fn prepare_record_for_insertion(
                     geoip_elapsed.as_nanos()
                 );
             }
-            (geoip_data, geoip_lookup_ms)
+            (geoip_data, geoip_lookup_us)
         },
         // Security analysis (synchronous, very fast)
         async {
@@ -106,8 +106,8 @@ pub async fn prepare_record_for_insertion(
                 &params.tls_dns_data.valid_to,
                 &params.tls_dns_data.subject_alternative_names,
             );
-            let security_analysis_ms = duration_to_ms(security_start.elapsed());
-            (security_warnings, security_analysis_ms)
+            let security_analysis_us = duration_to_us(security_start.elapsed());
+            (security_warnings, security_analysis_us)
         },
         // WHOIS lookup (async, can be slow)
         async {
@@ -163,17 +163,17 @@ pub async fn prepare_record_for_insertion(
                         None
                     }
                 };
-                let whois_lookup_ms = duration_to_ms(whois_start.elapsed());
-                (result, whois_lookup_ms)
+                let whois_lookup_us = duration_to_us(whois_start.elapsed());
+                (result, whois_lookup_us)
             } else {
                 (None, 0)
             }
         }
     );
 
-    let (geoip_data, geoip_lookup_ms) = geoip_data;
-    let (security_warnings, security_analysis_ms) = security_warnings;
-    let (whois_data, whois_lookup_ms) = whois_data;
+    let (geoip_data, geoip_lookup_us) = geoip_data;
+    let (security_warnings, security_analysis_us) = security_warnings;
+    let (whois_data, whois_lookup_us) = whois_data;
 
     // Build batch record - takes ownership and MOVES large collections instead of cloning
     // This eliminates ~5-10KB of heap allocations per URL (HashMaps, Vecs)
@@ -195,7 +195,7 @@ pub async fn prepare_record_for_insertion(
 
     (
         batch_record,
-        (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms),
+        (geoip_lookup_us, whois_lookup_us, security_analysis_us),
     )
 }
 

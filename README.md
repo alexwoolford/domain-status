@@ -270,7 +270,7 @@ domain_status scan <file> [OPTIONS]
 - `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 35 seconds.
 - `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 15)
 - `--status-port <PORT>`: Start HTTP status server on the specified port (optional, disabled by default)
-- `--fail-on <POLICY>`: Exit code policy for CI integration: `never` (default), `any-failure`, `pct>X`, or `errors-only`. See [Exit Code Control](#exit-code-control) for details.
+- `--fail-on <POLICY>`: Exit code policy for CI integration: `never` (default), `any-failure`, or `pct>X`. See [Exit Code Control](#exit-code-control) for details.
 
 **Advanced Options:**
 - `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
@@ -296,7 +296,6 @@ The `--fail-on` option controls when the scan command exits with a non-zero code
 - `never` (default): Always return exit code 0, even if some URLs failed. Useful for monitoring scenarios where you want to log failures but not trigger alerts.
 - `any-failure`: Exit with code 2 if any URL failed. Strict mode for CI pipelines where any failure should be treated as a build failure.
 - `pct>X`: Exit with code 2 if failure percentage exceeds X (e.g., `pct>10` means exit if more than 10% failed). Use with `--fail-on-pct-threshold` to set the exact percentage. Useful for large scans where some failures are expected.
-- `errors-only`: Exit only on critical errors (timeouts, DNS failures, etc.). Currently behaves like `any-failure` (future enhancement).
 
 **Exit Codes:**
 - `0`: Success (or failures ignored by policy)
@@ -374,6 +373,8 @@ Most configuration is done via CLI arguments. Environment variables are used onl
 - `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
 - `GITHUB_TOKEN`: (Optional) GitHub personal access token for fingerprint ruleset downloads. Increases GitHub API rate limit from 60 to 5000 requests/hour. Only needed if using GitHub-hosted fingerprint rulesets.
 - `RUST_LOG`: (Optional) Advanced logging control. Overrides `--log-level` CLI argument if set. Format: `domain_status=debug,reqwest=info`. See [env_logger documentation](https://docs.rs/env_logger/) for details.
+
+**Sensitive environment variables:** `MAXMIND_LICENSE_KEY` and `GITHUB_TOKEN` are secrets. Never commit them to version control or log their values. Use a `.env` file (already in `.gitignore`) or your shell environment, and use CI secrets for automation.
 
 **Example `.env` file:**
 ```bash
@@ -555,7 +556,7 @@ The database uses a **star schema** design pattern with:
 
 **Key Features:**
 - WAL mode for concurrent reads/writes
-- UPSERT semantics: `UNIQUE (final_domain, observed_at_ms)` ensures idempotency
+- **Idempotency:** `UNIQUE (final_domain, observed_at_ms)` ensures at most one row per final domain per observation time. A new run with the same URL can overwrite that row if it falls in the same millisecond window; runs in the same second can overwrite each other. For repeat scans, include each URL once per run and use run_id to distinguish runs.
 - Comprehensive indexes for fast queries
 - Normalized structure for efficient storage and analytics
 
@@ -652,7 +653,7 @@ for run in runs {
 
 ## 📈 Monitoring
 
-For long-running jobs, you can monitor progress via an optional HTTP status server:
+For long-running jobs, you can monitor progress via an optional HTTP status server. **The status server has no authentication.** Bind only to localhost (e.g. use `127.0.0.1:8080` when scraping); do not expose it to the network or protect it behind auth if you do.
 
 ```bash
 # Start with status server on port 8080

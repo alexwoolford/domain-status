@@ -7,32 +7,32 @@ use std::time::Duration;
 
 /// Timing metrics for a single URL processing operation.
 ///
-/// All timing fields are in microseconds (μs), despite the `_ms` suffix in field names (naming legacy).
-/// Values are converted to milliseconds only when displaying to users.
+/// All timing fields are in microseconds (μs). Values are converted to milliseconds
+/// only when displaying to users or in API responses.
 #[derive(Debug, Clone, Default)]
 pub struct UrlTimingMetrics {
     /// HTTP request time (including redirects) in microseconds
-    pub http_request_ms: u64,
+    pub http_request_us: u64,
     /// DNS forward lookup time (hostname to IP) in microseconds
-    pub dns_forward_ms: u64,
+    pub dns_forward_us: u64,
     /// DNS reverse lookup time (IP to hostname) in microseconds
-    pub dns_reverse_ms: u64,
+    pub dns_reverse_us: u64,
     /// DNS additional records time (NS, TXT, MX lookups) in microseconds
-    pub dns_additional_ms: u64,
+    pub dns_additional_us: u64,
     /// TLS handshake time in microseconds
-    pub tls_handshake_ms: u64,
+    pub tls_handshake_us: u64,
     /// HTML parsing time in microseconds
-    pub html_parsing_ms: u64,
+    pub html_parsing_us: u64,
     /// Technology detection time in microseconds
-    pub tech_detection_ms: u64,
+    pub tech_detection_us: u64,
     /// GeoIP lookup time in microseconds
-    pub geoip_lookup_ms: u64,
+    pub geoip_lookup_us: u64,
     /// WHOIS lookup time in microseconds
-    pub whois_lookup_ms: u64,
+    pub whois_lookup_us: u64,
     /// Security analysis time in microseconds
-    pub security_analysis_ms: u64,
+    pub security_analysis_us: u64,
     /// Total processing time (from start to finish) in microseconds
-    pub total_ms: u64,
+    pub total_us: u64,
 }
 
 /// Aggregated timing statistics across all processed URLs.
@@ -46,27 +46,27 @@ pub struct TimingStats {
     /// Total number of URLs processed
     pub count: AtomicU64,
     /// Sum of HTTP request times in microseconds (for average calculation)
-    pub http_request_sum_ms: AtomicU64,
+    pub http_request_sum_us: AtomicU64,
     /// Sum of DNS forward lookup times in microseconds
-    pub dns_forward_sum_ms: AtomicU64,
+    pub dns_forward_sum_us: AtomicU64,
     /// Sum of DNS reverse lookup times in microseconds
-    pub dns_reverse_sum_ms: AtomicU64,
+    pub dns_reverse_sum_us: AtomicU64,
     /// Sum of DNS additional records times in microseconds
-    pub dns_additional_sum_ms: AtomicU64,
+    pub dns_additional_sum_us: AtomicU64,
     /// Sum of TLS handshake times in microseconds
-    pub tls_handshake_sum_ms: AtomicU64,
+    pub tls_handshake_sum_us: AtomicU64,
     /// Sum of HTML parsing times in microseconds
-    pub html_parsing_sum_ms: AtomicU64,
+    pub html_parsing_sum_us: AtomicU64,
     /// Sum of technology detection times in microseconds
-    pub tech_detection_sum_ms: AtomicU64,
+    pub tech_detection_sum_us: AtomicU64,
     /// Sum of GeoIP lookup times in microseconds
-    pub geoip_lookup_sum_ms: AtomicU64,
+    pub geoip_lookup_sum_us: AtomicU64,
     /// Sum of WHOIS lookup times in microseconds
-    pub whois_lookup_sum_ms: AtomicU64,
+    pub whois_lookup_sum_us: AtomicU64,
     /// Sum of security analysis times in microseconds
-    pub security_analysis_sum_ms: AtomicU64,
+    pub security_analysis_sum_us: AtomicU64,
     /// Sum of total processing times in microseconds
-    pub total_sum_ms: AtomicU64,
+    pub total_sum_us: AtomicU64,
 }
 
 impl TimingStats {
@@ -77,28 +77,28 @@ impl TimingStats {
     /// Records timing metrics for a single URL.
     pub fn record(&self, metrics: &UrlTimingMetrics) {
         self.count.fetch_add(1, Ordering::Relaxed);
-        self.http_request_sum_ms
-            .fetch_add(metrics.http_request_ms, Ordering::Relaxed);
-        self.dns_forward_sum_ms
-            .fetch_add(metrics.dns_forward_ms, Ordering::Relaxed);
-        self.dns_reverse_sum_ms
-            .fetch_add(metrics.dns_reverse_ms, Ordering::Relaxed);
-        self.dns_additional_sum_ms
-            .fetch_add(metrics.dns_additional_ms, Ordering::Relaxed);
-        self.tls_handshake_sum_ms
-            .fetch_add(metrics.tls_handshake_ms, Ordering::Relaxed);
-        self.html_parsing_sum_ms
-            .fetch_add(metrics.html_parsing_ms, Ordering::Relaxed);
-        self.tech_detection_sum_ms
-            .fetch_add(metrics.tech_detection_ms, Ordering::Relaxed);
-        self.geoip_lookup_sum_ms
-            .fetch_add(metrics.geoip_lookup_ms, Ordering::Relaxed);
-        self.whois_lookup_sum_ms
-            .fetch_add(metrics.whois_lookup_ms, Ordering::Relaxed);
-        self.security_analysis_sum_ms
-            .fetch_add(metrics.security_analysis_ms, Ordering::Relaxed);
-        self.total_sum_ms
-            .fetch_add(metrics.total_ms, Ordering::Relaxed);
+        self.http_request_sum_us
+            .fetch_add(metrics.http_request_us, Ordering::Relaxed);
+        self.dns_forward_sum_us
+            .fetch_add(metrics.dns_forward_us, Ordering::Relaxed);
+        self.dns_reverse_sum_us
+            .fetch_add(metrics.dns_reverse_us, Ordering::Relaxed);
+        self.dns_additional_sum_us
+            .fetch_add(metrics.dns_additional_us, Ordering::Relaxed);
+        self.tls_handshake_sum_us
+            .fetch_add(metrics.tls_handshake_us, Ordering::Relaxed);
+        self.html_parsing_sum_us
+            .fetch_add(metrics.html_parsing_us, Ordering::Relaxed);
+        self.tech_detection_sum_us
+            .fetch_add(metrics.tech_detection_us, Ordering::Relaxed);
+        self.geoip_lookup_sum_us
+            .fetch_add(metrics.geoip_lookup_us, Ordering::Relaxed);
+        self.whois_lookup_sum_us
+            .fetch_add(metrics.whois_lookup_us, Ordering::Relaxed);
+        self.security_analysis_sum_us
+            .fetch_add(metrics.security_analysis_us, Ordering::Relaxed);
+        self.total_sum_us
+            .fetch_add(metrics.total_us, Ordering::Relaxed);
     }
 
     /// Calculates and returns average times for each operation (in microseconds).
@@ -114,17 +114,17 @@ impl TimingStats {
 
         // Safe to divide by count here because we verified count > 0 above
         UrlTimingMetrics {
-            http_request_ms: self.http_request_sum_ms.load(Ordering::Relaxed) / count,
-            dns_forward_ms: self.dns_forward_sum_ms.load(Ordering::Relaxed) / count,
-            dns_reverse_ms: self.dns_reverse_sum_ms.load(Ordering::Relaxed) / count,
-            dns_additional_ms: self.dns_additional_sum_ms.load(Ordering::Relaxed) / count,
-            tls_handshake_ms: self.tls_handshake_sum_ms.load(Ordering::Relaxed) / count,
-            html_parsing_ms: self.html_parsing_sum_ms.load(Ordering::Relaxed) / count,
-            tech_detection_ms: self.tech_detection_sum_ms.load(Ordering::Relaxed) / count,
-            geoip_lookup_ms: self.geoip_lookup_sum_ms.load(Ordering::Relaxed) / count,
-            whois_lookup_ms: self.whois_lookup_sum_ms.load(Ordering::Relaxed) / count,
-            security_analysis_ms: self.security_analysis_sum_ms.load(Ordering::Relaxed) / count,
-            total_ms: self.total_sum_ms.load(Ordering::Relaxed) / count,
+            http_request_us: self.http_request_sum_us.load(Ordering::Relaxed) / count,
+            dns_forward_us: self.dns_forward_sum_us.load(Ordering::Relaxed) / count,
+            dns_reverse_us: self.dns_reverse_sum_us.load(Ordering::Relaxed) / count,
+            dns_additional_us: self.dns_additional_sum_us.load(Ordering::Relaxed) / count,
+            tls_handshake_us: self.tls_handshake_sum_us.load(Ordering::Relaxed) / count,
+            html_parsing_us: self.html_parsing_sum_us.load(Ordering::Relaxed) / count,
+            tech_detection_us: self.tech_detection_sum_us.load(Ordering::Relaxed) / count,
+            geoip_lookup_us: self.geoip_lookup_sum_us.load(Ordering::Relaxed) / count,
+            whois_lookup_us: self.whois_lookup_sum_us.load(Ordering::Relaxed) / count,
+            security_analysis_us: self.security_analysis_sum_us.load(Ordering::Relaxed) / count,
+            total_us: self.total_sum_us.load(Ordering::Relaxed) / count,
         }
     }
 
@@ -167,21 +167,21 @@ impl TimingStats {
         }
 
         let avg = self.averages(); // Returns values in microseconds
-        let total_sum_micros = self.total_sum_ms.load(Ordering::Relaxed);
+        let total_sum_micros = self.total_sum_us.load(Ordering::Relaxed);
 
-        // Convert to milliseconds for display
-        let avg_ms = UrlTimingMetrics {
-            http_request_ms: Self::micros_to_ms(avg.http_request_ms),
-            dns_forward_ms: Self::micros_to_ms(avg.dns_forward_ms),
-            dns_reverse_ms: Self::micros_to_ms(avg.dns_reverse_ms),
-            dns_additional_ms: Self::micros_to_ms(avg.dns_additional_ms),
-            tls_handshake_ms: Self::micros_to_ms(avg.tls_handshake_ms),
-            html_parsing_ms: Self::micros_to_ms(avg.html_parsing_ms),
-            tech_detection_ms: Self::micros_to_ms(avg.tech_detection_ms),
-            geoip_lookup_ms: Self::micros_to_ms(avg.geoip_lookup_ms),
-            whois_lookup_ms: Self::micros_to_ms(avg.whois_lookup_ms),
-            security_analysis_ms: Self::micros_to_ms(avg.security_analysis_ms),
-            total_ms: Self::micros_to_ms(avg.total_ms),
+        // Convert to milliseconds for display (struct for log output only)
+        let avg_ms = DisplayMs {
+            http_request_ms: Self::micros_to_ms(avg.http_request_us),
+            dns_forward_ms: Self::micros_to_ms(avg.dns_forward_us),
+            dns_reverse_ms: Self::micros_to_ms(avg.dns_reverse_us),
+            dns_additional_ms: Self::micros_to_ms(avg.dns_additional_us),
+            tls_handshake_ms: Self::micros_to_ms(avg.tls_handshake_us),
+            html_parsing_ms: Self::micros_to_ms(avg.html_parsing_us),
+            tech_detection_ms: Self::micros_to_ms(avg.tech_detection_us),
+            geoip_lookup_ms: Self::micros_to_ms(avg.geoip_lookup_us),
+            whois_lookup_ms: Self::micros_to_ms(avg.whois_lookup_us),
+            security_analysis_ms: Self::micros_to_ms(avg.security_analysis_us),
+            total_ms: Self::micros_to_ms(avg.total_us),
         };
         let total_sum_ms = Self::micros_to_ms(total_sum_micros);
 
@@ -208,7 +208,7 @@ impl TimingStats {
         };
 
         // Helper to get sum in microseconds for each metric
-        let http_sum_micros = self.http_request_sum_ms.load(Ordering::Relaxed);
+        let http_sum_micros = self.http_request_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -219,7 +219,7 @@ impl TimingStats {
             )
         );
 
-        let dns_forward_sum_micros = self.dns_forward_sum_ms.load(Ordering::Relaxed);
+        let dns_forward_sum_micros = self.dns_forward_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -230,7 +230,7 @@ impl TimingStats {
             )
         );
 
-        let dns_reverse_sum_micros = self.dns_reverse_sum_ms.load(Ordering::Relaxed);
+        let dns_reverse_sum_micros = self.dns_reverse_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -241,7 +241,7 @@ impl TimingStats {
             )
         );
 
-        let dns_additional_sum_micros = self.dns_additional_sum_ms.load(Ordering::Relaxed);
+        let dns_additional_sum_micros = self.dns_additional_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -252,7 +252,7 @@ impl TimingStats {
             )
         );
 
-        let tls_sum_micros = self.tls_handshake_sum_ms.load(Ordering::Relaxed);
+        let tls_sum_micros = self.tls_handshake_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -263,7 +263,7 @@ impl TimingStats {
             )
         );
 
-        let html_sum_micros = self.html_parsing_sum_ms.load(Ordering::Relaxed);
+        let html_sum_micros = self.html_parsing_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -274,7 +274,7 @@ impl TimingStats {
             )
         );
 
-        let tech_sum_micros = self.tech_detection_sum_ms.load(Ordering::Relaxed);
+        let tech_sum_micros = self.tech_detection_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -285,7 +285,7 @@ impl TimingStats {
             )
         );
         // GeoIP Lookup - show "(disabled)" if GeoIP is not enabled, or show total in microseconds if very fast
-        let geoip_sum_micros = self.geoip_lookup_sum_ms.load(Ordering::Relaxed);
+        let geoip_sum_micros = self.geoip_lookup_sum_us.load(Ordering::Relaxed);
         if let Some(false) = geoip_enabled {
             log::info!(
                 "  GeoIP Lookup:        {:>6} ms ({:.1}%) (disabled)",
@@ -305,7 +305,7 @@ impl TimingStats {
         }
 
         // WHOIS Lookup - show "(disabled)" if WHOIS is not enabled
-        let whois_sum_micros = self.whois_lookup_sum_ms.load(Ordering::Relaxed);
+        let whois_sum_micros = self.whois_lookup_sum_us.load(Ordering::Relaxed);
         if let Some(false) = whois_enabled {
             log::info!(
                 "  WHOIS Lookup:        {:>6} ms ({:.1}%) (disabled)",
@@ -325,7 +325,7 @@ impl TimingStats {
         }
 
         // Security Analysis - always enabled, but very fast (just checking conditions)
-        let security_sum_micros = self.security_analysis_sum_ms.load(Ordering::Relaxed);
+        let security_sum_micros = self.security_analysis_sum_us.load(Ordering::Relaxed);
         log::info!(
             "{}",
             Self::format_timing_with_micros(
@@ -368,15 +368,26 @@ impl TimingStats {
     }
 }
 
+/// Millisecond display values for log output (not stored).
+struct DisplayMs {
+    http_request_ms: u64,
+    dns_forward_ms: u64,
+    dns_reverse_ms: u64,
+    dns_additional_ms: u64,
+    tls_handshake_ms: u64,
+    html_parsing_ms: u64,
+    tech_detection_ms: u64,
+    geoip_lookup_ms: u64,
+    whois_lookup_ms: u64,
+    security_analysis_ms: u64,
+    total_ms: u64,
+}
+
 /// Helper function to convert a Duration to microseconds.
 ///
 /// All timing measurements are stored in microseconds internally for precision,
 /// then converted to milliseconds only when displaying to users.
-pub fn duration_to_ms(duration: Duration) -> u64 {
-    // Return microseconds (despite the function name for API compatibility)
-    // The name is kept as `duration_to_ms` to avoid breaking existing code,
-    // but it actually returns microseconds which are stored internally
-
+pub fn duration_to_us(duration: Duration) -> u64 {
     // SAFETY: Cast u128 to u64 for Duration microseconds conversion
     // - Duration::as_micros() returns u128 to handle very large durations
     // - Practical max: URL processing timeout is ~60s = 60M microseconds
@@ -396,71 +407,71 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn test_duration_to_ms_zero() {
+    fn test_duration_to_us_zero() {
         let duration = Duration::from_micros(0);
-        assert_eq!(duration_to_ms(duration), 0);
+        assert_eq!(duration_to_us(duration), 0);
     }
 
     #[test]
-    fn test_duration_to_ms_microseconds() {
+    fn test_duration_to_us_microseconds() {
         let duration = Duration::from_micros(1234);
-        assert_eq!(duration_to_ms(duration), 1234);
+        assert_eq!(duration_to_us(duration), 1234);
     }
 
     #[test]
-    fn test_duration_to_ms_milliseconds() {
+    fn test_duration_to_us_milliseconds() {
         let duration = Duration::from_millis(5);
-        assert_eq!(duration_to_ms(duration), 5000); // 5ms = 5000μs
+        assert_eq!(duration_to_us(duration), 5000); // 5ms = 5000μs
     }
 
     #[test]
-    fn test_duration_to_ms_seconds() {
+    fn test_duration_to_us_seconds() {
         let duration = Duration::from_secs(1);
-        assert_eq!(duration_to_ms(duration), 1_000_000); // 1s = 1,000,000μs
+        assert_eq!(duration_to_us(duration), 1_000_000); // 1s = 1,000,000μs
     }
 
     #[test]
-    fn test_duration_to_ms_nanoseconds() {
+    fn test_duration_to_us_nanoseconds() {
         let duration = Duration::from_nanos(500);
-        assert_eq!(duration_to_ms(duration), 0); // 500ns < 1μs, rounds to 0
+        assert_eq!(duration_to_us(duration), 0); // 500ns < 1μs, rounds to 0
     }
 
     #[test]
     fn test_timing_stats_new() {
         let stats = TimingStats::new();
         assert_eq!(stats.count.load(Ordering::Relaxed), 0);
-        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.http_request_sum_us.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_timing_stats_record_single() {
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1000,
-            dns_forward_ms: 500,
-            total_ms: 2000,
+            http_request_us: 1000,
+            dns_forward_us: 500,
+            total_us: 2000,
             ..Default::default()
         };
 
         stats.record(&metrics);
 
         assert_eq!(stats.count.load(Ordering::Relaxed), 1);
-        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), 1000);
-        assert_eq!(stats.dns_forward_sum_ms.load(Ordering::Relaxed), 500);
-        assert_eq!(stats.total_sum_ms.load(Ordering::Relaxed), 2000);
+        assert_eq!(stats.http_request_sum_us.load(Ordering::Relaxed), 1000);
+        assert_eq!(stats.dns_forward_sum_us.load(Ordering::Relaxed), 500);
+        assert_eq!(stats.total_sum_us.load(Ordering::Relaxed), 2000);
     }
 
     #[test]
     fn test_timing_stats_record_multiple() {
         let stats = TimingStats::new();
         let metrics1 = UrlTimingMetrics {
-            http_request_ms: 1000,
-            total_ms: 2000,
+            http_request_us: 1000,
+            total_us: 2000,
             ..Default::default()
         };
         let metrics2 = UrlTimingMetrics {
-            http_request_ms: 2000,
-            total_ms: 3000,
+            http_request_us: 2000,
+            total_us: 3000,
             ..Default::default()
         };
 
@@ -468,47 +479,47 @@ mod tests {
         stats.record(&metrics2);
 
         assert_eq!(stats.count.load(Ordering::Relaxed), 2);
-        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), 3000);
-        assert_eq!(stats.total_sum_ms.load(Ordering::Relaxed), 5000);
+        assert_eq!(stats.http_request_sum_us.load(Ordering::Relaxed), 3000);
+        assert_eq!(stats.total_sum_us.load(Ordering::Relaxed), 5000);
     }
 
     #[test]
     fn test_timing_stats_averages_zero_count() {
         let stats = TimingStats::new();
         let avg = stats.averages();
-        assert_eq!(avg.http_request_ms, 0);
-        assert_eq!(avg.total_ms, 0);
+        assert_eq!(avg.http_request_us, 0);
+        assert_eq!(avg.total_us, 0);
     }
 
     #[test]
     fn test_timing_stats_averages_single() {
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1000,
-            dns_forward_ms: 500,
-            total_ms: 2000,
+            http_request_us: 1000,
+            dns_forward_us: 500,
+            total_us: 2000,
             ..Default::default()
         };
 
         stats.record(&metrics);
         let avg = stats.averages();
 
-        assert_eq!(avg.http_request_ms, 1000);
-        assert_eq!(avg.dns_forward_ms, 500);
-        assert_eq!(avg.total_ms, 2000);
+        assert_eq!(avg.http_request_us, 1000);
+        assert_eq!(avg.dns_forward_us, 500);
+        assert_eq!(avg.total_us, 2000);
     }
 
     #[test]
     fn test_timing_stats_averages_multiple() {
         let stats = TimingStats::new();
         let metrics1 = UrlTimingMetrics {
-            http_request_ms: 1000,
-            total_ms: 2000,
+            http_request_us: 1000,
+            total_us: 2000,
             ..Default::default()
         };
         let metrics2 = UrlTimingMetrics {
-            http_request_ms: 3000,
-            total_ms: 4000,
+            http_request_us: 3000,
+            total_us: 4000,
             ..Default::default()
         };
 
@@ -516,21 +527,21 @@ mod tests {
         stats.record(&metrics2);
         let avg = stats.averages();
 
-        assert_eq!(avg.http_request_ms, 2000); // (1000 + 3000) / 2
-        assert_eq!(avg.total_ms, 3000); // (2000 + 4000) / 2
+        assert_eq!(avg.http_request_us, 2000); // (1000 + 3000) / 2
+        assert_eq!(avg.total_us, 3000); // (2000 + 4000) / 2
     }
 
     #[test]
     fn test_timing_stats_averages_rounding() {
         let stats = TimingStats::new();
         let metrics1 = UrlTimingMetrics {
-            http_request_ms: 1,
-            total_ms: 3,
+            http_request_us: 1,
+            total_us: 3,
             ..Default::default()
         };
         let metrics2 = UrlTimingMetrics {
-            http_request_ms: 2,
-            total_ms: 3,
+            http_request_us: 2,
+            total_us: 3,
             ..Default::default()
         };
 
@@ -539,9 +550,9 @@ mod tests {
         let avg = stats.averages();
 
         // (1 + 2) / 2 = 1.5, but integer division = 1
-        assert_eq!(avg.http_request_ms, 1);
+        assert_eq!(avg.http_request_us, 1);
         // (3 + 3) / 2 = 3
-        assert_eq!(avg.total_ms, 3);
+        assert_eq!(avg.total_us, 3);
     }
 
     #[test]
@@ -550,8 +561,8 @@ mod tests {
         let stats = TimingStats::new();
         let avg = stats.averages();
         // When count is 0, averages should return all zeros
-        assert_eq!(avg.total_ms, 0);
-        // Percentage calculation should handle total_ms = 0 (returns 0.0)
+        assert_eq!(avg.total_us, 0);
+        // Percentage calculation should handle total_us = 0 (returns 0.0)
         // This is tested implicitly - if it panicked, the test would fail
     }
 
@@ -560,30 +571,30 @@ mod tests {
         // Test that very large values don't cause overflow
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: u64::MAX,
-            total_ms: u64::MAX,
+            http_request_us: u64::MAX,
+            total_us: u64::MAX,
             ..Default::default()
         };
 
         // Should not panic on overflow
         stats.record(&metrics);
         assert_eq!(stats.count.load(Ordering::Relaxed), 1);
-        assert_eq!(stats.http_request_sum_ms.load(Ordering::Relaxed), u64::MAX);
+        assert_eq!(stats.http_request_sum_us.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[test]
     fn test_timing_stats_http_request_less_than_total() {
-        // Test that http_request_ms is always <= total_ms (critical for percentage accuracy)
+        // Test that http_request_us is always <= total_us (critical for percentage accuracy)
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1000,
-            total_ms: 2000, // Total should be >= http_request
+            http_request_us: 1000,
+            total_us: 2000, // Total should be >= http_request
             ..Default::default()
         };
 
         stats.record(&metrics);
         let avg = stats.averages();
-        assert!(avg.http_request_ms <= avg.total_ms);
+        assert!(avg.http_request_us <= avg.total_us);
     }
 
     #[test]
@@ -591,65 +602,65 @@ mod tests {
         // Test that sum of all components doesn't exceed total (with overhead)
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1000,
-            dns_forward_ms: 500,
-            dns_reverse_ms: 300,
-            dns_additional_ms: 200,
-            tls_handshake_ms: 400,
-            html_parsing_ms: 100,
-            tech_detection_ms: 50,
-            geoip_lookup_ms: 10,
-            whois_lookup_ms: 0,
-            security_analysis_ms: 5,
-            total_ms: 3000, // Total includes overhead
+            http_request_us: 1000,
+            dns_forward_us: 500,
+            dns_reverse_us: 300,
+            dns_additional_us: 200,
+            tls_handshake_us: 400,
+            html_parsing_us: 100,
+            tech_detection_us: 50,
+            geoip_lookup_us: 10,
+            whois_lookup_us: 0,
+            security_analysis_us: 5,
+            total_us: 3000, // Total includes overhead
         };
 
         stats.record(&metrics);
         let avg = stats.averages();
-        let sum_components = avg.http_request_ms
-            + avg.dns_forward_ms
-            + avg.dns_reverse_ms
-            + avg.dns_additional_ms
-            + avg.tls_handshake_ms
-            + avg.html_parsing_ms
-            + avg.tech_detection_ms
-            + avg.geoip_lookup_ms
-            + avg.whois_lookup_ms
-            + avg.security_analysis_ms;
+        let sum_components = avg.http_request_us
+            + avg.dns_forward_us
+            + avg.dns_reverse_us
+            + avg.dns_additional_us
+            + avg.tls_handshake_us
+            + avg.html_parsing_us
+            + avg.tech_detection_us
+            + avg.geoip_lookup_us
+            + avg.whois_lookup_us
+            + avg.security_analysis_us;
 
         // Sum of components should be <= total (total includes overhead)
-        assert!(sum_components <= avg.total_ms);
+        assert!(sum_components <= avg.total_us);
     }
 
     #[test]
-    fn test_duration_to_ms_very_large_duration() {
+    fn test_duration_to_us_very_large_duration() {
         // Test that very large durations don't cause overflow
         let duration = Duration::from_secs(u64::MAX / 1_000_000);
         // Should not panic, but may lose precision
-        let result = duration_to_ms(duration);
+        let result = duration_to_us(duration);
         // Result should be reasonable (not cause overflow in downstream code)
         assert!(result > 0);
     }
 
     #[test]
-    fn test_duration_to_ms_overflow_protection() {
+    fn test_duration_to_us_overflow_protection() {
         // Test duration that would overflow u64::MAX microseconds
         // Duration::from_secs(u64::MAX) would be way too large
         // Test with a large but reasonable duration
         let duration = Duration::from_secs(18_446_744); // Close to u64::MAX / 1_000_000
-        let result = duration_to_ms(duration);
+        let result = duration_to_us(duration);
         // Should handle gracefully (may truncate but shouldn't panic)
         assert!(result > 0);
     }
 
     #[test]
-    fn test_timing_stats_log_summary_zero_total_ms() {
-        // Test that log_summary handles zero total_ms gracefully
+    fn test_timing_stats_log_summary_zero_total() {
+        // Test that log_summary handles zero total_us gracefully
         // This is critical - prevents division by zero in percentage calculations
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 0,
-            total_ms: 0,
+            http_request_us: 0,
+            total_us: 0,
             ..Default::default()
         };
         stats.record(&metrics);
@@ -665,36 +676,36 @@ mod tests {
         // This is critical for percentage accuracy
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1000,
-            dns_forward_ms: 500,
-            dns_reverse_ms: 300,
-            dns_additional_ms: 200,
-            tls_handshake_ms: 400,
-            html_parsing_ms: 100,
-            tech_detection_ms: 50,
-            geoip_lookup_ms: 10,
-            whois_lookup_ms: 5,
-            security_analysis_ms: 2,
-            total_ms: 3000, // Total includes overhead, so sum of components < total
+            http_request_us: 1000,
+            dns_forward_us: 500,
+            dns_reverse_us: 300,
+            dns_additional_us: 200,
+            tls_handshake_us: 400,
+            html_parsing_us: 100,
+            tech_detection_us: 50,
+            geoip_lookup_us: 10,
+            whois_lookup_us: 5,
+            security_analysis_us: 2,
+            total_us: 3000, // Total includes overhead, so sum of components < total
         };
 
         stats.record(&metrics);
         let avg = stats.averages();
 
         // Verify that sum of components is less than total (overhead exists)
-        let sum = avg.http_request_ms
-            + avg.dns_forward_ms
-            + avg.dns_reverse_ms
-            + avg.dns_additional_ms
-            + avg.tls_handshake_ms
-            + avg.html_parsing_ms
-            + avg.tech_detection_ms
-            + avg.geoip_lookup_ms
-            + avg.whois_lookup_ms
-            + avg.security_analysis_ms;
+        let sum = avg.http_request_us
+            + avg.dns_forward_us
+            + avg.dns_reverse_us
+            + avg.dns_additional_us
+            + avg.tls_handshake_us
+            + avg.html_parsing_us
+            + avg.tech_detection_us
+            + avg.geoip_lookup_us
+            + avg.whois_lookup_us
+            + avg.security_analysis_us;
 
         assert!(
-            sum < avg.total_ms,
+            sum < avg.total_us,
             "Component sum should be less than total (overhead exists)"
         );
     }
@@ -730,15 +741,15 @@ mod tests {
         // This is critical - ensures timing breakdown is accurate
         let stats = TimingStats::new();
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1000,
-            dns_forward_ms: 500,
-            total_ms: 2000, // 500ms overhead
+            http_request_us: 1000,
+            dns_forward_us: 500,
+            total_us: 2000, // 500μs overhead
             ..Default::default()
         };
 
         stats.record(&metrics);
         // The log_summary calculates other_ms = total - sum of components
-        // This should be 2000 - 1500 = 500ms
+        // This should be 2000 - 1500 = 500 (in display ms after conversion)
         // We test this implicitly by verifying the calculation doesn't panic
         stats.log_summary(None, None);
     }

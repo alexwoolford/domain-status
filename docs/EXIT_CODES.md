@@ -27,11 +27,6 @@ Exits with code 2 if failure percentage exceeds threshold set by `--fail-on-pct-
 - **Behavior**: > 10% failures → exit 2, ≤ 10% → exit 0
 - **Special**: 0 URLs processed → exit 3
 
-### `errors-only`
-Exits with code 2 only for critical errors (timeouts, DNS failures, certificate issues).
-- **Use Case**: Distinguish between critical errors and expected failures (404s)
-- **Note**: Currently behaves like `any-failure`
-
 ## Error Type Categories
 
 The application tracks 23 distinct error types across these categories:

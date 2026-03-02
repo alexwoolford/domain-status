@@ -168,17 +168,17 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
                 Some(TimingSummary {
                     count,
                     averages: TimingMetrics {
-                        http_request_ms: micros_to_ms(avg.http_request_ms),
-                        dns_forward_ms: micros_to_ms(avg.dns_forward_ms),
-                        dns_reverse_ms: micros_to_ms(avg.dns_reverse_ms),
-                        dns_additional_ms: micros_to_ms(avg.dns_additional_ms),
-                        tls_handshake_ms: micros_to_ms(avg.tls_handshake_ms),
-                        html_parsing_ms: micros_to_ms(avg.html_parsing_ms),
-                        tech_detection_ms: micros_to_ms(avg.tech_detection_ms),
-                        geoip_lookup_ms: micros_to_ms(avg.geoip_lookup_ms),
-                        whois_lookup_ms: micros_to_ms(avg.whois_lookup_ms),
-                        security_analysis_ms: micros_to_ms(avg.security_analysis_ms),
-                        total_ms: micros_to_ms(avg.total_ms),
+                        http_request_ms: micros_to_ms(avg.http_request_us),
+                        dns_forward_ms: micros_to_ms(avg.dns_forward_us),
+                        dns_reverse_ms: micros_to_ms(avg.dns_reverse_us),
+                        dns_additional_ms: micros_to_ms(avg.dns_additional_us),
+                        tls_handshake_ms: micros_to_ms(avg.tls_handshake_us),
+                        html_parsing_ms: micros_to_ms(avg.html_parsing_us),
+                        tech_detection_ms: micros_to_ms(avg.tech_detection_us),
+                        geoip_lookup_ms: micros_to_ms(avg.geoip_lookup_us),
+                        whois_lookup_ms: micros_to_ms(avg.whois_lookup_us),
+                        security_analysis_ms: micros_to_ms(avg.security_analysis_us),
+                        total_ms: micros_to_ms(avg.total_us),
                     },
                 })
             } else {
@@ -348,9 +348,9 @@ mod tests {
         let timing_stats = Arc::new(TimingStats::new());
         // Record metrics with values that will test rounding
         let metrics = UrlTimingMetrics {
-            http_request_ms: 1500, // 1.5ms -> should round to 2ms
-            dns_forward_ms: 499,   // 0.499ms -> should round to 0ms
-            total_ms: 2000,        // 2ms
+            http_request_us: 1500, // 1.5ms -> should round to 2ms
+            dns_forward_us: 499,   // 0.499ms -> should round to 0ms
+            total_us: 2000,        // 2ms
             ..Default::default()
         };
         timing_stats.record(&metrics);
