@@ -38,4 +38,8 @@ cargo audit
 - **Integration tests**: In `tests/*.rs` files
 - **E2E tests**: Marked `#[ignore]` (run separately with `-- --ignored`)
 
+**Config validation:** Unit tests for `Config::validate()` live in `src/config/types.rs`. Integration tests that use config (panic safety, error message shape) are in `tests/panic_safety.rs` and `tests/error_messages.rs`; keep these minimal and non-duplicative of the unit tests.
+
+**Stress tests:** Stress tests (`tests/stress_*.rs`) are ignored by default. Run them manually for load/resilience checks: `cargo test --test 'stress_*' -- --ignored --nocapture`.
+
 See [.github/workflows/ci.yml](.github/workflows/ci.yml) for the full CI pipeline.

@@ -599,13 +599,9 @@ mod tests {
             };
         }
 
-        // Match JavaScript patterns (js field) - DISABLED to match wappalyzergo behavior
-        // wappalyzergo does NOT check JS patterns at all (commented out in fingerprint_body.go lines 50-57)
-        // The TODO comment says: "JS requires a running VM, for checking properties. Only possible with headless for now :("
-        // Therefore, we also disable JS pattern matching to achieve parity with wappalyzergo
-        //
-        // NOTE: This means technologies that ONLY have JS patterns (and no other patterns) will never be detected
-        // This matches wappalyzergo's behavior exactly
+        // JS pattern matching is intentionally disabled to match wappalyzergo (no headless VM).
+        // wappalyzergo does NOT check JS patterns (commented out in fingerprint_body.go).
+        // Technologies that only have JS patterns (and no other patterns) will never be detected.
 
         // JS patterns are disabled - return false (no match via JS)
         TechnologyMatchResult {

@@ -34,7 +34,7 @@ pub struct ScanResources {
     /// Database connection pool
     pub pool: DbPool,
     /// Database write circuit breaker for resilience (passed to ProcessingContext)
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via shared_ctx; kept on struct for drop/ownership
     pub db_circuit_breaker: Arc<crate::storage::circuit_breaker::DbWriteCircuitBreaker>,
 
     // Network clients (via ProcessingContext)
@@ -73,17 +73,17 @@ pub struct ScanResources {
     /// Unique run identifier (format: `run_<timestamp_millis>`)
     pub run_id: String,
     /// Start time as Unix timestamp in milliseconds (used for run metadata)
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for run metadata / logging
     pub start_time_epoch: i64,
     /// Start time as Instant for elapsed time calculations
     pub start_time: std::time::Instant,
 
     // Fingerprinting and GeoIP
     /// Fingerprint detection ruleset (kept loaded during scan)
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Kept for reference; detection uses shared_ctx
     pub ruleset: Arc<FingerprintRuleset>,
     /// Optional GeoIP database metadata (kept for reference)
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Kept for reference during scan
     pub geoip_metadata: Option<GeoIpMetadata>,
 
     // Configuration

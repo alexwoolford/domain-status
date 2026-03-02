@@ -130,7 +130,7 @@ pub async fn init_ruleset(
 }
 
 /// Gets the current ruleset metadata (for storing in database)
-#[allow(dead_code)]
+#[allow(dead_code)] // Used when persisting run metadata; may be used by export
 pub async fn get_ruleset_metadata() -> Option<FingerprintMetadata> {
     // Clone the Arc immediately to release the lock
     let ruleset = {

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 /// Timing metrics for a single URL processing operation.
 ///
-/// All times are stored in microseconds for precision, then converted to milliseconds
-/// only when displaying to users.
+/// All timing fields are in microseconds (μs), despite the `_ms` suffix in field names (naming legacy).
+/// Values are converted to milliseconds only when displaying to users.
 #[derive(Debug, Clone, Default)]
 pub struct UrlTimingMetrics {
     /// HTTP request time (including redirects) in microseconds

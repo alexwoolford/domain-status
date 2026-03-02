@@ -232,12 +232,12 @@ fn build_where_clause<'a>(
 }
 
 // The following functions return structured data (not formatted strings).
-// They are reserved for future use (e.g., Parquet export) and are not yet used by CSV/JSONL.
-// CSV/JSONL use the helper functions above (fetch_string_list, fetch_key_value_list, etc.)
-// which format data for their specific output formats.
+// CSV/JSONL/Parquet use the helper functions above (fetch_string_list, fetch_key_value_list, etc.)
+// which format data for their specific output formats. These fetch_* functions are used by tests
+// and may be used by future export or analytics code.
 
 /// Fetches redirect chain for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_redirect_chain(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -256,7 +256,7 @@ pub async fn fetch_redirect_chain(
 }
 
 /// Fetches technologies with optional versions for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_technologies(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -281,7 +281,7 @@ pub async fn fetch_technologies(
 }
 
 /// Fetches certificate SANs for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_certificate_sans(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -300,7 +300,7 @@ pub async fn fetch_certificate_sans(
 }
 
 /// Fetches OIDs for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_oids(pool: &SqlitePool, url_status_id: i64) -> Result<Vec<String>, sqlx::Error> {
     let rows =
         sqlx::query("SELECT oid FROM url_certificate_oids WHERE url_status_id = ? ORDER BY oid")
@@ -312,7 +312,7 @@ pub async fn fetch_oids(pool: &SqlitePool, url_status_id: i64) -> Result<Vec<Str
 }
 
 /// Fetches analytics IDs for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_analytics_ids(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -337,7 +337,7 @@ pub async fn fetch_analytics_ids(
 }
 
 /// Fetches social media links for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_social_media_links(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -362,7 +362,7 @@ pub async fn fetch_social_media_links(
 }
 
 /// Fetches security warnings for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_security_warnings(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -382,7 +382,7 @@ pub async fn fetch_security_warnings(
 }
 
 /// Fetches structured data types for a URL status record.
-#[allow(dead_code)] // Reserved for future use (Parquet export, etc.)
+#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_structured_data_types(
     pool: &SqlitePool,
     url_status_id: i64,
