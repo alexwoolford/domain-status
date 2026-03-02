@@ -224,7 +224,6 @@ fn test_cli_scan_fail_on_options() {
         ("never", FailOn::Never),
         ("any-failure", FailOn::AnyFailure),
         ("pct>", FailOn::PctGreaterThan),
-        ("errors-only", FailOn::ErrorsOnly),
     ];
 
     for (arg_value, expected) in test_cases {

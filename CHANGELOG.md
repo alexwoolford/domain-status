@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Timing fields**: Internal duration fields renamed from `_ms` to `_us` where they store microseconds (`UrlTimingMetrics`, `TimingStats`, and status server timing). Epoch/timestamp columns (e.g. `start_time_ms`, `observed_at_ms`) remain in milliseconds; no database migration. Public API (e.g. `/status` JSON) still reports times in milliseconds.
+
 ## [0.1.12] - 2026-03-02
 
 ### Added
@@ -82,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Subcommand-based CLI**: Switched to subcommand-style interface (`domain_status scan` and `domain_status export`)
 - **CSV Export**: New `export` subcommand to export scan results to CSV format with comprehensive filtering options
-- **Exit Code Policies**: New `--fail-on` option to control application exit codes based on scan results (`never`, `any-failure`, `pct>`, `errors-only`)
+- **Exit Code Policies**: New `--fail-on` option to control application exit codes based on scan results (`never`, `any-failure`, `pct>`)
 - **Stdin Input Support**: Can now read URLs from standard input using `-` as filename
 - **SQL Query Examples**: Added `QUERIES.md` with 26 common SQL queries for analyzing scan results
 - Comprehensive test coverage: 20+ new high-value tests for CSV export, CLI parsing, exit codes, stdin input, and input parsing

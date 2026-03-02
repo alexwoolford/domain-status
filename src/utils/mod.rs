@@ -15,7 +15,7 @@ mod timing;
 
 pub use process::{process_url, ProcessUrlResult};
 pub use selector::parse_selector_with_fallback;
-pub use timing::{duration_to_ms, TimingStats, UrlTimingMetrics};
+pub use timing::{duration_to_us, TimingStats, UrlTimingMetrics};
 
 #[cfg(test)]
 mod tests {

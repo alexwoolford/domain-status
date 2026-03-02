@@ -8,7 +8,7 @@ use crate::fetch::record::prepare_record_for_insertion;
 use crate::fetch::response::{extract_response_data, parse_html_content};
 use crate::fetch::ProcessingContext;
 use crate::storage::insert::insert_batch_record;
-use crate::utils::{duration_to_ms, UrlTimingMetrics};
+use crate::utils::{duration_to_us, UrlTimingMetrics};
 use std::time::Instant;
 
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
@@ -41,8 +41,8 @@ pub async fn handle_response(
     redirect_chain: Option<Vec<String>>,
     start_time: std::time::Instant,
 ) -> Result<(), Error> {
-    // Use start_time for total_ms calculation to ensure accurate percentages
-    // This ensures http_request_ms (which includes redirect resolution) is <= total_ms
+    // Use start_time for total_us calculation to ensure accurate percentages
+    // This ensures http_request_us (which includes redirect resolution) is <= total_us
     // since both are measured from the same start point
     debug!("Started processing response for {final_url_str}");
 
@@ -51,8 +51,7 @@ pub async fn handle_response(
         // Note: This includes redirect resolution time + HTTP request time
         // Use saturating cast to prevent overflow if elapsed is very large
         // Max safe value: ~18,446 seconds (u64::MAX microseconds) before overflow
-        // NOTE: Field is named `_ms` but actually stores microseconds (μs) for precision
-        // This is a naming legacy - all timing fields store microseconds internally
+        // All timing fields store microseconds (μs) for precision
         // Safe cast: value is clamped to [0.0, u64::MAX] range before conversion
         // - .max(0.0) ensures no negative values (handles clock adjustments)
         // - .min(u64::MAX as f64) prevents overflow during cast to u64
@@ -64,7 +63,7 @@ pub async fn handle_response(
             clippy::cast_precision_loss,
             clippy::cast_sign_loss
         )]
-        http_request_ms: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
+        http_request_us: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
         ..Default::default()
     };
 
@@ -93,7 +92,7 @@ pub async fn handle_response(
         &resp_data.final_domain,
         &ctx.config.error_stats,
     );
-    metrics.html_parsing_ms = duration_to_ms(html_parse_start.elapsed());
+    metrics.html_parsing_us = duration_to_us(html_parse_start.elapsed());
 
     // Run tech detection and DNS/TLS in parallel (they're independent)
     // Tech detection only needs HTML data and headers, DNS/TLS only needs domain
@@ -104,14 +103,14 @@ pub async fn handle_response(
         // Technology detection (only needs HTML data and headers)
         async {
             use crate::fetch::record::detect_technologies_safely;
-            use crate::utils::duration_to_ms;
+            use crate::utils::duration_to_us;
             use std::time::Instant;
 
             let tech_start = Instant::now();
             let technologies =
                 detect_technologies_safely(&html_data, &resp_data, &ctx.config.error_stats).await;
-            let tech_detection_ms = duration_to_ms(tech_start.elapsed());
-            (technologies, tech_detection_ms)
+            let tech_detection_us = duration_to_us(tech_start.elapsed());
+            (technologies, tech_detection_us)
         },
         // DNS/TLS fetching (only needs domain/hostname)
         async {
@@ -131,19 +130,19 @@ pub async fn handle_response(
         )
     );
 
-    let (technologies_vec, tech_detection_ms) = tech_result;
+    let (technologies_vec, tech_detection_us) = tech_result;
     let (
         tls_dns_data,
         additional_dns,
         partial_failures,
-        (dns_forward_ms, dns_reverse_ms, dns_additional_ms, tls_handshake_ms),
+        (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us),
     ) = dns_result?;
 
-    metrics.dns_forward_ms = dns_forward_ms;
-    metrics.dns_reverse_ms = dns_reverse_ms;
-    metrics.dns_additional_ms = dns_additional_ms;
-    metrics.tls_handshake_ms = tls_handshake_ms;
-    metrics.tech_detection_ms = tech_detection_ms;
+    metrics.dns_forward_us = dns_forward_us;
+    metrics.dns_reverse_us = dns_reverse_us;
+    metrics.dns_additional_us = dns_additional_us;
+    metrics.tls_handshake_us = tls_handshake_us;
+    metrics.tech_detection_us = tech_detection_us;
 
     debug!(
         "Preparing to insert record for URL: {}",
@@ -161,7 +160,7 @@ pub async fn handle_response(
     // Prepare record for insertion (enrichment lookups and batch record building)
     // Takes ownership of resp_data, html_data, tls_dns_data, additional_dns to
     // move large collections (HashMaps, Vecs) instead of cloning - saves ~5-10KB per URL
-    let (batch_record, (geoip_lookup_ms, whois_lookup_ms, security_analysis_ms)) =
+    let (batch_record, (geoip_lookup_us, whois_lookup_us, security_analysis_us)) =
         prepare_record_for_insertion(crate::fetch::record::RecordPreparationParams {
             resp_data,
             html_data,
@@ -177,9 +176,9 @@ pub async fn handle_response(
         })
         .await;
 
-    metrics.geoip_lookup_ms = geoip_lookup_ms;
-    metrics.whois_lookup_ms = whois_lookup_ms;
-    metrics.security_analysis_ms = security_analysis_ms;
+    metrics.geoip_lookup_us = geoip_lookup_us;
+    metrics.whois_lookup_us = whois_lookup_us;
+    metrics.security_analysis_us = security_analysis_us;
 
     // Insert record directly into database
     // If write fails, return error so URL is not counted as successful
@@ -195,9 +194,9 @@ pub async fn handle_response(
             anyhow::anyhow!("Database write failed: {}", e)
         })?;
 
-    // Calculate total_ms from start_time (same baseline as http_request_ms)
-    // This ensures percentages are accurate (http_request_ms <= total_ms)
-    metrics.total_ms = duration_to_ms(start_time.elapsed());
+    // Calculate total_us from start_time (same baseline as http_request_us)
+    // This ensures percentages are accurate (http_request_us <= total_us)
+    metrics.total_us = duration_to_us(start_time.elapsed());
 
     // Record metrics (DNS and enrichment times are set inside their respective functions)
     ctx.config.timing_stats.record(&metrics);

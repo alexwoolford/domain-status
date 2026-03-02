@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crate::dns::{resolve_host_to_ip, reverse_dns_lookup};
 use crate::tls::get_ssl_certificate_info;
-use crate::utils::duration_to_ms;
+use crate::utils::duration_to_us;
 
 use super::types::{TlsDnsData, TlsDnsResult};
 
@@ -66,30 +66,30 @@ pub(crate) async fn fetch_tls_and_dns(
         async {
             let forward_start = Instant::now();
             let ip_result = resolve_host_to_ip(host, resolver).await;
-            let forward_ms = duration_to_ms(forward_start.elapsed());
+            let forward_us = duration_to_us(forward_start.elapsed());
 
             let reverse_start = Instant::now();
             let result = match ip_result {
                 Ok(ip) => {
                     let reverse_result = reverse_dns_lookup(&ip, resolver).await;
-                    let reverse_ms = duration_to_ms(reverse_start.elapsed());
+                    let reverse_us = duration_to_us(reverse_start.elapsed());
                     match reverse_result {
-                        Ok(reverse_dns) => Ok((ip, reverse_dns, forward_ms, reverse_ms)),
-                        Err(e) => Err((e, forward_ms, reverse_ms)),
+                        Ok(reverse_dns) => Ok((ip, reverse_dns, forward_us, reverse_us)),
+                        Err(e) => Err((e, forward_us, reverse_us)),
                     }
                 }
-                Err(e) => Err((e, forward_ms, 0)),
+                Err(e) => Err((e, forward_us, 0)),
             };
             result
         }
     );
 
-    let tls_handshake_ms = duration_to_ms(tls_start.elapsed());
-    let (dns_result, dns_forward_ms, dns_reverse_ms) = match dns_result {
-        Ok((ip, reverse_dns, forward_ms, reverse_ms)) => {
-            (Ok((ip, reverse_dns)), forward_ms, reverse_ms)
+    let tls_handshake_us = duration_to_us(tls_start.elapsed());
+    let (dns_result, dns_forward_us, dns_reverse_us) = match dns_result {
+        Ok((ip, reverse_dns, forward_us, reverse_us)) => {
+            (Ok((ip, reverse_dns)), forward_us, reverse_us)
         }
-        Err((e, forward_ms, reverse_ms)) => (Err(e), forward_ms, reverse_ms),
+        Err((e, forward_us, reverse_us)) => (Err(e), forward_us, reverse_us),
     };
 
     // Extract TLS info and record partial failures
@@ -179,7 +179,7 @@ pub(crate) async fn fetch_tls_and_dns(
             },
             partial_failures,
         },
-        (dns_forward_ms, dns_reverse_ms, tls_handshake_ms),
+        (dns_forward_us, dns_reverse_us, tls_handshake_us),
     ))
 }
 
@@ -285,10 +285,10 @@ mod tests {
         .await;
 
         // Should return timing metrics
-        if let Ok((_, (dns_forward_ms, dns_reverse_ms, tls_handshake_ms))) = result {
+        if let Ok((_, (dns_forward_us, dns_reverse_us, tls_handshake_us))) = result {
             // Timing metrics should be non-negative (u64 is always >= 0)
             // Just verify they exist
-            let _ = (dns_forward_ms, dns_reverse_ms, tls_handshake_ms);
+            let _ = (dns_forward_us, dns_reverse_us, tls_handshake_us);
         }
     }
 
