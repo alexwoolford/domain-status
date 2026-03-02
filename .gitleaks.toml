@@ -13,6 +13,9 @@ paths = [
   # Allow test files that might contain example patterns
   '''\.test\.rs$''',
   '''tests/''',
+  # Secret detection module uses example patterns in tests and pattern definitions
+  '''src/parse/secrets\.rs''',
+  '''src/storage/insert/enrichment/secrets\.rs''',
   # Allow documentation
   '''\.md$''',
   # Allow generated files

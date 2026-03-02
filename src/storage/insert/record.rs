@@ -49,6 +49,14 @@ pub struct EnrichmentInsertSummary {
     pub favicon_inserted: bool,
     /// Whether favicon data insertion failed
     pub favicon_failed: bool,
+    /// Whether contact links were successfully inserted
+    pub contact_links_inserted: bool,
+    /// Whether contact links insertion failed
+    pub contact_links_failed: bool,
+    /// Whether exposed secrets were successfully inserted
+    pub exposed_secrets_inserted: bool,
+    /// Whether exposed secrets insertion failed
+    pub exposed_secrets_failed: bool,
 }
 
 impl EnrichmentInsertSummary {
@@ -62,6 +70,8 @@ impl EnrichmentInsertSummary {
             + if self.whois_failed { 1 } else { 0 }
             + if self.analytics_ids_failed { 1 } else { 0 }
             + if self.favicon_failed { 1 } else { 0 }
+            + if self.contact_links_failed { 1 } else { 0 }
+            + if self.exposed_secrets_failed { 1 } else { 0 }
     }
 
     /// Returns true if any enrichment operations failed.
@@ -118,7 +128,7 @@ pub async fn insert_batch_record(
     // Log summary if there were any failures (for monitoring/debugging)
     if enrichment_summary.has_failures() {
         log::warn!(
-            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, security_warnings={}, whois={}, analytics_ids={}, favicon={}",
+            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, contact_links={}, exposed_secrets={}, security_warnings={}, whois={}, analytics_ids={}, favicon={}",
             enrichment_summary.total_failures(),
             url_status_id,
             domain,
@@ -127,6 +137,8 @@ pub async fn insert_batch_record(
             if enrichment_summary.geoip_inserted { "ok" } else if enrichment_summary.geoip_failed { "failed" } else { "n/a" },
             if enrichment_summary.structured_data_inserted { "ok" } else if enrichment_summary.structured_data_failed { "failed" } else { "n/a" },
             if enrichment_summary.social_media_inserted { "ok" } else if enrichment_summary.social_media_failed { "failed" } else { "n/a" },
+            if enrichment_summary.contact_links_inserted { "ok" } else if enrichment_summary.contact_links_failed { "failed" } else { "n/a" },
+            if enrichment_summary.exposed_secrets_inserted { "ok" } else if enrichment_summary.exposed_secrets_failed { "failed" } else { "n/a" },
             if enrichment_summary.security_warnings_inserted { "ok" } else if enrichment_summary.security_warnings_failed { "failed" } else { "n/a" },
             if enrichment_summary.whois_inserted { "ok" } else if enrichment_summary.whois_failed { "failed" } else { "n/a" },
             if enrichment_summary.analytics_ids_inserted { "ok" } else if enrichment_summary.analytics_ids_failed { "failed" } else { "n/a" },
@@ -371,6 +383,50 @@ async fn insert_favicon_enrichment(
     }
 }
 
+/// Inserts contact links for a record.
+async fn insert_contact_links_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    contact_links: &[crate::parse::ContactLink],
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if !contact_links.is_empty() {
+        match insert::insert_contact_links(pool, url_status_id, contact_links).await {
+            Ok(_) => summary.contact_links_inserted = true,
+            Err(e) => {
+                summary.contact_links_failed = true;
+                log::warn!(
+                    "Failed to insert contact links for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// Inserts exposed secrets for a record.
+async fn insert_exposed_secrets_enrichment(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    exposed_secrets: &[crate::parse::ExposedSecret],
+    summary: &mut EnrichmentInsertSummary,
+) {
+    if !exposed_secrets.is_empty() {
+        match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
+            Ok(_) => summary.exposed_secrets_inserted = true,
+            Err(e) => {
+                summary.exposed_secrets_failed = true;
+                log::warn!(
+                    "Failed to insert exposed secrets for url_status_id {}: {}",
+                    url_status_id,
+                    e
+                );
+            }
+        }
+    }
+}
+
 /// Inserts all enrichment data for a record.
 ///
 /// This function inserts enrichment data (GeoIP, WHOIS, structured data, etc.) after the main
@@ -414,6 +470,9 @@ async fn insert_enrichment_data(
     )
     .await;
     insert_whois_enrichment(pool, url_status_id, &record.whois, &mut summary).await;
+    insert_contact_links_enrichment(pool, url_status_id, &record.contact_links, &mut summary).await;
+    insert_exposed_secrets_enrichment(pool, url_status_id, &record.exposed_secrets, &mut summary)
+        .await;
     insert_analytics_ids_enrichment(pool, url_status_id, &record.analytics_ids, &mut summary).await;
     insert_favicon_enrichment(pool, url_status_id, &record.favicon, &mut summary).await;
 
@@ -499,6 +558,8 @@ mod tests {
             geoip: None,
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
@@ -570,6 +631,8 @@ mod tests {
             geoip: None,
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
@@ -691,6 +754,8 @@ mod tests {
                 url: "https://www.linkedin.com/company/example".to_string(),
                 identifier: Some("example".to_string()),
             }],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![SecurityWarning::NoHttps],
             whois: Some(WhoisResult {
                 creation_date: Some(DateTime::from_timestamp(946684800, 0).unwrap()),
@@ -782,6 +847,8 @@ mod tests {
             geoip: None,
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
@@ -852,6 +919,8 @@ mod tests {
             geoip: None,
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![], // Empty for this test
@@ -898,6 +967,8 @@ mod tests {
             geoip: Some(("93.184.216.34".to_string(), geoip_result)),
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
@@ -944,6 +1015,8 @@ mod tests {
             geoip: None,
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
@@ -977,6 +1050,8 @@ mod tests {
             geoip: None,
             structured_data: None,
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
@@ -1083,6 +1158,10 @@ mod tests {
             analytics_ids_failed: true,
             favicon_inserted: false,
             favicon_failed: false,
+            contact_links_inserted: false,
+            contact_links_failed: false,
+            exposed_secrets_inserted: false,
+            exposed_secrets_failed: false,
         };
         // Should count: 1 (partial) + 1 (structured) + 1 (security) + 1 (analytics) = 4
         assert_eq!(summary.total_failures(), 4);
@@ -1122,6 +1201,10 @@ mod tests {
             analytics_ids_failed: false,
             favicon_inserted: true,
             favicon_failed: false,
+            contact_links_inserted: true,
+            contact_links_failed: false,
+            exposed_secrets_inserted: true,
+            exposed_secrets_failed: false,
         };
         assert_eq!(summary.total_failures(), 0);
         assert!(!summary.has_failures());

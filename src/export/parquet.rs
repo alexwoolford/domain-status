@@ -253,6 +253,43 @@ fn build_schema() -> Schema {
         // Favicon
         Field::new("favicon_hash", DataType::Int32, true),
         Field::new("favicon_url", DataType::Utf8, true),
+        // Contact links
+        Field::new("contact_link_count", DataType::Int32, false),
+        Field::new(
+            "contact_links",
+            DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("contact_type", DataType::Utf8, false),
+                        Field::new("contact_value", DataType::Utf8, false),
+                    ]
+                    .into(),
+                ),
+                true,
+            ))),
+            false,
+        ),
+        // Exposed secrets
+        Field::new("exposed_secret_count", DataType::Int32, false),
+        Field::new(
+            "exposed_secrets",
+            DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("secret_type", DataType::Utf8, false),
+                        Field::new("matched_value", DataType::Utf8, false),
+                        Field::new("severity", DataType::Utf8, false),
+                        Field::new("location", DataType::Utf8, false),
+                        Field::new("context", DataType::Utf8, true),
+                    ]
+                    .into(),
+                ),
+                true,
+            ))),
+            false,
+        ),
         // Metadata
         Field::new("observed_at_ms", DataType::Int64, false),
         Field::new("run_id", DataType::Utf8, true),
@@ -372,6 +409,30 @@ fn write_batch(
     let mut whois_country_b = StringBuilder::new();
     let mut favicon_hash_b = Int32Builder::new();
     let mut favicon_url_b = StringBuilder::new();
+    let mut contact_link_count_b = Int32Builder::new();
+    let mut contact_links_b = new_two_string_list_builder("contact_type", "contact_value");
+    let mut exposed_secret_count_b = Int32Builder::new();
+    // 5-field struct: secret_type, matched_value, severity, location (non-nullable), context (nullable)
+    let mut exposed_secrets_b = {
+        let fields = vec![
+            Field::new("secret_type", DataType::Utf8, false),
+            Field::new("matched_value", DataType::Utf8, false),
+            Field::new("severity", DataType::Utf8, false),
+            Field::new("location", DataType::Utf8, false),
+            Field::new("context", DataType::Utf8, true),
+        ];
+        let builder = StructBuilder::new(
+            fields.clone(),
+            vec![
+                Box::new(StringBuilder::new()),
+                Box::new(StringBuilder::new()),
+                Box::new(StringBuilder::new()),
+                Box::new(StringBuilder::new()),
+                Box::new(StringBuilder::new()),
+            ],
+        );
+        ListBuilder::new(builder)
+    };
     let mut observed_at_b = Int64Builder::new();
     let mut run_id_b = StringBuilder::new();
 
@@ -709,6 +770,59 @@ fn write_batch(
         append_opt_i32(&mut favicon_hash_b, row.favicon_hash);
         append_opt_str(&mut favicon_url_b, &row.favicon_url);
 
+        // Contact links
+        #[allow(clippy::cast_possible_truncation)]
+        contact_link_count_b.append_value(row.contact_link_count as i32);
+        for c in &row.contact_links {
+            contact_links_b
+                .values()
+                .field_builder::<StringBuilder>(0)
+                .unwrap()
+                .append_value(&c.contact_type);
+            contact_links_b
+                .values()
+                .field_builder::<StringBuilder>(1)
+                .unwrap()
+                .append_value(&c.contact_value);
+            contact_links_b.values().append(true);
+        }
+        contact_links_b.append(true);
+
+        // Exposed secrets
+        #[allow(clippy::cast_possible_truncation)]
+        exposed_secret_count_b.append_value(row.exposed_secret_count as i32);
+        for s in &row.exposed_secrets {
+            exposed_secrets_b
+                .values()
+                .field_builder::<StringBuilder>(0)
+                .unwrap()
+                .append_value(&s.secret_type);
+            exposed_secrets_b
+                .values()
+                .field_builder::<StringBuilder>(1)
+                .unwrap()
+                .append_value(&s.matched_value);
+            exposed_secrets_b
+                .values()
+                .field_builder::<StringBuilder>(2)
+                .unwrap()
+                .append_value(&s.severity);
+            exposed_secrets_b
+                .values()
+                .field_builder::<StringBuilder>(3)
+                .unwrap()
+                .append_value(&s.location);
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(4)
+                    .unwrap(),
+                &s.context,
+            );
+            exposed_secrets_b.values().append(true);
+        }
+        exposed_secrets_b.append(true);
+
         // Metadata
         observed_at_b.append_value(row.main.timestamp);
         append_opt_str(&mut run_id_b, &row.main.run_id);
@@ -767,6 +881,10 @@ fn write_batch(
         Arc::new(whois_country_b.finish()),
         Arc::new(favicon_hash_b.finish()),
         Arc::new(favicon_url_b.finish()),
+        Arc::new(contact_link_count_b.finish()),
+        Arc::new(contact_links_b.finish()),
+        Arc::new(exposed_secret_count_b.finish()),
+        Arc::new(exposed_secrets_b.finish()),
         Arc::new(observed_at_b.finish()),
         Arc::new(run_id_b.finish()),
     ];
@@ -1071,8 +1189,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(
             batch.num_columns(),
-            53,
-            "Should have 53 columns matching schema"
+            57,
+            "Should have 57 columns matching schema"
         );
 
         // Verify the 'url' column

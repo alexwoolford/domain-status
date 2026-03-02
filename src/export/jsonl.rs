@@ -165,7 +165,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
         };
 
         // Build the complete JSON object
-        let json_obj = json!({
+        let mut json_obj = json!({
             "url": url,
             "initial_domain": export_row.main.initial_domain,
             "final_domain": export_row.main.final_domain,
@@ -231,6 +231,36 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "timestamp": export_row.main.timestamp,
             "run_id": export_row.main.run_id,
         });
+
+        // Add contact links and exposed secrets (built outside json! macro to avoid recursion limit)
+        if let Value::Object(ref mut map) = json_obj {
+            map.insert(
+                "contact_links".to_string(),
+                json!(export_row.contact_links.iter().map(|c| json!({"contact_type": c.contact_type, "contact_value": c.contact_value})).collect::<Vec<_>>()),
+            );
+            map.insert(
+                "contact_link_count".to_string(),
+                json!(export_row.contact_link_count),
+            );
+            map.insert(
+                "exposed_secrets".to_string(),
+                json!(export_row
+                    .exposed_secrets
+                    .iter()
+                    .map(|s| json!({
+                        "secret_type": s.secret_type,
+                        "matched_value": s.matched_value,
+                        "severity": s.severity,
+                        "location": s.location,
+                        "context": s.context,
+                    }))
+                    .collect::<Vec<_>>()),
+            );
+            map.insert(
+                "exposed_secret_count".to_string(),
+                json!(export_row.exposed_secret_count),
+            );
+        }
 
         serde_json::to_writer(&mut writer, &json_obj)?;
         writeln!(writer)?;

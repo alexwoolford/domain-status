@@ -38,7 +38,10 @@ tarpaulin-report.html
 id_rsa
 id_rsa.pub
 *.secret
-secrets.*
+secrets.env
+secrets.yaml
+secrets.json
+secrets.toml
 
 # Temporary LLM-generated working files (should never be committed)
 *_REVIEW.md

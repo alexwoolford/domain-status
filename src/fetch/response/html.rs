@@ -5,8 +5,8 @@ use scraper::Html;
 use std::collections::{HashMap, HashSet};
 
 use crate::parse::{
-    extract_meta_description, extract_meta_keywords, extract_social_media_links,
-    extract_structured_data, extract_title, is_mobile_friendly,
+    detect_exposed_secrets, extract_contact_links, extract_meta_description, extract_meta_keywords,
+    extract_social_media_links, extract_structured_data, extract_title, is_mobile_friendly,
 };
 
 use super::types::HtmlData;
@@ -62,6 +62,22 @@ pub(crate) fn parse_html_content(
         "Extracted {} social media links for {final_domain}",
         social_media_links.len()
     );
+
+    // Extract contact links (mailto/tel)
+    let contact_links = extract_contact_links(&document);
+    debug!(
+        "Extracted {} contact links for {final_domain}",
+        contact_links.len()
+    );
+
+    // Detect exposed secrets in HTML body
+    let exposed_secrets = detect_exposed_secrets(body);
+    if !exposed_secrets.is_empty() {
+        log::info!(
+            "Detected {} exposed secret(s) for {final_domain}",
+            exposed_secrets.len()
+        );
+    }
 
     // Extract analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
     let analytics_ids = crate::parse::extract_analytics_ids(body);
@@ -236,6 +252,8 @@ pub(crate) fn parse_html_content(
         is_mobile_friendly,
         structured_data,
         social_media_links,
+        contact_links,
+        exposed_secrets,
         analytics_ids,
         meta_tags,
         script_sources,

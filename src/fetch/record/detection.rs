@@ -92,6 +92,8 @@ mod tests {
             is_mobile_friendly: false,
             structured_data: crate::parse::StructuredData::default(),
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             analytics_ids: vec![],
             meta_tags: HashMap::new(),
             script_sources: vec![],

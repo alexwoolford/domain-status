@@ -49,6 +49,23 @@ pub struct SocialMediaLink {
     pub identifier: Option<String>,
 }
 
+/// A contact link (mailto/tel).
+#[derive(Debug, Clone)]
+pub struct ContactLinkRecord {
+    pub contact_type: String,
+    pub contact_value: String,
+}
+
+/// An exposed secret detected in HTML.
+#[derive(Debug, Clone)]
+pub struct ExposedSecretRecord {
+    pub secret_type: String,
+    pub matched_value: String,
+    pub severity: String,
+    pub location: String,
+    pub context: Option<String>,
+}
+
 /// A partial failure (DNS/TLS error that didn't block processing).
 #[derive(Debug, Clone)]
 pub struct PartialFailure {
@@ -203,6 +220,14 @@ pub struct ExportRow {
     pub favicon_hash: Option<i32>,
     /// Favicon URL
     pub favicon_url: Option<String>,
+
+    /// Contact links (mailto/tel)
+    pub contact_links: Vec<ContactLinkRecord>,
+    pub contact_link_count: usize,
+
+    /// Exposed secrets detected in HTML
+    pub exposed_secrets: Vec<ExposedSecretRecord>,
+    pub exposed_secret_count: usize,
 }
 
 /// Key HTTP headers to include in exports.
@@ -580,6 +605,39 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         (None, None)
     };
 
+    // Fetch contact links
+    let contact_links: Vec<ContactLinkRecord> = sqlx::query(
+        "SELECT contact_type, contact_value FROM url_contact_links WHERE url_status_id = ? ORDER BY contact_type, contact_value",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| ContactLinkRecord {
+        contact_type: r.get("contact_type"),
+        contact_value: r.get("contact_value"),
+    })
+    .collect();
+    let contact_link_count = contact_links.len();
+
+    // Fetch exposed secrets
+    let exposed_secrets: Vec<ExposedSecretRecord> = sqlx::query(
+        "SELECT secret_type, matched_value, severity, location, context FROM url_exposed_secrets WHERE url_status_id = ? ORDER BY secret_type",
+    )
+    .bind(url_status_id)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| ExposedSecretRecord {
+        secret_type: r.get("secret_type"),
+        matched_value: r.get("matched_value"),
+        severity: r.get("severity"),
+        location: r.get("location"),
+        context: r.get("context"),
+    })
+    .collect();
+    let exposed_secret_count = exposed_secrets.len();
+
     // SAFETY: All count values are non-negative database counts that fit in usize.
     // These casts are safe because:
     // 1. SQL COUNT(*) always returns non-negative values
@@ -623,6 +681,10 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         whois,
         favicon_hash,
         favicon_url,
+        contact_links,
+        contact_link_count,
+        exposed_secrets,
+        exposed_secret_count,
     })
 }
 
