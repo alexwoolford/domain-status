@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::geoip::GeoIpResult;
-use crate::parse::{AnalyticsId, SocialMediaLink, StructuredData};
+use crate::parse::{AnalyticsId, ContactLink, ExposedSecret, SocialMediaLink, StructuredData};
 use crate::security::SecurityWarning;
 use crate::whois::WhoisResult;
 
@@ -34,6 +34,8 @@ pub struct BatchRecord {
     pub geoip: Option<(String, GeoIpResult)>, // (ip_address, geoip_result)
     pub structured_data: Option<StructuredData>,
     pub social_media_links: Vec<SocialMediaLink>,
+    pub contact_links: Vec<ContactLink>,
+    pub exposed_secrets: Vec<ExposedSecret>,
     pub security_warnings: Vec<SecurityWarning>,
     pub whois: Option<WhoisResult>,
     pub partial_failures: Vec<UrlPartialFailureRecord>, // DNS/TLS errors that didn't prevent processing

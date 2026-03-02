@@ -443,3 +443,40 @@ CREATE TABLE IF NOT EXISTS url_favicons (
 );
 
 CREATE INDEX idx_url_favicons_hash ON url_favicons(hash);
+
+-- ============================================================================
+-- SATELLITE: url_contact_links (extracted mailto/tel contact info)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS url_contact_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url_status_id INTEGER NOT NULL,
+    contact_type TEXT NOT NULL,       -- 'email' or 'phone'
+    contact_value TEXT NOT NULL,      -- email address or phone number
+    raw_href TEXT NOT NULL,           -- original href attribute
+
+    FOREIGN KEY (url_status_id) REFERENCES url_status(id) ON DELETE CASCADE,
+    UNIQUE(url_status_id, contact_type, contact_value)
+);
+
+CREATE INDEX idx_url_contact_links_type ON url_contact_links(contact_type);
+CREATE INDEX idx_url_contact_links_value ON url_contact_links(contact_value);
+
+-- ============================================================================
+-- SATELLITE: url_exposed_secrets (detected secrets/credentials in HTML)
+-- Full matched values stored — these are already on the public web.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS url_exposed_secrets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url_status_id INTEGER NOT NULL,
+    secret_type TEXT NOT NULL,         -- 'aws_access_key', 'openai_api_key', etc.
+    matched_value TEXT NOT NULL,       -- full matched secret value
+    severity TEXT NOT NULL,            -- 'critical', 'high', 'medium', 'low'
+    location TEXT NOT NULL,            -- 'inline_script', 'html_comment', 'url_parameter', etc.
+    context TEXT,                      -- surrounding text (~80 chars each side)
+
+    FOREIGN KEY (url_status_id) REFERENCES url_status(id) ON DELETE CASCADE,
+    UNIQUE(url_status_id, secret_type, matched_value)
+);
+
+CREATE INDEX idx_url_exposed_secrets_type ON url_exposed_secrets(secret_type);
+CREATE INDEX idx_url_exposed_secrets_severity ON url_exposed_secrets(severity);

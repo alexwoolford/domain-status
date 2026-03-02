@@ -272,6 +272,8 @@ mod tests {
             is_mobile_friendly: false,
             structured_data: crate::parse::StructuredData::default(),
             social_media_links: Vec::new(),
+            contact_links: Vec::new(),
+            exposed_secrets: Vec::new(),
             analytics_ids: Vec::new(),
             meta_tags: std::collections::HashMap::new(),
             script_sources: Vec::new(),

@@ -137,10 +137,12 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         .take()
         .unwrap_or_default();
 
-    // Move analytics_ids, structured_data, social_media_links instead of cloning
+    // Move analytics_ids, structured_data, social_media_links, contact_links, exposed_secrets instead of cloning
     let analytics_ids = std::mem::take(&mut params.html_data.analytics_ids);
     let structured_data = std::mem::take(&mut params.html_data.structured_data);
     let social_media_links = std::mem::take(&mut params.html_data.social_media_links);
+    let contact_links = std::mem::take(&mut params.html_data.contact_links);
+    let exposed_secrets = std::mem::take(&mut params.html_data.exposed_secrets);
 
     // Move security_headers and http_headers HashMaps instead of cloning
     // These are the most expensive clones (~2-5KB each for typical responses)
@@ -159,6 +161,8 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         geoip: params.geoip_data,
         structured_data: Some(structured_data),
         social_media_links,
+        contact_links,
+        exposed_secrets,
         security_warnings: params.security_warnings,
         whois: params.whois_data,
         partial_failures: partial_failure_records,
@@ -208,6 +212,8 @@ mod tests {
             is_mobile_friendly: true,
             structured_data: StructuredData::default(),
             social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
             analytics_ids: vec![],
             meta_tags: HashMap::new(),
             script_sources: vec![],

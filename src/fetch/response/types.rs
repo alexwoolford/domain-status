@@ -26,6 +26,8 @@ pub(crate) struct HtmlData {
     pub(crate) is_mobile_friendly: bool,
     pub(crate) structured_data: crate::parse::StructuredData,
     pub(crate) social_media_links: Vec<crate::parse::SocialMediaLink>,
+    pub(crate) contact_links: Vec<crate::parse::ContactLink>,
+    pub(crate) exposed_secrets: Vec<crate::parse::ExposedSecret>,
     pub(crate) analytics_ids: Vec<crate::parse::AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
     pub(crate) meta_tags: HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name (e.g., multiple generator tags)
     pub(crate) script_sources: Vec<String>,

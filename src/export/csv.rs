@@ -129,6 +129,11 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         // New columns: partial failures
         "partial_failure_count",
         "partial_failures",
+        // New columns: contact links and exposed secrets
+        "contact_links",
+        "contact_link_count",
+        "exposed_secrets",
+        "exposed_secret_count",
     ])?;
 
     let query = query_builder.build();
@@ -279,6 +284,27 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
                 .map(|f| format!("{}|{}", f.error_type, f.error_message))
                 .collect::<Vec<_>>()
                 .join(","),
+            // New columns: contact links
+            export_row
+                .contact_links
+                .iter()
+                .map(|c| format!("{}:{}", c.contact_type, c.contact_value))
+                .collect::<Vec<_>>()
+                .join(","),
+            export_row.contact_link_count.to_string(),
+            // New columns: exposed secrets
+            export_row
+                .exposed_secrets
+                .iter()
+                .map(|s| {
+                    format!(
+                        "[{}] {}|{}|{}",
+                        s.severity, s.secret_type, s.location, s.matched_value
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; "),
+            export_row.exposed_secret_count.to_string(),
         ])?;
 
         record_count += 1;

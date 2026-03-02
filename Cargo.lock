@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "domain_status"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "arrow",
