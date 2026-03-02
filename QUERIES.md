@@ -8,39 +8,37 @@ This document provides common SQL queries for analyzing `domain_status` scan res
 
 ```sql
 SELECT
-    domain,
-    status,
+    initial_domain,
+    http_status,
     final_domain,
-    timestamp
+    datetime(observed_at_ms/1000, 'unixepoch') as scanned_at
 FROM url_status
-ORDER BY timestamp DESC;
+ORDER BY observed_at_ms DESC;
 ```
 
 ### 2. Find all failed URLs
 
 ```sql
 SELECT
-    domain,
-    status,
-    status_description,
-    timestamp
-FROM url_status
-WHERE status >= 400 OR status = 0
-ORDER BY timestamp DESC;
+    initial_domain,
+    error_type,
+    error_message,
+    datetime(observed_at_ms/1000, 'unixepoch') as scanned_at
+FROM url_failures
+ORDER BY observed_at_ms DESC;
 ```
 
 ### 3. Find all redirects
 
 ```sql
 SELECT
-    us.domain,
+    us.initial_domain,
     us.final_domain,
-    us.status,
+    us.http_status,
     COUNT(urc.id) as redirect_count
 FROM url_status us
 LEFT JOIN url_redirect_chain urc ON us.id = urc.url_status_id
-WHERE us.status BETWEEN 300 AND 399
-   OR urc.id IS NOT NULL
+WHERE urc.id IS NOT NULL
 GROUP BY us.id
 ORDER BY redirect_count DESC;
 ```
@@ -49,8 +47,8 @@ ORDER BY redirect_count DESC;
 
 ```sql
 SELECT
-    us.final_domain,
-    urc.url as redirect_url,
+    us.initial_domain,
+    urc.redirect_url,
     urc.sequence_order
 FROM url_status us
 JOIN url_redirect_chain urc ON us.id = urc.url_status_id
@@ -63,9 +61,10 @@ ORDER BY us.id, urc.sequence_order;
 
 ```sql
 SELECT
-    us.domain,
+    us.initial_domain,
     us.final_domain,
     ut.technology_name,
+    ut.technology_version,
     ut.technology_category
 FROM url_status us
 JOIN url_technologies ut ON us.id = ut.url_status_id
@@ -90,10 +89,11 @@ ORDER BY technology_count DESC;
 ```sql
 SELECT DISTINCT
     us.final_domain,
-    us.domain
+    us.initial_domain,
+    ut.technology_version
 FROM url_status us
 JOIN url_technologies ut ON us.id = ut.url_status_id
-WHERE ut.technology_name = 'nginx'  -- Replace with your technology
+WHERE ut.technology_name = 'WordPress'  -- Replace with your technology
 ORDER BY us.final_domain;
 ```
 
@@ -103,13 +103,13 @@ ORDER BY us.final_domain;
 
 ```sql
 SELECT
-    us.domain,
+    us.initial_domain,
     us.final_domain,
-    datetime(us.ssl_cert_valid_to/1000, 'unixepoch') as cert_expiry,
-    (us.ssl_cert_valid_to - strftime('%s', 'now') * 1000) / (1000 * 60 * 60 * 24.0) as days_until_expiry
+    datetime(us.ssl_cert_valid_to_ms/1000, 'unixepoch') as cert_expiry,
+    CAST((us.ssl_cert_valid_to_ms - strftime('%s', 'now') * 1000) / (1000.0 * 60 * 60 * 24) AS INTEGER) as days_until_expiry
 FROM url_status us
-WHERE us.ssl_cert_valid_to IS NOT NULL
-  AND (us.ssl_cert_valid_to - strftime('%s', 'now') * 1000) / (1000 * 60 * 60 * 24.0) BETWEEN 0 AND 30
+WHERE us.ssl_cert_valid_to_ms IS NOT NULL
+  AND (us.ssl_cert_valid_to_ms - strftime('%s', 'now') * 1000) / (1000.0 * 60 * 60 * 24) BETWEEN 0 AND 30
 ORDER BY days_until_expiry ASC;
 ```
 
@@ -117,13 +117,13 @@ ORDER BY days_until_expiry ASC;
 
 ```sql
 SELECT
-    us.domain,
+    us.initial_domain,
     us.final_domain,
-    datetime(us.ssl_cert_valid_to/1000, 'unixepoch') as cert_expiry,
-    (strftime('%s', 'now') * 1000 - us.ssl_cert_valid_to) / (1000 * 60 * 60 * 24.0) as days_expired
+    datetime(us.ssl_cert_valid_to_ms/1000, 'unixepoch') as cert_expiry,
+    CAST((strftime('%s', 'now') * 1000 - us.ssl_cert_valid_to_ms) / (1000.0 * 60 * 60 * 24) AS INTEGER) as days_expired
 FROM url_status us
-WHERE us.ssl_cert_valid_to IS NOT NULL
-  AND us.ssl_cert_valid_to < strftime('%s', 'now') * 1000
+WHERE us.ssl_cert_valid_to_ms IS NOT NULL
+  AND us.ssl_cert_valid_to_ms < strftime('%s', 'now') * 1000
 ORDER BY days_expired DESC;
 ```
 
@@ -145,10 +145,7 @@ ORDER BY domain_count DESC;
 
 ```sql
 -- Nameservers
-SELECT
-    us.final_domain,
-    'NS' as record_type,
-    uns.nameserver as record_value
+SELECT us.final_domain, 'NS' as record_type, uns.nameserver as record_value
 FROM url_status us
 JOIN url_nameservers uns ON us.id = uns.url_status_id
 WHERE us.final_domain = 'example.com'  -- Replace with your domain
@@ -156,10 +153,7 @@ WHERE us.final_domain = 'example.com'  -- Replace with your domain
 UNION ALL
 
 -- TXT records
-SELECT
-    us.final_domain,
-    'TXT' as record_type,
-    utr.txt_record as record_value
+SELECT us.final_domain, utr.record_type, utr.record_value
 FROM url_status us
 JOIN url_txt_records utr ON us.id = utr.url_status_id
 WHERE us.final_domain = 'example.com'
@@ -167,10 +161,7 @@ WHERE us.final_domain = 'example.com'
 UNION ALL
 
 -- MX records
-SELECT
-    us.final_domain,
-    'MX' as record_type,
-    umr.priority || ' ' || umr.mail_exchange as record_value
+SELECT us.final_domain, 'MX' as record_type, umr.priority || ' ' || umr.mail_exchange as record_value
 FROM url_status us
 JOIN url_mx_records umr ON us.id = umr.url_status_id
 WHERE us.final_domain = 'example.com'
@@ -182,17 +173,13 @@ ORDER BY record_type;
 
 ```sql
 -- Option 1: From extracted SPF field
-SELECT DISTINCT
-    us.final_domain,
-    us.spf_record
+SELECT DISTINCT us.final_domain, us.spf_record
 FROM url_status us
 WHERE us.spf_record IS NOT NULL
 ORDER BY us.final_domain;
 
 -- Option 2: From TXT records
-SELECT DISTINCT
-    us.final_domain,
-    utr.txt_record as spf_record
+SELECT DISTINCT us.final_domain, utr.record_value as spf_record
 FROM url_status us
 JOIN url_txt_records utr ON us.id = utr.url_status_id
 WHERE utr.record_type = 'SPF'
@@ -203,17 +190,13 @@ ORDER BY us.final_domain;
 
 ```sql
 -- Option 1: From extracted DMARC field
-SELECT DISTINCT
-    us.final_domain,
-    us.dmarc_record
+SELECT DISTINCT us.final_domain, us.dmarc_record
 FROM url_status us
 WHERE us.dmarc_record IS NOT NULL
 ORDER BY us.final_domain;
 
 -- Option 2: From TXT records
-SELECT DISTINCT
-    us.final_domain,
-    utr.txt_record as dmarc_record
+SELECT DISTINCT us.final_domain, utr.record_value as dmarc_record
 FROM url_status us
 JOIN url_txt_records utr ON us.id = utr.url_status_id
 WHERE utr.record_type = 'DMARC'
@@ -227,7 +210,7 @@ ORDER BY us.final_domain;
 ```sql
 SELECT
     us.final_domain,
-    us.domain,
+    us.initial_domain,
     ug.country_code,
     ug.country_name,
     ug.city
@@ -256,13 +239,14 @@ ORDER BY domain_count DESC;
 ```sql
 SELECT
     run_id,
-    timestamp,
     version,
-    fingerprints_source,
-    fingerprints_version,
-    geoip_version
+    datetime(start_time_ms/1000, 'unixepoch') as started_at,
+    elapsed_seconds,
+    total_urls,
+    successful_urls,
+    failed_urls
 FROM runs
-ORDER BY timestamp DESC;
+ORDER BY start_time_ms DESC;
 ```
 
 ### 17. Compare results between runs
@@ -270,34 +254,31 @@ ORDER BY timestamp DESC;
 ```sql
 -- Find URLs that changed status between runs
 SELECT
-    us1.domain,
-    us1.status as status_run1,
-    us2.status as status_run2,
-    us1.timestamp as timestamp_run1,
-    us2.timestamp as timestamp_run2
+    us1.initial_domain,
+    us1.http_status as status_run1,
+    us2.http_status as status_run2
 FROM url_status us1
 JOIN url_status us2 ON us1.final_domain = us2.final_domain
 WHERE us1.run_id = 'run_1234567890'  -- Replace with your run IDs
   AND us2.run_id = 'run_1234567891'
-  AND us1.status != us2.status;
+  AND us1.http_status != us2.http_status;
 ```
 
 ### 18. Find new technologies detected in latest run
 
 ```sql
--- Compare technologies between two runs
 SELECT DISTINCT
     ut2.technology_name as new_technology,
     ut2.technology_category,
     us2.final_domain
 FROM url_technologies ut2
 JOIN url_status us2 ON ut2.url_status_id = us2.id
-WHERE us2.run_id = (SELECT run_id FROM runs ORDER BY start_time DESC LIMIT 1)
+WHERE us2.run_id = (SELECT run_id FROM runs ORDER BY start_time_ms DESC LIMIT 1)
   AND NOT EXISTS (
     SELECT 1
     FROM url_technologies ut1
     JOIN url_status us1 ON ut1.url_status_id = us1.id
-    WHERE us1.run_id = (SELECT run_id FROM runs ORDER BY start_time DESC LIMIT 1 OFFSET 1)
+    WHERE us1.run_id = (SELECT run_id FROM runs ORDER BY start_time_ms DESC LIMIT 1 OFFSET 1)
       AND ut1.technology_name = ut2.technology_name
       AND us1.final_domain = us2.final_domain
   )
@@ -312,7 +293,7 @@ ORDER BY us2.final_domain, ut2.technology_category;
 SELECT
     error_type,
     COUNT(*) as error_count,
-    COUNT(DISTINCT domain) as affected_domains
+    COUNT(DISTINCT initial_domain) as affected_domains
 FROM url_failures
 GROUP BY error_type
 ORDER BY error_count DESC;
@@ -322,11 +303,11 @@ ORDER BY error_count DESC;
 
 ```sql
 SELECT
-    domain,
+    initial_domain,
     COUNT(*) as failure_count,
     GROUP_CONCAT(DISTINCT error_type) as error_types
 FROM url_failures
-GROUP BY domain
+GROUP BY initial_domain
 ORDER BY failure_count DESC
 LIMIT 20;
 ```
@@ -337,13 +318,13 @@ LIMIT 20;
 
 ```sql
 SELECT
-    domain,
+    initial_domain,
     final_domain,
-    response_time,
-    timestamp
+    response_time_seconds,
+    datetime(observed_at_ms/1000, 'unixepoch') as scanned_at
 FROM url_status
-WHERE response_time IS NOT NULL
-ORDER BY response_time DESC
+WHERE response_time_seconds IS NOT NULL
+ORDER BY response_time_seconds DESC
 LIMIT 20;
 ```
 
@@ -352,25 +333,25 @@ LIMIT 20;
 ```sql
 SELECT
     final_domain,
-    AVG(response_time) as avg_response_time,
-    MIN(response_time) as min_response_time,
-    MAX(response_time) as max_response_time,
+    ROUND(AVG(response_time_seconds), 3) as avg_response_time,
+    ROUND(MIN(response_time_seconds), 3) as min_response_time,
+    ROUND(MAX(response_time_seconds), 3) as max_response_time,
     COUNT(*) as request_count
 FROM url_status
-WHERE response_time IS NOT NULL
+WHERE response_time_seconds IS NOT NULL
 GROUP BY final_domain
 ORDER BY avg_response_time DESC;
 ```
 
 ## Security Analysis
 
-### 23. Find domains without HTTPS
+### 23. Find domains without TLS
 
 ```sql
 SELECT
-    domain,
+    initial_domain,
     final_domain,
-    status
+    http_status
 FROM url_status
 WHERE tls_version IS NULL
 ORDER BY final_domain;
@@ -380,7 +361,7 @@ ORDER BY final_domain;
 
 ```sql
 SELECT
-    us.domain,
+    us.initial_domain,
     us.final_domain,
     usw.warning_code,
     usw.warning_description
@@ -389,33 +370,97 @@ JOIN url_security_warnings usw ON us.id = usw.url_status_id
 ORDER BY us.final_domain, usw.warning_code;
 ```
 
+### 25. Find exposed secrets (sorted by severity)
+
+```sql
+SELECT
+    us.initial_domain,
+    es.secret_type,
+    es.severity,
+    es.location,
+    es.matched_value,
+    es.context
+FROM url_exposed_secrets es
+JOIN url_status us ON es.url_status_id = us.id
+ORDER BY
+    CASE es.severity
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END,
+    us.initial_domain;
+```
+
+### 26. Count exposed secrets by type
+
+```sql
+SELECT
+    secret_type,
+    severity,
+    COUNT(*) as count,
+    COUNT(DISTINCT url_status_id) as affected_domains
+FROM url_exposed_secrets
+GROUP BY secret_type, severity
+ORDER BY
+    CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 END,
+    count DESC;
+```
+
+## Contact Information
+
+### 27. Find all email contacts
+
+```sql
+SELECT
+    us.initial_domain,
+    cl.contact_value as email,
+    cl.raw_href
+FROM url_contact_links cl
+JOIN url_status us ON cl.url_status_id = us.id
+WHERE cl.contact_type = 'email'
+ORDER BY us.initial_domain;
+```
+
+### 28. Find all phone contacts
+
+```sql
+SELECT
+    us.initial_domain,
+    cl.contact_value as phone,
+    cl.raw_href
+FROM url_contact_links cl
+JOIN url_status us ON cl.url_status_id = us.id
+WHERE cl.contact_type = 'phone'
+ORDER BY us.initial_domain;
+```
+
 ## Advanced Queries
 
-### 25. Complete domain summary
+### 29. Complete domain summary
 
 ```sql
 SELECT
     us.final_domain,
     COUNT(DISTINCT us.id) as url_count,
-    MIN(us.status) as min_status,
-    MAX(us.status) as max_status,
-    AVG(us.response_time) as avg_response_time,
+    us.http_status,
+    ROUND(us.response_time_seconds, 3) as response_time,
     COUNT(DISTINCT ut.technology_name) as technology_count,
-    GROUP_CONCAT(DISTINCT ut.technology_category) as technology_categories
+    GROUP_CONCAT(DISTINCT ut.technology_name) as technologies
 FROM url_status us
 LEFT JOIN url_technologies ut ON us.id = ut.url_status_id
 GROUP BY us.final_domain
 ORDER BY url_count DESC;
 ```
 
-### 26. Find domains with multiple redirects
+### 30. Find domains with multiple redirects
 
 ```sql
 SELECT
     us.final_domain,
-    us.domain,
+    us.initial_domain,
     COUNT(urc.id) as redirect_count,
-    GROUP_CONCAT(urc.url, ' -> ') as redirect_chain
+    GROUP_CONCAT(urc.redirect_url, ' -> ') as redirect_chain
 FROM url_status us
 JOIN url_redirect_chain urc ON us.id = urc.url_status_id
 GROUP BY us.id
@@ -423,11 +468,25 @@ HAVING redirect_count > 3
 ORDER BY redirect_count DESC;
 ```
 
+### 31. Find domains sharing the same TLS certificate
+
+```sql
+SELECT
+    san.san_value,
+    COUNT(DISTINCT us.final_domain) as domain_count,
+    GROUP_CONCAT(DISTINCT us.final_domain) as domains
+FROM url_certificate_sans san
+JOIN url_status us ON san.url_status_id = us.id
+GROUP BY san.san_value
+HAVING domain_count > 1
+ORDER BY domain_count DESC;
+```
+
 ## Tips
 
-- Use `julianday('now')` for date calculations in SQLite
+- Use `datetime(observed_at_ms/1000, 'unixepoch')` to format timestamps as readable dates
 - The `run_id` field links records to specific scan runs
-- `timestamp` is stored as milliseconds since epoch
+- Timestamps are stored as milliseconds since epoch (`observed_at_ms`, `start_time_ms`, `ssl_cert_valid_to_ms`)
 - Use `GROUP_CONCAT()` to aggregate multiple values into a single column
 - Join with `runs` table to filter by scan version or date
 
@@ -440,11 +499,11 @@ sqlite3 domain_status.db <<EOF
 .headers on
 .mode csv
 .output results.csv
-SELECT * FROM url_status WHERE status = 200;
+SELECT initial_domain, http_status, title FROM url_status WHERE http_status = 200;
 EOF
 ```
 
-Or use the export subcommand to export filtered results:
+Or use the built-in export command:
 
 ```bash
 domain_status export --db-path domain_status.db --format csv --status 200 --output successful.csv

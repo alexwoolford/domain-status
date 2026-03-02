@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-03-02
+
+### Added
+- **Contact extraction**: Extract email addresses and phone numbers from `mailto:` and `tel:` links in HTML. New `url_contact_links` table with deduplication.
+- **Exposed secret detection**: Scan HTML for ~57 credential patterns across 13 categories (AWS, OpenAI, Anthropic, Stripe, Slack, GitHub, GitLab, database URLs, private keys, and many more). Each finding includes:
+  - **Severity classification** (critical/high/medium/low) based on impact
+  - **Location heuristic** (inline_script, html_comment, data_attribute, url_parameter, meta_tag, html_body)
+  - **80-character context window** for analyst triage
+  - Full matched values stored (no redaction — these are on the public web)
+- New `url_exposed_secrets` table with severity and location columns
+- **Homebrew tap**: `brew tap alexwoolford/domain-status && brew install domain_status`
+- Per-domain rate limiting (`--max-per-domain`) to prevent overwhelming individual servers
+- Parquet export format with Apache Arrow typed columns
+- Complete export data: all satellite table data now included in CSV/JSONL/Parquet exports
+
+### Fixed
+- `.gitignore` `secrets.*` pattern was blocking `secrets.rs` source files
+- Flaky `test_regex_cache_works` timing assertion on macOS CI runners
+- Retry default changed to fail-fast for unknown errors (was incorrectly retrying)
+
 ## [0.1.11] - 2026-02-18
 
 ### Added
