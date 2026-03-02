@@ -46,14 +46,15 @@ Give it a list of URLs → it fetches HTTP status, TLS certificates, DNS records
 **Install and run in 3 commands:**
 
 ```bash
-# 1. Install (requires Rust 1.85+)
-cargo install domain_status
+# 1. Install via Homebrew (macOS/Linux) or Cargo (any platform)
+brew tap alexwoolford/domain-status && brew install domain_status
+# or: cargo install domain_status
 
 # 2. Create URLs file and run scan
 echo -e "https://example.com\nhttps://example.org" > urls.txt && domain_status scan urls.txt
 
 # 3. View results
-sqlite3 domain_status.db "SELECT domain, status, title FROM url_status;"
+sqlite3 domain_status.db "SELECT initial_domain, http_status, title FROM url_status;"
 ```
 
 **Optional: Enable GeoIP lookup**
@@ -70,19 +71,28 @@ Get a free MaxMind license key from: https://www.maxmind.com/en/accounts/current
 
 **Example output:**
 ```
-domain            | status | title
-------------------|--------|--------------------------
-example.com       | 200    | Example Domain
-rust-lang.org     | 200    | Rust Programming Language
+initial_domain    | http_status | title
+------------------|-------------|--------------------------
+example.com       | 200         | Example Domain
+rust-lang.org     | 200         | Rust Programming Language
 ```
 
 **That's it!** The tool processes URLs concurrently (30 by default), stores all data in SQLite, and provides progress updates.
 
-**Alternative:** Don't have Rust? Download a pre-built binary from the [Releases page](https://github.com/alexwoolford/domain_status/releases) - see [Installation](#-installation) for details.
+**Alternative:** Download a pre-built binary from the [Releases page](https://github.com/alexwoolford/domain_status/releases) — see [Installation](#-installation) for details.
 
 ## 📦 Installation
 
-**Option 1: Install via Cargo (Recommended for Rust users)**
+**Option 1: Install via Homebrew (macOS/Linux — Recommended)**
+
+```bash
+brew tap alexwoolford/domain-status
+brew install domain_status
+```
+
+Pre-built binary, no compilation needed. Works on macOS (Intel and Apple Silicon) and Linux.
+
+**Option 2: Install via Cargo (Rust users)**
 
 Requires [Rust](https://www.rust-lang.org/tools/install) 1.85 or newer:
 
@@ -100,7 +110,7 @@ This compiles from source and installs the binary to `~/.cargo/bin/domain_status
 
 **Note:** This crate requires Rust 1.85 or newer (for edition 2024 support in dependencies). If installation fails, update your Rust toolchain: `rustup update stable`.
 
-**Option 2: Download Pre-built Binary**
+**Option 3: Download Pre-built Binary**
 
 Download the latest release from the [Releases page](https://github.com/alexwoolford/domain_status/releases):
 
@@ -132,7 +142,7 @@ xattr -d com.apple.quarantine domain_status 2>/dev/null || true
 # Download domain_status-windows-x86_64.exe.zip and extract
 ```
 
-**Option 3: Build from Source**
+**Option 4: Build from Source**
 
 Requires [Rust](https://www.rust-lang.org/tools/install) 1.85 or newer:
 
@@ -154,8 +164,11 @@ This creates an executable in `./target/release/domain_status` (or `domain_statu
 ### Data Collection
 - **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, WHOIS registration data, structured data (JSON-LD, Open Graph, Twitter Cards), security warnings, and complete redirect chains
 - **Technology Fingerprinting**: Detects web technologies using community-maintained Wappalyzer rulesets via pattern matching (headers, cookies, HTML, script URLs). Does not execute JavaScript.
+- **Contact Extraction**: Extracts email addresses and phone numbers from `mailto:` and `tel:` links
+- **Exposed Secret Detection**: Scans HTML for ~57 credential patterns (AWS, OpenAI, Anthropic, Stripe, Slack, GitHub, database URLs, private keys, and 40+ more). Each finding includes severity (critical/high/medium/low), location (inline_script, html_comment, url_parameter, etc.), and surrounding context for analyst triage
 - **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
 - **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
+- **Favicon Hashing**: Captures Shodan-compatible MurmurHash3 favicon hashes for infrastructure correlation
 - **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (auto-downloads if license key provided)
 
 ### Performance
@@ -405,11 +418,11 @@ After a scan completes, all data is stored in the SQLite database. Use `domain_s
 
 ### Duplicate Domain Handling
 
-The database uses a `UNIQUE (final_domain, timestamp)` constraint to ensure idempotency. This means:
+The database uses a `UNIQUE (final_domain, observed_at_ms)` constraint to ensure idempotency. This means:
 
 - **Same domain, same run**: If you include the same domain multiple times in one input file, only one record will be stored (the last one processed). This is by design to avoid duplicate data.
-- **Same domain, different runs**: Each run creates a new record with a different timestamp, so you can track changes over time.
-- **Different paths on same domain**: If you include both `https://example.com/` and `https://example.com/page`, both will be processed, but they will resolve to the same `final_domain` after following redirects. The database stores the final domain after redirects, so only one record per final domain per timestamp is kept.
+- **Same domain, different runs**: Each run creates a new record with a different observation time, so you can track changes over time.
+- **Different paths on same domain**: If you include both `https://example.com/` and `https://example.com/page`, both will be processed, but they will resolve to the same `final_domain` after following redirects. The database stores the final domain after redirects, so only one record per final domain per observation is kept.
 
 **Best practice:** Include each domain only once per input file. If you need to check multiple paths on the same domain, they should be separate URLs (e.g., `https://example.com/` and `https://example.com/about`), but be aware that redirects may cause them to resolve to the same final domain.
 
@@ -460,47 +473,54 @@ All results are stored in the SQLite database. You can query the database while 
 
 **Basic status overview:**
 ```sql
-SELECT domain, status, status_description, response_time
+SELECT initial_domain, http_status, http_status_text, response_time_seconds
 FROM url_status
-ORDER BY domain;
+ORDER BY initial_domain;
 ```
 
 **Find all failed URLs:**
 ```sql
-SELECT domain, status, status_description
-FROM url_status
-WHERE status >= 400 OR status = 0
-ORDER BY status;
+SELECT initial_domain, error_type, error_message
+FROM url_failures
+ORDER BY error_type;
 ```
 
 **Find all sites using a specific technology:**
 ```sql
-SELECT DISTINCT us.domain, us.status
+SELECT DISTINCT us.initial_domain, us.http_status
 FROM url_status us
 JOIN url_technologies ut ON us.id = ut.url_status_id
 WHERE ut.technology_name = 'WordPress'
-ORDER BY us.domain;
+ORDER BY us.initial_domain;
 ```
 
 **Find sites with missing security headers:**
 ```sql
-SELECT DISTINCT us.domain
+SELECT DISTINCT us.initial_domain
 FROM url_status us
 JOIN url_security_warnings usw ON us.id = usw.url_status_id
 WHERE usw.warning_code LIKE '%missing%'
-ORDER BY us.domain;
+ORDER BY us.initial_domain;
+```
+
+**Find exposed secrets (sorted by severity):**
+```sql
+SELECT us.initial_domain, es.secret_type, es.severity, es.location, es.matched_value
+FROM url_exposed_secrets es
+JOIN url_status us ON es.url_status_id = us.id
+ORDER BY CASE es.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 END;
 ```
 
 **Find all redirects:**
 ```sql
 SELECT
-    us.domain,
+    us.initial_domain,
     us.final_domain,
-    us.status,
+    us.http_status,
     COUNT(urc.id) as redirect_count
 FROM url_status us
-LEFT JOIN url_redirect_chain urc ON us.id = urc.url_status_id
-GROUP BY us.id, us.domain, us.final_domain, us.status
+JOIN url_redirect_chain urc ON us.id = urc.url_status_id
+GROUP BY us.id
 HAVING redirect_count > 0
 ORDER BY redirect_count DESC;
 ```
@@ -511,17 +531,17 @@ SELECT version, COUNT(*) as runs,
        SUM(total_urls) as total_urls,
        AVG(elapsed_seconds) as avg_time
 FROM runs
-WHERE end_time IS NOT NULL
+WHERE end_time_ms IS NOT NULL
 GROUP BY version
 ORDER BY version DESC;
 ```
 
 **Get all URLs from a specific run:**
 ```sql
-SELECT domain, status, title, response_time
+SELECT initial_domain, http_status, title, response_time_seconds
 FROM url_status
 WHERE run_id = 'run_1765150444953'
-ORDER BY domain;
+ORDER BY initial_domain;
 ```
 
 ## 📊 Database Schema
@@ -535,7 +555,7 @@ The database uses a **star schema** design pattern with:
 
 **Key Features:**
 - WAL mode for concurrent reads/writes
-- UPSERT semantics: `UNIQUE (final_domain, timestamp)` ensures idempotency
+- UPSERT semantics: `UNIQUE (final_domain, observed_at_ms)` ensures idempotency
 - Comprehensive indexes for fast queries
 - Normalized structure for efficient storage and analytics
 
@@ -554,23 +574,16 @@ Beyond basic URL status checks, the database enables powerful analytical capabil
 ```sql
 SELECT DISTINCT us2.final_domain
 FROM url_certificate_sans san1
-JOIN url_certificate_sans san2 ON san1.domain_name = san2.domain_name
+JOIN url_certificate_sans san2 ON san1.san_value = san2.san_value
 JOIN url_status us1 ON san1.url_status_id = us1.id
 JOIN url_status us2 ON san2.url_status_id = us2.id
 WHERE us1.final_domain = 'example.com' AND us1.id != us2.id;
 ```
 
-#### 📊 Pre-Built Analyst Views
-- **`url_status_enriched`**: Convenient 1:1 joins with GeoIP and WHOIS data
-- **`url_observations`**: Unified timeline of successes and failures for easy analysis
-
-```sql
--- Get all observations from a run (success + failure)
-SELECT outcome, final_domain, http_status, error_type
-FROM url_observations
-WHERE run_id = 'run_123'
-ORDER BY observed_at_ms;
-```
+#### 📊 Cross-Table Analysis
+- **Contact Intelligence**: Extract email addresses and phone numbers across all scanned domains via `url_contact_links`
+- **Secret Detection**: Find exposed credentials with severity classification via `url_exposed_secrets`
+- **Infrastructure Mapping**: Group domains by shared IP, certificate, or ASN
 
 #### 📈 Time-Series Tracking
 - Compare technology stacks between runs (track migrations: WordPress → React)
@@ -601,16 +614,16 @@ All scan results are persisted in the database, so you can query past runs even 
 SELECT
     run_id,
     version,
-    datetime(start_time/1000, 'unixepoch') as start_time,
-    datetime(end_time/1000, 'unixepoch') as end_time,
+    datetime(start_time_ms/1000, 'unixepoch') as start_time,
+    datetime(end_time_ms/1000, 'unixepoch') as end_time,
     elapsed_seconds,
     total_urls,
     successful_urls,
     failed_urls,
     ROUND(100.0 * successful_urls / total_urls, 1) as success_rate
 FROM runs
-WHERE end_time IS NOT NULL
-ORDER BY start_time DESC
+WHERE end_time_ms IS NOT NULL
+ORDER BY start_time_ms DESC
 LIMIT 10;
 ```
 
