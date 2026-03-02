@@ -521,6 +521,20 @@ fn infer_location(context: &str) -> &'static str {
     }
 }
 
+/// Returns true if a matched value for VercelToken looks like an identifier (CSS/JS
+/// class or variable name) rather than a real token, to avoid false positives.
+fn vercel_token_likely_identifier(matched_value: &str) -> bool {
+    let suffix = match matched_value.strip_prefix("ver_") {
+        Some(s) => s,
+        None => return false,
+    };
+    let underscore_count = suffix.chars().filter(|c| *c == '_').count();
+    let has_hyphen = suffix.contains('-');
+    // Real tokens are typically one alphanumeric block; identifiers have multiple
+    // underscores (e.g. ver_effect_offset_hover_popover) or hyphens (e.g. ver_CTA-webimage-...).
+    underscore_count >= 2 || has_hyphen
+}
+
 /// Detects exposed secrets in raw HTML body text.
 ///
 /// Scans the body for ~55 known secret patterns across cloud providers, AI/ML,
@@ -535,6 +549,13 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     for pattern in PATTERNS.iter() {
         for mat in pattern.regex.find_iter(body) {
             let matched_value = mat.as_str().to_string();
+
+            if pattern.secret_type == SecretType::VercelToken
+                && vercel_token_likely_identifier(&matched_value)
+            {
+                continue;
+            }
+
             let key = (pattern.secret_type, matched_value.clone());
 
             if seen.insert(key) {
@@ -804,6 +825,24 @@ mod tests {
         let secrets = detect_exposed_secrets(body);
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].secret_type, SecretType::VercelToken);
+    }
+
+    #[test]
+    fn test_vercel_token_identifier_false_positives_filtered() {
+        // CSS/JS identifiers with ver_ prefix and multiple underscores or hyphens must not be reported.
+        let body = r#"<div class="ver_effect_offset_hover_popover ver__section-video-container">"#;
+        let secrets: Vec<_> = detect_exposed_secrets(body)
+            .into_iter()
+            .filter(|s| s.secret_type == SecretType::VercelToken)
+            .collect();
+        assert!(
+            secrets.is_empty(),
+            "identifier-like ver_ strings should not be reported as VercelToken; got {:?}",
+            secrets
+                .iter()
+                .map(|s| s.matched_value.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
