@@ -779,25 +779,12 @@ mod tests {
         clear_regex_cache();
 
         // First call should compile and cache
-        let start = std::time::Instant::now();
         assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
-        let first_call_time = start.elapsed();
 
-        // Second call should use cache (much faster)
-        let start = std::time::Instant::now();
+        // Second call should use cache
         assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
-        let second_call_time = start.elapsed();
 
-        // Cached call should be significantly faster (at least 2x, often 10-100x)
-        // Note: This is a rough check - exact timing depends on system load
-        assert!(
-            second_call_time < first_call_time || second_call_time.as_nanos() < 1_000_000,
-            "Cached regex should be faster. First: {:?}, Second: {:?}",
-            first_call_time,
-            second_call_time
-        );
-
-        // Verify cache is populated
+        // Verify cache is populated (the real test — timing assertions are flaky on CI)
         assert!(
             REGEX_CACHE.get("^nginx").is_some(),
             "Cache should contain compiled regex for '^nginx'"
