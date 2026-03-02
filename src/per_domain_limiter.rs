@@ -61,7 +61,7 @@ impl PerDomainLimiter {
     }
 
     /// Returns the number of domains currently being tracked.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Available for monitoring/debugging
     pub fn tracked_domains(&self) -> u64 {
         self.limiters.entry_count()
     }

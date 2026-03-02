@@ -451,6 +451,34 @@ mod tests {
                 assert_eq!(report.total_urls, 0);
                 assert_eq!(report.successful, 0);
                 assert_eq!(report.failed, 0);
+
+                // Verify finalize_scan wrote run stats to DB (run row matches report)
+                let pool =
+                    sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+                        .await
+                        .expect("connect to test db");
+                let row: (i64, i64, i64) = sqlx::query_as(
+                    "SELECT total_urls, successful_urls, failed_urls FROM runs WHERE run_id = ?",
+                )
+                .bind(&report.run_id)
+                .fetch_one(&pool)
+                .await
+                .expect("run row should exist");
+                assert_eq!(
+                    usize::try_from(row.0).expect("total_urls non-negative"),
+                    report.total_urls,
+                    "DB total_urls should match report"
+                );
+                assert_eq!(
+                    usize::try_from(row.1).expect("successful_urls non-negative"),
+                    report.successful,
+                    "DB successful_urls should match report"
+                );
+                assert_eq!(
+                    usize::try_from(row.2).expect("failed_urls non-negative"),
+                    report.failed,
+                    "DB failed_urls should match report"
+                );
             }
             Err(e) => {
                 let error_msg = e.to_string();
@@ -499,6 +527,14 @@ mod tests {
         };
 
         let result = run_scan(config).await;
-        let _ = result;
+        match &result {
+            Ok(report) => assert_eq!(
+                report.total_urls, 1,
+                "File with one URL and comments should result in one URL attempted"
+            ),
+            Err(_) => {
+                // Init or network failure (e.g. fingerprint fetch); skip assertion
+            }
+        }
     }
 }

@@ -328,7 +328,7 @@ domain_status export [OPTIONS]
 - `--format <FORMAT>`: Export format: `csv`, `jsonl`, or `parquet` (default: `csv`)
   - **CSV**: Flattened format, one row per URL with all fields as columns (ideal for spreadsheets)
   - **JSONL**: JSON Lines format, one JSON object per line (ideal for scripting, piping to `jq`, or loading into databases)
-  - **Parquet**: Columnar format (not yet implemented)
+  - **Parquet**: Columnar format for analytics (Arrow-typed columns)
 - `--output <PATH>`: Output file path
   - If not specified, writes to `domain_status_export.{csv,jsonl,parquet}` in the current directory
   - Use `-` to write to stdout (for piping to other commands)
@@ -834,6 +834,7 @@ tokio = { version = "1", features = ["full"] }
 Then use it in your code:
 
 ```rust
+use domain_status::export::{export_csv, ExportFormat, ExportOptions};
 use domain_status::{Config, run_scan};
 use std::path::PathBuf;
 
@@ -853,9 +854,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Results saved in {}", report.db_path.display());
 
     // Export to CSV using the library API
-    use domain_status::export::export_csv;
-    export_csv(&report.db_path, Some(&PathBuf::from("results.csv")), None, None, None, None)
-        .await?;
+    let export_opts = ExportOptions {
+        db_path: report.db_path.clone(),
+        output: Some(PathBuf::from("results.csv")),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    };
+    export_csv(&export_opts).await?;
     println!("Exported results to results.csv");
 
     Ok(())
@@ -864,7 +872,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 See the [API documentation](https://docs.rs/domain_status) for details on `Config` options and usage.
 
-**Note:** The library requires a Tokio runtime. Use `#[tokio::main]` in your application or ensure you're calling library functions within an async context.
+**Note:** The library requires a Tokio runtime. Use `#[tokio::main]` in your application or ensure you're calling library functions within an async context. When using the library, `log_file` can be `None`; the CLI requires it for file-based logging.
 
 ## 🛠️ Technical Details
 
