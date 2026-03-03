@@ -417,7 +417,8 @@ fn extract_secret(
     full_match.to_string()
 }
 
-/// Returns true if any per-rule allowlist (regex or stopword) matches the appropriate target per RegexTarget (secret / line / match).
+/// Returns true if the match should be skipped by a per-rule allowlist.
+/// Respects condition: OR = any criterion skips; AND = all must match (path is N/A for single-blob, so AND with paths never skips).
 fn rule_allowlist_skips(
     allowlists: &[crate::parse::gitleaks::CompiledRuleAllowlist],
     matched_value: &str,
@@ -430,14 +431,29 @@ fn rule_allowlist_skips(
             Some("match") => full_match,
             _ => matched_value,
         };
-        for re in &list.regexes {
-            if re.is_match(target) {
+        if list.condition_and {
+            // AND: all criteria must match. Path is N/A for single-blob (we never have a file path).
+            if list.has_paths {
+                continue; // path never matches, so AND never succeeds; do not skip
+            }
+            let all_regex =
+                list.regexes.is_empty() || list.regexes.iter().all(|re| re.is_match(target));
+            let all_stop =
+                list.stopwords.is_empty() || list.stopwords.iter().all(|w| target.contains(w));
+            if all_regex && all_stop {
                 return true;
             }
-        }
-        for word in &list.stopwords {
-            if target.contains(word) {
-                return true;
+        } else {
+            // OR: any match skips
+            for re in &list.regexes {
+                if re.is_match(target) {
+                    return true;
+                }
+            }
+            for word in &list.stopwords {
+                if target.contains(word) {
+                    return true;
+                }
             }
         }
     }
@@ -799,6 +815,38 @@ mod tests {
             sourcegraph.is_none(),
             "40-char hex in html id= should be allowlisted; got {:?}",
             secrets
+        );
+    }
+
+    /// Cloudflare email obfuscation: 40-char hex in email-protection# or data-cfemail= must be allowlisted.
+    #[test]
+    fn test_sourcegraph_allowlist_cloudflare_email_skipped() {
+        let hex = "3f565159507f5e53545e52564b5a5c57115c5052";
+        let body = format!(
+            r#"<a href="/cdn-cgi/l/email-protection#{}">Contact</a> sourcegraph"#,
+            hex
+        );
+        let secrets = detect_exposed_secrets(&body);
+        let sourcegraph = secrets
+            .iter()
+            .find(|s| s.secret_type == "sourcegraph-access-token");
+        assert!(
+            sourcegraph.is_none(),
+            "40-char hex in Cloudflare email-protection# should be allowlisted; got {:?}",
+            secrets
+        );
+        let body2 = format!(
+            r#"<span class="__cf_email__" data-cfemail="{}">[email protected]</span> sourcegraph"#,
+            "cca5a2aaa38cada0a7ada1a5b8a9afa4e2afa3a1"
+        );
+        let secrets2 = detect_exposed_secrets(&body2);
+        let sg2 = secrets2
+            .iter()
+            .find(|s| s.secret_type == "sourcegraph-access-token");
+        assert!(
+            sg2.is_none(),
+            "40-char hex in data-cfemail= should be allowlisted; got {:?}",
+            secrets2
         );
     }
 

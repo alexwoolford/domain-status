@@ -85,10 +85,9 @@ pub async fn handle_http_request(
     match res {
         Ok(mut response) => {
             // For HTTP/3 detection: match wappalyzergo behavior exactly
-            // Go's http.Client automatically follows redirects and exposes alt-svc in final response
-            // reqwest's HTTP/2 implementation doesn't expose connection-level headers like alt-svc
-            // Solution: If we captured alt-svc from any response in redirect chain, add it to final response
-            // This matches wappalyzergo's behavior where resp.Header contains alt-svc from the final response
+            // Parity with wappalyzergo: HTTP/3 detection uses alt-svc. Go's http.Client exposes alt-svc
+            // on the final response after redirects; reqwest does not. We copy alt-svc from the redirect
+            // chain into the final response so fingerprinting sees it. See README/DATABASE.md for limitations.
             // If alt-svc header is missing from final response but was captured during redirects,
             // add it to the final response for HTTP/3 detection (matches wappalyzergo behavior)
             if !response.headers().contains_key("alt-svc") {

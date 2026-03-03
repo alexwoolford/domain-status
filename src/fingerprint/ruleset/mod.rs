@@ -28,8 +28,8 @@ use fetch::fetch_from_url;
 use github::get_latest_commit_sha;
 use local::load_from_path;
 
-/// Default URLs for fingerprint sources (merged, matching Go implementation)
-/// The Go implementation fetches from both sources and merges them
+/// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then HTTPArchive).
+/// wappalyzergo uses the same two sources; we merge with later overwriting earlier for the same technology.
 const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
     "https://raw.githubusercontent.com/enthec/webappanalyzer/main/src/technologies",
     "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies",
