@@ -25,7 +25,7 @@ pub async fn insert_exposed_secrets(
              severity=excluded.severity, location=excluded.location, context=excluded.context",
         )
         .bind(url_status_id)
-        .bind(secret.secret_type.as_str())
+        .bind(&secret.secret_type)
         .bind(&secret.matched_value)
         .bind(secret.severity.as_str())
         .bind(&secret.location)
@@ -35,7 +35,7 @@ pub async fn insert_exposed_secrets(
         {
             log::warn!(
                 "Failed to insert exposed secret ({}) for url_status_id {}: {}",
-                secret.secret_type.as_str(),
+                secret.secret_type,
                 url_status_id,
                 e
             );
@@ -48,7 +48,7 @@ pub async fn insert_exposed_secrets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::{ExposedSecret, SecretSeverity, SecretType};
+    use crate::parse::{ExposedSecret, SecretSeverity};
     use sqlx::Row;
 
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
@@ -59,7 +59,7 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let secrets = vec![ExposedSecret {
-            secret_type: SecretType::AwsAccessKey,
+            secret_type: "aws-access-token".to_string(),
             matched_value: "AKIAIOSFODNN7EXAMPLE".to_string(),
             context: "var key = AKIAIOSFODNN7EXAMPLE;".to_string(),
             severity: SecretSeverity::High,
@@ -78,7 +78,7 @@ mod tests {
         .expect("Failed to fetch");
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get::<String, _>("secret_type"), "aws_access_key");
+        assert_eq!(rows[0].get::<String, _>("secret_type"), "aws-access-token");
         assert_eq!(
             rows[0].get::<String, _>("matched_value"),
             "AKIAIOSFODNN7EXAMPLE"
@@ -104,14 +104,14 @@ mod tests {
 
         let secrets = vec![
             ExposedSecret {
-                secret_type: SecretType::AwsAccessKey,
+                secret_type: "aws-access-token".to_string(),
                 matched_value: "AKIAIOSFODNN7EXAMPLE".to_string(),
                 context: "context1".to_string(),
                 severity: SecretSeverity::High,
                 location: "html_body".to_string(),
             },
             ExposedSecret {
-                secret_type: SecretType::GoogleApiKey,
+                secret_type: "gcp-api-key".to_string(),
                 matched_value: "AIzaSyA1234567890abcdefghijklmnopqrstuv".to_string(),
                 context: "context2".to_string(),
                 severity: SecretSeverity::Medium,
@@ -139,7 +139,7 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let secret = ExposedSecret {
-            secret_type: SecretType::AwsAccessKey,
+            secret_type: "aws-access-token".to_string(),
             matched_value: "AKIAIOSFODNN7EXAMPLE".to_string(),
             context: "original context".to_string(),
             severity: SecretSeverity::High,
@@ -152,7 +152,7 @@ mod tests {
 
         // Upsert with updated context
         let secret2 = ExposedSecret {
-            secret_type: SecretType::AwsAccessKey,
+            secret_type: "aws-access-token".to_string(),
             matched_value: "AKIAIOSFODNN7EXAMPLE".to_string(),
             context: "updated context".to_string(),
             severity: SecretSeverity::High,

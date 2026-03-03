@@ -11,6 +11,7 @@
 
 mod analytics;
 mod contact;
+mod gitleaks;
 mod html;
 mod secrets;
 mod social;

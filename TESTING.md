@@ -43,3 +43,15 @@ cargo audit
 **Stress tests:** Stress tests (`tests/stress_*.rs`) are ignored by default. Run them manually for load/resilience checks: `cargo test --test 'stress_*' -- --ignored --nocapture`.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml) for the full CI pipeline.
+
+## Sample scan validation
+
+To sanity-check columns and `url_exposed_secrets` after changes:
+
+```bash
+./target/release/domain_status scan url-list.txt --db-path validation_scan.db
+sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status; SELECT secret_type, COUNT(*) FROM url_exposed_secrets GROUP BY secret_type;"
+./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
+```
+
+Expect: `url_status` row count matches successful URLs from the run; `url_exposed_secrets` uses gitleaks rule ids (e.g. `sourcegraph-access-token`, `gcp-api-key`); no empty `ip_address` (DNS failures use placeholder `unknown`).
