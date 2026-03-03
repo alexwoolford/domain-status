@@ -155,7 +155,7 @@ pub(crate) async fn fetch_tls_and_dns(
                 crate::error_handling::ErrorType::DnsNsLookupError,
                 truncated_msg,
             ));
-            (String::new(), None) // Use empty string for IP, None for reverse DNS
+            ("unknown".to_string(), None) // Placeholder when DNS fails; NOT NULL and non-empty for url_status
         }
     };
 

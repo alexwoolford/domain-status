@@ -505,6 +505,13 @@ ORDER BY us.initial_domain;
 ```
 
 **Find exposed secrets (sorted by severity):**
+
+Secret detection uses the [gitleaks](https://github.com/gitleaks/gitleaks) default rule set; `secret_type` values are gitleaks rule ids (e.g. `aws-access-token`, `private-key`). The config is bundled at `config/gitleaks.toml`. To refresh from upstream:
+
+```bash
+curl -sL -o config/gitleaks.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml
+```
+
 ```sql
 SELECT us.initial_domain, es.secret_type, es.severity, es.location, es.matched_value
 FROM url_exposed_secrets es
@@ -926,6 +933,10 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 - Memory efficiency: Response bodies limited to 2MB, HTML text extraction limited to 50KB
 
 ## 🔒 Security & Secret Management
+
+**Exposed secret detection (in scanned pages):**
+The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, tokens) using the gitleaks default config at `config/gitleaks.toml`. Path-based allowlists in that config are ignored (we scan a single blob). Severity is derived from rule id. To pull in the latest gitleaks rules:
+`curl -sL -o config/gitleaks.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml`
 
 **Preventing Credential Leaks:**
 
