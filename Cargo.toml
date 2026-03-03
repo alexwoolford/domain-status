@@ -75,7 +75,7 @@ colored = "^3.0"
 indicatif = "^0.17"
 
 # Other
-toml = "^0.8"
+toml = { version = "^0.8", features = ["preserve_order"] }
 chrono = "^0.4"
 strum = "^0.27"
 strum_macros = "^0.27"

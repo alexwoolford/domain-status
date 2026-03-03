@@ -363,7 +363,7 @@ WHERE initial_domain != final_domain;
 ```
 
 #### `url_technologies` (Junction Table)
-Stores detected web technologies (one row per technology per URL).
+Stores detected web technologies (one row per technology per URL). Detection uses Wappalyzer-style rules (headers, cookies, HTML, script URLs); JavaScript is not executed. Technologies detectable only via JavaScript are not present. HTTP/3 is detected via the `alt-svc` header (copied from the redirect chain for parity with wappalyzergo when the client does not expose it on the final response).
 
 | Column | Type | Description |
 |--------|------|-------------|

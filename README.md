@@ -506,11 +506,13 @@ ORDER BY us.initial_domain;
 
 **Find exposed secrets (sorted by severity):**
 
-Secret detection uses the [gitleaks](https://github.com/gitleaks/gitleaks) default rule set; `secret_type` values are gitleaks rule ids (e.g. `aws-access-token`, `private-key`). The config is bundled at `config/gitleaks.toml`. To refresh from upstream:
+Secret detection uses the [gitleaks](https://github.com/gitleaks/gitleaks) default rule set; `secret_type` values are gitleaks rule ids (e.g. `aws-access-token`, `private-key`). The config is bundled at `config/gitleaks.toml`; web-specific allowlists (e.g. for `sourcegraph-access-token`) live in `config/gitleaks.overrides.toml` and are applied after the main config so they are not lost when refreshing upstream. Detection logic (keywords prefilter, secretGroup, regexTarget and condition for allowlists) matches Gitleaks. Because we scan **live HTML** (not just source files), the overlay adds per-rule allowlists for web-only false positives (e.g. Cloudflare email obfuscation, HTML `id=` attributes). To refresh from upstream:
 
 ```bash
 curl -sL -o config/gitleaks.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml
 ```
+
+Do not overwrite `config/gitleaks.overrides.toml` when refreshing; it is merged at load time and keeps web-specific allowlists.
 
 ```sql
 SELECT us.initial_domain, es.secret_type, es.severity, es.location, es.matched_value
@@ -768,7 +770,9 @@ Technology detection uses pattern matching against:
 - URL patterns
 - Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
 
-**Important**: The tool does NOT execute JavaScript or fetch external scripts. It only analyzes the initial HTML response, matching WappalyzerGo's behavior.
+**Important**: The tool does NOT execute JavaScript or fetch external scripts. It only analyzes the initial HTML response, matching WappalyzerGo's behavior. Technologies that are detectable only via JavaScript (e.g. some SPA frameworks) are not detected.
+
+**Wappalyzer parity**: Fingerprint sources match wappalyzergo (enthec/webappanalyzer and HTTPArchive/wappalyzer; later overwrites earlier). HTTP/3 detection relies on the `alt-svc` header; because reqwest does not expose it on the final response, we copy `alt-svc` from the redirect chain into the response used for fingerprinting. Technologies that depend only on JS pattern matching are skipped (no headless VM).
 
 The default fingerprint ruleset comes from the HTTP Archive Wappalyzer fork and is cached locally for 7 days. You can update to the latest by pointing `--fingerprints` to a new JSON file (e.g., the official Wappalyzer `technologies.json`). The tool prints the fingerprints source and version (commit hash) in the `runs` table.
 
@@ -935,8 +939,7 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 ## 🔒 Security & Secret Management
 
 **Exposed secret detection (in scanned pages):**
-The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, tokens) using the gitleaks default config at `config/gitleaks.toml`. Path-based allowlists in that config are ignored (we scan a single blob). Severity is derived from rule id. To pull in the latest gitleaks rules:
-`curl -sL -o config/gitleaks.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml`
+The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, tokens) using the gitleaks default config at `config/gitleaks.toml` plus optional overrides at `config/gitleaks.overrides.toml` (web-specific allowlists; do not overwrite when refreshing upstream). Path-based allowlists are N/A for single-blob scan. Severity is derived from rule id. To pull in the latest gitleaks rules: `curl -sL -o config/gitleaks.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml`
 
 **Preventing Credential Leaks:**
 
