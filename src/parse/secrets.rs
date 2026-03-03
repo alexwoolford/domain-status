@@ -383,19 +383,60 @@ fn global_allowlist_skips(
     false
 }
 
-/// Returns true if any per-rule allowlist (regex or stopword) matches, so we should skip.
+/// Returns the line containing the byte range [start, end) in body. Line = span between \\n or start/end of body.
+fn line_containing(body: &str, start: usize, end: usize) -> &str {
+    let line_start = body[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = body[end..].find('\n').map_or(body.len(), |i| end + i);
+    &body[line_start..line_end]
+}
+
+/// Extracts the secret from a regex match per Gitleaks: SecretGroup (1-based) if set, else first non-empty capture group, else full match.
+fn extract_secret(
+    captures: Option<regex::Captures>,
+    full_match: &str,
+    secret_group: Option<u32>,
+) -> String {
+    let caps = match captures {
+        Some(c) => c,
+        None => return full_match.to_string(),
+    };
+    if let Some(n) = secret_group {
+        if n > 0 {
+            if let Some(m) = caps.get(n as usize) {
+                return m.as_str().to_string();
+            }
+        }
+    }
+    for i in 1..caps.len() {
+        if let Some(m) = caps.get(i) {
+            if !m.as_str().is_empty() {
+                return m.as_str().to_string();
+            }
+        }
+    }
+    full_match.to_string()
+}
+
+/// Returns true if any per-rule allowlist (regex or stopword) matches the appropriate target per RegexTarget (secret / line / match).
 fn rule_allowlist_skips(
     allowlists: &[crate::parse::gitleaks::CompiledRuleAllowlist],
     matched_value: &str,
+    line_content: &str,
+    full_match: &str,
 ) -> bool {
     for list in allowlists {
+        let target = match list.regex_target.as_deref() {
+            Some("line") => line_content,
+            Some("match") => full_match,
+            _ => matched_value,
+        };
         for re in &list.regexes {
-            if re.is_match(matched_value) {
+            if re.is_match(target) {
                 return true;
             }
         }
         for word in &list.stopwords {
-            if matched_value.contains(word) {
+            if target.contains(word) {
                 return true;
             }
         }
@@ -458,13 +499,20 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     let mut seen = std::collections::HashSet::new();
 
     for rule in &config.rules {
+        // Gitleaks prefilter: if rule has keywords, run regex only when at least one keyword appears in fragment (case-insensitive).
+        if let Some(ref kws) = rule.keywords {
+            if !kws.is_empty() {
+                let body_lower = body.to_lowercase();
+                if !kws.iter().any(|kw| body_lower.contains(kw)) {
+                    continue;
+                }
+            }
+        }
+
         for mat in rule.regex.find_iter(body) {
-            let matched_value = rule
-                .regex
-                .captures(mat.as_str())
-                .and_then(|c| c.get(1))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| mat.as_str().to_string());
+            let full_match = mat.as_str();
+            let captures = rule.regex.captures(full_match);
+            let matched_value = extract_secret(captures, full_match, rule.secret_group);
 
             if let Some(entropy_threshold) = rule.entropy {
                 if shannon_entropy(&matched_value) < entropy_threshold {
@@ -476,7 +524,8 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
             if global_allowlist_skips(&config.global_allowlist, &matched_value, &context) {
                 continue;
             }
-            if rule_allowlist_skips(&rule.allowlists, &matched_value) {
+            let line_content = line_containing(body, mat.start(), mat.end());
+            if rule_allowlist_skips(&rule.allowlists, &matched_value, line_content, full_match) {
                 continue;
             }
 
@@ -698,6 +747,79 @@ mod tests {
         let config = &crate::parse::gitleaks::GITLEAKS;
         assert!(config.rules.len() > 200, "expected 200+ gitleaks rules");
         assert!(!config.global_allowlist.regexes.is_empty());
+    }
+
+    /// Gitleaks keyword prefilter: sourcegraph-access-token has keywords ["sgp_", "sourcegraph"].
+    /// Without either in the body, a plain 40-char hex (e.g. Git SHA) must not be reported.
+    #[test]
+    fn test_sourcegraph_no_fire_without_keyword() {
+        let sha_like = "9c02de5c56d82f105252bb92478c88114ab41dce";
+        let body = format!(r#"<span>commit {} </span>"#, sha_like);
+        let secrets = detect_exposed_secrets(&body);
+        let sourcegraph = secrets
+            .iter()
+            .find(|s| s.secret_type == "sourcegraph-access-token");
+        assert!(
+            sourcegraph.is_none(),
+            "sourcegraph-access-token must not fire without keyword in body; got {:?}",
+            secrets
+        );
+    }
+
+    /// With "sourcegraph" in the body, a 40-char hex can be reported as sourcegraph-access-token.
+    #[test]
+    fn test_sourcegraph_fires_with_keyword() {
+        let token_hex = "a1b2c3d4e5f6789012345678901234567890abcd";
+        let body = format!(r#"<script>window.SOURCEGRAPH = "{}";</script>"#, token_hex);
+        let secrets = detect_exposed_secrets(&body);
+        let sourcegraph = secrets
+            .iter()
+            .find(|s| s.secret_type == "sourcegraph-access-token");
+        assert!(
+            sourcegraph.is_some(),
+            "sourcegraph-access-token should fire when 'sourcegraph' (case-insensitive) in body; got {:?}",
+            secrets
+        );
+        assert_eq!(sourcegraph.unwrap().matched_value, token_hex);
+    }
+
+    /// Per-rule allowlist: 40-char hex in html id="..." (e.g. Wix build ID) must not be reported as sourcegraph-access-token.
+    #[test]
+    fn test_sourcegraph_allowlist_html_id_skipped() {
+        let build_id = "1ccd1dddac2890afd4e9eb54f87f22008b1ed114";
+        let body = format!(
+            r#"<html id="{}" class="StudioLegacy Legacy">sourcegraph integration</html>"#,
+            build_id
+        );
+        let secrets = detect_exposed_secrets(&body);
+        let sourcegraph = secrets
+            .iter()
+            .find(|s| s.secret_type == "sourcegraph-access-token");
+        assert!(
+            sourcegraph.is_none(),
+            "40-char hex in html id= should be allowlisted; got {:?}",
+            secrets
+        );
+    }
+
+    /// sonar-api-token has secretGroup = 2; extracted secret must be group 2 (the token), not group 1 (login|token).
+    #[test]
+    fn test_sonar_secret_group_2() {
+        // Regex group 1 = (login|token), group 2 = 40-char token. secretGroup=2 => we store group 2.
+        let token = "squ_abcdefghij0123456789abcdefghij012345"; // 40 chars
+        let body = format!(r#"sonar_token="{}""#, token);
+        let secrets = detect_exposed_secrets(&body);
+        let sonar = secrets.iter().find(|s| s.secret_type == "sonar-api-token");
+        assert!(
+            sonar.is_some(),
+            "expected sonar-api-token finding: {:?}",
+            secrets
+        );
+        assert_eq!(
+            sonar.unwrap().matched_value,
+            token,
+            "secretGroup=2 should yield the token (group 2), not 'token' (group 1)"
+        );
     }
 
     #[test]

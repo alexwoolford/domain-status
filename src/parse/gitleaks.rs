@@ -39,6 +39,8 @@ pub struct RuleRaw {
     pub regex: Option<String>,
     pub entropy: Option<f64>,
     pub keywords: Option<Vec<String>>,
+    #[serde(rename = "secretGroup")]
+    pub secret_group: Option<u32>,
     pub path: Option<String>,
     pub allowlists: Option<Vec<RuleAllowlistRaw>>,
 }
@@ -61,9 +63,11 @@ pub struct CompiledGlobalAllowlist {
 }
 
 /// Compiled per-rule allowlist.
+/// regex_target: "line" | "match" | empty (default = secret). Controls what string allowlist regex/stopwords are tested against.
 pub struct CompiledRuleAllowlist {
     pub regexes: Vec<Regex>,
     pub stopwords: Vec<String>,
+    pub regex_target: Option<String>,
 }
 
 /// A single compiled rule ready for scanning.
@@ -71,6 +75,10 @@ pub struct CompiledRule {
     pub id: String,
     pub regex: Regex,
     pub entropy: Option<f64>,
+    /// Lowercased at load time; if Some and non-empty, rule runs only when at least one keyword appears in fragment (Gitleaks prefilter).
+    pub keywords: Option<Vec<String>>,
+    /// 1-based capture group index for secret extraction; None = first non-empty group.
+    pub secret_group: Option<u32>,
     pub allowlists: Vec<CompiledRuleAllowlist>,
 }
 
@@ -100,6 +108,7 @@ fn compile_rule_allowlist(raw: &RuleAllowlistRaw) -> CompiledRuleAllowlist {
     CompiledRuleAllowlist {
         regexes: compile_allowlist_regexes(raw.regexes.clone()),
         stopwords: raw.stopwords.clone().unwrap_or_default(),
+        regex_target: raw.regex_target.clone(),
     }
 }
 
@@ -136,10 +145,17 @@ fn load_compiled() -> GitleaksCompiled {
                 .iter()
                 .map(compile_rule_allowlist)
                 .collect();
+            let keywords = r.keywords.as_ref().map(|kws| {
+                kws.iter()
+                    .map(|s| s.to_lowercase())
+                    .collect::<Vec<String>>()
+            });
             Some(CompiledRule {
                 id: r.id,
                 regex,
                 entropy: r.entropy,
+                keywords,
+                secret_group: r.secret_group,
                 allowlists,
             })
         })
