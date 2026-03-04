@@ -123,3 +123,142 @@ pub async fn finalize_scan(
         elapsed_seconds,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::SystemTime;
+
+    use hickory_resolver::config::ResolverOpts;
+    use hickory_resolver::TokioResolver;
+    use tokio::sync::Semaphore;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::config::Config;
+    use crate::error_handling::ProcessingStats;
+    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+    use crate::fingerprint::{FingerprintMetadata, FingerprintRuleset};
+    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
+    use crate::storage::{insert_run_metadata, run_migrations, RunMetadata};
+    use crate::utils::TimingStats;
+
+    use super::*;
+
+    async fn create_test_pool() -> crate::storage::DbPool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("test pool");
+        run_migrations(&pool).await.expect("migrations");
+        Arc::new(pool)
+    }
+
+    /// finalize_scan returns a ScanReport with correct totals and run_id; does not panic.
+    #[tokio::test]
+    async fn test_finalize_scan_returns_correct_report() {
+        let pool = create_test_pool().await;
+        let run_id = "run_finalize_test_123";
+        let start_time_ms = 1704067200000i64;
+        let meta = RunMetadata {
+            run_id,
+            start_time_ms,
+            version: "0.1.0",
+            fingerprints_source: Some("test"),
+            fingerprints_version: Some("0"),
+            geoip_version: None,
+        };
+        insert_run_metadata(pool.as_ref(), &meta)
+            .await
+            .expect("insert run metadata");
+
+        let total_urls_attempted = Arc::new(AtomicUsize::new(10));
+        let completed_urls = Arc::new(AtomicUsize::new(8));
+        let failed_urls = Arc::new(AtomicUsize::new(2));
+        let start_time = std::time::Instant::now();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let timing_stats = Arc::new(TimingStats::new());
+        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::new());
+
+        let client = Arc::new(reqwest::Client::builder().build().expect("http client"));
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("redirect client"),
+        );
+        let extractor = Arc::new(psl::List);
+        let resolver = Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+
+        let shared_ctx = Arc::new(ProcessingContext::new(
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(Arc::clone(&pool), Arc::clone(&db_circuit_breaker)),
+            ConfigContext::new(
+                Arc::clone(&error_stats),
+                Arc::clone(&timing_stats),
+                Some(run_id.to_string()),
+                false,
+            ),
+        ));
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: SystemTime::now(),
+            },
+        });
+
+        let config = Config {
+            db_path: std::path::PathBuf::from(":memory:"),
+            enable_whois: false,
+            ..Config::default()
+        };
+
+        let resources = ScanResources {
+            pool,
+            db_circuit_breaker,
+            shared_ctx,
+            semaphore: Arc::new(Semaphore::new(1)),
+            request_limiter: None,
+            rate_limiter_shutdown: None,
+            adaptive_limiter: None,
+            per_domain_limiter: None,
+            error_stats,
+            timing_stats,
+            completed_urls,
+            failed_urls,
+            total_urls_attempted,
+            total_urls_in_file: Arc::new(AtomicUsize::new(10)),
+            run_id: run_id.to_string(),
+            start_time_epoch: start_time_ms,
+            start_time,
+            ruleset,
+            geoip_metadata: None,
+            config,
+        };
+
+        let cancel = CancellationToken::new();
+        let loop_result = ScanLoopResult {
+            cancel,
+            logging_task: None,
+        };
+
+        let report = finalize_scan(resources, loop_result)
+            .await
+            .expect("finalize_scan should succeed");
+
+        assert_eq!(report.total_urls, 10);
+        assert_eq!(report.successful, 8);
+        assert_eq!(report.failed, 2);
+        assert_eq!(report.run_id, run_id);
+        assert!(report.elapsed_seconds >= 0.0);
+    }
+}

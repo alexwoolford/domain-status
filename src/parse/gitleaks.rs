@@ -326,3 +326,74 @@ fn load_compiled() -> GitleaksCompiled {
 
 /// Compiled gitleaks config, loaded once at first use.
 pub static GITLEAKS: LazyLock<GitleaksCompiled> = LazyLock::new(load_compiled);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use toml::map::Map;
+
+    /// Rule/allowlist association: when rules are a Table, each [[rules.allowlists]] is associated with the preceding rule.
+    /// We build the table in code so we control the structure (toml string [rules.0] + [rules.allowlists.0] may parse as array).
+    #[test]
+    fn test_rules_table_allowlist_association() {
+        let mut rule_t = Map::new();
+        rule_t.insert("id".into(), Value::String("test-rule".into()));
+        rule_t.insert("description".into(), Value::String("Test".into()));
+        rule_t.insert("regex".into(), Value::String("[A-Z]+".into()));
+
+        let mut allow_t = Map::new();
+        allow_t.insert(
+            "regexes".into(),
+            Value::Array(vec![Value::String(".+EXAMPLE$".into())]),
+        );
+
+        let mut rules_t = Map::new();
+        rules_t.insert("0".into(), Value::Table(rule_t));
+        rules_t.insert(
+            "allowlists".into(),
+            Value::Array(vec![Value::Table(allow_t)]),
+        );
+
+        let rules = rules_from_table(&rules_t);
+        assert_eq!(rules.len(), 1, "expected one rule");
+        let allowlists = rules[0]
+            .allowlists
+            .as_ref()
+            .expect("rule should have allowlists");
+        assert_eq!(allowlists.len(), 1, "expected one allowlist");
+        let regexes = allowlists[0]
+            .regexes
+            .as_ref()
+            .expect("allowlist should have regexes");
+        assert_eq!(regexes.len(), 1);
+        assert!(
+            regexes[0].contains("EXAMPLE"),
+            "allowlist regex should match EXAMPLE suffix, got {:?}",
+            regexes[0]
+        );
+    }
+
+    /// Overlay merge: gitleaks.overrides.toml appends allowlists to rules by rule_id. sourcegraph-access-token gets overlay allowlists.
+    #[test]
+    fn test_overlay_merge_appends_allowlists() {
+        let config = &GITLEAKS;
+        let rule = config
+            .rules
+            .iter()
+            .find(|r| r.id == "sourcegraph-access-token")
+            .expect("sourcegraph-access-token rule should exist");
+        assert!(
+            !rule.allowlists.is_empty(),
+            "sourcegraph-access-token should have allowlists from overlay (gitleaks.overrides.toml)"
+        );
+        // Overlay adds regexTarget = "line" and several regexes (e.g. id="[0-9a-fA-F]{40})
+        let has_line_target = rule
+            .allowlists
+            .iter()
+            .any(|a| a.regex_target.as_deref() == Some("line"));
+        assert!(
+            has_line_target,
+            "overlay defines regexTarget = 'line' for sourcegraph"
+        );
+    }
+}

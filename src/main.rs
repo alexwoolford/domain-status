@@ -860,39 +860,4 @@ mod tests {
             "33.33% failure should not exceed 34% threshold"
         );
     }
-
-    #[test]
-    fn test_export_output_path_stdout_detection() {
-        // Test that "-" is correctly detected as stdout
-        // This is critical - stdout detection must work for piping
-        let output_str = Some("-".to_string());
-        let is_stdout = output_str.as_ref().map(|s| s == "-").unwrap_or(false);
-        assert!(is_stdout, "Should detect '-' as stdout");
-    }
-
-    #[test]
-    fn test_export_output_path_file_path() {
-        // Test that non-"-" paths are treated as file paths
-        // This is critical - file paths must be preserved correctly
-        let output_str = Some("/path/to/output.csv".to_string());
-        let is_stdout = output_str.as_ref().map(|s| s == "-").unwrap_or(false);
-        assert!(!is_stdout, "Should not treat file path as stdout");
-    }
-
-    #[test]
-    fn test_progress_callback_overflow_protection() {
-        // Test that progress callback handles large numbers without overflow
-        // This is critical - prevents panics when processing many URLs
-        let total = usize::MAX;
-        let completed = usize::MAX / 2;
-        let failed = usize::MAX / 2;
-
-        // Test that casting to u64 doesn't panic
-        let total_u64 = total as u64;
-        let position_u64 = (completed + failed) as u64;
-
-        // Should not overflow
-        assert!(total_u64 > 0);
-        assert!(position_u64 <= total_u64);
-    }
 }
