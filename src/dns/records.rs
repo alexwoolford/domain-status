@@ -192,50 +192,22 @@ pub async fn lookup_mx_records(
 mod tests {
     use crate::config::{MAX_TXT_RECORD_COUNT, MAX_TXT_RECORD_SIZE};
 
+    /// Documents intent: TXT limits must be in a reasonable range to prevent memory exhaustion
+    /// in lookup_txt_records. Count 1-100, size 512-4096 bytes, worst case under 100KB.
     #[test]
-    fn test_max_txt_record_count_constant_value() {
-        // Verify MAX_TXT_RECORD_COUNT is set to a reasonable value (20)
-        // This caps the number of TXT records to prevent memory/storage exhaustion
-        // Range: 1-100 records is reasonable
-        assert_eq!(MAX_TXT_RECORD_COUNT, 20);
-    }
-
-    #[test]
-    fn test_max_txt_record_size_constant_value() {
-        // Verify MAX_TXT_RECORD_SIZE is set to a reasonable value (1KB)
-        // This truncates individual TXT records to prevent memory exhaustion
-        // Range: 512-4096 bytes is reasonable
-        assert_eq!(MAX_TXT_RECORD_SIZE, 1024);
-    }
-
-    #[test]
-    fn test_txt_record_limits_prevent_memory_exhaustion() {
-        // Verify that the combination of count and size limits prevents memory exhaustion
-        // Worst case: MAX_TXT_RECORD_COUNT * MAX_TXT_RECORD_SIZE = 20 * 1024 = 20KB
-        // This is a reasonable upper bound for TXT records per domain
+    fn test_txt_record_limits_reasonable() {
+        assert!(
+            (1..=100).contains(&MAX_TXT_RECORD_COUNT),
+            "TXT record count limit should be 1-100"
+        );
+        assert!(
+            (512..=4096).contains(&MAX_TXT_RECORD_SIZE),
+            "TXT record size limit should be 512-4096 bytes"
+        );
         let worst_case_bytes = MAX_TXT_RECORD_COUNT * MAX_TXT_RECORD_SIZE;
-        assert_eq!(worst_case_bytes, 20 * 1024);
         assert!(
             worst_case_bytes <= 100 * 1024,
-            "Worst case should be under 100KB"
+            "Worst case TXT bytes per domain should be under 100KB"
         );
-    }
-
-    #[test]
-    fn test_take_iterator_behavior() {
-        // Verify that .take() correctly limits the number of items
-        // This tests the underlying behavior we rely on in lookup_txt_records
-        let items: Vec<i32> = (0..100).collect();
-        let limited: Vec<i32> = items.iter().take(MAX_TXT_RECORD_COUNT).cloned().collect();
-        assert_eq!(limited.len(), MAX_TXT_RECORD_COUNT);
-        assert_eq!(limited.len(), 20);
-    }
-
-    #[test]
-    fn test_take_iterator_with_fewer_items() {
-        // Verify that .take() works correctly when there are fewer items than the limit
-        let items: Vec<i32> = (0..5).collect();
-        let limited: Vec<i32> = items.iter().take(MAX_TXT_RECORD_COUNT).cloned().collect();
-        assert_eq!(limited.len(), 5);
     }
 }

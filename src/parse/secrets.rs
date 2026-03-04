@@ -419,7 +419,8 @@ fn extract_secret(
 
 /// Returns true if the match should be skipped by a per-rule allowlist.
 /// Respects condition: OR = any criterion skips; AND = all must match (path is N/A for single-blob, so AND with paths never skips).
-fn rule_allowlist_skips(
+#[allow(dead_code)]
+pub(crate) fn rule_allowlist_skips(
     allowlists: &[crate::parse::gitleaks::CompiledRuleAllowlist],
     matched_value: &str,
     line_content: &str,
@@ -876,5 +877,32 @@ mod tests {
         assert_eq!(SecretSeverity::High.as_str(), "high");
         assert_eq!(SecretSeverity::Medium.as_str(), "medium");
         assert_eq!(SecretSeverity::Low.as_str(), "low");
+    }
+
+    /// Condition AND with has_paths: for single-blob we never have a file path, so AND never succeeds and we must not skip.
+    #[test]
+    fn test_rule_allowlist_condition_and_with_paths_does_not_skip() {
+        use crate::parse::gitleaks::CompiledRuleAllowlist;
+        use regex::Regex;
+
+        let re = Regex::new("EXAMPLE").unwrap();
+        let list = CompiledRuleAllowlist {
+            regexes: vec![re],
+            stopwords: vec![],
+            regex_target: None,
+            condition_and: true,
+            has_paths: true,
+        };
+        // Target matches the regex, but AND requires all criteria; path is N/A so we treat as not matched -> do not skip.
+        let skips = rule_allowlist_skips(
+            &[list],
+            "AKIAIOSFODNN7EXAMPLE",
+            "line content",
+            "full match",
+        );
+        assert!(
+            !skips,
+            "AND with has_paths must not skip (path never matches in single-blob)"
+        );
     }
 }
