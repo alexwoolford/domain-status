@@ -70,10 +70,20 @@ compare_detection
 *.profraw
 default_*.profraw
 
-# Local export validation artifacts
+# Local export validation artifacts and scan outputs (never commit DBs or exports)
 export_validation.csv
 export_validation.jsonl
 export_validation.parquet
+validation_*.db
+validation_*.csv
+validation_*.jsonl
+validation_*.parquet
+*_export*.csv
+*_export*.jsonl
+*_export*.parquet
+domain_status_export.csv
+domain_status_export.jsonl
+domain_status_export.parquet
 
 # Temporary test files
 # Exceptions: legitimate test helper files (must come before test_* pattern)

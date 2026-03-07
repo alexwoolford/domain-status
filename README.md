@@ -996,7 +996,8 @@ The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, token
 3. **GitHub Secret Scanning**: GitHub automatically scans public repositories for known secret patterns (enabled by default).
 
 4. **Best practices**:
-   - Never commit `.env` files (already in `.gitignore`)
+   - Never commit `.env` files, `.db` files, or scan export files (CSV/JSONL/Parquet); these are in `.gitignore`
+   - Exposed secrets found on scanned sites are redacted before storage and export; only redacted forms exist in DB and exports
    - Use environment variables for all secrets
    - Use GitHub Secrets for CI/CD tokens
    - Review gitleaks output if CI fails

@@ -614,6 +614,7 @@ description = "Uncovered a GCP API key, which could lead to unauthorized access 
 regex = '''\b(AIza[\w-]{35})(?:[\x60'"\s;]|\\[nr]|$)'''
 entropy = 4
 keywords = ["aiza"]
+# Following literals are upstream example/test keys for allowlisting, not project secrets.
 [[rules.allowlists]]
 regexes = [
     '''AIzaSyabcdefghijklmnopqrstuvwxyz1234567''',
