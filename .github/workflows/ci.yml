@@ -3,7 +3,7 @@ name: CI
 # This workflow ensures code quality and security:
 # - Formatting: cargo fmt --check (Ubuntu only, platform-agnostic)
 # - Linting: cargo clippy with -D warnings (Ubuntu only, platform-agnostic)
-# - Security: cargo audit (all platforms)
+# - Security: cargo audit + cargo deny policy checks
 # - Tests: All unit and integration tests (all platforms)
 # - E2E: Ignored tests requiring network access (Ubuntu only, see e2e job)
 # - Coverage: Code coverage via cargo-tarpaulin (uploaded to Codecov)
@@ -37,16 +37,17 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       # rust-toolchain.toml will be used automatically by rustup
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -65,6 +66,14 @@ jobs:
         # This enforces: unused code warnings, unsafe code, performance issues, etc.
         if: matrix.os == 'ubuntu-latest'
 
+      - name: Run docs checks
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo test --doc --locked
+          cargo doc --no-deps --locked
+
       - name: Run tests
         run: cargo test --all-features --all-targets --locked
         # Note: Tests marked with #[ignore] are skipped by default
@@ -81,13 +90,15 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -131,7 +142,7 @@ jobs:
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
           github.event_name != 'schedule' &&
           steps.check_coverage.outputs.exists == 'true'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0561704f0f02c16a585d4c7555e57fa2e44cf909
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: alexwoolford/domain_status
@@ -143,36 +154,41 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     # Security checks run on push/PR and weekly schedule
-    # This job runs: cargo audit (dependency vulnerabilities) + gitleaks (secret scanning)
+    # This job runs: cargo audit + cargo deny policy checks + gitleaks secret scanning
     if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0  # Full history needed for secret scanning
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
 
-      - name: Install cargo-audit
+      - name: Install cargo security tools
         run: |
           cargo install cargo-audit --features=fix --locked
+          cargo install cargo-deny --locked
 
       # .cargo/audit.toml will be automatically detected by cargo-audit
       # This checks for known vulnerabilities in dependencies (CVE database)
       - name: Run security audit
         run: cargo audit
-        # Removed continue-on-error since config is now correctly placed
+
+      - name: Run dependency policy checks
+        run: cargo deny check advisories bans sources
 
       - name: Scan for secrets
         # Skip secret scanning on scheduled runs (only needed for code changes)
         if: github.event_name != 'schedule'
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Note: gitleaks-action@v2 doesn't support 'with' inputs
+        # Note: gitleaks-action doesn't support 'with' inputs
         # The .gitleaks.toml file in the repo root will be automatically detected
         # Default behavior: scans for secrets, exits with code 1 if found, redacts output
 
@@ -190,13 +206,15 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
         with:
           workspaces: '.'
           cache-on-failure: true

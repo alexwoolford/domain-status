@@ -1,62 +1,83 @@
 # Exit Code Reference
 
+`domain_status` produces two kinds of non-zero exits:
+
+- command/runtime failures, which return `1`
+- policy failures from `evaluate_exit_code()`, which return `2` or `3`
+
+The policy-based codes apply to the `scan` subcommand only.
+
 ## Exit Codes
 
-| Code | Meaning | Triggered By |
-|------|---------|--------------|
-| 0 | Success | All URLs processed successfully, or failures ignored by policy (`--fail-on never`) |
-| 1 | Configuration/Initialization Error | Invalid configuration, missing files, database initialization failure |
-| 2 | Policy Failure Threshold Exceeded | Failures exceeded policy threshold (`--fail-on any-failure` or `--fail-on pct>N`) |
-| 3 | Partial Success | PctGreaterThan mode with 0 URLs processed (scan incomplete) |
+| Code | Meaning | When it happens |
+|------|---------|-----------------|
+| `0` | Success | The command completed successfully, or scan failures were ignored by `--fail-on never` |
+| `1` | Command/runtime error | CLI parsing failed, configuration was invalid, initialization failed, or the command returned an error before policy evaluation |
+| `2` | Failure policy exceeded | `--fail-on any-failure` saw at least one failed URL, or `--fail-on pct>` saw a failure rate greater than `--fail-on-pct-threshold` |
+| `3` | Percentage policy could not be evaluated | `--fail-on pct>` was selected, but `report.total_urls == 0` |
 
-## Failure Policies (`--fail-on`)
+## `--fail-on` Semantics
 
-### `never` (Default)
-Always exits with code 0, regardless of failures.
-- **Use Case**: CI/CD pipelines where you want to collect data even if some URLs fail
-- **Behavior**: Logs failures but doesn't affect exit code
+The accepted values are:
 
-### `any-failure`
-Exits with code 2 if ANY URL failed.
-- **Use Case**: Strict monitoring where any failure is unacceptable
-- **Behavior**: Single failure → exit 2
+- `never`
+- `any-failure`
+- `pct>`
 
-### `pct>` (Percentage Threshold)
-Exits with code 2 if failure percentage exceeds threshold set by `--fail-on-pct-threshold`.
-- **Use Case**: Allow acceptable failure rate (e.g., `--fail-on pct> --fail-on-pct-threshold 10`)
-- **Behavior**: > 10% failures → exit 2, ≤ 10% → exit 0
-- **Special**: 0 URLs processed → exit 3
+`pct>` does not embed the numeric threshold in the enum value. The percentage comes from the separate `--fail-on-pct-threshold` flag.
 
-## Error Type Categories
-
-The application tracks 23 distinct error types across these categories:
-
-**HTTP Errors:** 400, 401, 403, 404, 429, 500, 502, 503, 504, redirect errors, generic HTTP errors
-
-**DNS Errors:** NS lookup failures, TXT record failures, MX record failures
-
-**TLS Errors:** Certificate validation failures
-
-**Timeout Errors:** Request timeouts, processing timeouts
-
-**Parsing Errors:** Title extraction failures, technology detection errors
-
-## Examples
+Examples:
 
 ```bash
-# Always succeed (for data collection)
+# Always exit 0 after a successful scan command, even if some URLs failed
 domain_status scan urls.txt --fail-on never
-echo $?  # Always 0
 
-# Fail if any URL fails
+# Exit 2 if any URL failed
 domain_status scan urls.txt --fail-on any-failure
-echo $?  # 0 if all success, 2 if any failure
 
-# Fail if >5% failure rate
-domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 5
-echo $?  # 0 if ≤5% failed, 2 if >5% failed, 3 if no URLs processed
-
-# Configuration error
-domain_status scan nonexistent.txt
-echo $?  # 1 (file not found)
+# Exit 2 if failures are greater than 10%
+domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
 ```
+
+## Decision Rules
+
+### `never`
+
+- Returns `0`
+- Ignores `report.failed`
+
+### `any-failure`
+
+- Returns `2` when `report.failed > 0`
+- Returns `0` otherwise
+
+### `pct>`
+
+- Returns `3` when `report.total_urls == 0`
+- Otherwise computes `(report.failed / report.total_urls) * 100`
+- Returns `2` when that percentage is strictly greater than `--fail-on-pct-threshold`
+- Returns `0` otherwise
+
+The comparison is strictly greater-than, not greater-than-or-equal.
+
+## Concrete Examples
+
+```bash
+# One failed URL is enough to fail the scan
+domain_status scan urls.txt --fail-on any-failure
+echo $?  # 0 or 2
+
+# Allow up to 10% failures
+domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
+echo $?  # 0, 2, or 3
+
+# Invalid input file or another command-level error
+domain_status scan missing.txt
+echo $?  # 1
+```
+
+## Notes
+
+- The `export` subcommand returns `0` on success and `1` on failure.
+- `main.rs` maps any error returned by the library CLI runner to exit code `1`.
+- For the exact implementation, see `src/cli.rs` and `evaluate_exit_code()`.

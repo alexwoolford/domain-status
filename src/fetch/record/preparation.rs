@@ -77,10 +77,14 @@ pub async fn prepare_record_for_insertion(
         // GeoIP lookup (synchronous, very fast)
         async {
             let geoip_start = Instant::now();
-            let ip_addr = std::hint::black_box(&params.tls_dns_data.ip_address);
-            let geoip_result = crate::geoip::lookup_ip(ip_addr);
-            let geoip_data =
-                geoip_result.map(|result| (params.tls_dns_data.ip_address.clone(), result));
+            let geoip_data = params
+                .tls_dns_data
+                .ip_address
+                .as_ref()
+                .and_then(|ip_address| {
+                    let ip_addr = std::hint::black_box(ip_address.as_str());
+                    crate::geoip::lookup_ip(ip_addr).map(|result| (ip_address.clone(), result))
+                });
             let geoip_elapsed = geoip_start.elapsed();
             let geoip_lookup_us = duration_to_us(geoip_elapsed);
             // Debug: Log if GeoIP lookup is suspiciously fast (might indicate measurement issue)
@@ -112,24 +116,16 @@ pub async fn prepare_record_for_insertion(
         // WHOIS lookup (async, can be slow)
         async {
             if params.ctx.config.enable_whois {
-                use crate::config::WHOIS_TIMEOUT_SECS;
-                use tokio::time::{timeout, Duration};
-
                 let whois_start = Instant::now();
                 log::debug!(
                     "Performing WHOIS lookup for domain: {}",
                     params.resp_data.final_domain
                 );
 
-                // FIX: Wrap WHOIS lookup in explicit timeout to prevent worker blocking
-                // whois-service defaults to 30s timeout which is too long for our 35s URL_PROCESSING_TIMEOUT
-                let result = match timeout(
-                    Duration::from_secs(WHOIS_TIMEOUT_SECS),
-                    crate::whois::lookup_whois(&params.resp_data.final_domain, None),
-                )
-                .await
+                let result = match crate::whois::lookup_whois(&params.resp_data.final_domain, None)
+                    .await
                 {
-                    Ok(Ok(Some(whois_result))) => {
+                    Ok(Some(whois_result)) => {
                         log::debug!(
                             "WHOIS lookup successful for {}: registrar={:?}, creation={:?}, expiration={:?}",
                             params.resp_data.final_domain,
@@ -139,26 +135,18 @@ pub async fn prepare_record_for_insertion(
                         );
                         Some(whois_result)
                     }
-                    Ok(Ok(None)) => {
+                    Ok(None) => {
                         log::info!(
                             "WHOIS lookup returned no data for {}",
                             params.resp_data.final_domain
                         );
                         None
                     }
-                    Ok(Err(e)) => {
+                    Err(e) => {
                         log::warn!(
                             "WHOIS lookup failed for {}: {}",
                             params.resp_data.final_domain,
                             e
-                        );
-                        None
-                    }
-                    Err(_) => {
-                        log::warn!(
-                            "WHOIS lookup timed out after {}s for {}",
-                            WHOIS_TIMEOUT_SECS,
-                            params.resp_data.final_domain
                         );
                         None
                     }
@@ -245,7 +233,13 @@ mod tests {
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
             DatabaseContext::new(pool, db_circuit_breaker),
-            ConfigContext::new(error_stats, timing_stats, run_id, enable_whois),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                run_id,
+                enable_whois,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            ),
         )
     }
 
@@ -286,7 +280,7 @@ mod tests {
 
     fn create_minimal_tls_dns_data() -> TlsDnsData {
         TlsDnsData {
-            ip_address: "8.8.8.8".to_string(),
+            ip_address: Some("8.8.8.8".to_string()),
             tls_version: None,
             subject: None,
             issuer: None,
@@ -366,7 +360,7 @@ mod tests {
         let html_data = create_minimal_html_data();
         let mut tls_dns_data = create_minimal_tls_dns_data();
         // Use invalid IP to trigger GeoIP lookup failure
-        tls_dns_data.ip_address = "invalid.ip.address".to_string();
+        tls_dns_data.ip_address = Some("invalid.ip.address".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
         let (batch_record, (geoip_ms, _whois_ms, _security_ms)) =
@@ -620,7 +614,7 @@ mod tests {
         let html_data = create_minimal_html_data();
         let mut tls_dns_data = create_minimal_tls_dns_data();
         // Use invalid IP to trigger GeoIP lookup failure
-        tls_dns_data.ip_address = "999.999.999.999".to_string();
+        tls_dns_data.ip_address = Some("999.999.999.999".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
         let (batch_record, (geoip_ms, whois_ms, security_ms)) =

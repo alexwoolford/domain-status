@@ -1,13 +1,16 @@
 //! GeoIP database loading from files and URLs.
 
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use maxminddb::Reader;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::{MAX_GEOIP_DOWNLOAD_SIZE, MAX_NETWORK_DOWNLOAD_RETRIES};
 use crate::geoip::extract::extract_mmdb_from_tar_gz;
-use crate::geoip::metadata::{extract_metadata, load_metadata, save_metadata};
+use crate::geoip::metadata::{extract_metadata, load_metadata, save_metadata, write_atomic};
 use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self};
 use crate::security::validate_url_safe;
@@ -20,18 +23,23 @@ pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIp
         .await
         .with_context(|| format!("Failed to read GeoIP database from {}", path))?;
 
-    // Create reader from owned bytes
-    let reader = Reader::from_source(db_bytes.clone())
-        .with_context(|| format!("Failed to parse GeoIP database from {}", path))?;
+    tokio::task::spawn_blocking({
+        let path = path.to_string();
+        move || {
+            let reader = Reader::from_source(db_bytes)
+                .with_context(|| format!("Failed to parse GeoIP database from {}", path))?;
+            let metadata = extract_metadata(&reader, &path);
+            Ok((reader, metadata))
+        }
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("GeoIP file parse task failed: {}", error))?
+}
 
-    // Extract metadata from database
-    let metadata = extract_metadata(&reader, path);
-
-    // Create reader with owned data
-    let reader_owned = Reader::from_source(db_bytes)
-        .with_context(|| format!("Failed to create owned reader from {}", path))?;
-
-    Ok((reader_owned, metadata))
+pub(super) fn geoip_cache_paths(cache_dir: &Path, db_name: &str) -> (PathBuf, PathBuf) {
+    let cache_file = cache_dir.join(format!("{}.mmdb", db_name));
+    let metadata_file = cache_dir.join(format!("{}_metadata.json", db_name.to_lowercase()));
+    (cache_file, metadata_file)
 }
 
 /// Checks if a cached GeoIP database exists and is fresh.
@@ -114,8 +122,7 @@ pub(crate) async fn load_from_url(
         .await
         .with_context(|| format!("Failed to create cache directory: {:?}", cache_dir))?;
 
-    let cache_file = cache_dir.join(format!("{}.mmdb", db_name));
-    let metadata_file = cache_dir.join(format!("{}_metadata.json", db_name.to_lowercase()));
+    let (cache_file, metadata_file) = geoip_cache_paths(cache_dir, db_name);
 
     // Check if cached version exists and is fresh
     if let Some(cached) = try_load_from_cache(&cache_file, &metadata_file).await? {
@@ -172,6 +179,7 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
 
     let client = reqwest::Client::builder()
+        .dns_resolver(Arc::new(crate::security::safe_resolver::SafeResolver))
         .timeout(Duration::from_secs(300)) // 5 minutes for large file
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
@@ -212,15 +220,19 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
         }
     }
 
-    let downloaded_bytes = response.bytes().await?.to_vec();
-
-    // Double-check size after download (in case content-length was missing or wrong)
-    if downloaded_bytes.len() > MAX_GEOIP_DOWNLOAD_SIZE {
-        return Err(anyhow::anyhow!(
-            "GeoIP database too large: {} bytes (max: {} bytes)",
-            downloaded_bytes.len(),
-            MAX_GEOIP_DOWNLOAD_SIZE
-        ));
+    let mut downloaded_bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let new_len = downloaded_bytes.len().saturating_add(chunk.len());
+        if new_len > MAX_GEOIP_DOWNLOAD_SIZE {
+            return Err(anyhow::anyhow!(
+                "GeoIP database too large: {} bytes (max: {} bytes)",
+                new_len,
+                MAX_GEOIP_DOWNLOAD_SIZE
+            ));
+        }
+        downloaded_bytes.extend_from_slice(&chunk);
     }
 
     Ok(downloaded_bytes)
@@ -236,39 +248,36 @@ async fn process_downloaded_geoip(
     metadata_file: &Path,
 ) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
     // Extract .mmdb file from tar.gz if needed, or use directly if it's already .mmdb
-    let db_bytes = if url.ends_with(".tar.gz") || url.contains("suffix=tar.gz") {
-        extract_mmdb_from_tar_gz(&downloaded_bytes, db_name)?
-    } else if url.ends_with(".mmdb") {
-        // Direct .mmdb file download
-        downloaded_bytes
-    } else {
-        // Try to detect format - if it looks like tar.gz, extract it
-        if downloaded_bytes.len() > 2 && downloaded_bytes[0] == 0x1f && downloaded_bytes[1] == 0x8b
-        {
-            // Gzip magic number
-            extract_mmdb_from_tar_gz(&downloaded_bytes, db_name)?
-        } else {
-            // Assume it's already a .mmdb file
-            downloaded_bytes
-        }
-    };
+    let (db_bytes, metadata, reader) = tokio::task::spawn_blocking({
+        let url = url.to_string();
+        let db_name = db_name.to_string();
+        move || -> Result<(Vec<u8>, GeoIpMetadata, Reader<Vec<u8>>)> {
+            let db_bytes = if url.ends_with(".tar.gz") || url.contains("suffix=tar.gz") {
+                extract_mmdb_from_tar_gz(&downloaded_bytes, &db_name)?
+            } else if url.ends_with(".mmdb") {
+                downloaded_bytes
+            } else if downloaded_bytes.len() > 2
+                && downloaded_bytes[0] == 0x1f
+                && downloaded_bytes[1] == 0x8b
+            {
+                extract_mmdb_from_tar_gz(&downloaded_bytes, &db_name)?
+            } else {
+                downloaded_bytes
+            };
 
-    // Save to cache
-    tokio::fs::write(cache_file, &db_bytes)
+            let reader = Reader::from_source(db_bytes.clone())
+                .with_context(|| "Failed to create owned reader from downloaded database")?;
+            let metadata = extract_metadata(&reader, &url);
+
+            Ok((db_bytes, metadata, reader))
+        }
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("GeoIP archive parse task failed: {}", error))??;
+
+    write_atomic(cache_file, &db_bytes)
         .await
         .with_context(|| format!("Failed to write cache file: {:?}", cache_file))?;
-
-    // Parse database to extract metadata (temporary reader for metadata extraction)
-    let reader_temp = Reader::from_source(db_bytes.as_slice())
-        .with_context(|| "Failed to parse downloaded GeoIP database")?;
-
-    let metadata = extract_metadata(&reader_temp, url);
-
-    // Create reader with owned data
-    let reader = Reader::from_source(db_bytes)
-        .with_context(|| "Failed to create owned reader from downloaded database")?;
-
-    // Save metadata
     save_metadata(&metadata, metadata_file).await?;
 
     Ok((reader, metadata))

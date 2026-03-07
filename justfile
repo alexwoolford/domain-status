@@ -30,6 +30,11 @@ lint-pedantic:
 test:
     cargo test --all-features --all-targets --locked
 
+# Validate Rustdoc examples and doc warning cleanliness
+docs-check:
+    cargo test --doc --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+
 # Run end-to-end tests (requires network)
 test-e2e:
     cargo test --all-features --all-targets --locked -- --ignored
@@ -47,6 +52,10 @@ build:
 audit:
     cargo audit
 
+# Run cargo-deny policy checks
+deny:
+    cargo deny check advisories bans sources
+
 # Run secret scanner
 secrets:
     pre-commit run gitleaks --all-files
@@ -61,7 +70,7 @@ fix:
     cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features
 
 # Run full CI pipeline locally
-ci: fmt-check lint test audit
+ci: fmt-check lint docs-check test audit deny
     @echo "✅ CI pipeline passed!"
 
 # Clean build artifacts

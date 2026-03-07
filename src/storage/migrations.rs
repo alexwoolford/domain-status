@@ -21,6 +21,20 @@ static MIGRATIONS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 /// In development builds, it uses the source migrations directory directly (faster).
 /// In distributed binaries, it extracts embedded migrations to a temp directory
 /// (wrapped in spawn_blocking to avoid blocking the tokio runtime).
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::{init_db_pool_with_path, run_migrations};
+/// use std::path::Path;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let pool = init_db_pool_with_path(Path::new("./domain_status.db"), 5).await?;
+/// run_migrations(&pool).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
     // In development, try to use the source migrations directory first (faster)
     let source_migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");

@@ -140,7 +140,7 @@ pub(crate) async fn fetch_tls_and_dns(
     // If DNS resolution fails, continue with None values rather than failing the entire request
     // This makes the system more resilient to DNS issues
     let (ip_address, reverse_dns_name) = match dns_result {
-        Ok((ip, reverse_dns)) => (ip, reverse_dns),
+        Ok((ip, reverse_dns)) => (Some(ip), reverse_dns),
         Err(e) => {
             log::warn!(
                 "Failed to resolve DNS for {final_domain}: {e} - continuing without IP address"
@@ -155,11 +155,11 @@ pub(crate) async fn fetch_tls_and_dns(
                 crate::error_handling::ErrorType::DnsNsLookupError,
                 truncated_msg,
             ));
-            ("unknown".to_string(), None) // Placeholder when DNS fails; NOT NULL and non-empty for url_status
+            (None, None)
         }
     };
 
-    debug!("Resolved IP address: {ip_address}");
+    debug!("Resolved IP address: {ip_address:?}");
     debug!("Resolved reverse DNS name: {reverse_dns_name:?}");
 
     Ok((

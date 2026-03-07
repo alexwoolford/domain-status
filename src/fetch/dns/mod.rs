@@ -123,7 +123,7 @@ mod tests {
         let (tls_dns_data, additional_dns, partial_failures, timings) = result.unwrap();
 
         // Verify structure is correct
-        let _ = tls_dns_data.ip_address; // Should have IP address
+        let _ = tls_dns_data.ip_address; // Should be Some when DNS resolution succeeds
         let _ = additional_dns.nameservers; // May be None or Some
         let _ = partial_failures; // Partial failures may be empty or contain errors
 

@@ -11,16 +11,46 @@ mod types;
 
 use axum::routing::get;
 use axum::Router;
+use tokio_util::sync::CancellationToken;
 
 use handlers::{metrics_handler, status_handler};
 pub use types::StatusState;
 
-/// Creates and starts the status server
-pub async fn start_status_server(port: u16, state: StatusState) -> Result<(), anyhow::Error> {
-    let app = Router::new()
+/// Managed background status server with explicit shutdown semantics.
+#[derive(Debug)]
+pub struct StatusServerHandle {
+    shutdown: CancellationToken,
+    task: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
+}
+
+impl StatusServerHandle {
+    /// Gracefully stop the status server and wait for the task to exit.
+    pub async fn shutdown(self) -> Result<(), anyhow::Error> {
+        self.shutdown.cancel();
+        match self.task.await {
+            Ok(result) => result,
+            Err(join_error) => Err(anyhow::anyhow!(
+                "Status server task failed to join: {}",
+                join_error
+            )),
+        }
+    }
+}
+
+/// Build the status server router with the supplied shared state.
+pub fn build_router(state: StatusState) -> Router {
+    Router::new()
         .route("/metrics", get(metrics_handler))
         .route("/status", get(status_handler))
-        .with_state(state);
+        .with_state(state)
+}
+
+/// Creates, binds, and starts the status server as a managed background task.
+pub async fn spawn_status_server(
+    port: u16,
+    state: StatusState,
+) -> Result<StatusServerHandle, anyhow::Error> {
+    let app = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
@@ -30,49 +60,98 @@ pub async fn start_status_server(port: u16, state: StatusState) -> Result<(), an
     log::info!("  - Metrics: http://127.0.0.1:{}/metrics", port);
     log::info!("  - Status: http://127.0.0.1:{}/status", port);
 
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| anyhow::anyhow!("Status server error: {}", e))?;
+    let shutdown = CancellationToken::new();
+    let shutdown_signal = shutdown.clone();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                shutdown_signal.cancelled().await;
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Status server error: {}", e))
+    });
 
-    Ok(())
+    Ok(StatusServerHandle { shutdown, task })
 }
 
 #[cfg(test)]
 mod tests {
-    #[tokio::test]
-    async fn test_start_status_server_port_binding_failure() {
-        // Test that port binding failures are handled gracefully
-        // This is critical - if port is already in use, should return error, not panic
-        // The code at line 27 uses map_err to convert binding errors to anyhow::Error
-        // We verify the error message format is correct
-        let error_msg = format!("Failed to bind status server to port {}: test error", 8080);
-        assert!(error_msg.contains("Failed to bind"));
-        assert!(error_msg.contains("8080"));
+    use super::*;
+    use crate::error_handling::ProcessingStats;
+    use axum::body::Body;
+    use axum::http::Request;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::Instant;
+    use tower::ServiceExt;
+
+    fn create_test_state() -> StatusState {
+        StatusState {
+            total_urls: Arc::new(AtomicUsize::new(100)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
+            completed_urls: Arc::new(AtomicUsize::new(50)),
+            failed_urls: Arc::new(AtomicUsize::new(10)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new(ProcessingStats::new()),
+            timing_stats: None,
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(
+                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
+            ),
+            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+        }
     }
 
     #[tokio::test]
-    async fn test_start_status_server_error_message_format() {
-        // Test that error messages are properly formatted
-        // This is critical - error messages should be helpful for debugging
-        let binding_error = "Address already in use";
-        let port = 8080;
-        let error_msg = format!(
-            "Failed to bind status server to port {}: {}",
-            port, binding_error
-        );
-        assert!(error_msg.contains("Failed to bind status server"));
-        assert!(error_msg.contains(&port.to_string()));
-        assert!(error_msg.contains(binding_error));
+    async fn test_build_router_serves_status_endpoint() {
+        let app = build_router(create_test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("status response");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn test_start_status_server_server_error_handling() {
-        // Test that server errors (after binding) are handled gracefully
-        // This is critical - server errors should return error, not panic
-        // The code at line 35 uses map_err to convert server errors to anyhow::Error
-        let server_error = "Connection closed";
-        let error_msg = format!("Status server error: {}", server_error);
-        assert!(error_msg.contains("Status server error"));
-        assert!(error_msg.contains(server_error));
+    async fn test_build_router_serves_metrics_endpoint() {
+        let app = build_router(create_test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("metrics response");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_status_server_returns_bind_error_for_in_use_port() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let error = spawn_status_server(port, create_test_state())
+            .await
+            .expect_err("port already bound should fail");
+        let message = error.to_string();
+        assert!(message.contains("Failed to bind status server"));
+        assert!(message.contains(&port.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_spawned_status_server_shuts_down_cleanly() {
+        let handle = spawn_status_server(0, create_test_state())
+            .await
+            .expect("status server should bind");
+        handle.shutdown().await.expect("shutdown should succeed");
     }
 }

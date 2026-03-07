@@ -15,7 +15,7 @@ use crate::geoip::metadata::load_metadata;
 use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self, GEOIP_CITY_READER};
 
-use loader::{load_from_file, load_from_url};
+use loader::{geoip_cache_paths, load_from_file, load_from_url};
 
 /// Initializes the GeoIP database from a local file path or automatic download.
 ///
@@ -52,8 +52,8 @@ pub async fn init_geoip(
             if let Ok(license_key) = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV) {
                 if !license_key.is_empty() {
                     // Check cache first
-                    let cache_file = cache_path.join("GeoLite2-City.mmdb");
-                    let metadata_file = cache_path.join("metadata.json");
+                    let (cache_file, metadata_file) =
+                        geoip_cache_paths(&cache_path, "GeoLite2-City");
 
                     // Check if cached version exists and is fresh
                     let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await

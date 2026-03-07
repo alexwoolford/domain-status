@@ -23,6 +23,9 @@ fn format_date(ts_ms: Option<i64>) -> String {
 
 /// Exports data to CSV format.
 ///
+/// CSV output flattens multi-valued relationships into delimited string columns so
+/// the result is easy to open in spreadsheet tools.
+///
 /// # Arguments
 ///
 /// * `opts` - Export options including database path, output, and filters
@@ -30,6 +33,30 @@ fn format_date(ts_ms: Option<i64>) -> String {
 /// # Returns
 ///
 /// Returns the number of records exported, or an error if export fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::export::{export_csv, ExportFormat, ExportOptions};
+/// use std::path::PathBuf;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let count = export_csv(&ExportOptions {
+///     db_path: PathBuf::from("./domain_status.db"),
+///     output: Some(PathBuf::from("domains.csv")),
+///     format: ExportFormat::Csv,
+///     run_id: None,
+///     domain: None,
+///     status: Some(200),
+///     since: None,
+/// })
+/// .await?;
+///
+/// println!("exported {count} CSV rows");
+/// # Ok(())
+/// # }
+/// ```
 #[allow(clippy::too_many_lines)]
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)

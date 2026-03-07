@@ -1,163 +1,99 @@
-# Contributing to domain_status
+# Contributing to `domain_status`
 
-## Prerequisites
+`just` is the canonical developer interface for this repository. Start there unless you are debugging a specific raw Cargo invocation.
 
-- Rust 1.85+ ([install rustup](https://rustup.rs/))
-- [just](https://github.com/casey/just): `cargo install just`
-- (Optional) [pre-commit](https://pre-commit.com/): `pip install pre-commit`
-
-## Quick Start
-
-1. **Clone repository**
-   ```bash
-   git clone https://github.com/alexwoolford/domain_status.git
-   cd domain_status
-   ```
-
-2. **Install pre-commit hooks** (recommended)
-   ```bash
-   just install-hooks
-   ```
-
-3. **Run checks before committing**
-   ```bash
-   just check   # Runs fmt + lint + test
-   ```
-
-## Development Workflow
-
-### Running Checks
-
-Use `just` for all operations:
+## Quick Bootstrap
 
 ```bash
-just check        # Run all checks (fmt + lint + test)
-just ci           # Run full CI pipeline locally
-just fmt          # Format code
-just lint         # Run clippy
-just test         # Run tests
-just coverage     # Generate coverage report
+git clone https://github.com/alexwoolford/domain_status.git
+cd domain_status
+cargo install just
+just --list
+just check
 ```
 
-**Before creating a PR:**
+If you use pre-commit hooks:
+
+```bash
+pip install pre-commit
+just install-hooks
+```
+
+For the full environment bootstrap, helper CLI list, cache/network behavior, and writable-directory assumptions, see `docs/DEVELOPER_BOOTSTRAP.md`.
+
+## Required Tooling
+
+- Rust `1.85+`
+- `just`
+
+## Commonly Expected Optional Tooling
+
+These are not required for every code change, but parts of the docs, local workflows, or CI assume they are available:
+
+- `pre-commit`
+- `cargo-audit`
+- `cargo-tarpaulin`
+- `cargo-outdated`
+- `sqlite3`
+- `jq`
+- `curl`
+- `wget` or equivalent downloader
+
+## Main Workflows
+
+Use `just` recipes for the routine path:
+
+```bash
+just check      # fmt + lint + test
+just docs-check # doctests + rustdoc warnings
+just ci         # fmt-check + lint + test + audit
+just test       # deterministic unit/integration suite
+just test-e2e   # ignored tests, requires network
+just coverage   # tarpaulin coverage report
+just audit      # cargo audit
+just outdated   # dependency drift check
+```
+
+## Before Opening a PR
+
+Run the relevant local gates for your change. In most cases:
+
+```bash
+just check
+```
+
+If you changed CI-sensitive behavior, security-sensitive code, or docs/build logic, prefer:
+
 ```bash
 just ci
 ```
 
-### Code Quality Standards
+If you changed documentation or Rustdoc, also run:
 
-1. **Formatting**: `cargo fmt` (enforced in CI)
-2. **Linting**: `cargo clippy -- -D warnings` (enforced in CI)
-3. **Testing**: All tests must pass
-4. **Coverage**: Aim for >80%
-
-### Clippy Lints
-
-Workspace lints in `Cargo.toml` enforce:
-- **Correctness**: Prevent numeric truncation, float comparison issues
-- **Performance**: Detect needless clones, inefficient patterns
-- **Maintainability**: Flag functions >100 lines, high complexity
-
-### Pre-commit Hooks
-
-Automatically run before each commit:
-- **gitleaks**: Scan for secrets
-- **File checks**: Whitespace, merge conflicts, etc.
-
-Install: `just install-hooks`
-
-## Common Issues
-
-### Numeric Cast Warnings
-
-**Problem:** `cast_possible_truncation` or `cast_precision_loss`
-
-**Solution:**
-```rust
-// Bad
-let count = items.len() as u32;
-
-// Good
-let count = u32::try_from(items.len())
-    .expect("collection too large for u32");
+```bash
+just docs-check
 ```
 
-### Float Comparison Warnings
+## Testing Expectations
 
-**Problem:** `float_cmp` for direct equality
+Testing guidance lives in `TESTING.md`. The short version:
 
-**Solution:**
-```rust
-// Bad
-if ratio == 1.0 { }
+- default tests must be deterministic and local-only
+- live-network tests stay `#[ignore]`
+- if a live/manual repro finds a bug, add a deterministic regression test before or alongside the fix
 
-// Good
-const EPSILON: f64 = 1e-10;
-if (ratio - 1.0).abs() < EPSILON { }
-```
+## Commit Messages
 
-### Function Too Long
+Use concise, descriptive messages. Conventional-commit style is welcome:
 
-**Problem:** `too_many_lines` warning
-
-**Solution:** Extract helper functions
-```rust
-// Extract logical blocks
-fn process_item(item: &Item) -> Result<Output> {
-    let data = extract_data(item)?;
-    let validated = validate_data(data)?;
-    transform_data(validated)
-}
-```
-
-### Needless Clones
-
-**Problem:** `needless_pass_by_value` or cloning in hot paths
-
-**Solution:**
-```rust
-// Bad - clones unnecessarily
-fn process(data: String) -> String {
-    data.clone()
-}
-
-// Good - use references
-fn process(data: &str) -> String {
-    data.to_string()
-}
-```
-
-## Pull Request Process
-
-1. Create feature branch: `git checkout -b feature/your-feature`
-2. Make changes and test: `just check`
-3. Commit with clear messages (see below)
-4. Push and create PR with description
-5. Wait for CI (all checks must pass)
-6. Address review feedback
-
-### Commit Messages
-
-Follow conventional commits:
-```
-<type>: <short description>
-
-<optional body>
-```
-
-Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-
-Example:
-```
-feat: Add GeoIP caching
-
-Implements LRU cache for GeoIP lookups to reduce API calls.
-
-Closes #123
-```
+- `feat`
+- `fix`
+- `docs`
+- `refactor`
+- `test`
+- `chore`
 
 ## Getting Help
 
-- Questions? Open a GitHub Discussion
-- Bug reports? Open an Issue
-- Feature requests? Open an Issue with `[RFC]` prefix
+- Open an Issue for bugs or feature requests
+- Open a Discussion for questions or design conversation

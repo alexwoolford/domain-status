@@ -43,10 +43,18 @@ pub async fn finalize_scan(
     let ScanLoopResult {
         cancel,
         logging_task,
+        status_server,
     } = loop_result;
 
     // Shutdown background tasks
-    shutdown_gracefully(cancel, logging_task, resources.rate_limiter_shutdown).await;
+    shutdown_gracefully(
+        cancel,
+        logging_task,
+        resources.rate_limiter_shutdown,
+        resources.adaptive_limiter_shutdown,
+        status_server,
+    )
+    .await;
 
     // Log final progress
     log_progress(
@@ -67,7 +75,7 @@ pub async fn finalize_scan(
     #[allow(clippy::cast_possible_truncation)]
     let total_urls = resources.total_urls_attempted.load(Ordering::SeqCst) as i32;
     #[allow(clippy::cast_possible_truncation)]
-    let successful_urls = resources.completed_urls.load(Ordering::SeqCst) as i32;
+    let successful_urls = resources.successful_urls.load(Ordering::SeqCst) as i32;
     #[allow(clippy::cast_possible_truncation)]
     let failed_urls_count = resources.failed_urls.load(Ordering::SeqCst) as i32;
 
@@ -140,6 +148,7 @@ mod tests {
     use crate::error_handling::ProcessingStats;
     use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
     use crate::fingerprint::{FingerprintMetadata, FingerprintRuleset};
+    use crate::runtime_metrics::RuntimeMetrics;
     use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::storage::{insert_run_metadata, run_migrations, RunMetadata};
     use crate::utils::TimingStats;
@@ -156,6 +165,7 @@ mod tests {
 
     /// finalize_scan returns a ScanReport with correct totals and run_id; does not panic.
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_finalize_scan_returns_correct_report() {
         let pool = create_test_pool().await;
         let run_id = "run_finalize_test_123";
@@ -174,6 +184,8 @@ mod tests {
 
         let total_urls_attempted = Arc::new(AtomicUsize::new(10));
         let completed_urls = Arc::new(AtomicUsize::new(8));
+        let successful_urls = Arc::new(AtomicUsize::new(8));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(2));
         let start_time = std::time::Instant::now();
         let error_stats = Arc::new(ProcessingStats::new());
@@ -203,6 +215,7 @@ mod tests {
                 Arc::clone(&timing_stats),
                 Some(run_id.to_string()),
                 false,
+                Arc::new(RuntimeMetrics::default()),
             ),
         ));
 
@@ -230,10 +243,14 @@ mod tests {
             request_limiter: None,
             rate_limiter_shutdown: None,
             adaptive_limiter: None,
+            adaptive_limiter_shutdown: None,
             per_domain_limiter: None,
             error_stats,
             timing_stats,
+            runtime_metrics: Arc::new(RuntimeMetrics::default()),
             completed_urls,
+            successful_urls,
+            skipped_urls,
             failed_urls,
             total_urls_attempted,
             total_urls_in_file: Arc::new(AtomicUsize::new(10)),
@@ -249,6 +266,7 @@ mod tests {
         let loop_result = ScanLoopResult {
             cancel,
             logging_task: None,
+            status_server: None,
         };
 
         let report = finalize_scan(resources, loop_result)

@@ -13,6 +13,8 @@ use super::queries::{
     fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
 };
 
+const EXPORT_LIMIT: i64 = crate::config::MAX_EXPORT_RELATED_RECORDS;
+
 /// A single nameserver record.
 #[derive(Debug, Clone)]
 pub struct NameserverRecord {
@@ -298,9 +300,10 @@ async fn fetch_dns_records(
     url_status_id: i64,
 ) -> Result<(Vec<NameserverRecord>, Vec<TxtRecord>, Vec<MxRecord>)> {
     let nameservers: Vec<NameserverRecord> = sqlx::query(
-        "SELECT nameserver FROM url_nameservers WHERE url_status_id = ? ORDER BY nameserver",
+        "SELECT nameserver FROM url_nameservers WHERE url_status_id = ? ORDER BY nameserver LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -310,9 +313,10 @@ async fn fetch_dns_records(
     .collect();
 
     let txt_records: Vec<TxtRecord> = sqlx::query(
-        "SELECT record_type, record_value FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type, record_value",
+        "SELECT record_type, record_value FROM url_txt_records WHERE url_status_id = ? ORDER BY record_type, record_value LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -323,9 +327,10 @@ async fn fetch_dns_records(
     .collect();
 
     let mx_records: Vec<MxRecord> = sqlx::query(
-        "SELECT priority, mail_exchange FROM url_mx_records WHERE url_status_id = ? ORDER BY priority, mail_exchange",
+        "SELECT priority, mail_exchange FROM url_mx_records WHERE url_status_id = ? ORDER BY priority, mail_exchange LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -344,9 +349,10 @@ async fn fetch_headers_and_failures(
     url_status_id: i64,
 ) -> Result<(Vec<HttpHeader>, Vec<HttpHeader>, Vec<PartialFailure>)> {
     let all_http_headers: Vec<HttpHeader> = sqlx::query(
-        "SELECT header_name, header_value FROM url_http_headers WHERE url_status_id = ? ORDER BY header_name",
+        "SELECT header_name, header_value FROM url_http_headers WHERE url_status_id = ? ORDER BY header_name LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -357,9 +363,10 @@ async fn fetch_headers_and_failures(
     .collect();
 
     let all_security_headers: Vec<HttpHeader> = sqlx::query(
-        "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ? ORDER BY header_name",
+        "SELECT header_name, header_value FROM url_security_headers WHERE url_status_id = ? ORDER BY header_name LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -370,9 +377,10 @@ async fn fetch_headers_and_failures(
     .collect();
 
     let partial_failures: Vec<PartialFailure> = sqlx::query(
-        "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ? ORDER BY observed_at_ms",
+        "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ? ORDER BY observed_at_ms LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -391,9 +399,10 @@ async fn fetch_social_and_structured(
     url_status_id: i64,
 ) -> Result<(Vec<SocialMediaLink>, Vec<StructuredDataEntry>)> {
     let social_media_links: Vec<SocialMediaLink> = sqlx::query(
-        "SELECT platform, profile_url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
+        "SELECT platform, profile_url, identifier FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -405,9 +414,10 @@ async fn fetch_social_and_structured(
     .collect();
 
     let structured_data_entries: Vec<StructuredDataEntry> = sqlx::query(
-        "SELECT data_type, property_name, property_value FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type, property_name",
+        "SELECT data_type, property_name, property_value FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type, property_name LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -428,9 +438,10 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     // Fetch redirect chain
     let redirect_rows = sqlx::query(
         "SELECT redirect_url, sequence_order FROM url_redirect_chain
-         WHERE url_status_id = ? ORDER BY sequence_order",
+         WHERE url_status_id = ? ORDER BY sequence_order LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?;
 
@@ -607,9 +618,10 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
 
     // Fetch contact links
     let contact_links: Vec<ContactLinkRecord> = sqlx::query(
-        "SELECT contact_type, contact_value FROM url_contact_links WHERE url_status_id = ? ORDER BY contact_type, contact_value",
+        "SELECT contact_type, contact_value FROM url_contact_links WHERE url_status_id = ? ORDER BY contact_type, contact_value LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
@@ -622,18 +634,28 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
 
     // Fetch exposed secrets
     let exposed_secrets: Vec<ExposedSecretRecord> = sqlx::query(
-        "SELECT secret_type, matched_value, severity, location, context FROM url_exposed_secrets WHERE url_status_id = ? ORDER BY secret_type",
+        "SELECT secret_type, matched_value, severity, location, context FROM url_exposed_secrets WHERE url_status_id = ? ORDER BY secret_type LIMIT ?",
     )
     .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
     .fetch_all(pool.as_ref())
     .await?
     .iter()
-    .map(|r| ExposedSecretRecord {
-        secret_type: r.get("secret_type"),
-        matched_value: r.get("matched_value"),
-        severity: r.get("severity"),
-        location: r.get("location"),
-        context: r.get("context"),
+    .map(|r| {
+        let matched_value: String = r.get("matched_value");
+        let context: Option<String> = r.get("context");
+        let redacted_value = crate::parse::redact_exposed_secret_value(&matched_value);
+        let redacted_context = context
+            .as_deref()
+            .map(|ctx| crate::parse::redact_exposed_secret_context(ctx, &matched_value));
+
+        ExposedSecretRecord {
+            secret_type: r.get("secret_type"),
+            matched_value: redacted_value,
+            severity: r.get("severity"),
+            location: r.get("location"),
+            context: redacted_context,
+        }
     })
     .collect();
     let exposed_secret_count = exposed_secrets.len();

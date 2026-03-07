@@ -7,6 +7,7 @@ use hickory_resolver::TokioResolver;
 use std::sync::Arc;
 
 use crate::error_handling::ProcessingStats;
+use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
@@ -44,6 +45,8 @@ pub struct ConfigContext {
     pub run_id: Option<String>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
+    /// Live runtime counters for retries and degradation paths
+    pub runtime_metrics: Arc<RuntimeMetrics>,
 }
 
 /// Main processing context containing all shared resources.
@@ -94,12 +97,14 @@ impl ConfigContext {
         timing_stats: Arc<TimingStats>,
         run_id: Option<String>,
         enable_whois: bool,
+        runtime_metrics: Arc<RuntimeMetrics>,
     ) -> Self {
         Self {
             error_stats,
             timing_stats,
             run_id,
             enable_whois,
+            runtime_metrics,
         }
     }
 }
@@ -178,6 +183,7 @@ mod tests {
                 timing_stats.clone(),
                 run_id.clone(),
                 enable_whois,
+                Arc::new(RuntimeMetrics::default()),
             ),
         );
 
@@ -242,7 +248,13 @@ mod tests {
         let context = ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
             DatabaseContext::new(pool, db_circuit_breaker),
-            ConfigContext::new(error_stats, timing_stats, run_id, enable_whois),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                run_id,
+                enable_whois,
+                Arc::new(RuntimeMetrics::default()),
+            ),
         );
 
         assert_eq!(context.config.run_id, None);

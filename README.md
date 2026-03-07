@@ -182,7 +182,7 @@ This creates an executable in `./target/release/domain_status` (or `domain_statu
 - **Timeout Protection**: Per-URL processing timeout (35 seconds) prevents hung requests
 
 ### Integration
-- **Flexible Configuration**: Extensive CLI options for logging, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
+- **Flexible Configuration**: Extensive CLI options for logging, output format, timeouts, concurrency, per-domain concurrency caps, rate limits, database paths, and fingerprint rulesets
 - **Library API**: Use as a Rust library in your own projects
 - **Status Server**: Optional HTTP server for monitoring long-running jobs with Prometheus metrics
 - **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
@@ -191,10 +191,10 @@ This creates an executable in `./target/release/domain_status` (or `domain_statu
 
 domain_status provides comprehensive error handling with clear exit codes:
 
-- **Exit Code 0**: Success or ignored failures (`--fail-on never`)
-- **Exit Code 1**: Configuration or initialization error
-- **Exit Code 2**: Failure threshold exceeded (policy-based)
-- **Exit Code 3**: Partial success (no URLs processed)
+- **Exit Code 0**: Success, or failures ignored by policy (`--fail-on never`)
+- **Exit Code 1**: CLI/configuration/runtime error before a policy-based exit code is produced
+- **Exit Code 2**: Failure threshold exceeded (`--fail-on any-failure` or `--fail-on pct>`)
+- **Exit Code 3**: `--fail-on pct>` was selected but zero URLs were processed
 
 See [docs/EXIT_CODES.md](docs/EXIT_CODES.md) for detailed exit code reference.
 
@@ -264,19 +264,22 @@ domain_status scan <file> [OPTIONS]
 
 **Common Options:**
 - `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
-- `--log-file <PATH>`: Log file path (default: `domain_status.log`). All logs are written to this file with timestamps.
+- `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
+- `--log-file <PATH>`: Log file path (default: `domain_status.log`). Scan logs are written to this file.
 - `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
-- `--max-concurrency <N>`: Maximum concurrent requests (default: 30)
-- `--timeout-seconds <N>`: HTTP client timeout in seconds (default: 10). Note: Per-URL processing timeout is 35 seconds.
-- `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting always enabled, default: 15)
-- `--status-port <PORT>`: Start HTTP status server on the specified port (optional, disabled by default)
-- `--fail-on <POLICY>`: Exit code policy for CI integration: `never` (default), `any-failure`, or `pct>X`. See [Exit Code Control](#exit-code-control) for details.
+- `--max-concurrency <N>`: Maximum concurrent requests (default: `30`)
+- `--max-per-domain <N>`: Maximum concurrent requests per registered domain (default: `5`, `0` disables the cap)
+- `--timeout-seconds <N>`: HTTP client timeout in seconds (default: `10`). Per-URL processing still has a wider overall timeout budget.
+- `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting is enabled when this is greater than `0`; default: `15`)
+- `--status-port <PORT>`: Start the local-only HTTP status server on `127.0.0.1:<PORT>` (disabled by default)
+- `--fail-on <POLICY>`: Exit code policy: `never` (default), `any-failure`, or `pct>`. See [Exit Code Control](#exit-code-control) for details.
+- `--fail-on-pct-threshold <N>`: Percentage threshold used with `--fail-on pct>` (default: `10`)
 
 **Advanced Options:**
-- `--user-agent <STRING>`: HTTP User-Agent header value (default: Chrome user agent)
-- `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). Default: HTTP Archive Wappalyzer fork. Rules are cached locally for 7 days.
-- `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL. If not provided, will auto-download if `MAXMIND_LICENSE_KEY` environment variable is set.
-- `--enable-whois`: Enable WHOIS/RDAP lookup for domain registration information. WHOIS data is cached for 7 days. Default: disabled.
+- `--user-agent <STRING>`: HTTP User-Agent header value. If you keep the built-in default, the tool may refresh the Chrome version and cache it in `.user_agent_cache/`.
+- `--fingerprints <URL|PATH>`: Technology fingerprint ruleset source (URL or local path). By default, the scanner merges the `enthec/webappanalyzer` and `HTTPArchive/wappalyzer` technology directories and caches the merged result in `.fingerprints_cache/`.
+- `--geoip <PATH|URL>`: GeoIP database path (MaxMind GeoLite2 `.mmdb` file) or download URL. If omitted, the scanner attempts an automatic download when `MAXMIND_LICENSE_KEY` is set, caching databases in `.geoip_cache/`.
+- `--enable-whois`: Enable WHOIS/RDAP lookup for domain registration information. WHOIS responses are cached in `.whois_cache/`. Default: disabled.
 
 **Example:**
 ```bash
@@ -293,15 +296,15 @@ domain_status scan urls.txt \
 
 The `--fail-on` option controls when the scan command exits with a non-zero code, making it ideal for CI/CD pipelines:
 
-- `never` (default): Always return exit code 0, even if some URLs failed. Useful for monitoring scenarios where you want to log failures but not trigger alerts.
-- `any-failure`: Exit with code 2 if any URL failed. Strict mode for CI pipelines where any failure should be treated as a build failure.
-- `pct>X`: Exit with code 2 if failure percentage exceeds X (e.g., `pct>10` means exit if more than 10% failed). Use with `--fail-on-pct-threshold` to set the exact percentage. Useful for large scans where some failures are expected.
+- `never` (default): Always return exit code `0`, even if some URLs failed.
+- `any-failure`: Exit with code `2` if any URL failed.
+- `pct>`: Exit with code `2` if the failure percentage is greater than `--fail-on-pct-threshold`. If zero URLs were processed, the command exits with code `3`.
 
 **Exit Codes:**
-- `0`: Success (or failures ignored by policy)
-- `1`: Configuration error or scan initialization failure
-- `2`: Failures exceeded threshold (based on `--fail-on` policy)
-- `3`: Partial success (some URLs processed, but scan incomplete)
+- `0`: Success, or failures ignored by policy
+- `1`: CLI/configuration/runtime error
+- `2`: Failures exceeded the selected policy threshold
+- `3`: `--fail-on pct>` was selected but zero URLs were processed
 
 **Examples:**
 ```bash
@@ -309,7 +312,7 @@ The `--fail-on` option controls when the scan command exits with a non-zero code
 domain_status scan urls.txt --fail-on any-failure
 
 # Allow up to 10% failures before failing
-domain_status scan urls.txt --fail-on pct>10 --fail-on-pct-threshold 10
+domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
 
 # Monitoring mode: always succeed (default)
 domain_status scan urls.txt --fail-on never
@@ -359,20 +362,20 @@ domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.technol
 
 ### Environment Variables
 
-Environment variables can be set in a `.env` file (in the current directory or next to the executable) or exported in your shell.
+Environment variables can be set in a `.env` file in the current working directory. If no `.env` is found there, the binary also checks for a `.env` file next to the executable. Shell-exported variables work as well.
 
 **Configuration Precedence** (highest to lowest):
 1. **Command-line arguments** - always take precedence
 2. **Environment variables** (for specific features like GeoIP, GitHub API) - used when CLI args not provided
 3. **Default values** - fallback when neither CLI args nor env vars are set
 
-Most configuration is done via CLI arguments. Environment variables are used only for API keys and advanced logging.
+Most configuration is done via CLI arguments. Environment variables are used for API keys and baseline log filtering.
 
 **Available Environment Variables:**
 
 - `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
 - `GITHUB_TOKEN`: (Optional) GitHub personal access token for fingerprint ruleset downloads. Increases GitHub API rate limit from 60 to 5000 requests/hour. Only needed if using GitHub-hosted fingerprint rulesets.
-- `RUST_LOG`: (Optional) Advanced logging control. Overrides `--log-level` CLI argument if set. Format: `domain_status=debug,reqwest=info`. See [env_logger documentation](https://docs.rs/env_logger/) for details.
+- `RUST_LOG`: (Optional) Advanced logging control. It is read first, then the CLI `--log-level` still sets the global minimum level. Use `RUST_LOG` for per-module filters such as `domain_status=debug,reqwest=info`.
 
 **Sensitive environment variables:** `MAXMIND_LICENSE_KEY` and `GITHUB_TOKEN` are secrets. Never commit them to version control or log their values. Use a `.env` file (already in `.gitignore`) or your shell environment, and use CI secrets for automation.
 
@@ -662,12 +665,11 @@ for run in runs {
 
 ## 📈 Monitoring
 
-For long-running jobs, you can monitor progress via an optional HTTP status server. **The status server has no authentication.** Bind only to localhost (e.g. use `127.0.0.1:8080` when scraping); do not expose it to the network or protect it behind auth if you do.
+For long-running jobs, you can monitor progress via an optional HTTP status server. The server binds to `127.0.0.1` only and exposes **no authentication**. It is intended for local scraping, local dashboards, or SSH-tunneled access.
 
 ```bash
 # Start with status server on port 8080
 domain_status scan urls.txt --status-port 8080
-```
 
 # In another terminal, check progress:
 curl http://127.0.0.1:8080/status | jq
@@ -677,9 +679,9 @@ curl http://127.0.0.1:8080/metrics
 ```
 
 The status server provides:
-- **Real-time progress**: Total URLs, completed, failed, percentage complete, processing rate
-- **Error breakdown**: Detailed counts by error type
-- **Warning/info metrics**: Track missing metadata, redirects, bot detection events
+- **Real-time progress**: File size, attempted URLs, active URLs, completed URLs, failed URLs, pending URLs, and throughput
+- **Runtime health signals**: Current adaptive RPS, retry counts, non-retriable failures, DB write failures, skipped failure writes, and circuit-breaker state
+- **Error breakdown**: Detailed counts by error, warning, and informational event categories
 - **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping
 
 ### Status Endpoint (`/status`)
@@ -694,15 +696,39 @@ curl http://127.0.0.1:8080/status | jq
 ```json
 {
   "total_urls": 100,
+  "total_urls_attempted": 92,
   "completed_urls": 85,
   "failed_urls": 2,
+  "active_urls": 5,
   "pending_urls": 13,
   "percentage_complete": 87.0,
   "elapsed_seconds": 55.88,
   "rate_per_second": 1.52,
+  "current_rps": 12,
+  "retried_requests": 6,
+  "non_retriable_failures": 1,
+  "db_write_failures": 0,
+  "skipped_failure_writes": 0,
+  "circuit_breaker_open": false,
   "errors": { "total": 17, "timeout": 0, "connection_error": 0, "http_error": 3, "dns_error": 14, "tls_error": 0, "parse_error": 0, "other_error": 0 },
   "warnings": { "total": 104, "missing_meta_keywords": 77, "missing_meta_description": 25, "missing_title": 2 },
-  "info": { "total": 64, "http_redirect": 55, "https_redirect": 0, "bot_detection_403": 3, "multiple_redirects": 6 }
+  "info": { "total": 64, "http_redirect": 55, "https_redirect": 0, "bot_detection_403": 3, "multiple_redirects": 6 },
+  "timing": {
+    "count": 87,
+    "averages": {
+      "http_request_ms": 210,
+      "dns_forward_ms": 14,
+      "dns_reverse_ms": 7,
+      "dns_additional_ms": 4,
+      "tls_handshake_ms": 35,
+      "html_parsing_ms": 10,
+      "tech_detection_ms": 9,
+      "geoip_lookup_ms": 1,
+      "whois_lookup_ms": 0,
+      "security_analysis_ms": 2,
+      "total_ms": 288
+    }
+  }
 }
 ```
 
@@ -718,11 +744,20 @@ curl http://127.0.0.1:8080/metrics
 - `domain_status_total_urls` (gauge): Total URLs to process
 - `domain_status_completed_urls` (gauge): Successfully processed URLs
 - `domain_status_failed_urls` (gauge): Failed URLs
+- `domain_status_attempted_urls` (gauge): URLs that have entered processing
+- `domain_status_active_urls` (gauge): URLs currently in flight
 - `domain_status_percentage_complete` (gauge): Completion percentage (0-100)
 - `domain_status_rate_per_second` (gauge): Processing rate (URLs/sec)
 - `domain_status_errors_total` (counter): Total error count
 - `domain_status_warnings_total` (counter): Total warning count
 - `domain_status_info_total` (counter): Total info event count
+- `domain_status_runtime_retries_total` (counter): Retry attempts consumed
+- `domain_status_runtime_non_retriable_failures_total` (counter): Failures classified as terminal at the retry boundary
+- `domain_status_db_write_failures_total` (counter): Database write failures seen by the circuit breaker
+- `domain_status_db_skipped_failure_writes_total` (counter): Failure-write attempts skipped while the DB circuit breaker is open
+- `domain_status_db_circuit_open` (gauge): Whether the DB circuit breaker is currently open (`1` or `0`)
+- `domain_status_current_rps` (gauge): Current effective request rate after adaptive adjustments
+- `domain_status_timing_*` (gauges): Average stage timings when timing statistics are available
 
 **Prometheus Integration:**
 ```yaml
@@ -936,6 +971,8 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 - Direct database writes with SQLite WAL mode (efficient concurrent writes)
 - Memory efficiency: Response bodies limited to 2MB, HTML text extraction limited to 50KB
 
+For a code-to-doc map and ADR index, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## 🔒 Security & Secret Management
 
 **Exposed secret detection (in scanned pages):**
@@ -966,7 +1003,7 @@ The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, token
 
 ## 🔨 Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [docs/DEVELOPER_BOOTSTRAP.md](docs/DEVELOPER_BOOTSTRAP.md) for the full local setup path.
 
 See [TESTING.md](TESTING.md) for detailed information about:
 - Test structure (unit, integration, e2e)
@@ -993,12 +1030,13 @@ We use `just` for task automation: `cargo install just`
 
 Common commands:
 - `just check` - Format + lint + test
+- `just docs-check` - Run doctests and fail on Rustdoc warnings
 - `just ci` - Full CI pipeline
 - `just lint` - Run clippy
 - `just test` - Run tests
 - `just coverage` - Generate coverage
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPER_BOOTSTRAP.md](docs/DEVELOPER_BOOTSTRAP.md) for the complete contributor workflow.
 
 ## License
 

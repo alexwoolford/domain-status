@@ -74,44 +74,73 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::error::{DatabaseError as SqlxDatabaseError, ErrorKind};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::{error::Error as StdError, fmt};
 
-    /// Creates a mock non-retriable error for testing.
+    #[derive(Debug)]
+    struct FakeDatabaseError {
+        message: String,
+    }
+
+    impl fmt::Display for FakeDatabaseError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.message)
+        }
+    }
+
+    impl StdError for FakeDatabaseError {}
+
+    impl SqlxDatabaseError for FakeDatabaseError {
+        fn message(&self) -> &str {
+            &self.message
+        }
+
+        fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn StdError + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn StdError + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
     fn create_non_retriable_error() -> DatabaseError {
-        DatabaseError::SqlError(sqlx::Error::Protocol("some other error".to_string()))
+        DatabaseError::SqlError(sqlx::Error::Protocol("some other error".into()))
+    }
+
+    fn create_retriable_error(message: &str) -> DatabaseError {
+        DatabaseError::SqlError(sqlx::Error::Database(Box::new(FakeDatabaseError {
+            message: message.to_string(),
+        })))
     }
 
     #[test]
     fn test_is_retriable_error_busy() {
-        // Test that "database is busy" is identified as retriable
-        // Note: We can't easily construct a real sqlx::Error::Database, so we test
-        // the string matching logic indirectly
-        let error_msg = "database is busy";
-        assert!(
-            error_msg.contains("database is busy"),
-            "Should identify 'database is busy' as retriable"
-        );
+        assert!(is_retriable_error(&create_retriable_error(
+            "database is busy"
+        )));
     }
 
     #[test]
     fn test_is_retriable_error_locked() {
-        // Test that "database is locked" is identified as retriable
-        let error_msg = "database is locked";
-        assert!(
-            error_msg.contains("database is locked"),
-            "Should identify 'database is locked' as retriable"
-        );
+        assert!(is_retriable_error(&create_retriable_error(
+            "database is locked"
+        )));
     }
 
     #[test]
     fn test_is_retriable_error_other() {
-        // Test that other errors are not retriable
-        let error_msg = "some other error";
-        assert!(
-            !error_msg.contains("database is busy") && !error_msg.contains("database is locked"),
-            "Should not identify other errors as retriable"
-        );
+        assert!(!is_retriable_error(&create_non_retriable_error()));
     }
 
     #[tokio::test]
@@ -140,7 +169,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_sqlite_retry_non_retriable_error_no_retry() {
-        // Test that non-retriable errors return immediately without retrying
         let call_count = Arc::new(AtomicUsize::new(0));
         let call_count_clone = Arc::clone(&call_count);
 
@@ -161,57 +189,57 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_with_sqlite_retry_max_retries_constant() {
-        // Verify the MAX_RETRIES constant is set correctly
-        assert_eq!(MAX_RETRIES, 3, "MAX_RETRIES should be 3");
-    }
-
-    #[tokio::test]
-    async fn test_with_sqlite_retry_initial_delay_constant() {
-        // Verify the INITIAL_DELAY_MS constant is set correctly
-        assert_eq!(INITIAL_DELAY_MS, 50, "INITIAL_DELAY_MS should be 50");
-    }
-
-    #[tokio::test]
-    async fn test_exponential_backoff_calculation() {
-        // Test that exponential backoff is calculated correctly
-        // Formula: INITIAL_DELAY_MS * (1 << attempt)
-        // attempt 0: 50ms (1 << 0 = 1)
-        // attempt 1: 100ms (1 << 1 = 2)
-        // attempt 2: 200ms (1 << 2 = 4)
-        assert_eq!(INITIAL_DELAY_MS, 50);
-        assert_eq!(INITIAL_DELAY_MS * (1 << 1), 100);
-        assert_eq!(INITIAL_DELAY_MS * (1 << 2), 200);
-    }
-
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_with_sqlite_retry_succeeds_after_retries() {
-        // Test that operation succeeds after initial failures
         let call_count = Arc::new(AtomicUsize::new(0));
         let call_count_clone = Arc::clone(&call_count);
 
-        // This operation fails twice with a retriable-like error, then succeeds
-        // Note: We use Protocol error since we can't easily mock Database error
-        let result = with_sqlite_retry(|| {
+        let retry = with_sqlite_retry(|| {
             let count = Arc::clone(&call_count_clone);
             async move {
                 let attempt = count.fetch_add(1, Ordering::SeqCst);
                 if attempt < 2 {
-                    // Return a non-retriable error to test the path
-                    // In real usage, this would be a SQLITE_BUSY error
-                    Err(create_non_retriable_error())
+                    Err(create_retriable_error("database is locked"))
                 } else {
                     Ok::<_, DatabaseError>(42)
                 }
             }
-        })
-        .await;
+        });
 
-        // Since we're using non-retriable error, it should fail on first attempt
-        // This test verifies the retry logic structure exists
+        tokio::pin!(retry);
+        tokio::time::advance(std::time::Duration::from_millis(
+            INITIAL_DELAY_MS + INITIAL_DELAY_MS * 2,
+        ))
+        .await;
+        let result = retry.await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.expect("successful retry"), 42);
+        assert_eq!(call_count.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_with_sqlite_retry_returns_last_retriable_error_after_max_retries() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = Arc::clone(&call_count);
+
+        let retry = with_sqlite_retry(|| {
+            let count = Arc::clone(&call_count_clone);
+            async move {
+                count.fetch_add(1, Ordering::SeqCst);
+                Err::<i32, DatabaseError>(create_retriable_error("database is busy"))
+            }
+        });
+
+        tokio::pin!(retry);
+        tokio::time::advance(std::time::Duration::from_millis(
+            INITIAL_DELAY_MS + INITIAL_DELAY_MS * 2 + INITIAL_DELAY_MS * 4,
+        ))
+        .await;
+        let result = retry.await;
+
         assert!(result.is_err());
-        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(call_count.load(Ordering::SeqCst), MAX_RETRIES + 1);
     }
 
     #[tokio::test]

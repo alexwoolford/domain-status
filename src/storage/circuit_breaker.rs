@@ -20,6 +20,10 @@ pub struct DbWriteCircuitBreaker {
     cooldown_duration: Duration,
     /// Current consecutive failure count
     failure_count: Arc<AtomicU32>,
+    /// Total database write failures observed over the process lifetime
+    total_failures: Arc<AtomicU32>,
+    /// Number of writes skipped because the circuit was already open
+    skipped_writes: Arc<AtomicU32>,
     /// Whether the circuit is currently open
     is_open: Arc<AtomicBool>,
     /// Timestamp when circuit was opened (for cooldown)
@@ -47,6 +51,8 @@ impl DbWriteCircuitBreaker {
             failure_threshold,
             cooldown_duration,
             failure_count: Arc::new(AtomicU32::new(0)),
+            total_failures: Arc::new(AtomicU32::new(0)),
+            skipped_writes: Arc::new(AtomicU32::new(0)),
             is_open: Arc::new(AtomicBool::new(false)),
             opened_at: Arc::new(RwLock::new(None)),
         }
@@ -69,6 +75,7 @@ impl DbWriteCircuitBreaker {
     /// Increments the failure count and opens the circuit if threshold is reached.
     /// Uses atomic compare-and-swap to prevent race conditions when opening the circuit.
     pub async fn record_failure(&self) {
+        self.total_failures.fetch_add(1, Ordering::SeqCst);
         let count = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
 
         if count >= self.failure_threshold {
@@ -111,6 +118,7 @@ impl DbWriteCircuitBreaker {
             if opened.elapsed() >= self.cooldown_duration {
                 // Cooldown expired, allow one attempt to close circuit
                 // Atomically update both is_open and opened_at
+                self.failure_count.store(0, Ordering::SeqCst);
                 self.is_open.store(false, Ordering::SeqCst);
                 *opened_at = None;
                 log::info!(
@@ -127,6 +135,21 @@ impl DbWriteCircuitBreaker {
     #[allow(dead_code)] // Reserved for future monitoring/metrics
     pub fn failure_count(&self) -> u32 {
         self.failure_count.load(Ordering::SeqCst)
+    }
+
+    /// Total database write failures observed.
+    pub fn total_failures(&self) -> u32 {
+        self.total_failures.load(Ordering::SeqCst)
+    }
+
+    /// Record that a write was skipped because the circuit was open.
+    pub fn record_skipped_write(&self) {
+        self.skipped_writes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Total writes skipped while the circuit was open.
+    pub fn skipped_writes(&self) -> u32 {
+        self.skipped_writes.load(Ordering::SeqCst)
     }
 
     /// Gets whether the circuit is currently open (for monitoring/testing only).
@@ -244,6 +267,7 @@ mod tests {
 
         // Circuit should allow retry (closed)
         wait_for_circuit_state(&cb, false, Duration::from_millis(2000)).await;
+        assert_eq!(cb.failure_count(), 0);
     }
 
     #[tokio::test]
@@ -260,6 +284,17 @@ mod tests {
         cb.record_failure().await;
         assert!(cb.is_circuit_open().await);
         assert_eq!(cb.failure_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_tracks_total_and_skipped_writes() {
+        let cb = DbWriteCircuitBreaker::with_threshold(1, Duration::from_millis(50));
+        cb.record_failure().await;
+        cb.record_skipped_write();
+        cb.record_skipped_write();
+
+        assert_eq!(cb.total_failures(), 1);
+        assert_eq!(cb.skipped_writes(), 2);
     }
 
     #[tokio::test]
@@ -382,12 +417,11 @@ mod tests {
         // Wait for circuit to close after cooldown
         wait_for_circuit_state(&cb, false, Duration::from_millis(2000)).await;
 
-        // Record another failure - count continues from previous (doesn't reset on cooldown)
+        // Record another failure - count starts fresh after cooldown closes the circuit
         cb.record_failure().await;
-        // Failure count continues: was 2, now 3
-        assert_eq!(cb.failure_count(), 3);
+        assert_eq!(cb.failure_count(), 1);
 
-        // Wait for circuit to open again (threshold is 2, we now have 3)
+        cb.record_failure().await;
         wait_for_circuit_state(&cb, true, Duration::from_millis(2000)).await;
     }
 }

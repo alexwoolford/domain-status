@@ -1,201 +1,188 @@
 //! WHOIS cache management.
-//!
-//! Uses async I/O via `tokio::fs` to avoid blocking the tokio runtime
-//! during cache operations (called per-domain during scanning).
-//!
-//! An in-memory `AtomicUsize` tracks the cache file count so that the
-//! eviction check is O(1) per insert instead of O(N) directory scan.
 
 use anyhow::{Context, Result};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use crate::clock::{Clock, SystemClock};
 
 use super::types::{WhoisCacheEntry, WhoisResult};
 
 /// Default cache TTL: 7 days (WHOIS data changes infrequently)
 pub(crate) const CACHE_TTL_SECS: u64 = crate::config::WHOIS_CACHE_TTL_SECS;
 
-/// In-memory count of .json files in the WHOIS cache directory.
-/// Initialized from disk on first use, then kept in sync via atomic increments/decrements.
-static CACHE_FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
-/// Whether CACHE_FILE_COUNT has been initialized from disk.
-static CACHE_COUNT_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-/// Initializes the in-memory cache file count from disk (called once on first save).
-async fn init_cache_count(cache_path: &Path) {
-    if CACHE_COUNT_INITIALIZED.load(Ordering::Acquire) {
-        return;
-    }
-    let path = cache_path.to_path_buf();
-    let count = tokio::task::spawn_blocking(move || {
-        std::fs::read_dir(&path)
-            .map(|dir| {
-                dir.flatten()
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
-                    .count()
-            })
-            .unwrap_or(0)
-    })
-    .await
-    .unwrap_or(0);
-    CACHE_FILE_COUNT.store(count, Ordering::Release);
-    CACHE_COUNT_INITIALIZED.store(true, Ordering::Release);
+/// Cache store with injectable time source for deterministic tests.
+pub(crate) struct WhoisCacheStore<C = SystemClock> {
+    clock: C,
+    max_entries: usize,
 }
 
-/// Loads a cached WHOIS result from disk (async to avoid blocking tokio runtime)
-pub(crate) async fn load_from_cache(
-    cache_path: &Path,
-    domain: &str,
-) -> Result<Option<WhoisCacheEntry>> {
-    let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
+impl Default for WhoisCacheStore<SystemClock> {
+    fn default() -> Self {
+        Self::new(SystemClock, crate::config::MAX_WHOIS_CACHE_ENTRIES)
+    }
+}
 
-    // Use tokio::fs for non-blocking existence check
-    if !tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
-        return Ok(None);
+impl<C: Clock> WhoisCacheStore<C> {
+    pub(crate) fn new(clock: C, max_entries: usize) -> Self {
+        Self { clock, max_entries }
     }
 
-    let content = tokio::fs::read_to_string(&cache_file)
-        .await
-        .context("Failed to read cache file")?;
-    let entry: WhoisCacheEntry =
-        serde_json::from_str(&content).context("Failed to parse cache file")?;
+    fn cache_file(cache_path: &Path, domain: &str) -> PathBuf {
+        cache_path.join(format!("{}.json", domain.replace('.', "_")))
+    }
 
-    // Check if cache is still valid
-    let age = entry.cached_at.elapsed().unwrap_or_default();
-    if age.as_secs() > CACHE_TTL_SECS {
-        // Cache expired, delete it
-        if let Err(e) = tokio::fs::remove_file(&cache_file).await {
-            log::debug!(
-                "Failed to remove expired WHOIS cache file {}: {}",
+    pub(crate) async fn load(
+        &self,
+        cache_path: &Path,
+        domain: &str,
+    ) -> Result<Option<WhoisCacheEntry>> {
+        let cache_file = Self::cache_file(cache_path, domain);
+        if !tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
+            return Ok(None);
+        }
+
+        let metadata = tokio::fs::metadata(&cache_file)
+            .await
+            .context("Failed to stat cache file")?;
+        if metadata.len() > crate::config::MAX_WHOIS_CACHE_FILE_SIZE {
+            log::warn!(
+                "Skipping oversized WHOIS cache file {} ({} bytes, max: {} bytes)",
                 cache_file.display(),
-                e
+                metadata.len(),
+                crate::config::MAX_WHOIS_CACHE_FILE_SIZE
             );
+            if let Err(e) = tokio::fs::remove_file(&cache_file).await {
+                log::debug!(
+                    "Failed to remove oversized WHOIS cache file {}: {}",
+                    cache_file.display(),
+                    e
+                );
+            }
+            return Ok(None);
         }
-        return Ok(None);
-    }
 
-    Ok(Some(entry))
-}
+        let content = tokio::fs::read_to_string(&cache_file)
+            .await
+            .context("Failed to read cache file")?;
+        let entry: WhoisCacheEntry =
+            serde_json::from_str(&content).context("Failed to parse cache file")?;
 
-/// Saves a WHOIS result to disk cache (async to avoid blocking tokio runtime)
-///
-/// Enforces MAX_WHOIS_CACHE_ENTRIES limit by evicting oldest entries when exceeded.
-/// Uses an in-memory atomic counter so the eviction check is O(1), not O(N) directory scan.
-pub(crate) async fn save_to_cache(
-    cache_path: &Path,
-    domain: &str,
-    result: &WhoisResult,
-) -> Result<()> {
-    use crate::config::MAX_WHOIS_CACHE_ENTRIES;
-
-    tokio::fs::create_dir_all(cache_path)
-        .await
-        .context("Failed to create cache directory")?;
-
-    // Ensure in-memory counter is initialized from disk on first call
-    init_cache_count(cache_path).await;
-
-    let cache_file = cache_path.join(format!("{}.json", domain.replace('.', "_")));
-    let is_new = !tokio::fs::try_exists(&cache_file).await.unwrap_or(true);
-
-    let entry = WhoisCacheEntry {
-        result: result.into(),
-        cached_at: SystemTime::now(),
-        domain: domain.to_string(),
-    };
-
-    let content =
-        serde_json::to_string_pretty(&entry).context("Failed to serialize cache entry")?;
-    tokio::fs::write(&cache_file, content)
-        .await
-        .context("Failed to write cache file")?;
-
-    if is_new {
-        CACHE_FILE_COUNT.fetch_add(1, Ordering::Relaxed);
-    }
-
-    // O(1) check: only trigger the expensive eviction sweep when over the limit
-    if CACHE_FILE_COUNT.load(Ordering::Relaxed) > MAX_WHOIS_CACHE_ENTRIES {
-        if let Err(e) = enforce_cache_limit(cache_path).await {
-            log::debug!("Failed to enforce WHOIS cache limit: {}", e);
+        let age = self
+            .clock
+            .now()
+            .duration_since(entry.cached_at)
+            .unwrap_or_default();
+        if age.as_secs() > CACHE_TTL_SECS {
+            if let Err(e) = tokio::fs::remove_file(&cache_file).await {
+                log::debug!(
+                    "Failed to remove expired WHOIS cache file {}: {}",
+                    cache_file.display(),
+                    e
+                );
+            }
+            return Ok(None);
         }
+
+        Ok(Some(entry))
     }
 
-    Ok(())
-}
+    pub(crate) async fn save(
+        &self,
+        cache_path: &Path,
+        domain: &str,
+        result: &WhoisResult,
+    ) -> Result<()> {
+        tokio::fs::create_dir_all(cache_path)
+            .await
+            .context("Failed to create cache directory")?;
 
-/// Enforces MAX_WHOIS_CACHE_ENTRIES limit by evicting oldest entries.
-///
-/// Only called when the in-memory atomic counter exceeds the limit,
-/// so the expensive directory scan + stat + sort only runs when eviction is needed.
-async fn enforce_cache_limit(cache_path: &Path) -> Result<()> {
-    use crate::config::MAX_WHOIS_CACHE_ENTRIES;
+        let cache_file = Self::cache_file(cache_path, domain);
+        let entry = WhoisCacheEntry {
+            result: result.into(),
+            cached_at: self.clock.now(),
+            domain: domain.to_string(),
+        };
 
-    // Collect full metadata for sorting by modification time
-    let cache_path_owned = cache_path.to_path_buf();
-    let entries =
-        tokio::task::spawn_blocking(move || -> Result<Vec<(std::path::PathBuf, SystemTime)>> {
-            let mut files = Vec::new();
+        let content =
+            serde_json::to_string_pretty(&entry).context("Failed to serialize cache entry")?;
+        tokio::fs::write(&cache_file, content)
+            .await
+            .context("Failed to write cache file")?;
 
-            let dir =
-                std::fs::read_dir(&cache_path_owned).context("Failed to read cache directory")?;
+        self.enforce_cache_limit(cache_path).await
+    }
 
-            for entry in dir.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    if let Ok(metadata) = entry.metadata() {
-                        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    async fn enforce_cache_limit(&self, cache_path: &Path) -> Result<()> {
+        let cache_path_owned = cache_path.to_path_buf();
+        let mut entries =
+            tokio::task::spawn_blocking(move || -> Result<Vec<(PathBuf, SystemTime)>> {
+                let mut files = Vec::new();
+                let dir = std::fs::read_dir(&cache_path_owned)
+                    .context("Failed to read cache directory")?;
+
+                for entry in dir.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "json") {
+                        let modified = entry
+                            .metadata()
+                            .ok()
+                            .and_then(|metadata| metadata.modified().ok())
+                            .unwrap_or(SystemTime::UNIX_EPOCH);
                         files.push((path, modified));
                     }
                 }
-            }
 
-            Ok(files)
-        })
-        .await
-        .context("Blocking task panicked")??;
+                Ok(files)
+            })
+            .await
+            .context("Blocking task panicked")??;
 
-    let entry_count = entries.len();
-    // Re-sync the atomic counter from the authoritative disk scan
-    CACHE_FILE_COUNT.store(entry_count, Ordering::Relaxed);
-
-    if entry_count <= MAX_WHOIS_CACHE_ENTRIES {
-        return Ok(()); // Under limit after re-sync
-    }
-
-    // Sort by modification time (oldest first)
-    let mut entries = entries;
-    entries.sort_by_key(|(_, modified)| *modified);
-
-    // Delete oldest entries to bring count back under limit
-    let to_delete = entry_count - MAX_WHOIS_CACHE_ENTRIES;
-    log::debug!(
-        "WHOIS cache has {} entries (limit: {}), evicting {} oldest",
-        entry_count,
-        MAX_WHOIS_CACHE_ENTRIES,
-        to_delete
-    );
-
-    let mut deleted = 0usize;
-    for (path, _) in entries.into_iter().take(to_delete) {
-        if let Err(e) = tokio::fs::remove_file(&path).await {
-            log::debug!("Failed to evict WHOIS cache file {}: {}", path.display(), e);
-        } else {
-            deleted += 1;
+        if entries.len() <= self.max_entries {
+            return Ok(());
         }
-    }
-    // Decrement counter by actual number of files deleted
-    CACHE_FILE_COUNT.fetch_sub(deleted, Ordering::Relaxed);
 
-    Ok(())
+        entries.sort_by_key(|(_, modified)| *modified);
+        let to_delete = entries.len() - self.max_entries;
+        for (path, _) in entries.into_iter().take(to_delete) {
+            if let Err(e) = tokio::fs::remove_file(&path).await {
+                log::debug!("Failed to evict WHOIS cache file {}: {}", path.display(), e);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
+
+    #[derive(Clone)]
+    struct TestClock {
+        now: Arc<Mutex<SystemTime>>,
+    }
+
+    impl TestClock {
+        fn new(now: SystemTime) -> Self {
+            Self {
+                now: Arc::new(Mutex::new(now)),
+            }
+        }
+
+        fn set(&self, now: SystemTime) {
+            *self.now.lock().expect("clock lock") = now;
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now(&self) -> SystemTime {
+            *self.now.lock().expect("clock lock")
+        }
+    }
 
     fn create_test_whois_result() -> WhoisResult {
         WhoisResult {
@@ -220,11 +207,10 @@ mod tests {
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
+        let store = WhoisCacheStore::new(TestClock::new(SystemTime::UNIX_EPOCH), 10);
 
-        // Should succeed
-        assert!(save_to_cache(cache_path, domain, &result).await.is_ok());
+        assert!(store.save(cache_path, domain, &result).await.is_ok());
 
-        // Verify file was created
         let cache_file = cache_path.join("example_com.json");
         assert!(cache_file.exists(), "Cache file should be created");
     }
@@ -233,10 +219,10 @@ mod tests {
     async fn test_load_from_cache_not_found() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
-        let domain = "nonexistent.com";
+        let store = WhoisCacheStore::new(TestClock::new(SystemTime::UNIX_EPOCH), 10);
 
-        // Should return None for non-existent cache
-        let result = load_from_cache(cache_path, domain)
+        let result = store
+            .load(cache_path, "nonexistent.com")
             .await
             .expect("Should not error");
         assert!(
@@ -251,14 +237,16 @@ mod tests {
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
+        let clock = TestClock::new(SystemTime::UNIX_EPOCH + Duration::from_secs(10));
+        let store = WhoisCacheStore::new(clock.clone(), 10);
 
-        // Save to cache first
-        save_to_cache(cache_path, domain, &result)
+        store
+            .save(cache_path, domain, &result)
             .await
             .expect("Should save to cache");
 
-        // Load from cache
-        let cached = load_from_cache(cache_path, domain)
+        let cached = store
+            .load(cache_path, domain)
             .await
             .expect("Should load from cache");
         assert!(cached.is_some(), "Should find cached entry");
@@ -278,27 +266,21 @@ mod tests {
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
+        let clock = TestClock::new(SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        let store = WhoisCacheStore::new(clock.clone(), 10);
 
-        // Save to cache
-        save_to_cache(cache_path, domain, &result)
+        store
+            .save(cache_path, domain, &result)
             .await
             .expect("Should save to cache");
+        clock.set(SystemTime::UNIX_EPOCH + Duration::from_secs(CACHE_TTL_SECS + 2));
 
-        // Manually create an expired cache entry
-        let cache_file = cache_path.join("example_com.json");
-        let expired_entry = WhoisCacheEntry {
-            result: (&result).into(),
-            cached_at: SystemTime::now() - Duration::from_secs(CACHE_TTL_SECS + 1), // Expired
-            domain: domain.to_string(),
-        };
-        let content = serde_json::to_string_pretty(&expired_entry).expect("Should serialize");
-        std::fs::write(&cache_file, content).expect("Should write file");
-
-        // Load should return None and delete expired cache
-        let cached = load_from_cache(cache_path, domain)
+        let cached = store
+            .load(cache_path, domain)
             .await
             .expect("Should handle expired cache");
         assert!(cached.is_none(), "Should return None for expired cache");
+        let cache_file = cache_path.join("example_com.json");
         assert!(!cache_file.exists(), "Expired cache file should be deleted");
     }
 
@@ -308,13 +290,13 @@ mod tests {
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
+        let store = WhoisCacheStore::new(TestClock::new(SystemTime::UNIX_EPOCH), 10);
 
-        // Save to cache
-        save_to_cache(cache_path, domain, &result)
+        store
+            .save(cache_path, domain, &result)
             .await
             .expect("Should save to cache");
 
-        // Verify file name uses underscores instead of dots
         let cache_file = cache_path.join("example_com.json");
         assert!(cache_file.exists(), "Cache file should use sanitized name");
     }
@@ -329,50 +311,14 @@ mod tests {
         let cache_file = cache_path.join("example_com.json");
         std::fs::create_dir_all(cache_path).expect("Should create directory");
         std::fs::write(&cache_file, "invalid json").expect("Should write file");
+        let store = WhoisCacheStore::new(TestClock::new(SystemTime::UNIX_EPOCH), 10);
 
-        // Load should return error
-        let result = load_from_cache(cache_path, domain).await;
+        let result = store.load(cache_path, domain).await;
         assert!(result.is_err(), "Should error on invalid JSON");
     }
 
     #[tokio::test]
-    async fn test_cache_expired_deletes_file() {
-        // Test that expired cache files are deleted (critical for disk space management)
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_path = temp_dir.path();
-        let domain = "example.com";
-        let result = create_test_whois_result();
-
-        // Save to cache
-        save_to_cache(cache_path, domain, &result)
-            .await
-            .expect("Should save to cache");
-        let cache_file = cache_path.join("example_com.json");
-        assert!(cache_file.exists(), "Cache file should exist");
-
-        // Manually create expired cache entry
-        let expired_entry = WhoisCacheEntry {
-            result: (&result).into(),
-            cached_at: SystemTime::now() - Duration::from_secs(CACHE_TTL_SECS + 1),
-            domain: domain.to_string(),
-        };
-        let content = serde_json::to_string_pretty(&expired_entry).expect("Should serialize");
-        std::fs::write(&cache_file, content).expect("Should write file");
-
-        // Load should return None AND delete the expired file
-        let cached = load_from_cache(cache_path, domain)
-            .await
-            .expect("Should handle expired cache");
-        assert!(cached.is_none(), "Should return None for expired cache");
-        assert!(
-            !cache_file.exists(),
-            "Expired cache file should be deleted to free disk space"
-        );
-    }
-
-    #[tokio::test]
     async fn test_cache_missing_fields_handles_gracefully() {
-        // Test that cache files with missing required fields are handled gracefully
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
@@ -382,27 +328,29 @@ mod tests {
         std::fs::create_dir_all(cache_path).expect("Should create directory");
         std::fs::write(&cache_file, r#"{"domain": "example.com", "result": {}}"#)
             .expect("Should write file");
+        let store = WhoisCacheStore::new(TestClock::new(SystemTime::UNIX_EPOCH), 10);
 
-        // Load should return error (missing required field)
-        let result = load_from_cache(cache_path, domain).await;
+        let result = store.load(cache_path, domain).await;
         assert!(result.is_err(), "Should error on missing required fields");
     }
 
     #[tokio::test]
     async fn test_cache_fresh_returns_data() {
-        // Test that fresh cache (within TTL) returns data correctly
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
+        let clock = TestClock::new(SystemTime::UNIX_EPOCH + Duration::from_secs(60));
+        let store = WhoisCacheStore::new(clock.clone(), 10);
 
-        // Save to cache
-        save_to_cache(cache_path, domain, &result)
+        store
+            .save(cache_path, domain, &result)
             .await
             .expect("Should save to cache");
+        clock.set(SystemTime::UNIX_EPOCH + Duration::from_secs(CACHE_TTL_SECS - 1));
 
-        // Load immediately (should be fresh)
-        let cached = load_from_cache(cache_path, domain)
+        let cached = store
+            .load(cache_path, domain)
             .await
             .expect("Should load from cache");
         assert!(cached.is_some(), "Should return cached data when fresh");
@@ -420,25 +368,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_near_expiration_still_valid() {
-        // Test that cache just before expiration is still valid
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let domain = "example.com";
         let result = create_test_whois_result();
+        let clock = TestClock::new(SystemTime::UNIX_EPOCH + Duration::from_secs(5));
+        let store = WhoisCacheStore::new(clock.clone(), 10);
 
-        // Create cache entry that's just before expiration (1 second before TTL)
-        let cache_file = cache_path.join("example_com.json");
-        let near_expired_entry = WhoisCacheEntry {
-            result: (&result).into(),
-            cached_at: SystemTime::now() - Duration::from_secs(CACHE_TTL_SECS - 1),
-            domain: domain.to_string(),
-        };
-        std::fs::create_dir_all(cache_path).expect("Should create directory");
-        let content = serde_json::to_string_pretty(&near_expired_entry).expect("Should serialize");
-        std::fs::write(&cache_file, content).expect("Should write file");
+        store
+            .save(cache_path, domain, &result)
+            .await
+            .expect("Should save cache entry");
+        clock.set(SystemTime::UNIX_EPOCH + Duration::from_secs(CACHE_TTL_SECS - 1));
 
-        // Load should return cached data (still valid)
-        let cached = load_from_cache(cache_path, domain)
+        let cached = store
+            .load(cache_path, domain)
             .await
             .expect("Should load from cache");
         assert!(
@@ -447,115 +391,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_max_whois_cache_entries_constant() {
-        // Verify MAX_WHOIS_CACHE_ENTRIES is set to a reasonable value
-        // Range: 10,000-100,000 entries is reasonable
-        use crate::config::MAX_WHOIS_CACHE_ENTRIES;
-
-        assert_eq!(MAX_WHOIS_CACHE_ENTRIES, 50_000);
-    }
-
     #[tokio::test]
-    async fn test_enforce_cache_limit_within_limit() {
-        // Test that enforce_cache_limit does nothing when within limit
+    async fn test_enforce_cache_limit_evicts_oldest_entries() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let cache_path = temp_dir.path();
         let result = create_test_whois_result();
+        let clock = TestClock::new(SystemTime::UNIX_EPOCH);
+        let store = WhoisCacheStore::new(clock.clone(), 2);
 
-        // Create a few cache entries (well under limit)
-        for i in 0..5 {
+        for i in 0..3 {
             let domain = format!("domain{}.com", i);
-            save_to_cache(cache_path, &domain, &result)
+            store
+                .save(cache_path, &domain, &result)
                 .await
                 .expect("Should save to cache");
+            clock.set(
+                SystemTime::UNIX_EPOCH
+                    + Duration::from_secs(u64::try_from(i + 1).expect("positive index")),
+            );
+            std::thread::sleep(Duration::from_millis(5));
         }
 
-        // Verify all files still exist (under limit, no eviction)
         let file_count = std::fs::read_dir(cache_path)
             .expect("Should read dir")
             .filter(|e| e.is_ok())
             .count();
-        assert_eq!(
-            file_count, 5,
-            "All files should be preserved when under limit"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_enforce_cache_limit_evicts_oldest() {
-        // Test that enforce_cache_limit evicts oldest entries when over limit
-        // We'll use a small test limit by directly testing the enforce_cache_limit function
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_path = temp_dir.path();
-        std::fs::create_dir_all(cache_path).expect("Should create directory");
-
-        // Create 5 cache files with different modification times
-        for i in 0..5 {
-            let file_path = cache_path.join(format!("domain{}_com.json", i));
-            let content = r#"{"domain":"test","result":{},"cached_at":{"secs_since_epoch":0,"nanos_since_epoch":0}}"#;
-            std::fs::write(&file_path, content).expect("Should write file");
-
-            // Pause briefly to ensure different modification times
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        // Verify we have 5 files
-        let initial_count = std::fs::read_dir(cache_path)
-            .expect("Should read dir")
-            .filter(|e| e.is_ok())
-            .count();
-        assert_eq!(initial_count, 5, "Should have 5 initial files");
-    }
-
-    #[tokio::test]
-    async fn test_cache_eviction_on_save() {
-        // Test that saving a new entry triggers eviction when over limit
-        // This is a smoke test - actual limit testing is impractical with 50K entries
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_path = temp_dir.path();
-        let result = create_test_whois_result();
-
-        // Save multiple entries
-        for i in 0..10 {
-            let domain = format!("domain{}.com", i);
-            save_to_cache(cache_path, &domain, &result)
-                .await
-                .expect("Should save to cache");
-        }
-
-        // Verify all files exist (since we're well under the 50K limit)
-        let file_count = std::fs::read_dir(cache_path)
-            .expect("Should read dir")
-            .filter(|e| e.is_ok())
-            .count();
-        assert_eq!(file_count, 10, "All files should exist when under limit");
-    }
-
-    #[tokio::test]
-    async fn test_cache_preserves_newest_entries() {
-        // Test that the newest entries are preserved during eviction
-        // (oldest entries should be evicted first)
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_path = temp_dir.path();
-        let result = create_test_whois_result();
-
-        // Create entries with predictable order
-        let domains: Vec<String> = (0..5).map(|i| format!("domain{}.com", i)).collect();
-        for domain in &domains {
-            save_to_cache(cache_path, domain, &result)
-                .await
-                .expect("Should save to cache");
-            // Small delay to ensure different timestamps
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-
-        // All should exist since we're under the limit
-        for domain in &domains {
-            let cached = load_from_cache(cache_path, domain)
-                .await
-                .expect("Should load");
-            assert!(cached.is_some(), "Entry for {} should exist", domain);
-        }
+        assert_eq!(file_count, 2, "Only the newest entries should remain");
+        assert!(!cache_path.join("domain0_com.json").exists());
+        assert!(cache_path.join("domain1_com.json").exists());
+        assert!(cache_path.join("domain2_com.json").exists());
     }
 }

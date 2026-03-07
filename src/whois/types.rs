@@ -4,26 +4,51 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-/// WHOIS lookup result
+/// WHOIS lookup result.
+///
+/// Fields are normalized into optional structured values because WHOIS and RDAP
+/// responses are highly inconsistent across registries.
+///
+/// A missing field means the upstream source did not provide a trustworthy value;
+/// it does not necessarily mean the domain itself lacks that property.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::lookup_whois;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// if let Some(whois) = lookup_whois("example.com", None).await? {
+///     if let Some(nameservers) = whois.nameservers {
+///         println!("{} nameservers", nameservers.len());
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct WhoisResult {
-    /// Domain creation date
+    /// Domain creation date when supplied by the upstream provider.
     pub creation_date: Option<DateTime<Utc>>,
-    /// Domain expiration date
+    /// Domain expiration date when supplied by the upstream provider.
     pub expiration_date: Option<DateTime<Utc>>,
-    /// Domain updated date
+    /// Domain updated date when supplied by the upstream provider.
     pub updated_date: Option<DateTime<Utc>>,
-    /// Registrar name
+    /// Registrar name.
     pub registrar: Option<String>,
-    /// Registrant country code (ISO 3166-1 alpha-2)
+    /// Registrant country code (typically ISO 3166-1 alpha-2).
     pub registrant_country: Option<String>,
-    /// Registrant organization
+    /// Registrant organization.
+    ///
+    /// This is intentionally distinct from a personal registrant name. The parser
+    /// leaves it as `None` when it cannot confidently map an organization value.
     pub registrant_org: Option<String>,
-    /// Domain status (e.g., "clientTransferProhibited")
+    /// Domain status values such as `clientTransferProhibited`.
     pub status: Option<Vec<String>>,
-    /// Nameservers from WHOIS
+    /// Nameservers extracted from WHOIS/RDAP payloads.
     pub nameservers: Option<Vec<String>>,
-    /// Raw WHOIS text (for debugging/fallback)
+    /// Raw WHOIS text when available.
     pub raw_text: Option<String>,
 }
 

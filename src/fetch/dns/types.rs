@@ -15,7 +15,7 @@ pub(crate) struct TlsDnsData {
     pub(crate) cipher_suite: Option<String>,
     pub(crate) key_algorithm: Option<crate::models::KeyAlgorithm>,
     pub(crate) subject_alternative_names: Option<Vec<String>>,
-    pub(crate) ip_address: String,
+    pub(crate) ip_address: Option<String>,
     pub(crate) reverse_dns_name: Option<String>,
 }
 

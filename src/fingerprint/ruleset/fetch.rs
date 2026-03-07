@@ -10,6 +10,7 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::{MAX_NETWORK_DOWNLOAD_RETRIES, MAX_RULESET_DOWNLOAD_SIZE};
@@ -31,6 +32,7 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
 
     let client = reqwest::Client::builder()
+        .dns_resolver(Arc::new(crate::security::safe_resolver::SafeResolver))
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;

@@ -901,6 +901,10 @@ fn write_batch(
 
 /// Exports data to Parquet format.
 ///
+/// Parquet preserves typed columns and nested arrays, making it the preferred
+/// export when the downstream consumer is an analytics engine rather than a
+/// spreadsheet.
+///
 /// # Arguments
 ///
 /// * `opts` - Export options including database path, output, and filters
@@ -908,6 +912,30 @@ fn write_batch(
 /// # Returns
 ///
 /// Returns the number of records exported, or an error if export fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::export::{export_parquet, ExportFormat, ExportOptions};
+/// use std::path::PathBuf;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let count = export_parquet(&ExportOptions {
+///     db_path: PathBuf::from("./domain_status.db"),
+///     output: Some(PathBuf::from("domains.parquet")),
+///     format: ExportFormat::Parquet,
+///     run_id: None,
+///     domain: Some("example.com".to_string()),
+///     status: None,
+///     since: None,
+/// })
+/// .await?;
+///
+/// println!("exported {count} Parquet rows");
+/// # Ok(())
+/// # }
+/// ```
 pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
     let output_path = opts.output.as_ref().ok_or_else(|| {
         anyhow::anyhow!(

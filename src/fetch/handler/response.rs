@@ -7,6 +7,7 @@ use crate::fetch::dns::fetch_all_dns_data;
 use crate::fetch::record::prepare_record_for_insertion;
 use crate::fetch::response::{extract_response_data, parse_html_content};
 use crate::fetch::ProcessingContext;
+use crate::fetch::UrlProcessOutcome;
 use crate::storage::insert::insert_batch_record;
 use crate::utils::{duration_to_us, UrlTimingMetrics};
 use std::time::Instant;
@@ -40,7 +41,7 @@ pub async fn handle_response(
     elapsed: f64,
     redirect_chain: Option<Vec<String>>,
     start_time: std::time::Instant,
-) -> Result<(), Error> {
+) -> Result<UrlProcessOutcome, Error> {
     // Use start_time for total_us calculation to ensure accurate percentages
     // This ensures http_request_us (which includes redirect resolution) is <= total_us
     // since both are measured from the same start point
@@ -83,7 +84,7 @@ pub async fn handle_response(
             "Skipping URL {} (non-HTML content-type, empty body, or body too large)",
             final_url_str
         );
-        return Ok(());
+        return Ok(UrlProcessOutcome::Skipped);
     };
 
     // Parse HTML content
@@ -201,7 +202,7 @@ pub async fn handle_response(
     // Record metrics (DNS and enrichment times are set inside their respective functions)
     ctx.config.timing_stats.record(&metrics);
 
-    Ok(())
+    Ok(UrlProcessOutcome::Inserted)
 }
 
 #[cfg(test)]
@@ -248,7 +249,13 @@ mod tests {
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
             DatabaseContext::new(pool, db_circuit_breaker),
-            ConfigContext::new(error_stats, timing_stats, None, false),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                None,
+                false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            ),
         )
     }
 
@@ -297,6 +304,7 @@ mod tests {
                 timing_stats,
                 Some("test-run".to_string()),
                 false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             ),
         )
     }
@@ -336,10 +344,13 @@ mod tests {
         .await;
 
         // Should succeed (skip silently) OR fail at domain extraction (both are acceptable)
-        // The key is that if extract_response_data returns Ok(None), handle_response returns Ok(())
+        // The key is that if extract_response_data returns Ok(None), handle_response returns Skipped
         match result {
-            Ok(()) => {
+            Ok(crate::fetch::UrlProcessOutcome::Skipped) => {
                 // Success - non-HTML was skipped silently
+            }
+            Ok(crate::fetch::UrlProcessOutcome::Inserted) => {
+                panic!("non-HTML response should not reach insert path");
             }
             Err(e) => {
                 // Domain extraction failed (expected for IP addresses)
@@ -390,10 +401,13 @@ mod tests {
         .await;
 
         // Should succeed (skip silently) OR fail at domain extraction (both are acceptable)
-        // The key is that if extract_response_data returns Ok(None), handle_response returns Ok(())
+        // The key is that if extract_response_data returns Ok(None), handle_response returns Skipped
         match result {
-            Ok(()) => {
+            Ok(crate::fetch::UrlProcessOutcome::Skipped) => {
                 // Success - empty body was skipped silently
+            }
+            Ok(crate::fetch::UrlProcessOutcome::Inserted) => {
+                panic!("empty-body response should not reach insert path");
             }
             Err(e) => {
                 // Domain extraction failed (expected for IP addresses)
@@ -1088,6 +1102,7 @@ mod tests {
                 timing_stats,
                 Some("test-run".to_string()),
                 false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             ),
         );
 

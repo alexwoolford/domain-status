@@ -5,6 +5,7 @@
 
 use crate::domain::extract_domain;
 use crate::error_handling::DatabaseError;
+use crate::security::redaction::{scrub_headers, scrub_url};
 use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
@@ -17,6 +18,18 @@ use super::context::FailureContext;
 #[cfg(test)]
 use super::context::attach_failure_context;
 use super::error::{extract_error_type, extract_http_status};
+
+fn truncate_header_value(value: String) -> String {
+    if value.len() <= crate::config::MAX_HEADER_VALUE_LENGTH {
+        return value;
+    }
+
+    crate::utils::sanitize::truncate_utf8_with_suffix(
+        &value,
+        crate::config::MAX_HEADER_VALUE_LENGTH,
+        "... (truncated)",
+    )
+}
 
 /// Parameters for recording a URL failure.
 ///
@@ -58,11 +71,14 @@ pub struct FailureRecordParams<'a> {
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), DatabaseError> {
+    let attempted_url = scrub_url(params.url);
+
     // Check if circuit breaker is open (database writes are blocked)
     if params.circuit_breaker.is_circuit_open().await {
+        params.circuit_breaker.record_skipped_write();
         log::warn!(
             "Database write circuit breaker is open - skipping failure record for {} (circuit will retry after cooldown)",
-            params.url
+            attempted_url
         );
         return Ok(()); // Return Ok to avoid propagating error - we've logged the issue
     }
@@ -71,12 +87,19 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), D
     let extracted_context = super::context::extract_failure_context(params.error);
 
     // Use provided context if fields are populated, otherwise use extracted context
-    let final_url = params.context.final_url.or(extracted_context.final_url);
-    let redirect_chain = if !params.context.redirect_chain.is_empty() {
+    let final_url = params
+        .context
+        .final_url
+        .or(extracted_context.final_url)
+        .map(|url| scrub_url(&url));
+    let redirect_chain: Vec<String> = if !params.context.redirect_chain.is_empty() {
         params.context.redirect_chain
     } else {
         extracted_context.redirect_chain
-    };
+    }
+    .into_iter()
+    .map(|url| scrub_url(&url))
+    .collect();
 
     // Extract domain information
     let domain = extract_domain(params.extractor, params.url).unwrap_or_else(|e| {
@@ -177,39 +200,19 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), D
     }
 
     // Truncate header values to prevent database bloat
-    let response_headers: Vec<(String, String)> = response_headers
+    let response_headers: Vec<(String, String)> = scrub_headers(response_headers)
         .into_iter()
-        .map(|(name, value)| {
-            let truncated_value = if value.len() > crate::config::MAX_HEADER_VALUE_LENGTH {
-                format!(
-                    "{}... (truncated)",
-                    &value[..crate::config::MAX_HEADER_VALUE_LENGTH - 20]
-                )
-            } else {
-                value
-            };
-            (name, truncated_value)
-        })
+        .map(|(name, value)| (name, truncate_header_value(value)))
         .collect();
-    let request_headers: Vec<(String, String)> = request_headers
+    let request_headers: Vec<(String, String)> = scrub_headers(request_headers)
         .into_iter()
-        .map(|(name, value)| {
-            let truncated_value = if value.len() > crate::config::MAX_HEADER_VALUE_LENGTH {
-                format!(
-                    "{}... (truncated)",
-                    &value[..crate::config::MAX_HEADER_VALUE_LENGTH - 20]
-                )
-            } else {
-                value
-            };
-            (name, truncated_value)
-        })
+        .map(|(name, value)| (name, truncate_header_value(value)))
         .collect();
 
     // Build failure record
     let failure = UrlFailureRecord {
-        url: params.url.to_string(),
-        final_url: final_url.map(|s| s.to_string()),
+        url: attempted_url,
+        final_url,
         domain,
         final_domain,
         error_type,
@@ -416,6 +419,49 @@ mod tests {
                     || value.len() <= crate::config::MAX_HEADER_VALUE_LENGTH
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_record_url_failure_header_truncation_handles_unicode() {
+        let pool = create_test_pool().await;
+        let extractor = psl::List;
+        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
+
+        let long_header_value =
+            "测试🚀".repeat((crate::config::MAX_HEADER_VALUE_LENGTH / "测试🚀".len()) + 10);
+        let context = FailureContext {
+            final_url: None,
+            redirect_chain: vec![],
+            response_headers: vec![("server".to_string(), long_header_value)],
+            request_headers: vec![],
+        };
+
+        let error = anyhow::anyhow!("unicode header test");
+        let params = FailureRecordParams {
+            pool: &pool,
+            extractor: &extractor,
+            url: "https://example.com",
+            error: &error,
+            context,
+            retry_count: 0,
+            elapsed_time: 1.0,
+            run_id: None,
+            circuit_breaker,
+        };
+
+        record_url_failure(params)
+            .await
+            .expect("failure should record");
+
+        let row = sqlx::query(
+            "SELECT header_value FROM url_failure_response_headers WHERE header_name = 'server'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query header");
+        let value: String = row.get("header_value");
+        assert!(std::str::from_utf8(value.as_bytes()).is_ok());
+        assert!(value.contains("truncated"));
     }
 
     #[tokio::test]

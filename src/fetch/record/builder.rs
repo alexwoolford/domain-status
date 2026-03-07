@@ -28,7 +28,7 @@ pub(crate) fn build_url_record(
     UrlRecord {
         initial_domain: resp_data.initial_domain.clone(),
         final_domain: resp_data.final_domain.clone(),
-        ip_address: tls_dns_data.ip_address.clone(),
+        ip_address: tls_dns_data.ip_address.clone().unwrap_or_default(),
         reverse_dns_name: tls_dns_data.reverse_dns_name.clone(),
         status: resp_data.status,
         status_desc: resp_data.status_desc.clone(),
@@ -239,7 +239,7 @@ mod tests {
             cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
             key_algorithm: Some(crate::models::KeyAlgorithm::RSA),
             subject_alternative_names: Some(vec!["example.com".to_string()]),
-            ip_address: "192.0.2.1".to_string(),
+            ip_address: Some("192.0.2.1".to_string()),
             reverse_dns_name: Some("example.com".to_string()),
         }
     }

@@ -5,8 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use url::form_urlencoded;
 
-use super::loader::load_from_file;
-use super::loader::load_from_url;
+use super::loader::{geoip_cache_paths, load_from_file, load_from_url};
 use crate::geoip::metadata::load_metadata;
 use crate::geoip::{self, GEOIP_ASN_READER};
 
@@ -25,8 +24,7 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
     // Try to get license key for auto-download
     if let Ok(license_key) = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV) {
         if !license_key.is_empty() {
-            let cache_file = cache_dir.join("GeoLite2-ASN.mmdb");
-            let metadata_file = cache_dir.join("asn_metadata.json");
+            let (cache_file, metadata_file) = geoip_cache_paths(cache_dir, "GeoLite2-ASN");
 
             // Check if cached version exists and is fresh
             let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await {

@@ -6,6 +6,7 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use domain_status::Config;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 
 #[test]
@@ -31,45 +32,77 @@ fn test_config_fail_on_enum_variants_all_valid() {
 
 #[test]
 fn test_config_validation_does_not_panic_on_extreme_or_invalid_inputs() {
-    // Validation must return Ok or Err, never panic; assert outcome for each case.
     let mut config = Config::default();
     config.max_concurrency = usize::MAX;
-    let result = config.validate();
-    assert!(result.is_ok() || result.is_err());
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
+    assert!(
+        result.is_err(),
+        "extreme max_concurrency should be rejected"
+    );
+    assert_eq!(
+        result.expect_err("validation error").field,
+        "max_concurrency"
+    );
 
     config = Config::default();
     config.max_concurrency = 0;
-    let result = config.validate();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
     assert!(result.is_err(), "zero max_concurrency should fail");
-    assert_eq!(result.unwrap_err().field, "max_concurrency");
+    assert_eq!(
+        result.expect_err("validation error").field,
+        "max_concurrency"
+    );
 
     config = Config::default();
     config.timeout_seconds = u64::MAX;
-    let result = config.validate();
-    assert!(result.is_ok() || result.is_err());
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
+    assert!(
+        result.is_ok(),
+        "very large timeout is allowed but must not panic"
+    );
 
     config = Config::default();
     config.timeout_seconds = 0;
-    let result = config.validate();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
     assert!(result.is_err(), "zero timeout_seconds should fail");
+    assert_eq!(
+        result.expect_err("validation error").field,
+        "timeout_seconds"
+    );
 
     config = Config::default();
     config.adaptive_error_threshold = f64::MAX;
-    let result = config.validate();
-    assert!(result.is_ok() || result.is_err());
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
+    assert!(result.is_err(), "out-of-range threshold should fail");
+    assert_eq!(
+        result.expect_err("validation error").field,
+        "adaptive_error_threshold"
+    );
 
     config = Config::default();
     config.file = PathBuf::from("");
-    let result = config.validate();
-    assert!(result.is_ok() || result.is_err());
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
+    assert!(
+        result.is_ok(),
+        "empty file path is not validated today, but validation must stay panic-free"
+    );
 
     config = Config::default();
     config.user_agent = String::new();
-    let result = config.validate();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
     assert!(result.is_err(), "empty user_agent should fail");
+    assert_eq!(result.expect_err("validation error").field, "user_agent");
 
     config = Config::default();
     config.user_agent = "x".repeat(10000);
-    let result = config.validate();
-    assert!(result.is_ok() || result.is_err());
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
+        .expect("validate should not panic");
+    assert!(result.is_ok(), "long user_agent should remain valid");
 }

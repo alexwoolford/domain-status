@@ -17,6 +17,7 @@ use chrono::NaiveDateTime;
 use log::error;
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -82,6 +83,63 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
     }
 }
 
+async fn resolve_public_tls_addr(domain: &str) -> Result<SocketAddr> {
+    crate::security::validate_url_safe(&format!("https://{domain}/"))?;
+
+    let mut addrs = tokio::net::lookup_host((domain, 443))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to resolve {}: {}", domain, e))?;
+
+    addrs
+        .find(|addr| crate::security::safe_resolver::is_public_ip(addr.ip()))
+        .ok_or_else(|| anyhow::anyhow!("No public IP addresses resolved for {}", domain))
+}
+
+fn parse_certificate_info_from_der(
+    cert_der: &[u8],
+    tls_version: crate::models::TlsVersion,
+    cipher_suite: Option<String>,
+) -> Result<CertificateInfo> {
+    let (_, cert) = x509_parser::parse_x509_certificate(cert_der)?;
+    let tbs_cert = &cert.tbs_certificate;
+    let subject = cert.tbs_certificate.subject.to_string();
+    let issuer = cert.tbs_certificate.issuer.to_string();
+    let key_algorithm = {
+        let oid_str = tbs_cert.subject_pki.algorithm.algorithm.to_string();
+        crate::models::KeyAlgorithm::from_oid(&oid_str)
+    };
+    let unique_oids: HashSet<String> = extract_certificate_oids(&cert).into_iter().collect();
+    let sans = extract_certificate_sans(&cert);
+
+    let valid_from_str = tbs_cert
+        .validity
+        .not_before
+        .to_rfc2822()
+        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e))?;
+    let valid_from = NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
+        .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
+
+    let valid_to_str = tbs_cert
+        .validity
+        .not_after
+        .to_rfc2822()
+        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e))?;
+    let valid_to = NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
+        .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
+
+    Ok(CertificateInfo {
+        tls_version: Some(tls_version),
+        subject: Some(subject),
+        issuer: Some(issuer),
+        valid_from: Some(valid_from),
+        valid_to: Some(valid_to),
+        oids: Some(unique_oids),
+        cipher_suite,
+        key_algorithm: Some(key_algorithm),
+        subject_alternative_names: if sans.is_empty() { None } else { Some(sans) },
+    })
+}
+
 /// Retrieves SSL/TLS certificate information for a domain.
 ///
 /// This function establishes a **separate** TLS connection to the domain and extracts
@@ -116,8 +174,8 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
 pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo> {
     log::debug!("Attempting to get SSL info for domain: {domain}");
 
-    // Always allow invalid certificates to maximize data capture
-    // Certificate issues will be detected and recorded as security warnings
+    // Diagnostic certificate capture still accepts invalid certificates so we can
+    // inspect misconfigured endpoints separately from the main HTTP transport.
     let config = ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
@@ -135,23 +193,28 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
     };
 
     log::debug!("Attempting to connect to domain: {domain}");
-    // TcpStream::connect can use &str, avoiding clone here
+    let socket_addr = resolve_public_tls_addr(&domain).await?;
     let sock = match tokio::time::timeout(
         std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
-        TcpStream::connect((domain.as_str(), 443)),
+        TcpStream::connect(socket_addr),
     )
     .await
     {
         Ok(Ok(sock)) => sock,
         Ok(Err(e)) => {
-            error!("Failed to connect to {domain}:443 - {e}");
-            return Err(anyhow::anyhow!("Failed to connect to {}:443", domain));
+            error!("Failed to connect to {domain} ({socket_addr}) - {e}");
+            return Err(anyhow::anyhow!(
+                "Failed to connect to {} via {}",
+                domain,
+                socket_addr
+            ));
         }
         Err(_) => {
-            error!("TCP connection timeout for {domain}:443");
+            error!("TCP connection timeout for {domain} via {socket_addr}");
             return Err(anyhow::anyhow!(
-                "TCP connection timeout for {}:443 ({}s)",
+                "TCP connection timeout for {} via {} ({}s)",
                 domain,
+                socket_addr,
                 crate::config::TCP_CONNECT_TIMEOUT_SECS
             ));
         }
@@ -219,61 +282,9 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
 
     if let Some(certs) = tls_stream.get_ref().1.peer_certificates() {
         if let Some(cert) = certs.first() {
-            let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref())?;
-            let tbs_cert = &cert.tbs_certificate;
-
-            let subject = cert.tbs_certificate.subject.to_string();
-            let issuer = cert.tbs_certificate.issuer.to_string();
-
-            // Extract public key algorithm from certificate
-            let key_algorithm = {
-                let oid_str = tbs_cert.subject_pki.algorithm.algorithm.to_string();
-                crate::models::KeyAlgorithm::from_oid(&oid_str)
-            };
-
-            let oids = extract_certificate_oids(&cert);
-            let unique_oids: HashSet<String> = oids.into_iter().collect();
-
-            // Extract Subject Alternative Names (SANs)
-            let sans = extract_certificate_sans(&cert);
-            if !sans.is_empty() {
-                log::debug!(
-                    "Found {} SAN(s) for domain {}: {:?}",
-                    sans.len(),
-                    domain,
-                    sans
-                );
-            }
-
-            log::debug!("Extracting validity period for domain: {domain}");
-            let valid_from_str =
-                tbs_cert.validity.not_before.to_rfc2822().map_err(|e| {
-                    anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e)
-                })?;
-            let valid_from =
-                NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
-                    .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
-
-            let valid_to_str =
-                tbs_cert.validity.not_after.to_rfc2822().map_err(|e| {
-                    anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e)
-                })?;
-            let valid_to = NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
-                .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
-
+            let parsed = parse_certificate_info_from_der(cert.as_ref(), tls_version, cipher_suite)?;
             log::debug!("SSL certificate info extracted for domain: {domain}");
-
-            return Ok(CertificateInfo {
-                tls_version: Some(tls_version),
-                subject: Some(subject),
-                issuer: Some(issuer),
-                valid_from: Some(valid_from),
-                valid_to: Some(valid_to),
-                oids: Some(unique_oids),
-                cipher_suite,
-                key_algorithm: Some(key_algorithm),
-                subject_alternative_names: if sans.is_empty() { None } else { Some(sans) },
-            });
+            return Ok(parsed);
         }
     }
 
@@ -286,6 +297,10 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
+    use rcgen::{
+        CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    };
 
     fn init_crypto_for_test() {
         // Initialize crypto provider for TLS tests
@@ -422,19 +437,76 @@ mod tests {
         }
     }
 
+    fn test_certificate_der() -> Vec<u8> {
+        let mut params = CertificateParams::new(vec![
+            "example.com".to_string(),
+            "www.example.com".to_string(),
+        ])
+        .expect("certificate params");
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, "example.com");
+        params.distinguished_name = distinguished_name;
+        params.is_ca = IsCa::ExplicitNoCa;
+        params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+        params
+            .self_signed(&KeyPair::generate().expect("key pair"))
+            .expect("certificate")
+            .der()
+            .to_vec()
+    }
+
     #[test]
-    fn test_key_algorithm_oid_mapping() {
-        // Test the OID to algorithm name mapping logic
-        // RSA OID: 1.2.840.113549.1.1.1
-        assert!("1.2.840.113549.1.1.1".contains("1.2.840.113549.1.1.1"));
+    fn test_parse_certificate_info_from_der_extracts_contract() {
+        let parsed = parse_certificate_info_from_der(
+            &test_certificate_der(),
+            crate::models::TlsVersion::Tls13,
+            Some("TLS13_AES_256_GCM_SHA384".to_string()),
+        )
+        .expect("parse certificate");
 
-        // ECDSA OID: 1.2.840.10045.2.1
-        assert!("1.2.840.10045.2.1".contains("1.2.840.10045.2.1"));
+        assert_eq!(parsed.tls_version, Some(crate::models::TlsVersion::Tls13));
+        assert_eq!(
+            parsed.subject_alternative_names,
+            Some(vec![
+                "example.com".to_string(),
+                "www.example.com".to_string()
+            ])
+        );
+        assert_eq!(
+            parsed.cipher_suite.as_deref(),
+            Some("TLS13_AES_256_GCM_SHA384")
+        );
+        assert!(parsed
+            .subject
+            .as_deref()
+            .is_some_and(|subject| subject.contains("example.com")));
+        assert!(parsed
+            .issuer
+            .as_deref()
+            .is_some_and(|issuer| issuer.contains("example.com")));
+        assert!(parsed.valid_from.is_some());
+        assert!(parsed.valid_to.is_some());
+        assert!(parsed
+            .oids
+            .as_ref()
+            .is_some_and(|oids| oids.contains("2.5.29.17")));
+        assert!(matches!(
+            parsed.key_algorithm,
+            Some(crate::models::KeyAlgorithm::ECDSA | crate::models::KeyAlgorithm::Ed25519)
+        ));
+    }
 
-        // Ed25519 OID: 1.3.101.112
-        assert!("1.3.101.112".contains("1.3.101.112"));
-
-        // Ed448 OID: 1.3.101.113
-        assert!("1.3.101.113".contains("1.3.101.113"));
+    #[test]
+    fn test_parse_certificate_info_from_der_rejects_invalid_der() {
+        let error = parse_certificate_info_from_der(
+            b"not-a-certificate",
+            crate::models::TlsVersion::Tls12,
+            None,
+        )
+        .expect_err("invalid DER should fail");
+        assert!(error.to_string().contains("Parsing Error"));
     }
 }

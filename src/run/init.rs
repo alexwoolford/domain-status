@@ -17,6 +17,7 @@ use crate::error_handling::ProcessingStats;
 use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
 use crate::initialization::*;
 use crate::per_domain_limiter::PerDomainLimiter;
+use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::{init_db_pool_with_path, insert_run_metadata, RunMetadata};
 use crate::utils::TimingStats;
 
@@ -116,7 +117,7 @@ pub async fn init_scan_resources(
         };
 
     // Initialize adaptive rate limiter
-    let adaptive_limiter = if config.rate_limit_rps > 0 {
+    let (adaptive_limiter, adaptive_limiter_shutdown) = if config.rate_limit_rps > 0 {
         let max_rps = config.rate_limit_rps.saturating_mul(2);
         let adaptive = Arc::new(AdaptiveRateLimiter::new(
             config.rate_limit_rps,
@@ -127,19 +128,21 @@ pub async fn init_scan_resources(
             None,
         ));
 
-        if let Some(ref rate_limiter) = request_limiter {
+        let adaptive_shutdown = if let Some(ref rate_limiter) = request_limiter {
             let rate_limiter_clone = Arc::clone(rate_limiter);
-            let _shutdown_token = adaptive.start_adaptive_adjustment(
+            Some(adaptive.start_adaptive_adjustment(
                 move |new_rps| {
                     rate_limiter_clone.update_rps(new_rps);
                 },
                 None,
-            );
-        }
+            ))
+        } else {
+            None
+        };
 
-        Some(adaptive)
+        (Some(adaptive), adaptive_shutdown)
     } else {
-        None
+        (None, None)
     };
 
     // Initialize per-domain rate limiter
@@ -219,6 +222,7 @@ pub async fn init_scan_resources(
     let start_time = std::time::Instant::now();
     let error_stats = Arc::new(ProcessingStats::new());
     let timing_stats = Arc::new(TimingStats::new());
+    let runtime_metrics = Arc::new(RuntimeMetrics::default());
 
     // Initialize circuit breaker
     let db_circuit_breaker =
@@ -227,6 +231,8 @@ pub async fn init_scan_resources(
 
     // Initialize counters
     let completed_urls = Arc::new(AtomicUsize::new(0));
+    let successful_urls = Arc::new(AtomicUsize::new(0));
+    let skipped_urls = Arc::new(AtomicUsize::new(0));
     let failed_urls = Arc::new(AtomicUsize::new(0));
     let total_urls_attempted = Arc::new(AtomicUsize::new(0));
     let total_urls_in_file = Arc::new(AtomicUsize::new(total_lines));
@@ -248,6 +254,7 @@ pub async fn init_scan_resources(
             Arc::clone(&timing_stats),
             Some(run_id.clone()),
             config.enable_whois,
+            Arc::clone(&runtime_metrics),
         ),
     ));
 
@@ -259,10 +266,14 @@ pub async fn init_scan_resources(
         request_limiter,
         rate_limiter_shutdown,
         adaptive_limiter,
+        adaptive_limiter_shutdown,
         per_domain_limiter,
         error_stats,
         timing_stats,
+        runtime_metrics,
         completed_urls,
+        successful_urls,
+        skipped_urls,
         failed_urls,
         total_urls_attempted,
         total_urls_in_file,

@@ -122,16 +122,54 @@ pub(crate) fn extract_certificate_sans(
 
 #[cfg(test)]
 mod tests {
-    // Note: Testing X.509 certificate extraction requires actual DER-encoded certificates.
-    // Creating valid certificates from scratch is complex and requires cryptographic libraries.
-    //
-    // These functions are tested in practice via:
-    // - Real TLS connections in src/tls/mod.rs::get_ssl_certificate_info()
-    // - The functions are called with real certificates from HTTPS connections
-    // - Error handling is tested when certificates fail to parse
-    //
-    // To add comprehensive unit tests, consider:
-    // 1. Adding `rcgen` as a dev-dependency to generate test certificates
-    // 2. Creating test fixtures with real certificate DER bytes
-    // 3. Using a certificate from a well-known site (e.g., Let's Encrypt)
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use rcgen::{
+        CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    };
+
+    fn test_certificate() -> x509_parser::certificate::X509Certificate<'static> {
+        let mut params = CertificateParams::new(vec![
+            "example.com".to_string(),
+            "www.example.com".to_string(),
+        ])
+        .expect("certificate params");
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, "example.com");
+        params.distinguished_name = distinguished_name;
+        params.is_ca = IsCa::ExplicitNoCa;
+        params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+
+        let der = params
+            .self_signed(&KeyPair::generate().expect("key pair"))
+            .expect("certificate")
+            .der()
+            .to_vec();
+        let leaked = Box::leak(der.into_boxed_slice());
+        let (_, cert) =
+            x509_parser::parse_x509_certificate(leaked).expect("parse generated certificate");
+        cert
+    }
+
+    #[test]
+    fn test_extract_certificate_sans_only_returns_dns_names() {
+        let cert = test_certificate();
+        assert_eq!(
+            extract_certificate_sans(&cert),
+            vec!["example.com".to_string(), "www.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_extract_certificate_oids_includes_extension_and_eku_oids() {
+        let cert = test_certificate();
+        let oids = extract_certificate_oids(&cert);
+        assert!(oids.contains(&"2.5.29.17".to_string()));
+        assert!(oids.contains(&"2.5.29.37".to_string()));
+        assert!(oids.contains(&"1.3.6.1.5.5.7.3.1".to_string()));
+        assert!(oids.contains(&"1.3.6.1.5.5.7.3.2".to_string()));
+    }
 }

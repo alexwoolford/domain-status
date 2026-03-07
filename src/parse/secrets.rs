@@ -12,6 +12,8 @@
 
 use std::fmt;
 
+use sha2::{Digest, Sha256};
+
 /// Number of context characters to capture before and after a match.
 const CONTEXT_CHARS: usize = 80;
 
@@ -286,6 +288,50 @@ pub struct ExposedSecret {
     pub location: String,
 }
 
+/// Returns a stable redacted representation that preserves dedupe utility without retaining the raw secret.
+pub fn redact_exposed_secret_value(value: &str) -> String {
+    if value.starts_with("redacted(") {
+        return value.to_string();
+    }
+
+    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+    if value.chars().count() <= 8 {
+        format!(
+            "redacted(len={},sha256={})",
+            value.chars().count(),
+            &digest[..16]
+        )
+    } else {
+        let prefix: String = value.chars().take(4).collect();
+        let suffix: String = value
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        format!(
+            "redacted({prefix}...{suffix},len={},sha256={})",
+            value.chars().count(),
+            &digest[..16]
+        )
+    }
+}
+
+/// Redacts secret occurrences inside analyst context while preserving surrounding text.
+pub fn redact_exposed_secret_context(context: &str, matched_value: &str) -> String {
+    if matched_value.is_empty() {
+        return context.to_string();
+    }
+
+    if matched_value.starts_with("redacted(") {
+        return context.to_string();
+    }
+
+    context.replace(matched_value, &redact_exposed_secret_value(matched_value))
+}
+
 /// Shannon entropy (log2) of the string, over byte frequencies.
 /// Used to filter low-entropy matches when a gitleaks rule sets an entropy threshold.
 fn shannon_entropy(s: &str) -> f64 {
@@ -514,15 +560,13 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     let config = &crate::parse::gitleaks::GITLEAKS;
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let body_lower = body.to_lowercase();
 
     for rule in &config.rules {
         // Gitleaks prefilter: if rule has keywords, run regex only when at least one keyword appears in fragment (case-insensitive).
         if let Some(ref kws) = rule.keywords {
-            if !kws.is_empty() {
-                let body_lower = body.to_lowercase();
-                if !kws.iter().any(|kw| body_lower.contains(kw)) {
-                    continue;
-                }
+            if !kws.is_empty() && !kws.iter().any(|kw| body_lower.contains(kw)) {
+                continue;
             }
         }
 
@@ -877,6 +921,23 @@ mod tests {
         assert_eq!(SecretSeverity::High.as_str(), "high");
         assert_eq!(SecretSeverity::Medium.as_str(), "medium");
         assert_eq!(SecretSeverity::Low.as_str(), "low");
+    }
+
+    #[test]
+    fn test_redact_exposed_secret_value_replaces_raw_secret() {
+        let redacted = redact_exposed_secret_value(AWS_KEY);
+        assert!(redacted.contains("sha256="));
+        assert!(!redacted.contains(AWS_KEY));
+        assert!(redacted.contains("AKIA"));
+    }
+
+    #[test]
+    fn test_redact_exposed_secret_context_replaces_secret_occurrences() {
+        let context = format!("before {AWS_KEY} after");
+        let redacted = redact_exposed_secret_context(&context, AWS_KEY);
+        assert!(redacted.contains("before"));
+        assert!(redacted.contains("after"));
+        assert!(!redacted.contains(AWS_KEY));
     }
 
     /// Condition AND with has_paths: for single-blob we never have a file path, so AND never succeeds and we must not skip.
