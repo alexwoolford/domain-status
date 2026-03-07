@@ -28,6 +28,20 @@ pub type DbPool = Arc<Pool<Sqlite>>;
 ///
 /// The pool is sized to match the given `max_connections` parameter (typically
 /// derived from `--max-concurrency`) so workers don't starve waiting for connections.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::init_db_pool_with_path;
+/// use std::path::Path;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let pool = init_db_pool_with_path(Path::new("./domain_status.db"), 30).await?;
+/// assert!(!pool.is_closed());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn init_db_pool_with_path(
     db_path: &std::path::Path,
     max_connections: u32,

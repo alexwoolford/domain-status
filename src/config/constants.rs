@@ -153,6 +153,12 @@ pub const MAX_RULESET_DOWNLOAD_SIZE: usize = 10 * 1024 * 1024;
 /// Maximum size for GeoIP database downloads in bytes (100MB)
 /// GeoIP databases are large but should not exceed this limit
 pub const MAX_GEOIP_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024;
+/// Maximum extracted GeoIP `.mmdb` entry size in bytes (100MB)
+/// Prevents tar.gz archive bombs from expanding into oversized in-memory payloads.
+pub const MAX_GEOIP_ARCHIVE_ENTRY_SIZE: usize = 100 * 1024 * 1024;
+/// Maximum number of archive entries to inspect when extracting GeoIP tarballs.
+/// MaxMind archives contain only a handful of files; larger counts are suspicious.
+pub const MAX_GEOIP_ARCHIVE_ENTRY_COUNT: usize = 128;
 /// Maximum number of retries for network downloads (rulesets, GeoIP)
 pub const MAX_NETWORK_DOWNLOAD_RETRIES: usize = 3;
 
@@ -166,8 +172,17 @@ pub const WHOIS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 /// Prevents unbounded disk usage and filesystem performance degradation
 /// when scanning 100K+ domains. Oldest entries are evicted when limit is reached.
 pub const MAX_WHOIS_CACHE_ENTRIES: usize = 50_000;
+/// Maximum raw WHOIS payload size retained in memory or cache (256KB).
+/// WHOIS text is only used for analyst context and should not grow without bound.
+pub const MAX_WHOIS_RAW_TEXT_SIZE: usize = 256 * 1024;
+/// Maximum WHOIS cache file size accepted when loading from disk (512KB).
+/// Rejects corrupted or hostile cache files before reading them fully into memory.
+pub const MAX_WHOIS_CACHE_FILE_SIZE: u64 = 512 * 1024;
 /// User-Agent cache TTL: 30 days
 /// Chrome releases roughly every 4 weeks, so 30 days ensures we stay current
 pub const USER_AGENT_CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 /// GeoIP cache TTL: 7 days
 pub const GEOIP_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// Maximum nested related records exported per table for a single URL row.
+/// Caps per-row memory/CPU amplification when exporting hostile or extremely large datasets.
+pub const MAX_EXPORT_RELATED_RECORDS: i64 = 500;

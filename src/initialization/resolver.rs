@@ -11,13 +11,14 @@ use hickory_resolver::TokioResolver;
 
 /// Initializes the DNS resolver for hostname lookups.
 ///
-/// Creates a DNS resolver using default configuration (Google DNS: 8.8.8.8, 8.8.4.4)
-/// with aggressive timeouts to prevent hanging on slow or unresponsive DNS servers.
+/// Creates a DNS resolver using the local system resolver configuration with
+/// domain-status-specific timeout settings layered on top.
 ///
 /// The resolver supports both forward lookups (hostname → IP) and reverse lookups
 /// (IP → hostname) using PTR records.
 ///
-/// Timeouts are configured to prevent hanging on slow or unresponsive DNS servers.
+/// Timeouts are configured to prevent hanging on slow or unresponsive DNS servers,
+/// and `ndots = 0` avoids search-domain expansion for scanned hostnames.
 ///
 /// # Returns
 ///
@@ -28,6 +29,15 @@ use hickory_resolver::TokioResolver;
 ///
 /// Returns `InitializationError::DnsResolverError` if both system and fallback
 /// configurations fail (though fallback should rarely fail).
+///
+/// # Examples
+///
+/// ```
+/// use domain_status::initialization::init_resolver;
+///
+/// let resolver = init_resolver().expect("resolver should initialize");
+/// let _shared = resolver.clone();
+/// ```
 pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
     use hickory_resolver::config::ResolverOpts;
 

@@ -13,52 +13,54 @@ use super::super::types::{
 };
 use crate::error_handling::{ErrorType, InfoType, WarningType};
 
-/// JSON status endpoint with detailed progress information
-// Large function handling comprehensive status JSON output with all error, warning, info, and timing statistics.
-// Consider refactoring into smaller focused functions in Phase 4.
+fn micros_to_ms(micros: u64) -> u64 {
+    (micros + 500) / 1000
+}
+
+/// Builds the structured `/status` response from the current state and elapsed time.
 #[allow(clippy::too_many_lines)]
-pub async fn status_handler(State(state): State<StatusState>) -> Response {
+pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> StatusResponse {
     let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
+    let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
-    let elapsed = state.start_time.elapsed().as_secs_f64();
-    // Safe cast: converting usize to f64 for rate calculation
-    // Values are bounded by practical URL counts (< 10^15), well within f64 precision
-    let rate = if elapsed > 0.0 {
-        #[allow(clippy::cast_precision_loss)]
-        {
-            completed as f64 / elapsed
-        }
-    } else {
-        0.0
-    };
-
-    // Calculate percentage based on total URLs in file (completed + failed out of total)
-    // This shows progress through all URLs in the file, not just attempted ones
     let processed = completed + failed;
-    // Safe cast: converting usize to f64 for percentage calculation
-    // Values are practical URL counts, precision loss is acceptable for display percentage
+    let active_urls = attempted.saturating_sub(processed);
     #[allow(clippy::cast_precision_loss)]
     let percentage = if total_urls_in_file > 0 {
         (processed as f64 / total_urls_in_file as f64) * 100.0
     } else {
         0.0
     };
-
-    // Pending URLs = total URLs in file that haven't completed or failed yet
-    // This includes both URLs that are currently being processed and URLs that haven't been read yet
+    #[allow(clippy::cast_precision_loss)]
+    let rate = if elapsed > 0.0 {
+        completed as f64 / elapsed
+    } else {
+        0.0
+    };
     let pending_urls = total_urls_in_file
         .saturating_sub(completed)
         .saturating_sub(failed);
 
-    let response = StatusResponse {
-        total_urls: total_urls_in_file, // Use total URLs in file, not just attempted
+    StatusResponse {
+        total_urls: total_urls_in_file,
+        total_urls_attempted: attempted,
         completed_urls: completed,
         failed_urls: failed,
+        active_urls,
         pending_urls: Some(pending_urls),
         percentage_complete: percentage,
         elapsed_seconds: elapsed,
         rate_per_second: rate,
+        current_rps: state
+            .request_limiter
+            .as_ref()
+            .map(|limiter| limiter.current_rps()),
+        retried_requests: state.runtime_metrics.retried_requests(),
+        non_retriable_failures: state.runtime_metrics.non_retriable_failures(),
+        db_write_failures: state.db_circuit_breaker.total_failures(),
+        skipped_failure_writes: state.db_circuit_breaker.skipped_writes(),
+        circuit_breaker_open: state.db_circuit_breaker.is_open_sync(),
         errors: ErrorCounts {
             total: state.error_stats.total_errors(),
             timeout: state
@@ -162,9 +164,6 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
             let count = timing_stats.count.load(Ordering::Relaxed);
             if count > 0 {
                 let avg = timing_stats.averages();
-                // Convert from microseconds to milliseconds for display
-                let micros_to_ms = |micros: u64| (micros + 500) / 1000;
-
                 Some(TimingSummary {
                     count,
                     averages: TimingMetrics {
@@ -185,7 +184,13 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
                 None
             }
         }),
-    };
+    }
+}
+
+/// JSON status endpoint with detailed progress information
+pub async fn status_handler(State(state): State<StatusState>) -> Response {
+    let elapsed = state.start_time.elapsed().as_secs_f64();
+    let response = build_status_response(&state, elapsed);
 
     let json = match serde_json::to_string_pretty(&response) {
         Ok(json) => json,
@@ -206,6 +211,8 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::status_server::StatusState;
+    use crate::utils::{TimingStats, UrlTimingMetrics};
+    use pretty_assertions::assert_eq;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use std::time::Instant;
@@ -219,6 +226,11 @@ mod tests {
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(
+                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
+            ),
+            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
         }
     }
 
@@ -237,17 +249,109 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_status_handler_calculates_percentage() {
-        let state = create_test_state();
-        let response = status_handler(State(state)).await;
+    #[test]
+    fn test_build_status_response_returns_exact_contract() {
+        let state = StatusState {
+            total_urls: Arc::new(AtomicUsize::new(100)),
+            total_urls_attempted: Arc::new(AtomicUsize::new(80)),
+            completed_urls: Arc::new(AtomicUsize::new(50)),
+            failed_urls: Arc::new(AtomicUsize::new(10)),
+            start_time: Arc::new(Instant::now()),
+            error_stats: Arc::new({
+                let stats = ProcessingStats::new();
+                stats.increment_error(ErrorType::ProcessUrlTimeout);
+                stats.increment_error(ErrorType::HttpRequestTimeoutError);
+                stats.increment_error(ErrorType::DnsNsLookupError);
+                stats.increment_warning(WarningType::MissingMetaDescription);
+                stats.increment_info(InfoType::HttpRedirect);
+                stats
+            }),
+            timing_stats: Some(Arc::new({
+                let stats = TimingStats::new();
+                stats.record(&UrlTimingMetrics {
+                    http_request_us: 1500,
+                    dns_forward_us: 499,
+                    total_us: 2000,
+                    ..Default::default()
+                });
+                stats
+            })),
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(
+                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
+            ),
+            runtime_metrics: Arc::new({
+                let metrics = crate::runtime_metrics::RuntimeMetrics::default();
+                metrics.record_retry();
+                metrics.record_non_retriable_failure();
+                metrics
+            }),
+        };
 
-        // Response should be valid JSON
-        assert_eq!(response.status(), StatusCode::OK);
+        let response = build_status_response(&state, 5.0);
+        assert_eq!(
+            response,
+            StatusResponse {
+                total_urls: 100,
+                total_urls_attempted: 80,
+                completed_urls: 50,
+                failed_urls: 10,
+                active_urls: 20,
+                pending_urls: Some(40),
+                percentage_complete: 60.0,
+                elapsed_seconds: 5.0,
+                rate_per_second: 10.0,
+                current_rps: None,
+                retried_requests: 1,
+                non_retriable_failures: 1,
+                db_write_failures: 0,
+                skipped_failure_writes: 0,
+                circuit_breaker_open: false,
+                errors: ErrorCounts {
+                    total: 3,
+                    timeout: 2,
+                    connection_error: 0,
+                    http_error: 0,
+                    dns_error: 1,
+                    tls_error: 0,
+                    parse_error: 0,
+                    other_error: 0,
+                },
+                warnings: WarningCounts {
+                    total: 1,
+                    missing_meta_keywords: 0,
+                    missing_meta_description: 1,
+                    missing_title: 0,
+                },
+                info: InfoCounts {
+                    total: 1,
+                    http_redirect: 1,
+                    https_redirect: 0,
+                    bot_detection_403: 0,
+                    multiple_redirects: 0,
+                },
+                timing: Some(TimingSummary {
+                    count: 1,
+                    averages: TimingMetrics {
+                        http_request_ms: 2,
+                        dns_forward_ms: 0,
+                        dns_reverse_ms: 0,
+                        dns_additional_ms: 0,
+                        tls_handshake_ms: 0,
+                        html_parsing_ms: 0,
+                        tech_detection_ms: 0,
+                        geoip_lookup_ms: 0,
+                        whois_lookup_ms: 0,
+                        security_analysis_ms: 0,
+                        total_ms: 2,
+                    },
+                }),
+            }
+        );
     }
 
-    #[tokio::test]
-    async fn test_status_handler_handles_zero_urls() {
+    #[test]
+    fn test_build_status_response_handles_zero_total_urls() {
         let state = StatusState {
             total_urls: Arc::new(AtomicUsize::new(0)),
             total_urls_attempted: Arc::new(AtomicUsize::new(0)),
@@ -256,158 +360,38 @@ mod tests {
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(
+                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
+            ),
+            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
         };
 
-        let response = status_handler(State(state)).await;
-        assert_eq!(response.status(), StatusCode::OK);
+        let response = build_status_response(&state, 0.0);
+        assert_eq!(response.pending_urls, Some(0));
+        assert!(response.percentage_complete.abs() < f64::EPSILON);
+        assert!(response.rate_per_second.abs() < f64::EPSILON);
+        assert_eq!(response.timing, None);
     }
 
-    #[tokio::test]
-    async fn test_status_handler_handles_serialization_error() {
-        // This test verifies error handling, but we can't easily trigger
-        // a serialization error without mocking serde_json
-        // The error path is tested via code review
-        let state = create_test_state();
-        let response = status_handler(State(state)).await;
-        // Should succeed with normal state
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_status_handler_rate_calculation_zero_elapsed() {
-        // Test that rate calculation handles zero elapsed time correctly
-        // This is critical - prevents division by zero
-        // The code at line 22-26 checks elapsed > 0.0 before dividing
+    #[test]
+    fn test_build_status_response_uses_saturating_pending_urls() {
         let state = StatusState {
             total_urls: Arc::new(AtomicUsize::new(100)),
             total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            start_time: Arc::new(Instant::now()), // Just created, elapsed will be very small
+            completed_urls: Arc::new(AtomicUsize::new(150)),
+            failed_urls: Arc::new(AtomicUsize::new(50)),
+            start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(
+                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
+            ),
+            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
         };
 
-        let response = status_handler(State(state)).await;
-        // Should succeed without panicking on division by zero
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_status_handler_percentage_calculation_overflow_protection() {
-        // Test that percentage calculation handles large numbers correctly
-        // This is critical - prevents overflow in percentage calculation
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(usize::MAX)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(usize::MAX)),
-            completed_urls: Arc::new(AtomicUsize::new(usize::MAX / 2)),
-            failed_urls: Arc::new(AtomicUsize::new(usize::MAX / 2)),
-            start_time: Arc::new(Instant::now() - std::time::Duration::from_secs(1)),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-        };
-
-        let response = status_handler(State(state)).await;
-        // Should succeed without overflow
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_status_handler_timing_stats_count_zero_returns_none() {
-        // Test that timing_stats with count=0 returns None (line 152)
-        // This is critical - prevents division by zero in timing calculations
-        use crate::utils::TimingStats;
-
-        let timing_stats = Arc::new(TimingStats::new());
-        // count is 0 by default
-
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            start_time: Arc::new(Instant::now() - std::time::Duration::from_secs(1)),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: Some(timing_stats),
-        };
-
-        let response = status_handler(State(state)).await;
-        assert_eq!(response.status(), StatusCode::OK);
-
-        // Verify timing is None when count is 0
-        // This is tested implicitly - if timing was Some, it would be in the JSON
-        // The code at line 152 checks count > 0 before creating TimingSummary
-    }
-
-    #[tokio::test]
-    async fn test_status_handler_timing_stats_micros_to_ms_rounding() {
-        // Test that micros_to_ms rounding works correctly (line 155)
-        // This is critical - ensures timing display is accurate
-        use crate::utils::{TimingStats, UrlTimingMetrics};
-
-        let timing_stats = Arc::new(TimingStats::new());
-        // Record metrics with values that will test rounding
-        let metrics = UrlTimingMetrics {
-            http_request_us: 1500, // 1.5ms -> should round to 2ms
-            dns_forward_us: 499,   // 0.499ms -> should round to 0ms
-            total_us: 2000,        // 2ms
-            ..Default::default()
-        };
-        timing_stats.record(&metrics);
-
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            start_time: Arc::new(Instant::now() - std::time::Duration::from_secs(1)),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: Some(timing_stats),
-        };
-
-        let response = status_handler(State(state)).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        // The rounding logic is tested - micros_to_ms(1500) = (1500 + 500) / 1000 = 2
-        // micros_to_ms(499) = (499 + 500) / 1000 = 0
-    }
-
-    #[tokio::test]
-    async fn test_status_handler_pending_urls_saturating_sub() {
-        // Test that pending_urls calculation uses saturating_sub correctly (line 39-41)
-        // This is critical - prevents underflow when completed + failed > total
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(150)), // More than total
-            failed_urls: Arc::new(AtomicUsize::new(50)),     // Would make 200 total
-            start_time: Arc::new(Instant::now() - std::time::Duration::from_secs(1)),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-        };
-
-        let response = status_handler(State(state)).await;
-        // Should succeed without underflow
-        assert_eq!(response.status(), StatusCode::OK);
-        // pending_urls should be 0 (saturating_sub prevents negative)
-    }
-
-    #[tokio::test]
-    async fn test_status_handler_percentage_zero_total_urls() {
-        // Test that percentage calculation handles zero total_urls correctly (line 31-35)
-        // This is critical - prevents division by zero
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(0)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
-            completed_urls: Arc::new(AtomicUsize::new(0)),
-            failed_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now() - std::time::Duration::from_secs(1)),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-        };
-
-        let response = status_handler(State(state)).await;
-        // Should succeed without division by zero
-        assert_eq!(response.status(), StatusCode::OK);
-        // percentage should be 0.0 when total_urls is 0
+        let response = build_status_response(&state, 1.0);
+        assert_eq!(response.pending_urls, Some(0));
     }
 }

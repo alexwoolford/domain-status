@@ -19,6 +19,8 @@ use tokio::time::{interval, Duration as TokioDuration};
 /// - Uses a background task for token replenishment
 /// - Supports graceful shutdown via `CancellationToken`
 /// - Supports dynamic RPS updates (for adaptive rate limiting)
+///
+/// Instances are usually created via [`init_rate_limiter()`].
 pub struct RateLimiter {
     permits: Arc<TokioSemaphore>,
     #[allow(dead_code)]
@@ -28,6 +30,36 @@ pub struct RateLimiter {
     shutdown: tokio_util::sync::CancellationToken,
 }
 
+fn compute_refill_permits(
+    current_rps: u32,
+    elapsed: std::time::Duration,
+    available: usize,
+    capacity: usize,
+    fractional_permits: f64,
+) -> (usize, f64) {
+    if current_rps == 0 || available >= capacity {
+        return (0, 0.0);
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    let permits_to_add_f64 = current_rps as f64 * elapsed.as_secs_f64() + fractional_permits;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let whole_permits = permits_to_add_f64.floor() as usize;
+    let permits_to_restore = capacity.saturating_sub(available);
+    let permits_to_add = whole_permits.min(permits_to_restore);
+
+    let new_fractional = if permits_to_add == permits_to_restore {
+        0.0
+    } else {
+        #[allow(clippy::cast_precision_loss)]
+        {
+            permits_to_add_f64 - whole_permits as f64
+        }
+    };
+
+    (permits_to_add, new_fractional)
+}
+
 impl RateLimiter {
     /// Acquires a permit from the rate limiter, blocking until one is available.
     ///
@@ -35,8 +67,14 @@ impl RateLimiter {
     /// and a warning is logged. This prevents requests from flooding the target
     /// during shutdown race conditions.
     pub async fn acquire(&self) {
-        if self.permits.acquire().await.is_err() {
-            log::warn!("Rate limiter semaphore closed, skipping throttle");
+        match self.permits.acquire().await {
+            Ok(permit) => {
+                // Consume the token permanently; replenishment happens in the background ticker.
+                permit.forget();
+            }
+            Err(_) => {
+                log::warn!("Rate limiter semaphore closed, skipping throttle");
+            }
         }
     }
 
@@ -72,6 +110,31 @@ impl RateLimiter {
 /// A tuple of `(RateLimiter, CancellationToken)` if rate limiting is enabled,
 /// or `None` if disabled. The cancellation token can be used to gracefully shut
 /// down the background token replenishment task.
+///
+/// # Examples
+///
+/// Disabled mode:
+///
+/// ```
+/// use domain_status::initialization::init_rate_limiter;
+///
+/// assert!(init_rate_limiter(0, 10).is_none());
+/// ```
+///
+/// Basic lifecycle with explicit shutdown:
+///
+/// ```no_run
+/// use domain_status::initialization::init_rate_limiter;
+///
+/// # #[tokio::main]
+/// # async fn main() {
+/// let (limiter, shutdown) = init_rate_limiter(10, 20).expect("rate limiter enabled");
+/// limiter.acquire().await;
+///
+/// // During teardown, stop the background refill task.
+/// shutdown.cancel();
+/// # }
+/// ```
 pub fn init_rate_limiter(
     rps: u32,
     burst: usize,
@@ -112,21 +175,18 @@ pub fn init_rate_limiter(
                         // Safe cast: truncating fractional permits is intentional for integer token count
                         // Values are bounded by RPS * elapsed (typically small values < 1000)
                         // Safe cast: permits_to_add is u32, fits exactly in f64 without precision loss
-                        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let permits_to_add_f64 = current_rps_value as f64 * elapsed.as_secs_f64() + fractional_permits;
-                        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let permits_to_add = permits_to_add_f64 as u32;
-                        #[allow(clippy::cast_precision_loss)]
-                        {
-                            fractional_permits = permits_to_add_f64 - permits_to_add as f64;
-                        }
+                        let available = permits.available_permits();
+                        let (permits_to_add, new_fractional_permits) = compute_refill_permits(
+                            current_rps_value,
+                            elapsed,
+                            available,
+                            capacity,
+                            fractional_permits,
+                        );
+                        fractional_permits = new_fractional_permits;
 
                         if permits_to_add > 0 {
-                            // Safe cast: u32 always fits in usize on all supported platforms
-                            #[allow(clippy::cast_possible_truncation)]
-                            {
-                                permits.add_permits(permits_to_add as usize);
-                            }
+                            permits.add_permits(permits_to_add);
                         }
                     }
 
@@ -146,6 +206,7 @@ pub fn init_rate_limiter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -171,17 +232,15 @@ mod tests {
         assert_eq!(limiter.current_rps(), 10);
     }
 
-    #[tokio::test]
-    async fn test_rate_limiter_acquire_permits() {
-        let (limiter, _shutdown) = init_rate_limiter(10, 5).unwrap();
+    #[tokio::test(start_paused = true)]
+    async fn test_rate_limiter_acquire_consumes_burst_capacity() {
+        let (limiter, _shutdown) = init_rate_limiter(1, 2).unwrap();
 
-        // Should be able to acquire permits up to burst capacity
-        for _ in 0..5 {
-            limiter.acquire().await;
-        }
+        limiter.acquire().await;
+        limiter.acquire().await;
 
-        // Additional acquires should wait (but we can't easily test this without timing)
-        // We verify the function doesn't panic by completing successfully
+        let blocked = timeout(Duration::from_millis(1), limiter.acquire()).await;
+        assert!(blocked.is_err(), "third acquire should block until refill");
     }
 
     #[tokio::test]
@@ -196,22 +255,25 @@ mod tests {
         assert_eq!(limiter.current_rps(), 5);
     }
 
-    #[tokio::test]
-    async fn test_rate_limiter_token_replenishment() {
+    #[tokio::test(start_paused = true)]
+    async fn test_rate_limiter_token_replenishment_unblocks_waiter() {
         let (limiter, _shutdown) = init_rate_limiter(10, 1).unwrap();
 
-        // Acquire the single permit
         limiter.acquire().await;
 
-        // Wait a bit for token replenishment (100ms ticker, so 200ms should give us 2 tokens)
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        let acquire = tokio::spawn({
+            let limiter = Arc::clone(&limiter);
+            async move { limiter.acquire().await }
+        });
 
-        // Should be able to acquire again (token was replenished)
-        let acquire_result = timeout(Duration::from_millis(100), limiter.acquire()).await;
+        tokio::time::advance(Duration::from_millis(90)).await;
         assert!(
-            acquire_result.is_ok(),
-            "Should be able to acquire permit after token replenishment"
+            !acquire.is_finished(),
+            "waiter should still be blocked before refill"
         );
+
+        tokio::time::advance(Duration::from_millis(20)).await;
+        acquire.await.expect("waiter task should complete");
     }
 
     #[tokio::test]
@@ -229,38 +291,34 @@ mod tests {
         let _ = timeout(Duration::from_millis(10), limiter.acquire()).await;
     }
 
-    #[tokio::test]
-    async fn test_rate_limiter_burst_capacity() {
-        let (limiter, _shutdown) = init_rate_limiter(1, 3).unwrap(); // 1 RPS, burst of 3
-
-        // Should be able to acquire all 3 permits immediately (burst)
-        for _ in 0..3 {
-            let acquire_result = timeout(Duration::from_millis(10), limiter.acquire()).await;
-            assert!(
-                acquire_result.is_ok(),
-                "Should be able to use burst capacity immediately"
-            );
-        }
-
-        // After burst is exhausted, should need to wait
-        // (This is hard to test reliably without flakiness, so we just verify it doesn't panic)
-        let _ = timeout(Duration::from_millis(10), limiter.acquire()).await;
+    #[tokio::test(start_paused = true)]
+    async fn test_rate_limiter_burst_capacity_is_capped() {
+        let (permits_to_add, fractional) =
+            compute_refill_permits(1, Duration::from_secs(5), 2, 3, 0.0);
+        assert_eq!(
+            permits_to_add, 1,
+            "bucket should only refill the missing slot"
+        );
+        assert!(
+            fractional.abs() < f64::EPSILON,
+            "overflow beyond burst capacity should be discarded"
+        );
     }
 
-    #[tokio::test]
-    async fn test_rate_limiter_dynamic_rps_update() {
+    #[tokio::test(start_paused = true)]
+    async fn test_rate_limiter_dynamic_rps_update_changes_refill_speed() {
         let (limiter, _shutdown) = init_rate_limiter(1, 1).unwrap();
 
-        // Update to higher RPS
+        limiter.acquire().await;
+        let blocked = timeout(Duration::from_millis(1), limiter.acquire()).await;
+        assert!(blocked.is_err(), "single-token burst should be exhausted");
+
         limiter.update_rps(10);
 
-        // Wait for token replenishment with new rate
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        // Should be able to acquire (new rate should replenish faster)
-        let acquire_result = timeout(Duration::from_millis(50), limiter.acquire()).await;
-        // May or may not succeed depending on timing, but shouldn't panic
-        let _ = acquire_result;
+        tokio::time::advance(Duration::from_millis(110)).await;
+        timeout(Duration::from_millis(10), limiter.acquire())
+            .await
+            .expect("updated RPS should replenish promptly");
     }
 
     #[tokio::test]
@@ -274,5 +332,18 @@ mod tests {
         // Different instances should have different configurations
         assert_eq!(limiter1.current_rps(), 10);
         assert_eq!(limiter2.current_rps(), 20);
+    }
+
+    #[test]
+    fn test_compute_refill_permits_accumulates_fractional_tokens() {
+        let (permits_to_add, fractional) =
+            compute_refill_permits(3, Duration::from_millis(100), 0, 5, 0.0);
+        assert_eq!(permits_to_add, 0);
+        assert!(fractional > 0.29 && fractional < 0.31);
+
+        let (permits_to_add, fractional) =
+            compute_refill_permits(3, Duration::from_millis(300), 0, 5, fractional);
+        assert_eq!(permits_to_add, 1);
+        assert!(fractional > 0.19 && fractional < 0.21);
     }
 }

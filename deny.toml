@@ -1,0 +1,25 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # indicatif still depends on number_prefix; remove once upstream replaces it.
+    "RUSTSEC-2025-0119",
+    # parquet still pulls paste transitively; remove once arrow/parquet drops or replaces it.
+    "RUSTSEC-2024-0436",
+    # whois-service still resolves an older reqwest/native-tls tree in build-time dependencies.
+    # Remove once that upstream dependency chain is updated.
+    "RUSTSEC-2025-0134",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

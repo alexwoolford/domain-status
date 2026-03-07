@@ -5,6 +5,51 @@ use std::collections::HashMap;
 use super::SecurityWarning;
 use crate::models::TlsVersion;
 
+fn certificate_name_matches(host: &str, candidate: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let candidate = candidate.trim_end_matches('.').to_ascii_lowercase();
+
+    if let Some(suffix) = candidate.strip_prefix("*.") {
+        if host == suffix {
+            return false;
+        }
+
+        return host.strip_suffix(suffix).is_some_and(|prefix| {
+            prefix.ends_with('.') && !prefix[..prefix.len() - 1].contains('.')
+        });
+    }
+
+    host == candidate
+}
+
+fn extract_common_name(subject: &str) -> Option<&str> {
+    subject
+        .split(',')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix("CN="))
+}
+
+fn hostname_matches_certificate(
+    final_url: &str,
+    cert_subject: &str,
+    cert_sans: &Option<Vec<String>>,
+) -> bool {
+    let Ok(parsed) = url::Url::parse(final_url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+
+    if let Some(sans) = cert_sans {
+        if !sans.is_empty() {
+            return sans.iter().any(|san| certificate_name_matches(host, san));
+        }
+    }
+
+    extract_common_name(cert_subject).is_some_and(|cn| certificate_name_matches(host, cn))
+}
+
 /// Analyzes collected data and returns a list of security warnings
 ///
 /// # Arguments
@@ -27,7 +72,7 @@ pub fn analyze_security(
     cert_subject: &Option<String>,
     cert_issuer: &Option<String>,
     cert_valid_to: &Option<chrono::NaiveDateTime>,
-    _cert_sans: &Option<Vec<String>>,
+    cert_sans: &Option<Vec<String>>,
 ) -> Vec<SecurityWarning> {
     let mut warnings = Vec::new();
 
@@ -92,14 +137,11 @@ pub fn analyze_security(
         // to handle any edge cases
         let is_self_signed = subject.trim().eq_ignore_ascii_case(issuer.trim());
 
-        if is_expired || is_self_signed {
+        let hostname_mismatch = !hostname_matches_certificate(final_url, subject, cert_sans);
+
+        if is_expired || is_self_signed || hostname_mismatch {
             warnings.push(SecurityWarning::InvalidCertificate);
         }
-        // Note: Hostname mismatch detection is complex and would require
-        // parsing the certificate subject and SANs, which is handled by
-        // the TLS library. Since we're accepting all certs, we can't easily
-        // detect hostname mismatches without re-implementing the validation logic.
-        // For now, we detect expired and self-signed certificates.
     } else if final_url.starts_with("https://") {
         // If we have HTTPS but no certificate info, it indicates
         // a certificate extraction failure. This could mean:
@@ -357,6 +399,27 @@ mod tests {
         );
 
         // Should warn about invalid certificate (couldn't extract)
+        assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
+    }
+
+    #[test]
+    fn test_analyze_security_hostname_mismatch() {
+        let security_headers = HashMap::new();
+        let future_date = NaiveDate::from_ymd_opt(2030, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let warnings = analyze_security(
+            "https://example.com",
+            &Some(TlsVersion::Tls13),
+            &security_headers,
+            &Some("CN=other.example".to_string()),
+            &Some("CN=Trusted Issuer".to_string()),
+            &Some(future_date),
+            &Some(vec!["other.example".to_string()]),
+        );
+
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
     }
 

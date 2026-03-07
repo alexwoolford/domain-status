@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::config::{HTTP_STATUS_TOO_MANY_REQUESTS, RETRY_MAX_ATTEMPTS, URL_PROCESSING_TIMEOUT};
 use crate::error_handling::ErrorType;
+use crate::fetch::UrlProcessOutcome;
 use crate::storage::failure::record_url_failure;
 use crate::utils::ProcessUrlResult;
 
@@ -34,6 +35,8 @@ pub async fn process_url_task(params: UrlTaskParams) {
         adaptive_limiter,
         per_domain_limiter,
         completed_urls,
+        successful_urls,
+        skipped_urls,
         failed_urls,
         total_urls_for_callback,
         progress_callback,
@@ -69,9 +72,16 @@ pub async fn process_url_task(params: UrlTaskParams) {
     .await;
 
     match result {
-        Ok(ProcessUrlResult { result: Ok(()), .. }) => {
+        Ok(ProcessUrlResult {
+            result: Ok(outcome),
+            ..
+        }) => {
             handle_success(
+                &url_for_logging,
+                outcome,
                 &completed_urls,
+                &successful_urls,
+                &skipped_urls,
                 &failed_urls,
                 total_urls_for_callback,
                 &progress_callback,
@@ -114,14 +124,27 @@ pub async fn process_url_task(params: UrlTaskParams) {
 }
 
 /// Handle successful URL processing.
+#[allow(clippy::too_many_arguments)]
 async fn handle_success(
+    _url: &Arc<str>,
+    outcome: UrlProcessOutcome,
     completed_urls: &Arc<std::sync::atomic::AtomicUsize>,
+    successful_urls: &Arc<std::sync::atomic::AtomicUsize>,
+    skipped_urls: &Arc<std::sync::atomic::AtomicUsize>,
     failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
     total_urls_for_callback: usize,
     progress_callback: &ProgressCallback,
     adaptive_limiter: Option<&Arc<crate::adaptive_rate_limiter::AdaptiveRateLimiter>>,
 ) {
     completed_urls.fetch_add(1, Ordering::SeqCst);
+    match outcome {
+        UrlProcessOutcome::Inserted => {
+            successful_urls.fetch_add(1, Ordering::SeqCst);
+        }
+        UrlProcessOutcome::Skipped => {
+            skipped_urls.fetch_add(1, Ordering::SeqCst);
+        }
+    }
     invoke_progress_callback(
         progress_callback,
         completed_urls,
@@ -266,5 +289,63 @@ async fn handle_timeout(
 
     if let Some(adaptive) = adaptive_limiter {
         adaptive.record_timeout().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn test_handle_success_counts_inserted_url_as_successful() {
+        let url: Arc<str> = Arc::from("https://example.com");
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let successful_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+
+        handle_success(
+            &url,
+            UrlProcessOutcome::Inserted,
+            &completed_urls,
+            &successful_urls,
+            &skipped_urls,
+            &failed_urls,
+            1,
+            &None,
+            None,
+        )
+        .await;
+
+        assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(successful_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(skipped_urls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_success_counts_skipped_url_separately() {
+        let url: Arc<str> = Arc::from("https://example.com");
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let successful_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+
+        handle_success(
+            &url,
+            UrlProcessOutcome::Skipped,
+            &completed_urls,
+            &successful_urls,
+            &skipped_urls,
+            &failed_urls,
+            1,
+            &None,
+            None,
+        )
+        .await;
+
+        assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
+        assert_eq!(skipped_urls.load(Ordering::SeqCst), 1);
     }
 }

@@ -8,9 +8,7 @@ mod error;
 mod record;
 
 // Re-export public API
-pub use context::{
-    attach_failure_context, extract_failure_context, FailureContext, FailureContextError,
-};
+pub use context::{attach_failure_context, extract_failure_context, FailureContext};
 #[allow(unused_imports)] // Used in tests
 pub use error::extract_http_status;
 pub use record::{record_url_failure, FailureRecordParams};
@@ -19,6 +17,7 @@ pub use record::{record_url_failure, FailureRecordParams};
 mod tests {
     use super::*;
     use crate::error_handling::ErrorType;
+    use crate::storage::failure::context::FailureContextError;
 
     #[test]
     fn test_extract_error_type_timeout() {

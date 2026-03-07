@@ -156,15 +156,6 @@ pub(crate) async fn extract_response_data(
         log::debug!("Title tag found in raw HTML for {final_domain}");
     } else {
         log::warn!("No title tag found in raw HTML for {final_domain}");
-        let preview = body
-            .chars()
-            .take(crate::config::MAX_HTML_PREVIEW_CHARS)
-            .collect::<String>();
-        log::debug!(
-            "HTML preview (first {} chars) for {final_domain}: {}",
-            crate::config::MAX_HTML_PREVIEW_CHARS,
-            preview
-        );
     }
 
     Ok(Some(ResponseData {

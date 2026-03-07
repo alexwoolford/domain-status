@@ -12,6 +12,13 @@ use std::io::{self, ErrorKind, Write};
 
 use crate::storage::DbPool;
 
+fn with_export_limit(query: &str) -> String {
+    format!(
+        "{query} LIMIT {}",
+        crate::config::MAX_EXPORT_RELATED_RECORDS
+    )
+}
+
 /// Wrapper around a Write that ignores broken pipe errors (EPIPE).
 /// This allows graceful handling when stdout is piped to a command that exits early.
 pub(crate) struct IgnoreBrokenPipe<W: Write> {
@@ -54,7 +61,7 @@ pub(crate) async fn fetch_string_list(
     query: &str,
     url_status_id: i64,
 ) -> Result<(String, usize)> {
-    let rows = sqlx::query(query)
+    let rows = sqlx::query(&with_export_limit(query))
         .bind(url_status_id)
         .fetch_all(pool.as_ref())
         .await?;
@@ -87,7 +94,7 @@ pub(crate) async fn fetch_key_value_list(
     value_field: &str,
     url_status_id: i64,
 ) -> Result<(String, usize)> {
-    let rows = sqlx::query(query)
+    let rows = sqlx::query(&with_export_limit(query))
         .bind(url_status_id)
         .fetch_all(pool.as_ref())
         .await?;
@@ -130,7 +137,8 @@ pub(crate) async fn fetch_filtered_http_headers(
     for header in allowed_headers {
         separated.push_bind(*header);
     }
-    separated.push_unseparated(") ORDER BY header_name");
+    separated.push_unseparated(") ORDER BY header_name LIMIT ");
+    query_builder.push_bind(crate::config::MAX_EXPORT_RELATED_RECORDS);
 
     let rows = query_builder.build().fetch_all(pool.as_ref()).await?;
 

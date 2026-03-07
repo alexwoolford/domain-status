@@ -6,8 +6,9 @@ use log::debug;
 use crate::config::MAX_REDIRECT_HOPS;
 use crate::error_handling::update_error_stats;
 use crate::fetch::request::RequestHeaders;
-use crate::fetch::utils::serialize_json_with_default;
+use crate::fetch::UrlProcessOutcome;
 use crate::fetch::{resolve_redirect_chain, ProcessingContext};
+use crate::security::redaction::{scrub_headers, scrub_url};
 
 /// Handles an HTTP request, resolving redirects and processing the response.
 ///
@@ -27,11 +28,15 @@ pub async fn handle_http_request(
     ctx: &ProcessingContext,
     url: &str,
     start_time: std::time::Instant,
-) -> Result<(), Error> {
-    debug!("Resolving redirects for {url}");
+) -> Result<UrlProcessOutcome, Error> {
+    let scrubbed_url = scrub_url(url);
+    debug!("Resolving redirects for {scrubbed_url}");
 
     let (final_url_string, redirect_chain, alt_svc_header) =
         resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.network.redirect_client).await?;
+    let scrubbed_final_url = scrub_url(&final_url_string);
+    let scrubbed_redirect_chain: Vec<String> =
+        redirect_chain.iter().map(|url| scrub_url(url)).collect();
 
     // Track redirect info metrics
     // redirect_chain includes the original URL, so:
@@ -68,13 +73,13 @@ pub async fn handle_http_request(
         }
     }
 
-    debug!("Sending request to final URL {final_url_string}");
+    debug!("Sending request to final URL {scrubbed_final_url}");
 
     // Add realistic browser headers to reduce bot detection
     // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
     // help with other detection methods (header analysis, behavioral patterns)
     // Capture actual request headers for failure tracking
-    let request_headers = RequestHeaders::as_vec();
+    let request_headers = scrub_headers(RequestHeaders::as_vec());
 
     // Build request with headers using the consolidated header builder
     let request_builder =
@@ -112,18 +117,17 @@ pub async fn handle_http_request(
                 .take(crate::config::MAX_HEADER_COUNT)
                 .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
                 .collect();
+            let response_headers = scrub_headers(response_headers);
 
             // Warn if response exceeded header count limit (potential header bomb attack)
             if header_count > crate::config::MAX_HEADER_COUNT {
                 log::warn!(
                     "Response from {} has {} headers (limit: {}), ignoring excess headers (potential header bomb attack)",
-                    url,
+                    scrubbed_url,
                     header_count,
                     crate::config::MAX_HEADER_COUNT
                 );
             }
-
-            let response_headers_str = serialize_json_with_default(&response_headers, "[]");
 
             match response.error_for_status() {
                 Ok(response) => {
@@ -152,29 +156,18 @@ pub async fn handle_http_request(
                     }
 
                     log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
-                        url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+                        scrubbed_url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
                     // Attach structured failure context to error
                     let failure_context = crate::storage::failure::FailureContext {
-                        final_url: Some(final_url_string.clone()),
-                        redirect_chain: redirect_chain.clone(),
+                        final_url: Some(scrubbed_final_url.clone()),
+                        redirect_chain: scrubbed_redirect_chain.clone(),
                         response_headers: response_headers.clone(),
                         request_headers: request_headers.clone(),
                     };
-                    // Attach structured failure context using helper function
-                    // This provides detailed debugging information (URL, redirect chain, headers)
-                    let redirect_chain_str = serialize_json_with_default(&redirect_chain, "[]");
                     let error = Error::from(e);
                     Err(crate::storage::failure::attach_failure_context(
-                        error
-                            .context(format!("HTTP request failed for {url}"))
-                            .context(format!("FINAL_URL:{final_url_string}"))
-                            .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
-                            .context(format!("RESPONSE_HEADERS:{response_headers_str}"))
-                            .context(format!(
-                                "REQUEST_HEADERS:{}",
-                                serialize_json_with_default(&request_headers, "[]")
-                            )),
+                        error.context(format!("HTTP request failed for {scrubbed_url}")),
                         failure_context,
                     ))
                 }
@@ -183,32 +176,21 @@ pub async fn handle_http_request(
         Err(e) => {
             update_error_stats(&ctx.config.error_stats, &e).await;
             log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
-                url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+                scrubbed_url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
             // Attach structured failure context to error
             // For connection errors, there are no response headers
             let failure_context = crate::storage::failure::FailureContext {
-                final_url: Some(final_url_string.clone()),
-                redirect_chain: redirect_chain.clone(),
+                final_url: Some(scrubbed_final_url),
+                redirect_chain: scrubbed_redirect_chain,
                 response_headers: Vec::new(), // No response for connection errors
                 request_headers: request_headers.clone(),
             };
-            let context_error = crate::storage::failure::FailureContextError {
-                context: failure_context,
-            };
-
-            // Also attach string context for backward compatibility
             let error = Error::from(e);
-            let redirect_chain_str = serialize_json_with_default(&redirect_chain, "[]");
-            Err(error
-                .context(format!("HTTP request failed for {url}"))
-                .context(format!("FINAL_URL:{final_url_string}"))
-                .context(format!("REDIRECT_CHAIN:{redirect_chain_str}"))
-                .context(format!(
-                    "REQUEST_HEADERS:{}",
-                    serialize_json_with_default(&request_headers, "[]")
-                ))
-                .context(Error::from(context_error))) // Attach structured context
+            Err(crate::storage::failure::attach_failure_context(
+                error.context(format!("HTTP request failed for {scrubbed_url}")),
+                failure_context,
+            ))
         }
     }
 }
@@ -257,7 +239,13 @@ mod tests {
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
             DatabaseContext::new(pool, db_circuit_breaker),
-            ConfigContext::new(error_stats, timing_stats, None, false),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                None,
+                false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            ),
         )
     }
 
@@ -503,7 +491,13 @@ mod tests {
         let ctx = ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
             DatabaseContext::new(pool, db_circuit_breaker),
-            ConfigContext::new(error_stats, timing_stats, None, false),
+            ConfigContext::new(
+                error_stats,
+                timing_stats,
+                None,
+                false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            ),
         );
 
         let start_time = std::time::Instant::now();

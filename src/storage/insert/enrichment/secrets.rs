@@ -18,6 +18,9 @@ pub async fn insert_exposed_secrets(
     secrets: &[ExposedSecret],
 ) -> Result<(), DatabaseError> {
     for secret in secrets {
+        let redacted_value = crate::parse::redact_exposed_secret_value(&secret.matched_value);
+        let redacted_context =
+            crate::parse::redact_exposed_secret_context(&secret.context, &secret.matched_value);
         if let Err(e) = sqlx::query(
             "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
              VALUES (?, ?, ?, ?, ?, ?)
@@ -26,10 +29,10 @@ pub async fn insert_exposed_secrets(
         )
         .bind(url_status_id)
         .bind(&secret.secret_type)
-        .bind(&secret.matched_value)
+        .bind(&redacted_value)
         .bind(secret.severity.as_str())
         .bind(&secret.location)
-        .bind(&secret.context)
+        .bind(&redacted_context)
         .execute(pool)
         .await
         {
@@ -79,13 +82,15 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get::<String, _>("secret_type"), "aws-access-token");
-        assert_eq!(
-            rows[0].get::<String, _>("matched_value"),
-            "AKIAIOSFODNN7EXAMPLE"
-        );
+        assert!(rows[0]
+            .get::<String, _>("matched_value")
+            .contains("sha256="));
+        assert!(!rows[0]
+            .get::<String, _>("matched_value")
+            .contains("AKIAIOSFODNN7EXAMPLE"));
         assert_eq!(rows[0].get::<String, _>("severity"), "high");
         assert_eq!(rows[0].get::<String, _>("location"), "inline_script");
-        assert!(rows[0].get::<String, _>("context").contains("AKIAIOSF"));
+        assert!(rows[0].get::<String, _>("context").contains("sha256="));
     }
 
     #[tokio::test]

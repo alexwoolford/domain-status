@@ -29,10 +29,32 @@ pub(crate) async fn load_metadata(metadata_file: &Path) -> Result<GeoIpMetadata>
     Ok(metadata)
 }
 
+pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    tokio::fs::create_dir_all(parent).await?;
+
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "geoip.tmp".to_string());
+    let temp_path = parent.join(format!(".{}.tmp", file_name));
+
+    tokio::fs::write(&temp_path, bytes).await?;
+    if let Err(error) = tokio::fs::rename(&temp_path, path).await {
+        if path.exists() {
+            tokio::fs::remove_file(path).await?;
+            tokio::fs::rename(&temp_path, path).await?;
+        } else {
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
 /// Saves metadata to cache file
 pub(crate) async fn save_metadata(metadata: &GeoIpMetadata, metadata_file: &Path) -> Result<()> {
     let content = serde_json::to_string_pretty(metadata)?;
-    tokio::fs::write(metadata_file, content).await?;
+    write_atomic(metadata_file, content.as_bytes()).await?;
     Ok(())
 }
 
@@ -116,10 +138,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_metadata_invalid_path() {
-        // Try to save to a path in a non-existent directory (platform-agnostic)
-        let metadata_file = PathBuf::from("nonexistent")
-            .join("dir")
-            .join("metadata.json");
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let file_path = temp_dir.path().join("not_a_directory");
+        tokio::fs::write(&file_path, b"occupied")
+            .await
+            .expect("Failed to create blocking file");
+        let metadata_file = file_path.join("metadata.json");
         let metadata = GeoIpMetadata {
             source: "test.mmdb".to_string(),
             version: "build_12345".to_string(),
@@ -130,11 +154,11 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("No such file")
+            error_msg.contains("Not a directory")
+                || error_msg.contains("not a directory")
                 || error_msg.contains("directory")
-                || error_msg.contains("not found")
-                || error_msg.contains("The system cannot find"),
-            "Expected directory error, got: {}",
+                || error_msg.contains("File exists"),
+            "Expected invalid parent path error, got: {}",
             error_msg
         );
     }

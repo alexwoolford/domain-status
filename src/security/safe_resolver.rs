@@ -57,14 +57,14 @@ impl Resolve for SafeResolver {
     }
 }
 
-fn is_public_ip(ip: IpAddr) -> bool {
+pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_public_ipv4(v4),
         IpAddr::V6(v6) => is_public_ipv6(v6),
     }
 }
 
-fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+pub(crate) fn is_public_ipv4(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
     // Loopback 127.0.0.0/8
     if o[0] == 127 {
@@ -101,7 +101,7 @@ fn is_public_ipv4(ip: Ipv4Addr) -> bool {
     true
 }
 
-fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+pub(crate) fn is_public_ipv6(ip: Ipv6Addr) -> bool {
     let s = ip.segments();
     // ::1 loopback
     if s == [0, 0, 0, 0, 0, 0, 0, 1] {

@@ -6,5 +6,11 @@
 mod request;
 mod response;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrlProcessOutcome {
+    Inserted,
+    Skipped,
+}
+
 pub use request::handle_http_request;
 pub use response::handle_response;

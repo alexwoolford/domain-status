@@ -31,10 +31,12 @@
 //! This library requires a Tokio runtime. Use `#[tokio::main]` in your application
 //! or ensure you're calling library functions within an async context.
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 
 mod adaptive_rate_limiter;
 mod app;
+pub mod cli;
+mod clock;
 pub mod config;
 mod database;
 mod dns;
@@ -49,6 +51,7 @@ mod models;
 mod parse;
 mod per_domain_limiter;
 mod run;
+mod runtime_metrics;
 mod security;
 mod status_server;
 mod storage;
@@ -58,8 +61,10 @@ mod utils;
 pub mod whois;
 
 // Re-export public API
+pub use cli::evaluate_exit_code;
 pub use config::{Config, FailOn, LogFormat, LogLevel};
 pub use error_handling::{DatabaseError, FingerprintError};
+pub use geoip::GeoIpService;
 pub use models::{KeyAlgorithm, TlsVersion};
 pub use run::{run_scan, ScanReport};
 pub use storage::{

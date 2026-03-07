@@ -32,6 +32,30 @@ use super::row::{
 /// # Returns
 ///
 /// Returns the number of records exported, or an error if export fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::export::{export_jsonl, ExportFormat, ExportOptions};
+/// use std::path::PathBuf;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let count = export_jsonl(&ExportOptions {
+///     db_path: PathBuf::from("./domain_status.db"),
+///     output: None,
+///     format: ExportFormat::Jsonl,
+///     run_id: Some("run_1700000000000".to_string()),
+///     domain: None,
+///     status: None,
+///     since: None,
+/// })
+/// .await?;
+///
+/// eprintln!("streamed {count} JSONL records");
+/// # Ok(())
+/// # }
+/// ```
 #[allow(clippy::too_many_lines)]
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)

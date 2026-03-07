@@ -1,11 +1,13 @@
 //! Status server data structures.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::error_handling::ProcessingStats;
+use crate::runtime_metrics::RuntimeMetrics;
+use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::utils::TimingStats;
 
 /// Shared state for the status server
@@ -16,7 +18,6 @@ pub struct StatusState {
     pub total_urls: Arc<AtomicUsize>,
     /// Total URLs that have been attempted (valid URLs that passed validation)
     /// Used in lib.rs for logging and statistics, but not in status server handlers
-    #[allow(dead_code)]
     pub total_urls_attempted: Arc<AtomicUsize>,
     pub completed_urls: Arc<AtomicUsize>,
     pub failed_urls: Arc<AtomicUsize>,
@@ -24,19 +25,33 @@ pub struct StatusState {
     pub error_stats: Arc<ProcessingStats>,
     /// Timing statistics for performance monitoring
     pub timing_stats: Option<Arc<TimingStats>>,
+    /// Request-per-second limiter for current effective rate reporting
+    pub request_limiter: Option<Arc<crate::initialization::RateLimiter>>,
+    /// Database write circuit breaker state
+    pub db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
+    /// Runtime retry/degradation counters
+    pub runtime_metrics: Arc<RuntimeMetrics>,
 }
 
 /// JSON response for `/status` endpoint
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct StatusResponse {
     pub total_urls: usize,
+    pub total_urls_attempted: usize,
     pub completed_urls: usize,
     pub failed_urls: usize,
+    pub active_urls: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_urls: Option<usize>,
     pub percentage_complete: f64,
     pub elapsed_seconds: f64,
     pub rate_per_second: f64,
+    pub current_rps: Option<u32>,
+    pub retried_requests: usize,
+    pub non_retriable_failures: usize,
+    pub db_write_failures: u32,
+    pub skipped_failure_writes: u32,
+    pub circuit_breaker_open: bool,
     pub errors: ErrorCounts,
     pub warnings: WarningCounts,
     pub info: InfoCounts,
@@ -45,14 +60,14 @@ pub struct StatusResponse {
 }
 
 /// Timing summary for status endpoint
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimingSummary {
     pub count: u64,
     pub averages: TimingMetrics,
 }
 
 /// Timing metrics in milliseconds
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimingMetrics {
     pub http_request_ms: u64,
     pub dns_forward_ms: u64,
@@ -67,7 +82,7 @@ pub struct TimingMetrics {
     pub total_ms: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct ErrorCounts {
     pub total: usize,
     pub timeout: usize,
@@ -79,7 +94,7 @@ pub struct ErrorCounts {
     pub other_error: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct WarningCounts {
     pub total: usize,
     pub missing_meta_keywords: usize,
@@ -87,7 +102,7 @@ pub struct WarningCounts {
     pub missing_title: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct InfoCounts {
     pub total: usize,
     pub http_redirect: usize,
@@ -113,6 +128,9 @@ mod tests {
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
+            runtime_metrics: Arc::new(RuntimeMetrics::default()),
         };
 
         // Test increment operations
@@ -134,6 +152,9 @@ mod tests {
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
+            runtime_metrics: Arc::new(RuntimeMetrics::default()),
         };
 
         let cloned = state.clone();
@@ -149,12 +170,20 @@ mod tests {
         // This is critical - malformed JSON would break monitoring integrations
         let response = StatusResponse {
             total_urls: 100,
+            total_urls_attempted: 55,
             completed_urls: 50,
             failed_urls: 5,
+            active_urls: 0,
             pending_urls: Some(45),
             percentage_complete: 50.0,
             elapsed_seconds: 30.5,
             rate_per_second: 1.64,
+            current_rps: Some(20),
+            retried_requests: 4,
+            non_retriable_failures: 2,
+            db_write_failures: 1,
+            skipped_failure_writes: 0,
+            circuit_breaker_open: false,
             errors: ErrorCounts {
                 total: 5,
                 timeout: 2,
@@ -196,12 +225,20 @@ mod tests {
         // Test that pending_urls is skipped when None
         let response = StatusResponse {
             total_urls: 100,
+            total_urls_attempted: 100,
             completed_urls: 100,
             failed_urls: 0,
+            active_urls: 0,
             pending_urls: None, // Should be skipped in JSON
             percentage_complete: 100.0,
             elapsed_seconds: 60.0,
             rate_per_second: 1.67,
+            current_rps: None,
+            retried_requests: 0,
+            non_retriable_failures: 0,
+            db_write_failures: 0,
+            skipped_failure_writes: 0,
+            circuit_breaker_open: false,
             errors: ErrorCounts {
                 total: 0,
                 timeout: 0,
@@ -289,6 +326,9 @@ mod tests {
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: Some(Arc::new(TimingStats::new())),
+            request_limiter: None,
+            db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
+            runtime_metrics: Arc::new(RuntimeMetrics::default()),
         };
 
         assert!(state.timing_stats.is_some());

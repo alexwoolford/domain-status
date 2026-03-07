@@ -3,7 +3,7 @@
 //! This module provides functions to extract .mmdb files from tar.gz archives
 //! downloaded from MaxMind.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 /// Extracts .mmdb file from a tar.gz archive.
 ///
@@ -27,18 +27,48 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
         .entries()
         .with_context(|| "Failed to read tar archive entries")?;
 
-    for entry_result in entries {
-        let mut entry = entry_result.with_context(|| "Failed to read tar entry")?;
+    for (index, entry_result) in entries.enumerate() {
+        if index >= crate::config::MAX_GEOIP_ARCHIVE_ENTRY_COUNT {
+            bail!(
+                "GeoIP archive exceeded entry inspection limit (max: {})",
+                crate::config::MAX_GEOIP_ARCHIVE_ENTRY_COUNT
+            );
+        }
+
+        let entry = entry_result.with_context(|| "Failed to read tar entry")?;
         let path = entry.path().with_context(|| "Failed to get entry path")?;
 
         // Look for the specified database .mmdb file
         if let Some(file_name) = path.file_name() {
             let expected_name = format!("{}.mmdb", db_name);
             if file_name.to_str() == Some(&expected_name) {
-                let mut mmdb_bytes = Vec::new();
-                entry.read_to_end(&mut mmdb_bytes).with_context(|| {
-                    format!("Failed to read {}.mmdb file from archive", db_name)
-                })?;
+                let declared_size = usize::try_from(entry.size()).unwrap_or(usize::MAX);
+                if declared_size > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
+                    bail!(
+                        "{}.mmdb entry too large: {} bytes (max: {} bytes)",
+                        db_name,
+                        declared_size,
+                        crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE
+                    );
+                }
+
+                let read_limit = u64::try_from(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1)
+                    .expect("GeoIP archive size limit fits in u64");
+                let capacity = declared_size.min(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE);
+                let mut mmdb_bytes = Vec::with_capacity(capacity);
+                entry
+                    .take(read_limit)
+                    .read_to_end(&mut mmdb_bytes)
+                    .with_context(|| {
+                        format!("Failed to read {}.mmdb file from archive", db_name)
+                    })?;
+                if mmdb_bytes.len() > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
+                    bail!(
+                        "{}.mmdb entry exceeded size limit while reading (max: {} bytes)",
+                        db_name,
+                        crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE
+                    );
+                }
                 log::info!(
                     "Extracted {}.mmdb from tar.gz ({} bytes)",
                     db_name,

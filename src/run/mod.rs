@@ -112,7 +112,7 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
         init_scan_resources(config).await?;
 
     // Phase 2: Start status server if configured
-    if let Some(port) = resources.config.status_port {
+    let mut status_server = if let Some(port) = resources.config.status_port {
         let status_state = crate::status_server::StatusState {
             total_urls: Arc::clone(&resources.total_urls_in_file),
             total_urls_attempted: Arc::clone(&resources.total_urls_attempted),
@@ -121,15 +121,46 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
             start_time: Arc::new(resources.start_time),
             error_stats: resources.error_stats.clone(),
             timing_stats: Some(Arc::clone(&resources.timing_stats)),
+            request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
+            db_circuit_breaker: Arc::clone(&resources.db_circuit_breaker),
+            runtime_metrics: Arc::clone(&resources.runtime_metrics),
         };
-        tokio::spawn(async move {
-            if let Err(e) = crate::status_server::start_status_server(port, status_state).await {
-                log::warn!("Failed to run status server: {}", e);
-            }
-        });
-    }
+        Some(crate::status_server::spawn_status_server(port, status_state).await?)
+    } else {
+        None
+    };
 
-    // Phase 3: Run the main scan loop
+    // Phase 3: Start progress logging and run the main scan loop
+    let cancel = CancellationToken::new();
+    let cancel_logging = cancel.child_token();
+
+    let completed_urls_for_logging = Arc::clone(&resources.completed_urls);
+    let failed_urls_for_logging = Arc::clone(&resources.failed_urls);
+    let total_urls_for_logging = Arc::clone(&resources.total_urls_attempted);
+    let start_time = resources.start_time;
+
+    let logging_interval_secs = if resources.config.status_port.is_none() {
+        LOGGING_INTERVAL as u64
+    } else {
+        STATUS_SERVER_LOGGING_INTERVAL_SECS
+    };
+
+    let mut logging_task = Some(tokio::task::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(logging_interval_secs));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    log_progress(start_time, &completed_urls_for_logging, &failed_urls_for_logging, Some(&total_urls_for_logging));
+                }
+                _ = cancel_logging.cancelled() => {
+                    break;
+                }
+            }
+        }
+    }));
+
+    // Phase 4: Run the main scan loop
     // Use JoinSet instead of FuturesUnordered for better memory efficiency.
     // JoinSet allows interleaved spawning and reaping, preventing memory accumulation
     // when processing large URL lists (1M+ URLs).
@@ -161,6 +192,14 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
             Err(e) => {
                 consecutive_errors += 1;
                 if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
+                    crate::app::shutdown_gracefully(
+                        cancel.clone(),
+                        logging_task.take(),
+                        resources.rate_limiter_shutdown.clone(),
+                        resources.adaptive_limiter_shutdown.clone(),
+                        status_server.take(),
+                    )
+                    .await;
                     return Err(anyhow::anyhow!(
                         "Too many consecutive read errors ({}): {}",
                         consecutive_errors,
@@ -201,6 +240,8 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
             adaptive_limiter: resources.adaptive_limiter.as_ref().map(Arc::clone),
             per_domain_limiter: resources.per_domain_limiter.as_ref().map(Arc::clone),
             completed_urls: Arc::clone(&resources.completed_urls),
+            successful_urls: Arc::clone(&resources.successful_urls),
+            skipped_urls: Arc::clone(&resources.skipped_urls),
             failed_urls: Arc::clone(&resources.failed_urls),
             total_urls_for_callback: total_lines,
             progress_callback: progress_callback.clone(),
@@ -211,49 +252,7 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
         tasks.spawn(task::process_url_task(task_params));
     }
 
-    // Phase 4: Set up logging and drain tasks
-    let cancel = CancellationToken::new();
-    let cancel_logging = cancel.child_token();
-
-    let completed_urls_for_logging = Arc::clone(&resources.completed_urls);
-    let failed_urls_for_logging = Arc::clone(&resources.failed_urls);
-    let total_urls_for_logging = Arc::clone(&resources.total_urls_attempted);
-    let start_time = resources.start_time;
-
-    let logging_task = if resources.config.status_port.is_none() {
-        Some(tokio::task::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(LOGGING_INTERVAL as u64));
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        log_progress(start_time, &completed_urls_for_logging, &failed_urls_for_logging, Some(&total_urls_for_logging));
-                    }
-                    _ = cancel_logging.cancelled() => {
-                        break;
-                    }
-                }
-            }
-        }))
-    } else {
-        Some(tokio::task::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                STATUS_SERVER_LOGGING_INTERVAL_SECS,
-            ));
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        log_progress(start_time, &completed_urls_for_logging, &failed_urls_for_logging, Some(&total_urls_for_logging));
-                    }
-                    _ = cancel_logging.cancelled() => {
-                        break;
-                    }
-                }
-            }
-        }))
-    };
-
-    // Drain all remaining tasks (blocking wait until all complete)
+    // Phase 5: Drain all remaining tasks (blocking wait until all complete)
     while let Some(task_result) = tasks.join_next().await {
         if let Err(join_error) = task_result {
             resources.failed_urls.fetch_add(1, Ordering::SeqCst);
@@ -261,10 +260,11 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
         }
     }
 
-    // Phase 5: Finalize
+    // Phase 6: Finalize
     let loop_result = ScanLoopResult {
         cancel,
         logging_task,
+        status_server,
     };
 
     finalize::finalize_scan(resources, loop_result).await

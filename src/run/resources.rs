@@ -21,6 +21,7 @@ use crate::fingerprint::FingerprintRuleset;
 use crate::geoip::GeoIpMetadata;
 use crate::initialization::RateLimiter;
 use crate::per_domain_limiter::PerDomainLimiter;
+use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
 
@@ -50,6 +51,8 @@ pub struct ScanResources {
     pub rate_limiter_shutdown: Option<CancellationToken>,
     /// Optional adaptive rate limiter that adjusts based on error rates
     pub adaptive_limiter: Option<Arc<AdaptiveRateLimiter>>,
+    /// Shutdown handle for the adaptive rate limiter background task
+    pub adaptive_limiter_shutdown: Option<CancellationToken>,
     /// Optional per-domain concurrency limiter
     pub per_domain_limiter: Option<Arc<PerDomainLimiter>>,
 
@@ -58,10 +61,16 @@ pub struct ScanResources {
     pub error_stats: Arc<ProcessingStats>,
     /// Timing statistics tracker
     pub timing_stats: Arc<TimingStats>,
+    /// Live runtime counters for retries and degradation paths
+    pub runtime_metrics: Arc<RuntimeMetrics>,
 
     // Counters
     /// Count of successfully processed URLs
     pub completed_urls: Arc<AtomicUsize>,
+    /// Count of URLs that produced a persisted `url_status` row
+    pub successful_urls: Arc<AtomicUsize>,
+    /// Count of URLs intentionally skipped before insert
+    pub skipped_urls: Arc<AtomicUsize>,
     /// Count of failed URLs
     pub failed_urls: Arc<AtomicUsize>,
     /// Count of total URLs attempted
@@ -122,6 +131,8 @@ pub struct ScanLoopResult {
     pub cancel: CancellationToken,
     /// Handle to the logging task
     pub logging_task: Option<tokio::task::JoinHandle<()>>,
+    /// Optional managed status server
+    pub status_server: Option<crate::status_server::StatusServerHandle>,
 }
 
 /// Parameters for processing a single URL task.
@@ -142,6 +153,10 @@ pub struct UrlTaskParams {
     pub per_domain_limiter: Option<Arc<PerDomainLimiter>>,
     /// Completed URL counter
     pub completed_urls: Arc<AtomicUsize>,
+    /// Persisted-success counter
+    pub successful_urls: Arc<AtomicUsize>,
+    /// Skipped-without-insert counter
+    pub skipped_urls: Arc<AtomicUsize>,
     /// Failed URL counter
     pub failed_urls: Arc<AtomicUsize>,
     /// Total URLs (for progress callback)

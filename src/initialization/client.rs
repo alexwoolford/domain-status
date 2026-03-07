@@ -36,6 +36,20 @@ use reqwest::ClientBuilder;
 /// # Errors
 ///
 /// Returns a `reqwest::Error` if client creation fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::{initialization::init_client, Config};
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = init_client(&Config::default()).await?;
+/// let response = client.get("https://example.com").send().await?;
+/// println!("{}", response.status());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
     use crate::security::safe_resolver::SafeResolver;
@@ -48,17 +62,20 @@ pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwes
         .timeout(Duration::from_secs(config.timeout_seconds))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .user_agent(config.user_agent.clone())
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
         .build()?;
     Ok(Arc::new(client))
 }
 
 /// Initializes a shared HTTP client for redirect resolution.
 ///
-/// Creates a `reqwest::Client` with redirects disabled so we can manually track
-/// the redirect chain. This allows us to capture the full redirect path including
-/// intermediate URLs.
+/// Creates a `reqwest::Client` for the redirect-resolution stage.
+///
+/// The primary fetch client and redirect client currently share the same low-level
+/// configuration, but they are exposed as separate constructors so call sites can
+/// express intent clearly and evolve the redirect pipeline independently later.
+///
+/// Redirects remain disabled here as well; redirect traversal is performed manually
+/// so the scanner can inspect and validate each hop.
 ///
 /// # Arguments
 ///
@@ -71,6 +88,20 @@ pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwes
 /// # Errors
 ///
 /// Returns a `reqwest::Error` if client creation fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use domain_status::{initialization::init_redirect_client, Config};
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = init_redirect_client(&Config::default()).await?;
+/// let response = client.get("https://example.com").send().await?;
+/// println!("{}", response.status());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn init_redirect_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
     use crate::security::safe_resolver::SafeResolver;
@@ -83,8 +114,6 @@ pub async fn init_redirect_client(config: &Config) -> Result<Arc<reqwest::Client
         .timeout(Duration::from_secs(config.timeout_seconds))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .user_agent(config.user_agent.clone())
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
         .build()?;
     Ok(Arc::new(client))
 }

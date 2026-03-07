@@ -34,6 +34,41 @@ pub fn sanitize_error_message(message: &str) -> String {
         .collect()
 }
 
+fn truncate_at_char_boundary(value: &str, max_len: usize) -> &str {
+    if value.len() <= max_len {
+        return value;
+    }
+
+    let mut end = max_len;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+/// Truncates a string to a maximum byte length without splitting UTF-8 code points.
+pub fn truncate_utf8(value: &str, max_len: usize) -> String {
+    truncate_at_char_boundary(value, max_len).to_string()
+}
+
+/// Truncates a string and appends a suffix, preserving valid UTF-8 boundaries.
+pub fn truncate_utf8_with_suffix(value: &str, max_len: usize, suffix: &str) -> String {
+    if value.len() <= max_len {
+        return value.to_string();
+    }
+
+    if max_len == 0 {
+        return String::new();
+    }
+
+    if suffix.len() >= max_len {
+        return truncate_utf8(suffix, max_len);
+    }
+
+    let prefix = truncate_at_char_boundary(value, max_len.saturating_sub(suffix.len()));
+    format!("{prefix}{suffix}")
+}
+
 /// Sanitizes and truncates an error message to a maximum length.
 ///
 /// This function:
@@ -52,15 +87,11 @@ pub fn sanitize_and_truncate_error_message(message: &str) -> String {
     let sanitized = sanitize_error_message(message);
 
     if sanitized.len() > crate::config::MAX_ERROR_MESSAGE_LENGTH {
-        // Truncate to MAX_ERROR_MESSAGE_LENGTH - 50 to leave room for truncation message
-        // Use min to ensure we don't go out of bounds if constant is changed
-        let truncate_len = crate::config::MAX_ERROR_MESSAGE_LENGTH.saturating_sub(50);
-        let truncate_len = truncate_len.min(sanitized.len());
-        format!(
-            "{}... (truncated, original length: {} chars)",
-            &sanitized[..truncate_len],
-            sanitized.len()
-        )
+        let suffix = format!(
+            "... (truncated, original length: {} chars)",
+            sanitized.chars().count()
+        );
+        truncate_utf8_with_suffix(&sanitized, crate::config::MAX_ERROR_MESSAGE_LENGTH, &suffix)
     } else {
         sanitized
     }
@@ -241,8 +272,7 @@ mod tests {
         // Should be truncated and should not panic
         assert!(output.len() < long_message.len());
         assert!(output.contains("... (truncated"));
-        // Output should be valid UTF-8 (no panics when creating)
-        let _ = output;
+        assert!(std::str::from_utf8(output.as_bytes()).is_ok());
     }
 
     #[test]
@@ -274,5 +304,21 @@ mod tests {
         if base_message.len() <= crate::config::MAX_ERROR_MESSAGE_LENGTH {
             assert!(!output.contains("... (truncated"));
         }
+    }
+
+    #[test]
+    fn test_truncate_utf8_preserves_code_point_boundaries() {
+        let value = "prefix-测试🚀-suffix";
+        let truncated = truncate_utf8(value, 10);
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+        assert!(value.starts_with(&truncated));
+    }
+
+    #[test]
+    fn test_truncate_utf8_with_suffix_preserves_code_point_boundaries() {
+        let value = "测试🚀测试🚀测试🚀";
+        let truncated = truncate_utf8_with_suffix(value, 18, "...(cut)");
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+        assert!(truncated.ends_with("...(cut)"));
     }
 }

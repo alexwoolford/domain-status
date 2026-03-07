@@ -19,6 +19,8 @@ pub async fn shutdown_gracefully(
     cancel: CancellationToken,
     logging_task: Option<tokio::task::JoinHandle<()>>,
     rate_limiter_shutdown: Option<CancellationToken>,
+    adaptive_limiter_shutdown: Option<CancellationToken>,
+    status_server: Option<crate::status_server::StatusServerHandle>,
 ) {
     // Signal logging task to stop
     cancel.cancel();
@@ -82,6 +84,19 @@ pub async fn shutdown_gracefully(
     if let Some(shutdown) = rate_limiter_shutdown {
         shutdown.cancel();
     }
+
+    if let Some(shutdown) = adaptive_limiter_shutdown {
+        shutdown.cancel();
+    }
+
+    if let Some(status_server) = status_server {
+        if let Err(error) = status_server.shutdown().await {
+            log::debug!(
+                "Status server completed with error during shutdown: {}",
+                error
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -93,7 +108,7 @@ mod tests {
     async fn test_shutdown_gracefully_no_tasks() {
         let cancel = CancellationToken::new();
         // Should not panic when no tasks are provided
-        shutdown_gracefully(cancel, None, None).await;
+        shutdown_gracefully(cancel, None, None, None, None).await;
     }
 
     #[tokio::test]
@@ -117,7 +132,7 @@ mod tests {
         });
 
         // Should wait for task to complete gracefully
-        shutdown_gracefully(cancel, Some(logging_task), None).await;
+        shutdown_gracefully(cancel, Some(logging_task), None, None, None).await;
     }
 
     #[tokio::test]
@@ -133,7 +148,7 @@ mod tests {
         });
 
         // Should abort the task after timeout
-        shutdown_gracefully(cancel, Some(logging_task), None).await;
+        shutdown_gracefully(cancel, Some(logging_task), None, None, None).await;
     }
 
     #[tokio::test]
@@ -142,7 +157,14 @@ mod tests {
         let rate_limiter_shutdown = CancellationToken::new();
 
         // Should cancel rate limiter
-        shutdown_gracefully(cancel, None, Some(rate_limiter_shutdown.clone())).await;
+        shutdown_gracefully(
+            cancel,
+            None,
+            Some(rate_limiter_shutdown.clone()),
+            None,
+            None,
+        )
+        .await;
 
         // Verify rate limiter was cancelled
         assert!(rate_limiter_shutdown.is_cancelled());
@@ -171,10 +193,22 @@ mod tests {
             cancel,
             Some(logging_task),
             Some(rate_limiter_shutdown.clone()),
+            None,
+            None,
         )
         .await;
 
         // Verify rate limiter was cancelled
         assert!(rate_limiter_shutdown.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_gracefully_cancels_adaptive_limiter() {
+        let cancel = CancellationToken::new();
+        let adaptive_shutdown = CancellationToken::new();
+
+        shutdown_gracefully(cancel, None, None, Some(adaptive_shutdown.clone()), None).await;
+
+        assert!(adaptive_shutdown.is_cancelled());
     }
 }
