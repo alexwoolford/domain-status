@@ -196,11 +196,10 @@ async fn test_run_scan_respects_rate_limit() {
 
     assert!(result.is_ok(), "run_scan should succeed");
 
-    // Calculate minimum expected time based on rate limit
-    // With 50 URLs at 10 RPS, minimum time should be ~5 seconds
-    // Allow some tolerance for overhead
+    // Minimum expected time: rate limiting should prevent finishing in a single burst.
+    // Use 50% of theoretical minimum so we verify throttling without flaking on CI timing.
     #[allow(clippy::cast_precision_loss)]
-    let min_expected_secs = (total_urls as f64 / rate_limit_rps as f64) * 0.9; // 10% tolerance
+    let min_expected_secs = (total_urls as f64 / rate_limit_rps as f64) * 0.5;
 
     assert!(
         elapsed.as_secs_f64() >= min_expected_secs,

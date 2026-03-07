@@ -381,8 +381,10 @@ mod tests {
                     error_msg.contains("Failed to connect")
                         || error_msg.contains("connection")
                         || error_msg.contains("timeout")
-                        || error_msg.contains("refused"),
-                    "Expected connection error, got: {}",
+                        || error_msg.contains("refused")
+                        || error_msg.contains("Unsafe URL")
+                        || error_msg.contains("private"),
+                    "Expected connection or safety error, got: {}",
                     error_msg
                 );
             }
@@ -404,9 +406,11 @@ mod tests {
                 let error_msg = e.to_string();
                 assert!(
                     error_msg.contains("Failed to connect")
+                        || error_msg.contains("Failed to resolve")
                         || error_msg.contains("connection")
                         || error_msg.contains("timeout")
-                        || error_msg.contains("Invalid domain name"),
+                        || error_msg.contains("Invalid domain name")
+                        || error_msg.contains("lookup"),
                     "Expected DNS/connection error, got: {}",
                     error_msg
                 );
