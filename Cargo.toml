@@ -72,7 +72,7 @@ thiserror = "^2.0"
 log = "^0.4"
 env_logger = "^0.11"
 colored = "^3.0"
-indicatif = "^0.17"
+indicatif = "0.18.4"
 
 # Other
 toml = { version = "^0.8", features = ["preserve_order"] }
@@ -88,7 +88,7 @@ maxminddb = "^0.27"
 flate2 = "^1.1"
 tar = "^0.4"
 dotenvy = "^0.15"
-whois-service = { version = "^0.1", default-features = false }
+whois-service = { version = "0.2.1", default-features = false }
 axum = "^0.8"
 include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
@@ -102,6 +102,10 @@ arrow = { version = "^58", default-features = false }
 parquet = { version = "^58", default-features = false, features = ["arrow", "snap"] }
 # Note: With rust-version = "1.85", edition 2024 is available
 # No need to constrain base64ct or home - newer versions will work
+
+# Pin whois-service to vendored build (reqwest 0.12) to eliminate rustls-pemfile (RUSTSEC-2025-0134)
+[patch.crates-io]
+whois-service = { path = "vendor/whois-service" }
 
 [dev-dependencies]
 httptest = "^0.16"
