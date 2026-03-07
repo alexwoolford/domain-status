@@ -157,7 +157,9 @@ mod tests {
             error_msg.contains("Not a directory")
                 || error_msg.contains("not a directory")
                 || error_msg.contains("directory")
-                || error_msg.contains("File exists"),
+                || error_msg.contains("File exists")
+                || error_msg.contains("already exists")
+                || error_msg.contains("183"),
             "Expected invalid parent path error, got: {}",
             error_msg
         );
@@ -321,18 +323,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_metadata_disk_full_simulation() {
-        // Test that disk full errors are handled gracefully
-        // This is critical - running out of disk space shouldn't crash
-        // Note: Hard to simulate actual disk full, but we test error handling
-        let invalid_path = PathBuf::from("/nonexistent")
-            .join("very")
-            .join("deep")
-            .join("path")
-            .join("that")
-            .join("does")
-            .join("not")
-            .join("exist")
-            .join("metadata.json");
+        // Test that write failures are handled gracefully (no panic).
+        // Use a path whose parent is an existing file so create_dir_all fails on all platforms
+        // (Unix: "Not a directory", Windows: ERROR_ALREADY_EXISTS 183).
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let file_as_parent = temp_dir.path().join("file_not_dir");
+        tokio::fs::write(&file_as_parent, b"x")
+            .await
+            .expect("Failed to create blocking file");
+        let metadata_file = file_as_parent.join("metadata.json");
 
         let metadata = GeoIpMetadata {
             source: "test.mmdb".to_string(),
@@ -340,8 +339,7 @@ mod tests {
             last_updated: SystemTime::now(),
         };
 
-        let result = save_metadata(&metadata, &invalid_path).await;
-        // Should fail gracefully with appropriate error
+        let result = save_metadata(&metadata, &metadata_file).await;
         assert!(result.is_err());
     }
 
