@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_scrub_url_removes_credentials_and_query() {
-        let scrubbed = scrub_url("https://user:[email protected]/path?token=abc#frag");
+        let scrubbed = scrub_url("https://user:password@example.com/path?token=abc#frag");
         assert_eq!(scrubbed, "https://example.com/path");
     }
 
