@@ -80,7 +80,9 @@ cargo test --doc
 
 ## Sample Scan Validation
 
-To sanity-check columns and `url_exposed_secrets` after changes:
+To sanity-check columns and `url_exposed_secrets` after changes, use the short recipe below. For a full end-to-end validation of every table, export format, and timings, use the **Full E2E validation checklist** that follows.
+
+### Quick sanity check
 
 ```bash
 ./target/release/domain_status scan url-list.txt --db-path validation_scan.db
@@ -88,7 +90,58 @@ sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status; SELECT secret_type,
 ./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
 ```
 
-Expect: `url_status` row count matches successful URLs from the run; `url_exposed_secrets` uses gitleaks rule ids (for example `sourcegraph-access-token` and `gcp-api-key`); no empty `ip_address` values because DNS failures use the placeholder `unknown`.
 Expect: `url_status` row count matches successful URLs from the run; `url_exposed_secrets` uses gitleaks-style rule ids (for example `sourcegraph-access-token` and `gcp-api-key`); exported and stored `ip_address` values may be empty when DNS resolution failed because the DB layer now persists absence as an empty string fallback rather than the old `unknown` sentinel.
+
+### Full E2E validation checklist
+
+Use this when you need to validate **everything**: database tables/columns, all export formats, timings, and optionally the status server.
+
+**Prerequisites**
+
+- Build: `cargo build --release --locked`
+- Input: `url-list.txt` (or another domain list)
+
+**1. Run scan**
+
+```bash
+./target/release/domain_status scan url-list.txt --db-path validation_scan.db
+```
+
+Optional: add `--status-port 8080` to exercise the status server during the run (see step 5).
+
+**2. Database validation** (e.g. with `sqlite3 validation_scan.db`)
+
+- **runs:** One row; `run_id`, `start_time_ms`, `end_time_ms`, `elapsed_seconds`, `total_urls`, `successful_urls`, `failed_urls` populated; `elapsed_seconds` > 0 and roughly matches wall-clock.
+- **url_status:** Row count = successful URLs (≤ input size); each row has `initial_domain`, `final_domain`, `http_status` in a sensible range (e.g. 200–599), `response_time_seconds` ≥ 0, `observed_at_ms` and `run_id` set; `ip_address` may be empty when DNS failed.
+- **url_failures:** Rows for failed URLs; `runs.successful_urls + runs.failed_urls` should match total attempted.
+- **Satellite tables:** At least some rows in `url_technologies`, `url_whois` (where WHOIS succeeded), and optionally `url_exposed_secrets`; `url_exposed_secrets.secret_type` uses gitleaks-style rule ids. Spot-check `url_geoip`, `url_nameservers`, `url_txt_records`, `url_mx_records`, `url_security_headers` where applicable.
+- **Timings:** `runs.elapsed_seconds` and `url_status.response_time_seconds` present and sensible; no null/negative where NOT NULL.
+
+Reference: [DATABASE.md](DATABASE.md) and `migrations/0001_initial_schema.sql` for schema.
+
+**3. Export format validation**
+
+- **CSV:**
+  `./target/release/domain_status export --db-path validation_scan.db --format csv --output validation_export.csv`
+  File exists; row count = header + one line per url_status row; header includes expected columns (url, initial_domain, final_domain, ip_address, http_status, technologies, whois-related columns, nameservers, exposed_secrets, etc.). Spot-check a sample row for non-empty values where expected.
+
+- **JSONL:**
+  `./target/release/domain_status export --db-path validation_scan.db --format jsonl --output validation_export.jsonl`
+  File exists; one JSON object per line; line count = url_status row count. Spot-check one object for required top-level fields (e.g. url, http_status, dns, technologies, whois if present).
+
+- **Parquet:**
+  `./target/release/domain_status export --db-path validation_scan.db --format parquet --output validation_export.parquet`
+  File exists; row count matches url_status. Optionally verify schema/row count with parquet-tools or a small script.
+
+**4. Status server (optional)**
+
+If the scan was run with `--status-port 8080`:
+
+- `curl -s http://127.0.0.1:8080/status | jq` returns 200 and JSON with run progress/state.
+- `curl -s http://127.0.0.1:8080/metrics` returns 200 and Prometheus-style text.
+
+**5. Cleanup**
+
+Validation artifacts (`validation_scan.db`, `validation_export.*`) are in `.gitignore`; remove or keep locally as needed.
 
 See `.github/workflows/ci.yml` for the full CI pipeline.

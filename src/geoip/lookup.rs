@@ -24,6 +24,7 @@ impl Default for GeoIpService {
 
 impl GeoIpService {
     /// Create an empty service with no GeoIP databases loaded.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             city_reader: std::sync::Arc::new(std::sync::RwLock::new(None)),
@@ -32,6 +33,7 @@ impl GeoIpService {
     }
 
     /// Looks up an IP address in the GeoIP databases (City and ASN).
+    #[must_use]
     pub fn lookup_ip(&self, ip: &str) -> Option<GeoIpResult> {
         let city_reader = match self.city_reader.read() {
             Ok(reader) => reader,
@@ -108,12 +110,14 @@ impl GeoIpService {
     }
 
     /// Gets the current GeoIP City metadata if initialized.
+    #[must_use]
     pub fn get_metadata(&self) -> Option<GeoIpMetadata> {
         let reader = self.city_reader.read().ok()?;
         reader.as_ref().map(|(_, metadata)| metadata.clone())
     }
 
     /// Checks if GeoIP is enabled (database is loaded).
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.city_reader
             .read()

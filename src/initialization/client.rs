@@ -15,11 +15,14 @@ use reqwest::ClientBuilder;
 /// - User-Agent header from options
 /// - Timeout from options
 /// - Redirect following DISABLED (SSRF protection)
-/// - HTTP/2 support enabled
+/// - TLS certificate and hostname verification at reqwest default (strict); never disabled
 /// - Rustls TLS backend (no native TLS)
 ///
 /// # Security Note
 ///
+/// This client is for page fetch only. Certificate and hostname verification are left at
+/// reqwest's default (strict). Do not add `danger_accept_invalid_certs()` or similar;
+/// TLS capture for observation uses a separate path in `src/tls/` (see ADR 0003).
 /// Redirects are disabled to prevent SSRF bypass via TOCTOU race conditions.
 /// Redirect chains are manually resolved by `resolve_redirect_chain()` with SSRF
 /// validation at each hop. If this client followed redirects automatically,
@@ -71,8 +74,8 @@ pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwes
 /// Creates a `reqwest::Client` for the redirect-resolution stage.
 ///
 /// The primary fetch client and redirect client currently share the same low-level
-/// configuration, but they are exposed as separate constructors so call sites can
-/// express intent clearly and evolve the redirect pipeline independently later.
+/// configuration (including strict TLS verification; see `init_client`), but they are
+/// exposed as separate constructors so call sites can express intent clearly.
 ///
 /// Redirects remain disabled here as well; redirect traversal is performed manually
 /// so the scanner can inspect and validate each hop.
@@ -335,6 +338,24 @@ mod tests {
             redirect_response.status().as_u16(),
             302,
             "Redirect client should not follow redirects"
+        );
+    }
+
+    /// CRITICAL SECURITY TEST: Page-fetch client must reject invalid TLS certificates.
+    /// The client uses reqwest default (strict) verification; it must never accept
+    /// self-signed or wrong-hostname certs. This guards against future changes that
+    /// might enable danger_accept_invalid_certs() on the page-fetch client.
+    /// Run with: cargo test -- --ignored (e2e job runs these).
+    #[tokio::test]
+    #[ignore] // Requires network; uses badssl.com
+    async fn test_init_client_rejects_invalid_tls_certificate() {
+        let config = create_test_config();
+        let client = init_client(&config).await.expect("Should create client");
+        // self-signed.badssl.com serves a self-signed certificate; strict TLS must fail
+        let result = client.get("https://self-signed.badssl.com/").send().await;
+        assert!(
+            result.is_err(),
+            "Page-fetch client must reject invalid (self-signed) certificates; got Ok"
         );
     }
 }

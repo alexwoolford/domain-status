@@ -1,6 +1,7 @@
 // Shared test helpers for database setup and test data creation.
 //
 // This module provides common utilities used across multiple test files to reduce duplication.
+#![allow(clippy::missing_panics_doc)] // test helpers use .expect() intentionally
 
 use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;

@@ -26,6 +26,40 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        with:
+          workspaces: '.'
+          cache-on-failure: true
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Run docs checks
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo test --doc --locked
+          cargo doc --no-deps --locked
+
   test:
     name: Test Suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -39,7 +73,6 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      # rust-toolchain.toml will be used automatically by rustup
       - name: Install Rust
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
@@ -51,28 +84,6 @@ jobs:
         with:
           workspaces: '.'
           cache-on-failure: true
-
-      # Code Quality Checks (platform-agnostic, so only run on Ubuntu to save CI time)
-      - name: Check formatting
-        run: cargo fmt --check
-        # Formatting is platform-agnostic, so we only check on Ubuntu
-        # All platforms still run tests and build to ensure cross-platform compatibility
-        if: matrix.os == 'ubuntu-latest'
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
-        # Clippy checks are platform-agnostic, so we only run on Ubuntu
-        # All platforms still run tests and build to ensure cross-platform compatibility
-        # This enforces: unused code warnings, unsafe code, performance issues, etc.
-        if: matrix.os == 'ubuntu-latest'
-
-      - name: Run docs checks
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: |
-          cargo test --doc --locked
-          cargo doc --no-deps --locked
 
       - name: Run tests
         run: cargo test --all-features --all-targets --locked

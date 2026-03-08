@@ -378,6 +378,7 @@ where
 /// assert_eq!(evaluate_exit_code(&FailOn::AnyFailure, 10, &report), 2);
 /// assert_eq!(evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report), 2);
 /// ```
+#[must_use]
 pub fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanReport) -> i32 {
     match fail_on {
         FailOn::Never => 0,
