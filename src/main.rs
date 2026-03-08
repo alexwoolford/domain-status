@@ -3,6 +3,8 @@
 //! All CLI parsing and command execution lives in the library so it can be tested
 //! without mirroring the binary-only clap types.
 
+#![deny(clippy::enum_glob_use, unsafe_code)]
+
 use anyhow::Result;
 use std::process;
 
@@ -12,7 +14,7 @@ async fn main() -> Result<()> {
         Ok(code) => code,
         Err(e) => {
             eprintln!("domain_status error: {:#}", e);
-            1
+            domain_status::exit_codes::EXIT_RUNTIME_ERROR
         }
     };
     process::exit(exit_code);

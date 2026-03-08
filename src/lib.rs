@@ -31,7 +31,7 @@
 //! This library requires a Tokio runtime. Use `#[tokio::main]` in your application
 //! or ensure you're calling library functions within an async context.
 
-#![deny(missing_docs)]
+#![deny(clippy::enum_glob_use, missing_docs, unsafe_code)]
 
 mod adaptive_rate_limiter;
 mod app;
@@ -42,6 +42,7 @@ mod database;
 mod dns;
 mod domain;
 mod error_handling;
+pub mod exit_codes;
 pub mod export;
 mod fetch;
 mod fingerprint;
@@ -62,8 +63,9 @@ pub mod whois;
 
 // Re-export public API
 pub use cli::evaluate_exit_code;
-pub use config::{Config, FailOn, LogFormat, LogLevel};
+pub use config::{Config, FailOn, LogFormat, LogLevel, ScanDependencyOverrides};
 pub use error_handling::{DatabaseError, FingerprintError};
+pub use exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_RUNTIME_ERROR, EXIT_SUCCESS};
 pub use geoip::GeoIpService;
 pub use models::{KeyAlgorithm, TlsVersion};
 pub use run::{run_scan, ScanReport};

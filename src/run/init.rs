@@ -165,12 +165,32 @@ pub async fn init_scan_resources(
         .context("Failed to initialize database pool")?;
 
     // Initialize network clients
-    let client = init_client(&config)
-        .await
-        .context("Failed to initialize HTTP client")?;
-    let redirect_client = init_redirect_client(&config)
-        .await
-        .context("Failed to initialize redirect client")?;
+    let client = if let Some(ref overrides) = config.dependency_overrides {
+        if let Some(ref c) = overrides.http_client {
+            Arc::new(c.clone())
+        } else {
+            init_client(&config)
+                .await
+                .context("Failed to initialize HTTP client")?
+        }
+    } else {
+        init_client(&config)
+            .await
+            .context("Failed to initialize HTTP client")?
+    };
+    let redirect_client = if let Some(ref overrides) = config.dependency_overrides {
+        if let Some(ref c) = overrides.http_client {
+            Arc::new(c.clone())
+        } else {
+            init_redirect_client(&config)
+                .await
+                .context("Failed to initialize redirect client")?
+        }
+    } else {
+        init_redirect_client(&config)
+            .await
+            .context("Failed to initialize redirect client")?
+    };
     let extractor = init_extractor();
     let resolver = init_resolver().context("Failed to initialize DNS resolver")?;
 

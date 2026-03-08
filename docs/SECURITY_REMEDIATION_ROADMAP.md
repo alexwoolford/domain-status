@@ -4,7 +4,7 @@ Prioritized security findings and actions from the Security Posture Report imple
 
 **Last reviewed:** 2026-03-01
 
-**Related:** [ADR 0003 – TLS capture versus validation](adr/0003-tls-capture-versus-validation.md), [SECURITY.md](../SECURITY.md), [THREAT_MODEL_UNTRUSTED_INPUT.md](THREAT_MODEL_UNTRUSTED_INPUT.md), [SECRET_RETENTION_AUDIT.md](SECRET_RETENTION_AUDIT.md), [SUPPLY_CHAIN_POSTURE.md](SUPPLY_CHAIN_POSTURE.md).
+**Related:** [ADR 0003 – TLS capture versus validation](adr/0003-tls-capture-versus-validation.md), [SECURITY.md](../SECURITY.md), [THREAT_MODEL_UNTRUSTED_INPUT.md](THREAT_MODEL_UNTRUSTED_INPUT.md), [SUPPLY_CHAIN_POSTURE.md](SUPPLY_CHAIN_POSTURE.md).
 
 ---
 

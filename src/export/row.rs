@@ -641,21 +641,12 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     .fetch_all(pool.as_ref())
     .await?
     .iter()
-    .map(|r| {
-        let matched_value: String = r.get("matched_value");
-        let context: Option<String> = r.get("context");
-        let redacted_value = crate::parse::redact_exposed_secret_value(&matched_value);
-        let redacted_context = context
-            .as_deref()
-            .map(|ctx| crate::parse::redact_exposed_secret_context(ctx, &matched_value));
-
-        ExposedSecretRecord {
-            secret_type: r.get("secret_type"),
-            matched_value: redacted_value,
-            severity: r.get("severity"),
-            location: r.get("location"),
-            context: redacted_context,
-        }
+    .map(|r| ExposedSecretRecord {
+        secret_type: r.get("secret_type"),
+        matched_value: r.get("matched_value"),
+        severity: r.get("severity"),
+        location: r.get("location"),
+        context: r.get("context"),
     })
     .collect();
     let exposed_secret_count = exposed_secrets.len();

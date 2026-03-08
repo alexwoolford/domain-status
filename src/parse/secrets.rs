@@ -289,6 +289,7 @@ pub struct ExposedSecret {
 }
 
 /// Returns a stable redacted representation that preserves dedupe utility without retaining the raw secret.
+#[allow(dead_code)]
 pub fn redact_exposed_secret_value(value: &str) -> String {
     if value.starts_with("redacted(") {
         return value.to_string();
@@ -320,6 +321,7 @@ pub fn redact_exposed_secret_value(value: &str) -> String {
 }
 
 /// Redacts secret occurrences inside analyst context while preserving surrounding text.
+#[allow(dead_code)]
 pub fn redact_exposed_secret_context(context: &str, matched_value: &str) -> String {
     if matched_value.is_empty() {
         return context.to_string();

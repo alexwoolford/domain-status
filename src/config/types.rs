@@ -6,8 +6,33 @@
 use std::path::PathBuf;
 
 use clap::ValueEnum;
+use reqwest::Client;
 
 use crate::config::constants::DEFAULT_USER_AGENT;
+
+/// Optional dependency overrides for tests or custom environments.
+///
+/// When set on [`Config`], these values are used instead of creating new
+/// instances in [`crate::run::init_scan_resources`]. This allows tests to
+/// inject mock HTTP clients, resolvers, or other dependencies without starting
+/// real servers or touching global state.
+///
+/// # Example (tests)
+///
+/// ```ignore
+/// let config = Config {
+///     dependency_overrides: Some(ScanDependencyOverrides {
+///         http_client: Some(my_mock_client),
+///     }),
+///     ..Default::default()
+/// };
+/// let report = run_scan(config).await?;
+/// ```
+#[derive(Clone, Default)]
+pub struct ScanDependencyOverrides {
+    /// If set, this client is used instead of creating one from config (e.g. a mock in tests).
+    pub http_client: Option<Client>,
+}
 
 /// Exit code policy for handling failures.
 ///
@@ -122,6 +147,10 @@ pub struct Config {
     /// Log level
     pub log_level: LogLevel,
 
+    /// When set (e.g. from CLI `-v` / `-vv`), overrides `log_level` for the actual filter. Used by CLI verbosity flag.
+    #[doc(hidden)]
+    pub log_level_filter_override: Option<log::LevelFilter>,
+
     /// Log format
     pub log_format: LogFormat,
 
@@ -190,6 +219,13 @@ pub struct Config {
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
     pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,
+
+    /// Optional dependency overrides for tests (inject mock HTTP client, etc.).
+    ///
+    /// When set, [`crate::run::init_scan_resources`] uses these instead of creating
+    /// new instances. Production callers should leave this `None`.
+    #[doc(hidden)]
+    pub dependency_overrides: Option<ScanDependencyOverrides>,
 }
 
 impl Default for Config {
@@ -197,6 +233,7 @@ impl Default for Config {
         Self {
             file: PathBuf::from("urls.txt"),
             log_level: LogLevel::Info,
+            log_level_filter_override: None,
             log_format: LogFormat::Plain,
             db_path: PathBuf::from("./domain_status.db"),
             max_concurrency: 30,
@@ -213,6 +250,7 @@ impl Default for Config {
             fail_on_pct_threshold: 10,
             log_file: None,
             progress_callback: None,
+            dependency_overrides: None,
         }
     }
 }
@@ -222,6 +260,7 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("file", &self.file)
             .field("log_level", &self.log_level)
+            .field("log_level_filter_override", &self.log_level_filter_override)
             .field("log_format", &self.log_format)
             .field("db_path", &self.db_path)
             .field("max_concurrency", &self.max_concurrency)
@@ -240,6 +279,10 @@ impl std::fmt::Debug for Config {
             .field(
                 "progress_callback",
                 &self.progress_callback.as_ref().map(|_| "<callback>"),
+            )
+            .field(
+                "dependency_overrides",
+                &self.dependency_overrides.as_ref().map(|_| "<overrides>"),
             )
             .finish()
     }
