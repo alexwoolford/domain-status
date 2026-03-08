@@ -137,6 +137,7 @@ Reference: [DATABASE.md](DATABASE.md) and `migrations/0001_initial_schema.sql` f
 
 If the scan was run with `--status-port 8080`:
 
+- `curl -s http://127.0.0.1:8080/health` returns 200 and body `ok`.
 - `curl -s http://127.0.0.1:8080/status | jq` returns 200 and JSON with run progress/state.
 - `curl -s http://127.0.0.1:8080/metrics` returns 200 and Prometheus-style text.
 

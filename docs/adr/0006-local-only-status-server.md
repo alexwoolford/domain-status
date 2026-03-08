@@ -15,7 +15,7 @@ The status server will:
 
 - be opt-in via `--status-port`
 - bind to `127.0.0.1:<port>`
-- expose `/status` and `/metrics`
+- expose `/health`, `/status`, and `/metrics`
 - provide no built-in authentication
 - be treated as a local monitoring helper, not a public API service
 
@@ -37,6 +37,7 @@ Trade-offs:
 ## Related Code
 
 - `src/status_server/mod.rs`
+- `src/status_server/handlers/health.rs`
 - `src/status_server/handlers/status.rs`
 - `src/status_server/handlers/metrics.rs`
 - `README.md`

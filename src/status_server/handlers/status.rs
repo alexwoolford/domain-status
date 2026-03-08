@@ -231,6 +231,8 @@ mod tests {
                 crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
             ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         }
     }
 
@@ -286,6 +288,8 @@ mod tests {
                 metrics.record_non_retriable_failure();
                 metrics
             }),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         let response = build_status_response(&state, 5.0);
@@ -365,6 +369,8 @@ mod tests {
                 crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
             ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         let response = build_status_response(&state, 0.0);
@@ -389,6 +395,8 @@ mod tests {
                 crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
             ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         let response = build_status_response(&state, 1.0);

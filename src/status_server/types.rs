@@ -31,6 +31,10 @@ pub struct StatusState {
     pub db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
     /// Runtime retry/degradation counters
     pub runtime_metrics: Arc<RuntimeMetrics>,
+    /// Run identifier (e.g. run_<epoch>) for correlating metrics with database and logs; optional when status server is used without a scan run
+    pub run_id: Option<String>,
+    /// Run start time as Unix timestamp in seconds, for Prometheus time-based dashboards; set when `run_id` is set
+    pub run_start_time_unix_secs: Option<f64>,
 }
 
 /// JSON response for `/status` endpoint
@@ -131,6 +135,8 @@ mod tests {
             request_limiter: None,
             db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         // Test increment operations
@@ -155,6 +161,8 @@ mod tests {
             request_limiter: None,
             db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         let cloned = state.clone();
@@ -329,6 +337,8 @@ mod tests {
             request_limiter: None,
             db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         assert!(state.timing_stats.is_some());

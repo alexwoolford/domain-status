@@ -121,11 +121,11 @@ If the built-in default User-Agent is used, the scanner may fetch the latest Chr
 When `--status-port` is set, the status server:
 
 - binds to `127.0.0.1:<port>`
-- exposes `/status` and `/metrics`
+- exposes `/health`, `/status`, and `/metrics`
 - has no authentication
 - is intended for local scraping only
 
-Do not treat it as an internet-facing service. If remote access is required, use an SSH tunnel or a local reverse proxy with explicit access controls.
+`/health` returns 200 OK when the server is up; use it for Kubernetes liveness probes, load balancers, or reverse proxies. Do not treat the status server as an internet-facing service. If remote access is required, use an SSH tunnel or a local reverse proxy with explicit access controls.
 
 ## Observability Signals
 
@@ -147,6 +147,8 @@ If you monitor production scans, prefer scraping `/metrics` and alerting on:
 - growth in `domain_status_runtime_non_retriable_failures_total`
 - growth in `domain_status_db_write_failures_total`
 - `domain_status_db_circuit_open == 1`
+
+For fleet or multi-instance runs, `domain_status_run_info{run_id="..."}`, `domain_status_elapsed_seconds`, and `domain_status_start_time_seconds` let you correlate metrics with a specific scan run (e.g. in the database or logs) and build time-based dashboards.
 
 ## Failure Policy Guidance
 

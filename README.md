@@ -676,13 +676,25 @@ curl http://127.0.0.1:8080/status | jq
 
 # Or view Prometheus metrics:
 curl http://127.0.0.1:8080/metrics
+
+# Liveness check (e.g. for orchestrators or load balancers):
+curl http://127.0.0.1:8080/health
 ```
 
 The status server provides:
+- **Health check**: `/health` returns 200 OK when the server is up (for Kubernetes liveness probes, load balancers, or reverse proxies)
 - **Real-time progress**: File size, attempted URLs, active URLs, completed URLs, failed URLs, pending URLs, and throughput
 - **Runtime health signals**: Current adaptive RPS, retry counts, non-retriable failures, DB write failures, skipped failure writes, and circuit-breaker state
 - **Error breakdown**: Detailed counts by error, warning, and informational event categories
-- **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping
+- **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping, with run identity and elapsed/start time for fleet dashboards
+
+### Health Endpoint (`/health`)
+
+Returns 200 OK with body `ok` when the status server is running. No authentication or request body. Useful for liveness probes and load balancer health checks.
+
+```bash
+curl http://127.0.0.1:8080/health
+```
 
 ### Status Endpoint (`/status`)
 
@@ -741,6 +753,9 @@ curl http://127.0.0.1:8080/metrics
 ```
 
 **Metrics:**
+- `domain_status_run_info{run_id="..."}` (gauge): Run identifier for correlating with database and logs (value 1 when run_id is set)
+- `domain_status_elapsed_seconds` (gauge): Seconds since the current run started
+- `domain_status_start_time_seconds` (gauge): Unix timestamp when the run started
 - `domain_status_total_urls` (gauge): Total URLs to process
 - `domain_status_completed_urls` (gauge): Successfully processed URLs
 - `domain_status_failed_urls` (gauge): Failed URLs
