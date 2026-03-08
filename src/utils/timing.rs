@@ -25,7 +25,7 @@ pub struct UrlTimingMetrics {
     pub html_parsing_us: u64,
     /// Technology detection time in microseconds
     pub tech_detection_us: u64,
-    /// GeoIP lookup time in microseconds
+    /// `GeoIP` lookup time in microseconds
     pub geoip_lookup_us: u64,
     /// WHOIS lookup time in microseconds
     pub whois_lookup_us: u64,
@@ -39,7 +39,7 @@ pub struct UrlTimingMetrics {
 ///
 /// All times are stored in microseconds for precision, then converted to milliseconds
 /// only when displaying to users.
-/// AtomicU64 can be mutated through &self (interior mutability), so individual
+/// `AtomicU64` can be mutated through &self (interior mutability), so individual
 /// Arc wrappers are unnecessary when the whole struct is already in Arc<TimingStats>.
 #[derive(Debug, Default)]
 pub struct TimingStats {
@@ -59,7 +59,7 @@ pub struct TimingStats {
     pub html_parsing_sum_us: AtomicU64,
     /// Sum of technology detection times in microseconds
     pub tech_detection_sum_us: AtomicU64,
-    /// Sum of GeoIP lookup times in microseconds
+    /// Sum of `GeoIP` lookup times in microseconds
     pub geoip_lookup_sum_us: AtomicU64,
     /// Sum of WHOIS lookup times in microseconds
     pub whois_lookup_sum_us: AtomicU64,
@@ -154,7 +154,7 @@ impl TimingStats {
 
     /// Logs a summary of timing statistics.
     ///
-    /// Optionally accepts flags to indicate whether GeoIP and WHOIS are enabled,
+    /// Optionally accepts flags to indicate whether `GeoIP` and WHOIS are enabled,
     /// which will be displayed in the output when these features are disabled.
     // Large function handling comprehensive timing summary output with percentage calculations and formatting.
     // Consider refactoring into smaller focused functions in Phase 4.

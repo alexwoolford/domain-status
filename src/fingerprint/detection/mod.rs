@@ -25,7 +25,7 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 ///
 /// This is a simplified matcher that only uses single-request fields:
 /// - Headers
-/// - Cookies (from SET_COOKIE and Cookie headers)
+/// - Cookies (from `SET_COOKIE` and Cookie headers)
 /// - Meta tags (name, property, http-equiv)
 /// - Script sources
 /// - Script content (inline scripts for js field detection)
@@ -41,7 +41,7 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 /// * `html_body` - Full HTML body normalized to lowercase (for HTML pattern matching, matching wappalyzergo)
 /// * `headers` - HTTP response headers
 /// * `url` - The URL being analyzed
-/// * `script_tag_ids` - Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
+/// * `script_tag_ids` - Script tag IDs found in HTML (for __`NEXT_DATA`__ etc.)
 ///
 /// Technology detection result with name and optional version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -48,14 +48,14 @@ fn is_redirect_status(status_code: u16) -> bool {
 ///
 /// # Returns
 ///
-/// A tuple of (final_url, redirect_chain, alt_svc_header) where:
+/// A tuple of (`final_url`, `redirect_chain`, `alt_svc_header`) where:
 /// - `final_url` is the final URL after all redirects
 /// - `redirect_chain` is a vector of all URLs in the chain (including final URL)
 /// - `alt_svc_header` is the alt-svc header from the first response (for HTTP/3 detection)
 ///
 /// # Errors
 ///
-/// Returns an error if HTTP requests fail, URL parsing fails, or max_hops is 0.
+/// Returns an error if HTTP requests fail, URL parsing fails, or `max_hops` is 0.
 pub async fn resolve_redirect_chain(
     start_url: &str,
     max_hops: usize,
@@ -92,7 +92,7 @@ pub async fn resolve_redirect_chain(
         // Capture alt-svc header from ANY response in the redirect chain (for HTTP/3 detection)
         // Go's http.Client exposes alt-svc in the final response after automatic redirect following
         // We need to check all responses and use the last one found (matching Go's behavior)
-        for (name, value) in resp.headers().iter() {
+        for (name, value) in resp.headers() {
             if name.as_str().eq_ignore_ascii_case("alt-svc") {
                 if let Ok(alt_svc_str) = value.to_str() {
                     alt_svc_header = Some(alt_svc_str.to_string());

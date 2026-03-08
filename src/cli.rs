@@ -23,10 +23,10 @@ use crate::{run_scan, Config, ScanReport};
     subcommand_required = true
 )]
 pub enum CliCommand {
-    /// Scan URLs and store results in SQLite database.
+    /// Scan URLs and store results in `SQLite` database.
     #[command(name = "scan")]
     Scan(ScanCommand),
-    /// Export data from SQLite database to various formats.
+    /// Export data from `SQLite` database to various formats.
     #[command(name = "export")]
     Export(ExportCommand),
 }
@@ -46,7 +46,7 @@ pub struct ScanCommand {
     #[arg(long, value_enum, default_value_t = LogFormat::Plain)]
     pub log_format: LogFormat,
 
-    /// Database path (SQLite file)
+    /// Database path (`SQLite` file)
     #[arg(long, value_parser, default_value = "./domain_status.db")]
     pub db_path: PathBuf,
 
@@ -78,7 +78,7 @@ pub struct ScanCommand {
     #[arg(long)]
     pub fingerprints: Option<String>,
 
-    /// GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL.
+    /// `GeoIP` database path (`MaxMind` `GeoLite2` .mmdb file) or download URL.
     #[arg(long)]
     pub geoip: Option<String>,
 
@@ -106,7 +106,7 @@ pub struct ScanCommand {
 /// CLI export command.
 #[derive(Debug, Parser, Clone)]
 pub struct ExportCommand {
-    /// Database path (SQLite file)
+    /// Database path (`SQLite` file)
     #[arg(long, value_parser, default_value = "./domain_status.db")]
     pub db_path: PathBuf,
 
@@ -172,6 +172,9 @@ impl From<ScanCommand> for Config {
 }
 
 /// Parse CLI arguments using the real clap configuration.
+///
+/// # Errors
+/// Returns `Err` when argument parsing fails (e.g. invalid or missing required options).
 pub fn parse_cli_command_from<I, T>(args: I) -> Result<CliCommand, clap::Error>
 where
     I: IntoIterator<Item = T>,
@@ -330,6 +333,9 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
 }
 
 /// Execute a parsed CLI command and return the intended process exit code.
+///
+/// # Errors
+/// Returns `Err` when scan or export execution fails (I/O, database, or runtime errors).
 pub async fn run_cli_command(cli_command: CliCommand) -> Result<i32> {
     match cli_command {
         CliCommand::Scan(scan_cmd) => execute_scan_with_reporting(scan_cmd.into()).await,
@@ -338,6 +344,9 @@ pub async fn run_cli_command(cli_command: CliCommand) -> Result<i32> {
 }
 
 /// Load environment, parse CLI args, and execute the command.
+///
+/// # Errors
+/// Returns `Err` when argument parsing fails or when the executed command fails.
 pub async fn run_cli_from_args<I, T>(args: I) -> Result<i32>
 where
     I: IntoIterator<Item = T>,
@@ -395,7 +404,7 @@ pub fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanRepo
             }
             #[allow(clippy::cast_precision_loss)]
             let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
-            if failure_pct > pct_threshold as f64 {
+            if failure_pct > f64::from(pct_threshold) {
                 2
             } else {
                 0

@@ -9,14 +9,14 @@ use super::builder::{build_batch_record, build_url_record};
 /// Parameters for preparing a record for database insertion.
 ///
 /// This struct **owns** the response, HTML, and TLS/DNS data to enable moving
-/// large collections (HashMaps, Vecs) into the final BatchRecord without cloning.
+/// large collections (`HashMaps`, Vecs) into the final `BatchRecord` without cloning.
 /// This eliminates ~5-10KB of heap allocations per URL in the hot path.
 pub struct RecordPreparationParams<'a> {
-    /// Response data (headers, status, body, etc.) - owned to move HashMaps
+    /// Response data (headers, status, body, etc.) - owned to move `HashMaps`
     pub resp_data: ResponseData,
     /// HTML parsing results - owned to move Vecs
     pub html_data: HtmlData,
-    /// TLS and DNS data - owned to move HashSet and Vec
+    /// TLS and DNS data - owned to move `HashSet` and Vec
     pub tls_dns_data: TlsDnsData,
     /// Additional DNS records (NS, TXT, MX)
     pub additional_dns: AdditionalDnsData,
@@ -40,10 +40,10 @@ pub struct RecordPreparationParams<'a> {
 ///
 /// Orchestrates enrichment lookups and batch record building.
 /// Technology detection is now done in parallel with DNS/TLS fetching.
-/// Returns the batch record and timing metrics in microseconds: (geoip_lookup_us, whois_lookup_us, security_analysis_us)
+/// Returns the batch record and timing metrics in microseconds: (`geoip_lookup_us`, `whois_lookup_us`, `security_analysis_us`)
 ///
 /// This function takes **ownership** of the response, HTML, and TLS/DNS data
-/// to enable moving large collections (HashMaps, Vecs) into the final BatchRecord
+/// to enable moving large collections (`HashMaps`, Vecs) into the final `BatchRecord`
 /// without cloning, saving ~5-10KB of allocations per URL.
 ///
 /// # Arguments

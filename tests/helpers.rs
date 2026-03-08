@@ -109,7 +109,7 @@ pub async fn create_test_url_status_default(pool: &SqlitePool) -> i64 {
     .await
 }
 
-/// Creates a test run record and returns its run_id.
+/// Creates a test run record and returns its `run_id`.
 /// Uses direct SQL insertion for simplicity in tests.
 #[allow(dead_code)] // Used by other test files
 pub async fn create_test_run(pool: &SqlitePool, run_id: &str, timestamp: i64) -> String {

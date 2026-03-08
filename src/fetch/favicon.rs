@@ -1,6 +1,6 @@
 //! Favicon fetching, hashing, and data structures.
 //!
-//! Provides Shodan-compatible MurmurHash3 favicon hashing and streaming
+//! Provides Shodan-compatible `MurmurHash3` favicon hashing and streaming
 //! favicon download with size limits. The hash format matches Shodan's
 //! `http.favicon.hash` field exactly, enabling direct interoperability
 //! with global threat intelligence feeds.
@@ -20,10 +20,10 @@ pub(crate) struct FaviconData {
     pub base64_data: String,
 }
 
-/// Computes a Shodan-compatible MurmurHash3 of favicon bytes.
+/// Computes a Shodan-compatible `MurmurHash3` of favicon bytes.
 ///
 /// Shodan hashes the base64 encoding (with newlines every 76 characters
-/// and a trailing newline) using MurmurHash3 (32-bit, seed 0). This
+/// and a trailing newline) using `MurmurHash3` (32-bit, seed 0). This
 /// function replicates that exact format so hashes can be dropped directly
 /// into `http.favicon.hash:<hash>` Shodan queries.
 pub(crate) fn compute_shodan_favicon_hash(raw_bytes: &[u8]) -> i32 {

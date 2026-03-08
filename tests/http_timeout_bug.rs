@@ -1,9 +1,9 @@
 //! Test demonstrating HTTP client timeout bug.
 //!
-//! **BUG**: The reqwest::Client is configured with only a global timeout,
+//! **BUG**: The `reqwest::Client` is configured with only a global timeout,
 //! but does NOT set:
-//! - connect_timeout() for TCP connection phase
-//! - Custom DNS resolver with DNS_TIMEOUT_SECS
+//! - `connect_timeout()` for TCP connection phase
+//! - Custom DNS resolver with `DNS_TIMEOUT_SECS`
 //!
 //! This means DNS/TCP/TLS operations can hang longer than intended.
 
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 ///
 /// This test uses a "blackhole" IP (TEST-NET-1: 192.0.2.1) that drops packets.
 /// A properly configured HTTP client should timeout quickly during TCP connect
-/// (config::TCP_CONNECT_TIMEOUT_SECS = 5s), but without .connect_timeout(),
+/// (`config::TCP_CONNECT_TIMEOUT_SECS` = 5s), but without .`connect_timeout()`,
 /// it waits for the full global timeout (10s).
 #[tokio::test]
 #[ignore] // Run with: cargo test --test http_timeout_bug -- --ignored
@@ -52,7 +52,7 @@ async fn test_http_client_slow_tcp_connect() {
     }
 }
 
-/// Demonstrates the fix: reqwest with connect_timeout.
+/// Demonstrates the fix: reqwest with `connect_timeout`.
 #[tokio::test]
 #[ignore]
 async fn test_http_client_with_connect_timeout_fix() {

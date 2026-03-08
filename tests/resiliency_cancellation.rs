@@ -4,7 +4,7 @@
 //! cancelled, timed out, or forcefully aborted.
 //!
 //! **Why This Matters:**
-//! - Production URLs regularly timeout (slow sites, network issues, DDoS)
+//! - Production URLs regularly timeout (slow sites, network issues, `DDoS`)
 //! - Users frequently press Ctrl-C during long scans
 //! - System OOM killer can terminate the process
 //! - Any of these can drop async futures mid-transaction
@@ -18,8 +18,8 @@
 //! **Regressions Prevented:**
 //! - CVE-style: Database corruption from partial transaction commits
 //! - Data loss: Successful URL processing lost due to cancellation
-//! - Deadlock: SQLite left in locked state after crash
-//! - Orphans: Satellite records without parent url_status records
+//! - Deadlock: `SQLite` left in locked state after crash
+//! - Orphans: Satellite records without parent `url_status` records
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ use tokio::time::{sleep, timeout};
 // Test Helpers
 //-----------------------------------------------------------------------------
 
-/// Creates an in-memory SQLite database with full schema.
+/// Creates an in-memory `SQLite` database with full schema.
 ///
 /// Uses real migrations to ensure test environment matches production.
 async fn create_test_pool() -> SqlitePool {
@@ -50,7 +50,7 @@ async fn create_test_pool() -> SqlitePool {
     pool
 }
 
-/// Creates a minimal but valid UrlRecord for testing.
+/// Creates a minimal but valid `UrlRecord` for testing.
 ///
 /// This record has all required fields populated to satisfy FK constraints
 /// and schema requirements.
@@ -100,7 +100,7 @@ async fn create_test_run(pool: &SqlitePool, run_id: &str) {
         .expect("Failed to create test run");
 }
 
-/// Counts total records in url_status table.
+/// Counts total records in `url_status` table.
 async fn count_url_records(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM url_status")
         .fetch_one(pool)
@@ -108,9 +108,9 @@ async fn count_url_records(pool: &SqlitePool) -> i64 {
         .expect("Failed to count url_status records")
 }
 
-/// Counts satellite records for a specific url_status_id.
+/// Counts satellite records for a specific `url_status_id`.
 ///
-/// Returns tuple: (technologies, nameservers, txt_records, mx_records, headers)
+/// Returns tuple: (technologies, nameservers, `txt_records`, `mx_records`, headers)
 #[allow(dead_code)]
 async fn count_satellite_records(
     pool: &SqlitePool,
@@ -154,7 +154,7 @@ async fn count_satellite_records(
     (technologies, nameservers, txt_records, mx_records, headers)
 }
 
-/// Checks for orphaned satellite records (records without parent url_status).
+/// Checks for orphaned satellite records (records without parent `url_status`).
 ///
 /// Returns the count of orphaned records across all satellite tables.
 async fn count_orphaned_satellites(pool: &SqlitePool) -> i64 {

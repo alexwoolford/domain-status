@@ -61,7 +61,7 @@ pub enum ExportFormat {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ExportOptions {
-    /// SQLite database file to read from.
+    /// `SQLite` database file to read from.
     pub db_path: PathBuf,
     /// Output file path, or `None` to write to stdout.
     pub output: Option<PathBuf>,

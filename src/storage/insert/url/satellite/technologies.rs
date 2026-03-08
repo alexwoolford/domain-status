@@ -1,4 +1,4 @@
-//! Technology insertion for url_technologies table.
+//! Technology insertion for `url_technologies` table.
 
 use sqlx::Sqlite;
 use sqlx::Transaction;
@@ -7,7 +7,7 @@ use crate::fingerprint::{self, DetectedTechnology};
 
 use super::super::super::utils::build_batch_insert_query;
 
-/// Inserts technologies into url_technologies table using batch INSERT.
+/// Inserts technologies into `url_technologies` table using batch INSERT.
 pub(crate) async fn insert_technologies(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,

@@ -2,22 +2,22 @@
 //!
 //! **BUG FOUND**: The WHOIS lookup relied on whois-service's internal timeout
 //! which defaults to 30 seconds in production. This is too long and can block
-//! workers, consuming most of the 35s URL_PROCESSING_TIMEOUT budget.
+//! workers, consuming most of the 35s `URL_PROCESSING_TIMEOUT` budget.
 //!
 //! **ROOT CAUSE**:
 //! - whois-service crate has internal timeouts: 30s in production, 15s in non-production
-//! - src/whois/mod.rs creates WhoisClient with default settings (no custom timeout)
-//! - src/fetch/record/preparation.rs called lookup_whois() without timeout wrapper
+//! - src/whois/mod.rs creates `WhoisClient` with default settings (no custom timeout)
+//! - src/fetch/record/preparation.rs called `lookup_whois()` without timeout wrapper
 //! - A slow WHOIS server could block a worker for up to 30 seconds
 //!
 //! **FIX APPLIED**:
-//! - Added WHOIS_TIMEOUT_SECS constant (5 seconds) in src/config/constants.rs
-//! - Wrapped lookup_whois() in tokio::time::timeout() in src/fetch/record/preparation.rs
+//! - Added `WHOIS_TIMEOUT_SECS` constant (5 seconds) in src/config/constants.rs
+//! - Wrapped `lookup_whois()` in `tokio::time::timeout()` in src/fetch/record/preparation.rs
 //! - Now WHOIS lookups fail fast after 5s, preventing worker blocking
 //!
 //! **Impact**: Most WHOIS queries complete in <2s. The 5s timeout provides
 //! a reasonable buffer while preventing the 30s default from consuming most
-//! of the URL_PROCESSING_TIMEOUT budget.
+//! of the `URL_PROCESSING_TIMEOUT` budget.
 
 use domain_status::lookup_whois;
 use std::time::{Duration, Instant};
@@ -107,7 +107,7 @@ async fn test_whois_lookup_slow_server() {
 /// to prevent worker blocking.
 ///
 /// **FIX APPLIED**: src/fetch/record/preparation.rs now wraps WHOIS lookup
-/// in tokio::time::timeout(Duration::from_secs(WHOIS_TIMEOUT_SECS))
+/// in `tokio::time::timeout(Duration::from_secs(WHOIS_TIMEOUT_SECS))`
 ///
 /// This prevents slow WHOIS servers from blocking workers for 30+ seconds.
 #[tokio::test]

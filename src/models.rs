@@ -107,7 +107,7 @@ impl TlsVersion {
     /// Returns `true` if this TLS version is considered weak/insecure.
     ///
     /// TLS 1.2 and TLS 1.3 are considered secure. Everything else
-    /// (TLS 1.1, TLS 1.0, SSLv3, Unknown) is considered weak.
+    /// (TLS 1.1, TLS 1.0, `SSLv3`, Unknown) is considered weak.
     #[must_use]
     pub fn is_weak(&self) -> bool {
         !matches!(self, TlsVersion::Tls12 | TlsVersion::Tls13)
@@ -135,7 +135,7 @@ impl fmt::Display for TlsVersion {
 /// * `valid_from` - Certificate validity start date
 /// * `valid_to` - Certificate validity end date
 /// * `oids` - Set of certificate OIDs (includes policy OIDs, extended key usage OIDs, and extension OIDs)
-/// * `cipher_suite` - Negotiated cipher suite (e.g., "TLS13_AES_256_GCM_SHA384")
+/// * `cipher_suite` - Negotiated cipher suite (e.g., "`TLS13_AES_256_GCM_SHA384`")
 /// * `key_algorithm` - Public key algorithm
 /// * `subject_alternative_names` - DNS names from the Subject Alternative Name extension (for linking domains sharing certificates)
 #[derive(Debug)]

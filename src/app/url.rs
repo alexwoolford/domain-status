@@ -2,14 +2,14 @@
 
 use log::warn;
 
-/// Maximum URL length (2048 characters) to prevent DoS attacks via extremely long URLs.
+/// Maximum URL length (2048 characters) to prevent `DoS` attacks via extremely long URLs.
 /// This matches common browser and server limits (e.g., IE, Apache, Nginx default limits).
 const MAX_URL_LENGTH: usize = 2048;
 
 /// Validates and normalizes a URL.
 ///
 /// Adds https:// prefix if missing, then validates that the URL is syntactically
-/// valid and uses http/https scheme. Rejects URLs longer than MAX_URL_LENGTH to prevent DoS.
+/// valid and uses http/https scheme. Rejects URLs longer than `MAX_URL_LENGTH` to prevent `DoS`.
 /// Logs a warning and returns None if the URL is invalid, too long, or uses an unsupported scheme.
 ///
 /// # Arguments

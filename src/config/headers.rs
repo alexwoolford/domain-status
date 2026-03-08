@@ -60,7 +60,7 @@ pub const HEADER_X_CACHE: &str = "X-Cache";
 // Caching
 /// Cache-Control header
 pub const HEADER_CACHE_CONTROL: &str = "Cache-Control";
-/// ETag header
+/// `ETag` header
 pub const HEADER_ETAG: &str = "ETag";
 /// Last-Modified header
 pub const HEADER_LAST_MODIFIED: &str = "Last-Modified";
@@ -71,7 +71,7 @@ pub const HEADER_LAST_MODIFIED: &str = "Last-Modified";
 /// - Infrastructure: Server, X-Powered-By, X-Generator (technology detection)
 /// - CDN/Proxy: CF-Ray, X-Served-By, Via (infrastructure analysis)
 /// - Performance: Server-Timing, X-Cache (performance monitoring)
-/// - Caching: Cache-Control, ETag, Last-Modified (cache analysis)
+/// - Caching: Cache-Control, `ETag`, Last-Modified (cache analysis)
 ///
 /// To add/remove headers, modify this array.
 pub const HTTP_HEADERS: &[&str] = &[

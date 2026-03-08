@@ -53,7 +53,7 @@ pub struct ContactLink {
 /// Searches for anchor tags (`<a>`) with `href` attributes starting with
 /// `mailto:` or `tel:` and extracts the contact information.
 ///
-/// Deduplicates by (contact_type, value) — the same email/phone appearing
+/// Deduplicates by (`contact_type`, value) — the same email/phone appearing
 /// in multiple `<a>` tags is only returned once.
 pub fn extract_contact_links(document: &Html) -> Vec<ContactLink> {
     let mut links = Vec::new();

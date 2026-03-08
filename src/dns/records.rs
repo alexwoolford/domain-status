@@ -193,7 +193,7 @@ mod tests {
     use crate::config::{MAX_TXT_RECORD_COUNT, MAX_TXT_RECORD_SIZE};
 
     /// Documents intent: TXT limits must be in a reasonable range to prevent memory exhaustion
-    /// in lookup_txt_records. Count 1-100, size 512-4096 bytes, worst case under 100KB.
+    /// in `lookup_txt_records`. Count 1-100, size 512-4096 bytes, worst case under 100KB.
     #[test]
     fn test_txt_record_limits_reasonable() {
         assert!(

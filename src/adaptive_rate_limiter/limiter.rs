@@ -29,7 +29,7 @@ impl AdaptiveRateLimiter {
     ///
     /// * `initial_rps` - Starting RPS value
     /// * `min_rps` - Minimum RPS (default: 1)
-    /// * `max_rps` - Maximum RPS (default: initial_rps)
+    /// * `max_rps` - Maximum RPS (default: `initial_rps`)
     /// * `error_threshold` - Error rate threshold (0.0-1.0, default: 0.2 = 20%)
     /// * `window_size` - Maximum number of outcomes to track (default: 100)
     /// * `window_duration` - Time window for error rate calculation (default: 30s)
@@ -127,7 +127,7 @@ impl AdaptiveRateLimiter {
                                 // Safe cast: current is u32 (max 4.3B), * 0.5 fits in f64 precision
                                 // Result is clamped to min_rps (u32), so truncation is impossible
                                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
-                                let decreased = (current as f64 * 0.5).max(min_rps as f64) as u32;
+                                let decreased = (f64::from(current) * 0.5).max(f64::from(min_rps)) as u32;
                                 log::info!(
                                     "Adaptive rate limiter: error rate {:.1}% > threshold {:.1}%, reducing RPS {} → {}",
                                     error_rate * 100.0,
@@ -141,7 +141,7 @@ impl AdaptiveRateLimiter {
                                 // Safe cast: current is u32, * 1.15 still fits in u32 range
                                 // Result is clamped to max_rps (u32) below, preventing any overflow
                                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
-                                let increased_calc = (current as f64 * 1.15) as u32;
+                                let increased_calc = (f64::from(current) * 1.15) as u32;
                                 let increased = increased_calc
                                     .max(current.saturating_add(1)) // At least +1, but prevent overflow
                                     .min(max_rps); // Ensure we never exceed max_rps

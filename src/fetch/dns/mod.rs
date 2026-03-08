@@ -18,7 +18,7 @@ use tls_dns::fetch_tls_and_dns;
 /// Fetches all DNS-related data (TLS, DNS resolution, and additional DNS records).
 ///
 /// Returns the combined data, all partial failures encountered, and timing metrics.
-/// Timing metrics in microseconds: (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us)
+/// Timing metrics in microseconds: (`dns_forward_us`, `dns_reverse_us`, `dns_additional_us`, `tls_handshake_us`)
 pub(crate) async fn fetch_all_dns_data(
     resp_data: &crate::fetch::response::ResponseData,
     resolver: &hickory_resolver::TokioResolver,

@@ -81,7 +81,7 @@ async fn insert_failure_redirect_chain(
 ///
 /// * `tx` - Database transaction
 /// * `failure_id` - The ID of the failure record
-/// * `response_headers` - Vector of (header_name, header_value) tuples
+/// * `response_headers` - Vector of (`header_name`, `header_value`) tuples
 ///
 /// # Returns
 ///
@@ -123,7 +123,7 @@ async fn insert_failure_response_headers(
 ///
 /// * `tx` - Database transaction
 /// * `failure_id` - The ID of the failure record
-/// * `request_headers` - Vector of (header_name, header_value) tuples
+/// * `request_headers` - Vector of (`header_name`, `header_value`) tuples
 ///
 /// # Returns
 ///
@@ -190,7 +190,7 @@ async fn insert_failure_satellite_data(
     Ok(())
 }
 
-/// Internal implementation of insert_url_failure (without retry logic).
+/// Internal implementation of `insert_url_failure` (without retry logic).
 async fn insert_url_failure_impl(
     pool: &SqlitePool,
     failure: &UrlFailureRecord,
@@ -212,8 +212,8 @@ async fn insert_url_failure_impl(
     .bind(failure.final_domain.as_ref())
     .bind(failure.error_type.as_str())
     .bind(&failure.error_message)
-    .bind(failure.http_status.map(|s| s as i64))
-    .bind(failure.retry_count as i64)
+    .bind(failure.http_status.map(i64::from))
+    .bind(i64::from(failure.retry_count))
     .bind(failure.elapsed_time_seconds)
     .bind(failure.timestamp)
     .bind(failure.run_id.as_ref())

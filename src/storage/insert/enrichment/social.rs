@@ -10,7 +10,7 @@ use crate::parse::SocialMediaLink;
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to url_status.id
+/// * `url_status_id` - Foreign key to `url_status.id`
 /// * `links` - Vector of social media links extracted from HTML
 pub async fn insert_social_media_links(
     pool: &SqlitePool,

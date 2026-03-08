@@ -85,7 +85,8 @@ domain_status_export.csv
 domain_status_export.jsonl
 domain_status_export.parquet
 
-# Temporary test files
+# Temporary test files and run artifacts
+nonexistent/
 # Exceptions: legitimate test helper files (must come before test_* pattern)
 !src/storage/test_helpers.rs
 !tests/helpers.rs

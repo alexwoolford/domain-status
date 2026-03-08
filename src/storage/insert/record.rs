@@ -1,7 +1,7 @@
 //! Direct record insertion (non-batched).
 //!
-//! This module provides functions to insert BatchRecord data directly into the database
-//! without batching. This is more efficient than batching for SQLite WAL mode.
+//! This module provides functions to insert `BatchRecord` data directly into the database
+//! without batching. This is more efficient than batching for `SQLite` WAL mode.
 
 use sqlx::SqlitePool;
 
@@ -21,9 +21,9 @@ pub struct EnrichmentInsertSummary {
     pub partial_failures_inserted: usize,
     /// Number of partial failures that failed to insert
     pub partial_failures_failed: usize,
-    /// Whether GeoIP data was successfully inserted
+    /// Whether `GeoIP` data was successfully inserted
     pub geoip_inserted: bool,
-    /// Whether GeoIP data insertion failed
+    /// Whether `GeoIP` data insertion failed
     pub geoip_failed: bool,
     /// Whether structured data was successfully inserted
     pub structured_data_inserted: bool,
@@ -83,7 +83,7 @@ impl EnrichmentInsertSummary {
 /// Inserts a batch record directly into the database.
 ///
 /// This function inserts the main URL record and all enrichment data immediately,
-/// without buffering or batching. With SQLite WAL mode, this provides better
+/// without buffering or batching. With `SQLite` WAL mode, this provides better
 /// performance than batching since writes can proceed concurrently.
 pub async fn insert_batch_record(
     pool: &SqlitePool,
@@ -179,13 +179,13 @@ async fn insert_partial_failures(
     }
 }
 
-/// Inserts GeoIP data for a record.
+/// Inserts `GeoIP` data for a record.
 ///
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
 /// * `url_status_id` - The ID of the main URL record
-/// * `geoip` - Optional tuple of (IP address, GeoIP result)
+/// * `geoip` - Optional tuple of (IP address, `GeoIP` result)
 /// * `summary` - Summary to update with insertion results
 async fn insert_geoip_enrichment(
     pool: &SqlitePool,
@@ -429,7 +429,7 @@ async fn insert_exposed_secrets_enrichment(
 
 /// Inserts all enrichment data for a record.
 ///
-/// This function inserts enrichment data (GeoIP, WHOIS, structured data, etc.) after the main
+/// This function inserts enrichment data (`GeoIP`, WHOIS, structured data, etc.) after the main
 /// URL record has been committed. Failures are logged but don't propagate, ensuring that
 /// enrichment data failures don't prevent URL processing.
 ///

@@ -21,32 +21,32 @@ cast_possible_truncation = "deny"        # usize→u32, u64→u32 truncation
 float_cmp = "deny"                       # Direct float equality checks
 duration_subsec = "deny"                 # Unchecked duration subtraction
 
-# === Correctness (warn) ===
-cast_precision_loss = "warn"             # usize→f64, i64→f64 precision loss
-cast_sign_loss = "warn"                  # i32→u32 sign loss
+# === Correctness (deny) ===
+cast_precision_loss = "deny"             # usize→f64, i64→f64 precision loss
+cast_sign_loss = "deny"                  # i32→u32 sign loss
 
 # === Performance ===
-needless_pass_by_value = "warn"          # Unnecessary clones in parameters
-clone_on_copy = "warn"                   # Clone on Copy types
-unnecessary_wraps = "warn"               # Functions always return Ok
+needless_pass_by_value = "deny"          # Unnecessary clones in parameters
+clone_on_copy = "deny"                   # Clone on Copy types
+unnecessary_wraps = "deny"               # Functions always return Ok
 
 # === Maintainability ===
-too_many_lines = "warn"                  # Functions >100 lines
-cognitive_complexity = "warn"            # High cyclomatic complexity
+too_many_lines = "deny"                  # Functions >100 lines
+cognitive_complexity = "deny"            # High cyclomatic complexity
 
 # === Pedantic (phase 1) ===
-must_use_candidate = "warn"
-missing_panics_doc = "warn"
-missing_safety_doc = "warn"
+must_use_candidate = "deny"
+missing_panics_doc = "deny"
+missing_safety_doc = "deny"
 
-# === Pedantic (phase 2) – enable as warn in follow-up PR after fixing doc/casts ===
-cast_lossless = "allow"
-default_trait_access = "allow"
-doc_markdown = "allow"
-explicit_iter_loop = "allow"
+# === Pedantic (phase 2) ===
+cast_lossless = "deny"
+default_trait_access = "deny"
+doc_markdown = "deny"
+explicit_iter_loop = "deny"
 
 # === Allow noisy / optional ===
-missing_errors_doc = "allow"             # Not critical
+missing_errors_doc = "warn"              # Next ratchet: fix then promote to deny
 module_name_repetitions = "allow"        # Common in Rust
 similar_names = "allow"                  # Too strict
 

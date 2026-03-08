@@ -10,7 +10,7 @@ use crate::parse::ContactLink;
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to url_status.id
+/// * `url_status_id` - Foreign key to `url_status.id`
 /// * `links` - Vector of contact links extracted from HTML
 pub async fn insert_contact_links(
     pool: &SqlitePool,

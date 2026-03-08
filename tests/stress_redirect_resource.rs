@@ -10,7 +10,7 @@
 //! **VULNERABILITY FOUND**: Memory/resource spike from concurrent deep redirect chains.
 //!
 //! **ROOT CAUSE**:
-//! - Redirect chain limit: MAX_REDIRECT_HOPS = 10 (good defense)
+//! - Redirect chain limit: `MAX_REDIRECT_HOPS` = 10 (good defense)
 //! - Each redirect hop requires:
 //!   - DNS lookup (possibly new domain)
 //!   - TLS handshake (for HTTPS)
@@ -22,8 +22,8 @@
 //! **Attack Vector**:
 //! - Malicious site creates 10-hop redirect chain
 //! - Each hop uses unique subdomain:
-//!   https://a.b.c.d.e.f.g.h.i.j.evil.com →
-//!   https://b.c.d.e.f.g.h.i.j.k.evil.com →
+//!   <https://a.b.c.d.e.f.g.h.i.j.evil.com> →
+//!   <https://b.c.d.e.f.g.h.i.j.k.evil.com> →
 //!   ... (10 hops)
 //! - Each subdomain requires DNS lookup (bypasses DNS cache)
 //! - Each hop requires new TLS handshake
@@ -60,8 +60,8 @@ use tokio::net::TcpListener;
 
 /// Creates a mock server that generates deep redirect chains.
 ///
-/// Each request to /redirect/{hop_count} returns a redirect to /{hop_count - 1}.
-/// When hop_count reaches 0, returns final content.
+/// Each request to /`redirect/{hop_count`} returns a redirect to /{`hop_count` - 1}.
+/// When `hop_count` reaches 0, returns final content.
 async fn start_redirect_server(_total_hops: usize) -> String {
     let hop_counter = Arc::new(AtomicUsize::new(0));
 

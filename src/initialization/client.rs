@@ -344,7 +344,7 @@ mod tests {
     /// CRITICAL SECURITY TEST: Page-fetch client must reject invalid TLS certificates.
     /// The client uses reqwest default (strict) verification; it must never accept
     /// self-signed or wrong-hostname certs. This guards against future changes that
-    /// might enable danger_accept_invalid_certs() on the page-fetch client.
+    /// might enable `danger_accept_invalid_certs()` on the page-fetch client.
     /// Run with: cargo test -- --ignored (e2e job runs these).
     #[tokio::test]
     #[ignore] // Requires network; uses badssl.com

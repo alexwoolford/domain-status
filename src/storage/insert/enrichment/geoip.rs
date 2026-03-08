@@ -1,14 +1,14 @@
-//! GeoIP data insertion.
+//! `GeoIP` data insertion.
 
 use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
 
-/// Inserts GeoIP data for a URL status record.
+/// Inserts `GeoIP` data for a URL status record.
 ///
 /// This should be called after `insert_url_record` to populate geographic
 /// and network information for the IP address.
-/// Note: ip_address is not stored here - it's in the url_status table.
+/// Note: `ip_address` is not stored here - it's in the `url_status` table.
 pub async fn insert_geoip_data(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -41,7 +41,7 @@ pub async fn insert_geoip_data(
     .bind(geoip.longitude)
     .bind(&geoip.postal_code)
     .bind(&geoip.timezone)
-    .bind(geoip.asn.map(|a| a as i64))
+    .bind(geoip.asn.map(i64::from))
     .bind(&geoip.asn_org)
     .execute(pool)
     .await

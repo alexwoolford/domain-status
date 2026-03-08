@@ -10,13 +10,13 @@
 //! **VULNERABILITY FOUND**: Connection pool size (30) much smaller than max concurrency (500).
 //!
 //! **ROOT CAUSE**:
-//! - src/storage/pool.rs:62 sets max_connections=30
-//! - Default max_concurrency in CLI is 30, but can be set up to 500
+//! - src/storage/pool.rs:62 sets `max_connections=30`
+//! - Default `max_concurrency` in CLI is 30, but can be set up to 500
 //! - When user sets --max-concurrent 500:
 //!   - 500 workers spawn concurrently
 //!   - Only 30 database connections available
 //!   - 470 workers block waiting for connections
-//! - Pool has acquire_timeout=5s (good), but causes cascade timeouts
+//! - Pool has `acquire_timeout=5s` (good), but causes cascade timeouts
 //! - Result: Throughput collapse, wasted worker threads
 //!
 //! **Attack Vector**:
@@ -37,7 +37,7 @@
 //! **Impact**: Severe performance degradation, wasted resources, cascade failures
 //!
 //! **Recommended Fix**:
-//! - Match pool size to max_concurrency: max_connections = max_concurrency
+//! - Match pool size to `max_concurrency`: `max_connections` = `max_concurrency`
 //! - Or document the limitation: "Max effective concurrency: 30"
 //! - Or implement write batching/queue to decouple workers from connections
 //! - Or increase pool size to 100+ for high-concurrency workloads
@@ -295,8 +295,8 @@ async fn test_pool_exhaustion_severe() {
     let p95 = durations[durations.len() * 95 / 100];
     let p99 = durations[durations.len() * 99 / 100];
 
-    let success_rate = (success_count as f64 / worker_count as f64) * 100.0;
-    let effective_throughput = success_count as f64 / total_elapsed.as_secs_f64();
+    let success_rate = (f64::from(success_count) / f64::from(worker_count)) * 100.0;
+    let effective_throughput = f64::from(success_count) / total_elapsed.as_secs_f64();
 
     println!("=== Results ===");
     println!("Total time: {:.2}s", total_elapsed.as_secs_f64());
@@ -307,7 +307,7 @@ async fn test_pool_exhaustion_severe() {
     println!(
         "Timeouts: {} ({:.1}%)",
         timeout_count,
-        (timeout_count as f64 / worker_count as f64) * 100.0
+        (f64::from(timeout_count) / f64::from(worker_count)) * 100.0
     );
     println!();
     println!("Latency distribution:");
@@ -325,7 +325,7 @@ async fn test_pool_exhaustion_severe() {
     println!(
         "  - {} workers failed or timed out ({:.1}%)",
         timeout_count,
-        (timeout_count as f64 / worker_count as f64) * 100.0
+        (f64::from(timeout_count) / f64::from(worker_count)) * 100.0
     );
     println!(
         "  - Effective throughput: {:.1} ops/sec",
@@ -428,9 +428,9 @@ async fn test_pool_exhaustion_extreme() {
 
     durations.sort();
 
-    let success_rate = (success_count as f64 / worker_count as f64) * 100.0;
-    let failure_rate = (timeout_count as f64 / worker_count as f64) * 100.0;
-    let effective_throughput = success_count as f64 / total_elapsed.as_secs_f64();
+    let success_rate = (f64::from(success_count) / f64::from(worker_count)) * 100.0;
+    let failure_rate = (f64::from(timeout_count) / f64::from(worker_count)) * 100.0;
+    let effective_throughput = f64::from(success_count) / total_elapsed.as_secs_f64();
     let wasted_workers = worker_count - success_count;
 
     println!("=== CRITICAL FINDINGS ===");
@@ -459,7 +459,7 @@ async fn test_pool_exhaustion_extreme() {
     println!(
         "  Wasted workers: {} ({:.1}%)",
         wasted_workers,
-        (wasted_workers as f64 / worker_count as f64) * 100.0
+        (f64::from(wasted_workers) / f64::from(worker_count)) * 100.0
     );
     println!();
 

@@ -10,7 +10,7 @@ use crate::parse::ExposedSecret;
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to url_status.id
+/// * `url_status_id` - Foreign key to `url_status.id`
 /// * `secrets` - Vector of exposed secrets detected in HTML
 pub async fn insert_exposed_secrets(
     pool: &SqlitePool,

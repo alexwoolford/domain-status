@@ -28,17 +28,17 @@ pub struct UrlRecordInsertParams<'a> {
     pub pool: &'a SqlitePool,
     /// The URL record to insert
     pub record: &'a UrlRecord,
-    /// Security headers HashMap (will be inserted into url_security_headers table)
+    /// Security headers `HashMap` (will be inserted into `url_security_headers` table)
     pub security_headers: &'a std::collections::HashMap<String, String>,
-    /// HTTP headers HashMap (will be inserted into url_http_headers table)
+    /// HTTP headers `HashMap` (will be inserted into `url_http_headers` table)
     pub http_headers: &'a std::collections::HashMap<String, String>,
-    /// Vector of OID strings (will be inserted into url_oids table)
+    /// Vector of OID strings (will be inserted into `url_oids` table)
     pub oids: &'a std::collections::HashSet<String>,
-    /// Vector of redirect URLs (will be inserted into url_redirect_chain table)
+    /// Vector of redirect URLs (will be inserted into `url_redirect_chain` table)
     pub redirect_chain: &'a [String],
-    /// Vector of detected technologies (will be inserted into url_technologies table)
+    /// Vector of detected technologies (will be inserted into `url_technologies` table)
     pub technologies: &'a [crate::fingerprint::DetectedTechnology],
-    /// Vector of DNS names from certificate SAN extension (will be inserted into url_certificate_sans table)
+    /// Vector of DNS names from certificate SAN extension (will be inserted into `url_certificate_sans` table)
     pub subject_alternative_names: &'a [String],
 }
 
@@ -46,13 +46,13 @@ pub struct UrlRecordInsertParams<'a> {
 ///
 /// This function inserts data into:
 /// 1. The main `url_status` table (fact table with atomic fields)
-/// 2. Normalized child tables (url_technologies, url_nameservers, url_txt_records, url_mx_records, url_security_headers, url_http_headers, url_oids, url_redirect_chain)
+/// 2. Normalized child tables (`url_technologies`, `url_nameservers`, `url_txt_records`, `url_mx_records`, `url_security_headers`, `url_http_headers`, `url_oids`, `url_redirect_chain`)
 ///
-/// All inserts are wrapped in a transaction for atomicity. SQLITE_BUSY and SQLITE_LOCKED
+/// All inserts are wrapped in a transaction for atomicity. `SQLITE_BUSY` and `SQLITE_LOCKED`
 /// errors are automatically retried with exponential backoff.
 ///
-/// Note: Multi-valued fields (technologies, nameservers, txt_records, mx_records, security_headers, http_headers,
-/// oids, redirect_chain) are stored only in normalized child tables, not as JSON in the main table.
+/// Note: Multi-valued fields (technologies, nameservers, `txt_records`, `mx_records`, `security_headers`, `http_headers`,
+/// oids, `redirect_chain`) are stored only in normalized child tables, not as JSON in the main table.
 /// This eliminates data duplication and establishes a single source of truth.
 ///
 /// # Arguments
@@ -62,6 +62,9 @@ pub struct UrlRecordInsertParams<'a> {
 /// # Returns
 ///
 /// Returns the `id` of the inserted (or updated) `url_status` record, or an error if insertion fails.
+///
+/// # Errors
+/// Returns `Err` when the transaction or any insert fails.
 // Large function handling comprehensive URL record insertion with transaction management and multiple satellite table inserts.
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
@@ -69,7 +72,7 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
     with_sqlite_retry(|| insert_url_record_impl(&params)).await
 }
 
-/// Internal implementation of insert_url_record (without retry logic).
+/// Internal implementation of `insert_url_record` (without retry logic).
 #[allow(clippy::too_many_lines)]
 async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
@@ -216,7 +219,7 @@ mod tests {
 
     use crate::storage::migrations::run_migrations;
 
-    /// Creates an in-memory SQLite database pool for testing
+    /// Creates an in-memory `SQLite` database pool for testing
     async fn create_test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
@@ -240,7 +243,7 @@ mod tests {
         .expect("Failed to insert test run");
     }
 
-    /// Creates a minimal UrlRecord for testing
+    /// Creates a minimal `UrlRecord` for testing
     fn create_test_url_record() -> UrlRecord {
         UrlRecord {
             initial_domain: "example.com".to_string(),

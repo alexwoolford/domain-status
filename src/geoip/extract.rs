@@ -1,7 +1,7 @@
 //! Archive extraction utilities.
 //!
 //! This module provides functions to extract .mmdb files from tar.gz archives
-//! downloaded from MaxMind.
+//! downloaded from `MaxMind`.
 
 use anyhow::{bail, Context, Result};
 

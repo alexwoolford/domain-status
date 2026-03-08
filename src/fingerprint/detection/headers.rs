@@ -73,7 +73,7 @@ mod tests {
     use super::*;
     use crate::fingerprint::ruleset::init_ruleset;
 
-    /// Test header detection matching wappalyzergo's TestHeadersDetect
+    /// Test header detection matching wappalyzergo's `TestHeadersDetect`
     #[tokio::test]
     async fn test_headers_detect() {
         // Initialize ruleset (uses wappalyzergo format for exact parity)
@@ -97,7 +97,7 @@ mod tests {
         );
     }
 
-    /// Test Apache detection with version (matching wappalyzergo's Test_All_Match_Paths)
+    /// Test Apache detection with version (matching wappalyzergo's `Test_All_Match_Paths`)
     #[tokio::test]
     async fn test_headers_apache_with_version() {
         // Skip test if ruleset initialization fails (e.g., no network in CI)

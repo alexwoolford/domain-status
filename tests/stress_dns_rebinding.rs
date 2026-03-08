@@ -16,7 +16,7 @@
 //! - No re-validation of resolved IP address
 //!
 //! **Attack Sequence**:
-//! 1. Attacker submits URL: http://evil.com
+//! 1. Attacker submits URL: <http://evil.com>
 //! 2. Scanner validates: evil.com is not localhost/private ✓
 //! 3. Attacker's DNS responds: evil.com → 1.2.3.4 (public IP)
 //! 4. Scanner resolves DNS: evil.com → 1.2.3.4 ✓
@@ -32,7 +32,7 @@
 //!
 //! **Real-World Example**:
 //! - rebind.network (DNS rebinding service)
-//! - Attacker uses: http://7f000001.1.2.3.4.rebind.network
+//! - Attacker uses: <http://7f000001.1.2.3.4.rebind.network>
 //! - First resolution: 1.2.3.4 (public)
 //! - Second resolution: 127.0.0.1 (localhost)
 //! - Scanner bypasses SSRF check, accesses internal service

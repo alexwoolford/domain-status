@@ -131,7 +131,7 @@ pub fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap
 /// - Infrastructure: Server, X-Powered-By, X-Generator (technology detection)
 /// - CDN/Proxy: CF-Ray, X-Served-By, Via (infrastructure analysis)
 /// - Performance: Server-Timing, X-Cache (performance monitoring)
-/// - Caching: Cache-Control, ETag, Last-Modified (cache analysis)
+/// - Caching: Cache-Control, `ETag`, Last-Modified (cache analysis)
 ///
 /// # Arguments
 ///

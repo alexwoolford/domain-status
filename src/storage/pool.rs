@@ -1,9 +1,9 @@
 //! Database connection pool management.
 //!
-//! This module initializes and configures the SQLite connection pool with:
+//! This module initializes and configures the `SQLite` connection pool with:
 //! - WAL mode enabled for concurrent access
 //! - Connection limits and timeouts
-//! - Automatic database file creation (via spawn_blocking to avoid blocking tokio runtime)
+//! - Automatic database file creation (via `spawn_blocking` to avoid blocking tokio runtime)
 
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
@@ -42,6 +42,9 @@ pub type DbPool = Arc<Pool<Sqlite>>;
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the database file cannot be created or the connection pool cannot be initialized.
 pub async fn init_db_pool_with_path(
     db_path: &std::path::Path,
     max_connections: u32,

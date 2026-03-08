@@ -3,7 +3,7 @@
 //! This module provides functions to insert various types of records into the database:
 //! - URL status records and related satellite tables
 //! - Run metadata and statistics
-//! - GeoIP data
+//! - `GeoIP` data
 //! - Enrichment data (structured data, social media, WHOIS, analytics)
 //! - Failure records
 //!

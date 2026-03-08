@@ -1,4 +1,4 @@
-//! Integration tests for the domain_status application.
+//! Integration tests for the `domain_status` application.
 //!
 //! These tests verify the library API using a mock HTTP server.
 //! They do not make real network requests, ensuring tests are fast and reliable.

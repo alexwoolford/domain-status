@@ -20,13 +20,13 @@ pub struct Technology {
     /// Website URL
     #[serde(default)]
     pub website: String,
-    /// Header patterns: header_name -> pattern
+    /// Header patterns: `header_name` -> pattern
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    /// Cookie patterns: cookie_name -> pattern
+    /// Cookie patterns: `cookie_name` -> pattern
     #[serde(default)]
     pub cookies: HashMap<String, String>,
-    /// Meta tag patterns: meta_name -> pattern(s)
+    /// Meta tag patterns: `meta_name` -> pattern(s)
     /// In Wappalyzer, meta values can be either a string or an array of strings
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_meta_map")]
@@ -372,7 +372,7 @@ mod tests {
         // description and priority should use defaults
     }
 
-    /// Test FingerprintMetadata serialization roundtrip
+    /// Test `FingerprintMetadata` serialization roundtrip
     #[test]
     fn test_fingerprint_metadata_roundtrip() {
         let metadata = FingerprintMetadata {
@@ -555,7 +555,7 @@ mod tests {
         assert!(result.is_err(), "Should fail when category name is missing");
     }
 
-    /// Test deserializing empty arrays for string_or_array fields
+    /// Test deserializing empty arrays for `string_or_array` fields
     #[test]
     fn test_technology_deserialize_empty_arrays() {
         // Test that empty arrays are handled correctly (should return empty Vec)
@@ -669,7 +669,7 @@ mod tests {
         );
     }
 
-    /// Test deserializing string_or_array with null value
+    /// Test deserializing `string_or_array` with null value
     #[test]
     fn test_technology_deserialize_string_or_array_null() {
         // Test that null values are rejected for string_or_array fields
@@ -705,7 +705,7 @@ mod tests {
         );
     }
 
-    /// Test FingerprintMetadata with empty strings
+    /// Test `FingerprintMetadata` with empty strings
     #[test]
     fn test_fingerprint_metadata_empty_strings() {
         // Test that empty source/version strings are handled

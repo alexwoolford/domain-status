@@ -1,8 +1,8 @@
 //! Record building utilities.
 //!
 //! These functions are optimized to minimize clones in the hot path:
-//! - `build_url_record` clones ~15 small strings (unavoidable for UrlRecord fields)
-//! - `build_batch_record` takes ownership and **moves** large collections (HashMaps, Vecs)
+//! - `build_url_record` clones ~15 small strings (unavoidable for `UrlRecord` fields)
+//! - `build_batch_record` takes ownership and **moves** large collections (`HashMaps`, Vecs)
 //!   instead of cloning them, saving ~5-10KB of allocations per URL
 
 use crate::database::UrlRecord;
@@ -10,11 +10,11 @@ use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::response::{HtmlData, ResponseData};
 use crate::storage::BatchRecord;
 
-/// Builds a UrlRecord from extracted response data.
+/// Builds a `UrlRecord` from extracted response data.
 ///
 /// This function clones string fields from the input data. While this involves
 /// ~15 small string allocations, these are necessary to create an independent
-/// UrlRecord. The expensive HashMap/Vec data is handled by `build_batch_record`
+/// `UrlRecord`. The expensive HashMap/Vec data is handled by `build_batch_record`
 /// which takes ownership to avoid cloning.
 pub(crate) fn build_url_record(
     resp_data: &ResponseData,
@@ -65,19 +65,19 @@ pub(crate) fn build_url_record(
     }
 }
 
-/// Parameters for building a BatchRecord.
+/// Parameters for building a `BatchRecord`.
 ///
 /// This struct **owns** the response, HTML, and TLS/DNS data to enable moving
-/// large collections (HashMaps, Vecs) into the BatchRecord instead of cloning.
+/// large collections (`HashMaps`, Vecs) into the `BatchRecord` instead of cloning.
 /// This eliminates ~5-10KB of heap allocations per URL in the hot path.
 pub struct BatchRecordParams {
     /// The URL record to include in the batch
     pub record: UrlRecord,
-    /// Response data (headers, status, etc.) - owned to move HashMaps
+    /// Response data (headers, status, etc.) - owned to move `HashMaps`
     pub resp_data: ResponseData,
     /// HTML parsing results - owned to move Vecs
     pub html_data: HtmlData,
-    /// TLS and DNS data - owned to move HashSet and Vec
+    /// TLS and DNS data - owned to move `HashSet` and Vec
     pub tls_dns_data: TlsDnsData,
     /// Detected technologies
     pub technologies_vec: Vec<crate::fingerprint::DetectedTechnology>,
@@ -85,7 +85,7 @@ pub struct BatchRecordParams {
     pub redirect_chain: Vec<String>,
     /// Partial failures (DNS/TLS errors that didn't prevent processing)
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
-    /// GeoIP lookup result (IP address and data)
+    /// `GeoIP` lookup result (IP address and data)
     pub geoip_data: Option<(String, crate::geoip::GeoIpResult)>,
     /// Security warnings
     pub security_warnings: Vec<crate::security::SecurityWarning>,
@@ -99,12 +99,12 @@ pub struct BatchRecordParams {
     pub favicon: Option<crate::fetch::favicon::FaviconData>,
 }
 
-/// Builds a BatchRecord from all extracted data.
+/// Builds a `BatchRecord` from all extracted data.
 ///
 /// Takes ownership of params to **move** large collections instead of cloning:
-/// - `security_headers` and `http_headers` HashMaps from ResponseData
-/// - `oids` HashSet and `subject_alternative_names` Vec from TlsDnsData
-/// - `analytics_ids`, `structured_data`, `social_media_links` from HtmlData
+/// - `security_headers` and `http_headers` `HashMaps` from `ResponseData`
+/// - `oids` `HashSet` and `subject_alternative_names` Vec from `TlsDnsData`
+/// - `analytics_ids`, `structured_data`, `social_media_links` from `HtmlData`
 ///
 /// This saves ~5-10KB of heap allocations per URL compared to cloning.
 ///

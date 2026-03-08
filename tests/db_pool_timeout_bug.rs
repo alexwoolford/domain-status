@@ -1,14 +1,14 @@
-//! Test demonstrating database pool acquire_timeout bug.
+//! Test demonstrating database pool `acquire_timeout` bug.
 //!
-//! **BUG FOUND**: SqlitePool is initialized with default acquire_timeout of 30s.
+//! **BUG FOUND**: `SqlitePool` is initialized with default `acquire_timeout` of 30s.
 //! When the connection pool is exhausted under high concurrency, worker tasks
 //! block for up to 30 seconds waiting for a connection.
 //!
 //! **ROOT CAUSE**:
-//! - src/storage/pool.rs:46 uses SqlitePool::connect() with defaults
-//! - Default acquire_timeout: 30 seconds
-//! - Default max_connections: 10
-//! - With max_concurrency=30, 20 workers can block for 30s each
+//! - src/storage/pool.rs:46 uses `SqlitePool::connect()` with defaults
+//! - Default `acquire_timeout`: 30 seconds
+//! - Default `max_connections`: 10
+//! - With `max_concurrency=30`, 20 workers can block for 30s each
 //!
 //! **Impact**: Under load, workers block waiting for database connections
 //! instead of failing fast, causing severe performance degradation.
@@ -56,7 +56,7 @@ fn create_test_record(domain: &str) -> UrlRecord {
     }
 }
 
-/// Demonstrates that default pool acquire_timeout blocks workers for 30s.
+/// Demonstrates that default pool `acquire_timeout` blocks workers for 30s.
 ///
 /// This test spawns more tasks than available connections and measures
 /// how long blocked tasks wait. With default settings, they wait ~30s.
@@ -153,7 +153,7 @@ async fn test_db_pool_default_acquire_timeout_blocks() {
     }
 }
 
-/// Documents the fix: explicit pool configuration with short acquire_timeout.
+/// Documents the fix: explicit pool configuration with short `acquire_timeout`.
 #[tokio::test]
 #[ignore]
 async fn test_db_pool_with_explicit_acquire_timeout() {

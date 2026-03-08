@@ -15,7 +15,7 @@
 //! - URL patterns
 //! - Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
 //!
-//! **Note:** We match WappalyzerGo's behavior - we do NOT execute JavaScript
+//! **Note:** We match `WappalyzerGo`'s behavior - we do NOT execute JavaScript
 //! or fetch external scripts. We only analyze the initial HTML response.
 
 mod detection;

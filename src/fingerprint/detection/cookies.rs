@@ -47,7 +47,7 @@ pub async fn check_cookies(
                 };
 
                 // Check all cookies for a match
-                for (actual_cookie_name, cookie_value) in cookies.iter() {
+                for (actual_cookie_name, cookie_value) in cookies {
                     if cookie_regex.is_match(actual_cookie_name) {
                         if pattern.is_empty() {
                             matched = true;
@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use crate::fingerprint::ruleset::init_ruleset;
 
-    /// Test cookie detection matching wappalyzergo's TestCookiesDetect
+    /// Test cookie detection matching wappalyzergo's `TestCookiesDetect`
     #[tokio::test]
     async fn test_cookies_detect() {
         // Initialize ruleset (uses wappalyzergo format for exact parity)

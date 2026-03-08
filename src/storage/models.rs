@@ -4,7 +4,7 @@
 //! - `UrlRecord` - Main URL status record
 //! - `BatchRecord` - Complete record with all satellite data (despite the name, records are NOT batched - they're written immediately)
 //!
-//! All models use `Option<T>` for nullable fields to match SQLite's type system.
+//! All models use `Option<T>` for nullable fields to match `SQLite`'s type system.
 
 use chrono::NaiveDateTime;
 

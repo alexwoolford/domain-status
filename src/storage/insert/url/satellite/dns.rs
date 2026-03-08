@@ -8,7 +8,7 @@ use super::super::super::utils::{
     parse_mx_json_array,
 };
 
-/// Inserts nameservers into url_nameservers table using batch insert.
+/// Inserts nameservers into `url_nameservers` table using batch insert.
 pub(crate) async fn insert_nameservers(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
@@ -40,7 +40,7 @@ pub(crate) async fn insert_nameservers(
     }
 }
 
-/// Inserts TXT records into url_txt_records table using batch insert.
+/// Inserts TXT records into `url_txt_records` table using batch insert.
 pub(crate) async fn insert_txt_records(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
@@ -79,7 +79,7 @@ pub(crate) async fn insert_txt_records(
     }
 }
 
-/// Inserts MX records into url_mx_records table using batch insert.
+/// Inserts MX records into `url_mx_records` table using batch insert.
 pub(crate) async fn insert_mx_records(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,

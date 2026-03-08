@@ -5,7 +5,7 @@
 //!
 //! Security features:
 //! - URL validation (SSRF protection)
-//! - Size limits to prevent DoS
+//! - Size limits to prevent `DoS`
 //! - Retry logic for transient failures
 
 use anyhow::{Context, Result};
@@ -24,7 +24,7 @@ use super::github::fetch_from_github_directory;
 /// # Security
 ///
 /// This function validates URLs to prevent SSRF attacks and enforces size limits
-/// to prevent DoS attacks via extremely large files.
+/// to prevent `DoS` attacks via extremely large files.
 pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technology>> {
     // SSRF protection: validate URL before fetching
     validate_url_safe(url).with_context(|| format!("Unsafe ruleset URL rejected: {}", url))?;

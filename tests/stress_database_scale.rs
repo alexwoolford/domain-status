@@ -30,14 +30,14 @@
 //! - 100K URLs/day × 365 days = 36.5M URLs/year
 //! - 36.5M URLs × 15 rows/URL = 547M database rows
 //! - Estimated size: 50-80GB after 1 year of continuous operation
-//! - SQLite performance degrades significantly beyond 1B rows
+//! - `SQLite` performance degrades significantly beyond 1B rows
 //!
 //! **Impact**: System failure due to disk exhaustion or performance degradation
 //!
 //! **Recommended Fix**:
 //! - Add default 30-day retention policy
 //! - Implement cleanup job to delete old runs (src/storage/cleanup.rs)
-//! - Add WAL checkpoint policy (PRAGMA wal_autocheckpoint)
+//! - Add WAL checkpoint policy (PRAGMA `wal_autocheckpoint`)
 //! - Support data export/archival for historical analysis
 //! - Document disk space requirements in production guide
 
@@ -158,7 +158,10 @@ async fn test_database_growth_moderate() {
     println!("  Time: {:.2}s", insert_elapsed.as_secs_f64());
     println!("  Final DB size: {:.2} MB", final_size as f64 / 1_048_576.0);
     println!("  Growth: {:.2} MB", growth as f64 / 1_048_576.0);
-    println!("  Bytes per URL: {:.0}", growth as f64 / url_count as f64);
+    println!(
+        "  Bytes per URL: {:.0}",
+        growth as f64 / f64::from(url_count)
+    );
     println!();
 
     // Test query performance
@@ -181,7 +184,7 @@ async fn test_database_growth_moderate() {
     println!("  Database size: {:.2} MB", final_size as f64 / 1_048_576.0);
     println!();
 
-    let bytes_per_url = growth as f64 / url_count as f64;
+    let bytes_per_url = growth as f64 / f64::from(url_count);
     let extrapolations = vec![
         (10_000, "10K URLs (small deployment)"),
         (100_000, "100K URLs (medium deployment)"),
@@ -190,7 +193,7 @@ async fn test_database_growth_moderate() {
     ];
 
     for (scale, description) in extrapolations {
-        let projected_size = bytes_per_url * scale as f64;
+        let projected_size = bytes_per_url * f64::from(scale);
         println!(
             "At {} - {}:",
             description,
@@ -329,7 +332,7 @@ async fn test_database_performance_degradation() {
 
 /// Demonstrates WAL file growth without checkpointing.
 ///
-/// SQLite's WAL (Write-Ahead Log) can grow unbounded if not checkpointed.
+/// `SQLite`'s WAL (Write-Ahead Log) can grow unbounded if not checkpointed.
 /// This test shows how WAL size grows during bulk inserts.
 #[tokio::test]
 #[ignore]

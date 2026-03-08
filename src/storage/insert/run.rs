@@ -28,7 +28,7 @@ pub struct RunStats<'a> {
 /// Inserts or updates run metadata in the runs table.
 ///
 /// This should be called at the start of a run to record run-level information
-/// like application version, fingerprints_source, fingerprints_version, and geoip_version.
+/// like application version, `fingerprints_source`, `fingerprints_version`, and `geoip_version`.
 pub async fn insert_run_metadata(
     pool: &SqlitePool,
     meta: &RunMetadata<'_>,
@@ -58,7 +58,7 @@ pub async fn insert_run_metadata(
 
 /// Updates run statistics when a run completes.
 ///
-/// Stores all statistics from a ScanReport including elapsed time for easy querying.
+/// Stores all statistics from a `ScanReport` including elapsed time for easy querying.
 pub async fn update_run_stats(
     pool: &SqlitePool,
     stats: &RunStats<'_>,
@@ -85,7 +85,7 @@ pub async fn update_run_stats(
 
 /// Query run history from the database.
 ///
-/// Returns all completed runs sorted by start_time_ms (most recent first).
+/// Returns all completed runs sorted by `start_time_ms` (most recent first).
 /// Useful for reviewing past scan results after closing the terminal.
 ///
 /// # Example
@@ -105,6 +105,9 @@ pub async fn update_run_stats(
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the database query fails.
 pub async fn query_run_history(
     pool: &SqlitePool,
     limit: Option<usize>,
@@ -151,7 +154,7 @@ pub async fn query_run_history(
 /// Summary of a completed run, suitable for displaying run history.
 #[derive(Debug, Clone)]
 pub struct RunSummary {
-    /// Unique identifier for this run (e.g., "run_1765150444953").
+    /// Unique identifier for this run (e.g., "`run_1765150444953`").
     pub run_id: String,
     /// Application version that ran this scan (e.g., "0.1.4").
     pub version: Option<String>,
@@ -497,7 +500,7 @@ mod tests {
             let run_id = format!("test-run-limit-{}", i);
             let meta = RunMetadata {
                 run_id: &run_id,
-                start_time_ms: 1704067200000 + (i as i64 * 1000),
+                start_time_ms: 1704067200000 + (i64::from(i) * 1000),
                 version: "0.1.4",
                 fingerprints_source: None,
                 fingerprints_version: None,
@@ -540,7 +543,7 @@ mod tests {
             let run_id = format!("test-run-unlimited-{}", i);
             let meta = RunMetadata {
                 run_id: &run_id,
-                start_time_ms: 1704067200000 + (i as i64 * 1000),
+                start_time_ms: 1704067200000 + (i64::from(i) * 1000),
                 version: "0.1.4",
                 fingerprints_source: None,
                 fingerprints_version: None,

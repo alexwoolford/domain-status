@@ -75,7 +75,7 @@ pub enum AllowlistCondition {
 }
 
 /// Compiled per-rule allowlist.
-/// regex_target: "line" | "match" | empty (default = secret). Controls what string allowlist regex/stopwords are tested against.
+/// `regex_target`: "line" | "match" | empty (default = secret). Controls what string allowlist regex/stopwords are tested against.
 /// condition: AND = all criteria (path, regexes, stopwords) must match to skip; OR = any match skips. Path is N/A for single-blob scan.
 pub struct CompiledRuleAllowlist {
     pub regexes: Vec<Regex>,
@@ -140,13 +140,13 @@ fn compile_rule_allowlist(raw: &RuleAllowlistRaw) -> CompiledRuleAllowlist {
     }
 }
 
-/// Single pass over rules Table: collect rules and allowlists in key order (preserve_order);
+/// Single pass over rules Table: collect rules and allowlists in key order (`preserve_order`);
 /// associate each allowlist block with the preceding [[rules]] (Gitleaks semantics).
 fn rules_from_table(t: &toml::map::Map<String, Value>) -> Vec<RuleRaw> {
     let mut out: Vec<RuleRaw> = Vec::new();
     let mut pending_allowlists: Vec<RuleAllowlistRaw> = Vec::new();
 
-    for (key, val) in t.iter() {
+    for (key, val) in t {
         if key == "allowlists" {
             if let Value::Array(arr) = val {
                 for (i, tab) in arr.iter().enumerate() {
@@ -373,7 +373,7 @@ mod tests {
         );
     }
 
-    /// Overlay merge: gitleaks.overrides.toml appends allowlists to rules by rule_id. sourcegraph-access-token gets overlay allowlists.
+    /// Overlay merge: gitleaks.overrides.toml appends allowlists to rules by `rule_id`. sourcegraph-access-token gets overlay allowlists.
     #[test]
     fn test_overlay_merge_appends_allowlists() {
         let config = &GITLEAKS;

@@ -5,7 +5,7 @@
 
 use chrono::NaiveDateTime;
 
-/// Converts a NaiveDateTime to milliseconds since Unix epoch.
+/// Converts a `NaiveDateTime` to milliseconds since Unix epoch.
 pub(crate) fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Option<i64> {
     datetime.map(|dt| dt.and_utc().timestamp_millis())
 }
@@ -180,9 +180,9 @@ pub(crate) fn build_batch_insert_query(
 ///
 /// * `tx` - Database transaction
 /// * `table_name` - Name of the table to insert into
-/// * `parent_id_column` - Name of the parent ID column (e.g., "url_status_id")
-/// * `key_column` - Name of the key column (e.g., "header_name", "nameserver")
-/// * `value_column` - Name of the value column (e.g., "header_value")
+/// * `parent_id_column` - Name of the parent ID column (e.g., "`url_status_id`")
+/// * `key_column` - Name of the key column (e.g., "`header_name`", "nameserver")
+/// * `value_column` - Name of the value column (e.g., "`header_value`")
 /// * `parent_id` - The parent record ID
 /// * `data` - Slice of (key, value) tuples to insert
 /// * `conflict_clause` - Optional conflict resolution clause
@@ -257,7 +257,7 @@ where
 ///
 /// * `tx` - Database transaction
 /// * `table_name` - Name of the table to insert into
-/// * `parent_id_column` - Name of the parent ID column (e.g., "url_status_id")
+/// * `parent_id_column` - Name of the parent ID column (e.g., "`url_status_id`")
 /// * `value_column` - Name of the value column (e.g., "nameserver")
 /// * `parent_id` - The parent record ID
 /// * `data` - Slice of values to insert

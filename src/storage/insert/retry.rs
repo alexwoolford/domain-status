@@ -1,7 +1,7 @@
-//! SQLite retry logic for transient database errors.
+//! `SQLite` retry logic for transient database errors.
 //!
 //! This module provides a reusable retry wrapper for database operations that may
-//! encounter transient SQLITE_BUSY or SQLITE_LOCKED errors during high concurrency
+//! encounter transient `SQLITE_BUSY` or `SQLITE_LOCKED` errors during high concurrency
 //! or WAL checkpoints.
 
 use std::future::Future;
@@ -16,7 +16,7 @@ pub const INITIAL_DELAY_MS: u64 = 50;
 
 /// Checks if a database error is retriable (transient).
 ///
-/// Returns true for SQLITE_BUSY and SQLITE_LOCKED errors, which are transient
+/// Returns true for `SQLITE_BUSY` and `SQLITE_LOCKED` errors, which are transient
 /// and may succeed on retry.
 pub fn is_retriable_error(error: &DatabaseError) -> bool {
     matches!(
@@ -29,7 +29,7 @@ pub fn is_retriable_error(error: &DatabaseError) -> bool {
 
 /// Executes a database operation with retry logic for transient errors.
 ///
-/// Retries SQLITE_BUSY and SQLITE_LOCKED errors up to `MAX_RETRIES` times
+/// Retries `SQLITE_BUSY` and `SQLITE_LOCKED` errors up to `MAX_RETRIES` times
 /// with exponential backoff (50ms, 100ms, 200ms).
 ///
 /// # Arguments

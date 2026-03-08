@@ -125,7 +125,7 @@ pub struct Config {
     /// Log format
     pub log_format: LogFormat,
 
-    /// Database path (SQLite file)
+    /// Database path (`SQLite` file)
     pub db_path: PathBuf,
 
     /// Maximum concurrent requests
@@ -146,7 +146,7 @@ pub struct Config {
     /// Fingerprints source URL or local path
     pub fingerprints: Option<String>,
 
-    /// GeoIP database path or download URL
+    /// `GeoIP` database path or download URL
     pub geoip: Option<String>,
 
     /// HTTP status server port (optional, disabled by default)
@@ -270,6 +270,9 @@ impl Config {
     /// config.max_concurrency = 0;
     /// assert!(config.validate().is_err());
     /// ```
+    ///
+    /// # Errors
+    /// Returns `Err` when a validation rule is violated (e.g. `max_concurrency` out of range).
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         // Validate max_concurrency
         if self.max_concurrency == 0 {

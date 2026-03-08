@@ -10,9 +10,9 @@ use crate::fingerprint::models::FingerprintRuleset;
 /// Applies technology exclusions, removing technologies that are excluded by others.
 ///
 /// A technology is excluded if any other detected technology lists it in its `excludes` field.
-/// For example, if TechA excludes TechB, and both are detected, TechB will be removed.
+/// For example, if `TechA` excludes `TechB`, and both are detected, `TechB` will be removed.
 /// Extracts base technology name from formatted name (strips version if present).
-/// "jQuery:3.6.0" -> "jQuery", "WordPress" -> "WordPress"
+/// "jQuery:3.6.0" -> "jQuery", "`WordPress`" -> "`WordPress`"
 fn extract_base_tech_name(formatted_name: &str) -> &str {
     if let Some(colon_pos) = formatted_name.find(':') {
         &formatted_name[..colon_pos]
@@ -163,7 +163,7 @@ mod tests {
         pub html_text: &'a str,
         /// The URL being checked
         pub url: &'a str,
-        /// Script tag IDs found in HTML (for __NEXT_DATA__ etc.)
+        /// Script tag IDs found in HTML (for __`NEXT_DATA`__ etc.)
         #[allow(dead_code)]
         // JS pattern matching is disabled to match wappalyzergo, but kept for potential future use
         pub script_tag_ids: &'a HashSet<String>, // Used for JS pattern matching (currently disabled)
@@ -187,7 +187,7 @@ mod tests {
     /// # Arguments
     ///
     /// * `headers` - HTTP headers (normalized to lowercase)
-    /// * `header_patterns` - Technology header patterns (header_name -> pattern)
+    /// * `header_patterns` - Technology header patterns (`header_name` -> pattern)
     ///
     /// # Returns
     ///
@@ -243,7 +243,7 @@ mod tests {
     /// # Arguments
     ///
     /// * `cookies` - HTTP cookies (normalized to lowercase)
-    /// * `cookie_patterns` - Technology cookie patterns (cookie_name -> pattern)
+    /// * `cookie_patterns` - Technology cookie patterns (`cookie_name` -> pattern)
     ///
     /// # Returns
     ///
@@ -263,7 +263,7 @@ mod tests {
                 };
 
                 // Check all cookies for a match
-                for (actual_cookie_name, cookie_value) in cookies.iter() {
+                for (actual_cookie_name, cookie_value) in cookies {
                     if cookie_regex.is_match(actual_cookie_name) {
                         if pattern.is_empty() {
                             log::debug!(
@@ -411,7 +411,7 @@ mod tests {
     /// # Arguments
     ///
     /// * `meta_tags` - HTML meta tags (key format: "prefix:name")
-    /// * `meta_patterns` - Technology meta patterns (meta_key -> patterns)
+    /// * `meta_patterns` - Technology meta patterns (`meta_key` -> patterns)
     ///
     /// # Returns
     ///
@@ -464,7 +464,7 @@ mod tests {
     ///
     /// # Returns
     ///
-    /// TechnologyMatchResult with match status and extracted version (if any)
+    /// `TechnologyMatchResult` with match status and extracted version (if any)
     ///
     /// # Note
     ///

@@ -125,13 +125,13 @@ static ANCHOR_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
 /// platform URL patterns and extracts the platform, full URL, and identifier (username/handle).
 ///
 /// Supported platforms:
-/// - LinkedIn (company, profile, publisher pages)
+/// - `LinkedIn` (company, profile, publisher pages)
 /// - Twitter/X
 /// - Facebook
 /// - Instagram
-/// - YouTube (channel, user pages)
+/// - `YouTube` (channel, user pages)
 /// - GitHub
-/// - TikTok
+/// - `TikTok`
 /// - Pinterest
 /// - Snapchat
 /// - Reddit (subreddits, users)

@@ -3,7 +3,7 @@
 //! This module extracts structured data from HTML content including:
 //! - Meta tags (keywords, description, Open Graph, Twitter Cards)
 //! - Structured data (JSON-LD, microdata)
-//! - Analytics IDs (Google Analytics, Facebook Pixel, GTM, AdSense)
+//! - Analytics IDs (Google Analytics, Facebook Pixel, GTM, `AdSense`)
 //! - Social media links
 //! - Mobile-friendliness indicators
 //!

@@ -1,7 +1,7 @@
-//! GeoIP database initialization and loading.
+//! `GeoIP` database initialization and loading.
 //!
-//! This module provides functions to initialize and load GeoIP databases from
-//! local files or automatic downloads from MaxMind.
+//! This module provides functions to initialize and load `GeoIP` databases from
+//! local files or automatic downloads from `MaxMind`.
 
 mod asn;
 mod loader;
@@ -17,15 +17,15 @@ use crate::geoip::{self, GEOIP_CITY_READER};
 
 use loader::{geoip_cache_paths, load_from_file, load_from_url};
 
-/// Initializes the GeoIP database from a local file path or automatic download.
+/// Initializes the `GeoIP` database from a local file path or automatic download.
 ///
 /// The database is cached in memory and can be refreshed by calling this function
 /// again with a different path or after the cache expires.
 ///
 /// # Arguments
 ///
-/// * `geoip_path` - Optional path to the MaxMind GeoLite2 database file (.mmdb) or download URL.
-///   If None, will attempt automatic download using MAXMIND_LICENSE_KEY env var.
+/// * `geoip_path` - Optional path to the `MaxMind` `GeoLite2` database file (.mmdb) or download URL.
+///   If None, will attempt automatic download using `MAXMIND_LICENSE_KEY` env var.
 /// * `cache_dir` - Optional cache directory for downloaded databases
 ///
 /// # Returns

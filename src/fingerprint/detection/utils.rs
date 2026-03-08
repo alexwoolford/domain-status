@@ -6,7 +6,7 @@
 use reqwest::header::HeaderMap;
 use std::collections::HashMap;
 
-/// Extracts cookies from HTTP headers (both SET_COOKIE and Cookie headers).
+/// Extracts cookies from HTTP headers (both `SET_COOKIE` and Cookie headers).
 ///
 /// Normalizes cookie names and values to lowercase to match Go implementation.
 pub(crate) fn extract_cookies_from_headers(headers: &HeaderMap) -> HashMap<String, String> {
@@ -49,7 +49,7 @@ pub(crate) fn extract_cookies_from_headers(headers: &HeaderMap) -> HashMap<Strin
 /// `HeaderName::as_str()` works for both standard and custom headers.
 pub(crate) fn normalize_headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
     let mut header_map = HashMap::new();
-    for (name, value) in headers.iter() {
+    for (name, value) in headers {
         // Get header name as string (works for both standard and custom headers)
         let header_name = name.as_str().to_lowercase();
         if let Ok(header_value) = value.to_str() {

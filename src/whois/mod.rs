@@ -51,6 +51,9 @@ const DEFAULT_CACHE_DIR: &str = ".whois_cache";
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the WHOIS client cannot be created or the lookup fails.
 pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Option<WhoisResult>> {
     lookup_whois_with_lookup(domain, cache_dir, |lookup_domain| {
         let domain = lookup_domain.to_string();

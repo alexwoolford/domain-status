@@ -5,7 +5,7 @@ use sqlx::Transaction;
 
 use super::super::super::utils::build_batch_insert_query;
 
-/// Inserts OIDs into url_certificate_oids table using batch insert.
+/// Inserts OIDs into `url_certificate_oids` table using batch insert.
 pub(crate) async fn insert_oids(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
@@ -41,7 +41,7 @@ pub(crate) async fn insert_oids(
     }
 }
 
-/// Inserts certificate Subject Alternative Names (SANs) into url_certificate_sans table using batch insert.
+/// Inserts certificate Subject Alternative Names (SANs) into `url_certificate_sans` table using batch insert.
 pub(crate) async fn insert_certificate_sans(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
