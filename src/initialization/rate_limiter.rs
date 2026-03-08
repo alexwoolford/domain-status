@@ -42,7 +42,7 @@ fn compute_refill_permits(
     }
 
     #[allow(clippy::cast_precision_loss)]
-    let permits_to_add_f64 = current_rps as f64 * elapsed.as_secs_f64() + fractional_permits;
+    let permits_to_add_f64 = f64::from(current_rps) * elapsed.as_secs_f64() + fractional_permits;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let whole_permits = permits_to_add_f64.floor() as usize;
     let permits_to_restore = capacity.saturating_sub(available);

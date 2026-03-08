@@ -134,6 +134,9 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 /// # Returns
 ///
 /// `Ok(())` if initialization succeeds, or an error if logger setup fails.
+///
+/// # Errors
+/// Returns `Err` when the log file cannot be created or logger setup fails.
 pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), InitializationError> {
     // Create/truncate the log file
     let file = File::create(log_file).map_err(|e| {

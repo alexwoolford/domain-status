@@ -1,4 +1,4 @@
-//! domain_status library: core URL scanning functionality
+//! `domain_status` library: core URL scanning functionality
 //!
 //! This library provides high-level APIs for scanning URLs and capturing comprehensive
 //! metadata including HTTP status, TLS certificates, DNS information, technology

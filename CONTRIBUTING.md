@@ -56,7 +56,12 @@ just outdated   # dependency drift check
 
 ## Before Opening a PR
 
-Run the relevant local gates for your change. In most cases:
+Run the relevant local gates for your change. Before submitting, run format, lint, and tests so CI passes:
+
+- **Recommended:** `just check` (runs `cargo fmt`, `cargo clippy`, and `cargo test`).
+- **Or manually:** `cargo fmt`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, and `cargo test --all-features --all-targets --locked`.
+
+In most cases:
 
 ```bash
 just check

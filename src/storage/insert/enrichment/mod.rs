@@ -1,7 +1,7 @@
 //! Enrichment data insertion.
 //!
 //! This module handles inserting enrichment data for URL records:
-//! - GeoIP data
+//! - `GeoIP` data
 //! - Structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
 //! - Social media links
 //! - Security warnings

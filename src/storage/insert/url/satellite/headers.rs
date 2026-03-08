@@ -5,7 +5,7 @@ use sqlx::Transaction;
 
 use super::super::super::utils::insert_key_value_batch;
 
-/// Inserts security headers into url_security_headers table using batch insert.
+/// Inserts security headers into `url_security_headers` table using batch insert.
 pub(crate) async fn insert_security_headers(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
@@ -39,7 +39,7 @@ pub(crate) async fn insert_security_headers(
     }
 }
 
-/// Inserts HTTP headers into url_http_headers table using batch insert.
+/// Inserts HTTP headers into `url_http_headers` table using batch insert.
 pub(crate) async fn insert_http_headers(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,

@@ -24,8 +24,8 @@ use std::time::Instant;
 /// * `final_url_str` - The final URL after redirects
 /// * `ctx` - Processing context containing all shared resources
 /// * `elapsed` - Response time in seconds (includes redirect resolution + HTTP request)
-/// * `redirect_chain` - Vector of redirect chain URLs (will be inserted into url_redirect_chain table)
-/// * `start_time` - Original start time from process_url (for accurate total_ms calculation)
+/// * `redirect_chain` - Vector of redirect chain URLs (will be inserted into `url_redirect_chain` table)
+/// * `start_time` - Original start time from `process_url` (for accurate `total_ms` calculation)
 ///
 /// # Errors
 ///

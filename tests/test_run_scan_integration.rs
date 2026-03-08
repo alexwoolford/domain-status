@@ -1,4 +1,4 @@
-//! Integration tests for run_scan function
+//! Integration tests for `run_scan` function
 //!
 //! These tests verify the core orchestration logic including:
 //! - Concurrent execution with semaphore enforcement
@@ -65,7 +65,7 @@ fn create_test_config(
     }
 }
 
-/// Test that run_scan enforces max_concurrency semaphore limit
+/// Test that `run_scan` enforces `max_concurrency` semaphore limit
 ///
 /// This test verifies that the semaphore actually limits concurrent tasks
 /// by using a mock server with delays and tracking concurrent connections.
@@ -154,7 +154,7 @@ async fn test_run_scan_enforces_max_concurrency() {
     );
 }
 
-/// Test that run_scan respects static rate limiting
+/// Test that `run_scan` respects static rate limiting
 ///
 /// This test verifies that the rate limiter prevents exceeding the configured
 /// requests per second limit.
@@ -199,7 +199,7 @@ async fn test_run_scan_respects_rate_limit() {
     // Minimum expected time: rate limiting should prevent finishing in a single burst.
     // Use 50% of theoretical minimum so we verify throttling without flaking on CI timing.
     #[allow(clippy::cast_precision_loss)]
-    let min_expected_secs = (total_urls as f64 / rate_limit_rps as f64) * 0.5;
+    let min_expected_secs = (f64::from(total_urls) / f64::from(rate_limit_rps)) * 0.5;
 
     assert!(
         elapsed.as_secs_f64() >= min_expected_secs,
@@ -215,7 +215,7 @@ async fn test_run_scan_respects_rate_limit() {
     );
 }
 
-/// Test that run_scan handles 429 errors with adaptive rate limiting
+/// Test that `run_scan` handles 429 errors with adaptive rate limiting
 ///
 /// This test verifies that the adaptive rate limiter reduces RPS when
 /// encountering 429 (Too Many Requests) errors.

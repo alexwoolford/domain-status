@@ -35,7 +35,7 @@ pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize) + Send + Sync
 /// 4. Initialize database connection pool
 /// 5. Initialize HTTP clients and DNS resolver
 /// 6. Run database migrations
-/// 7. Initialize fingerprint ruleset and GeoIP database
+/// 7. Initialize fingerprint ruleset and `GeoIP` database
 /// 8. Create run metadata record
 /// 9. Set up shared processing context
 ///

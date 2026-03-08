@@ -82,7 +82,7 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-/// Main row data from the url_status table.
+/// Main row data from the `url_status` table.
 #[derive(Debug)]
 pub struct MainRowData {
     pub id: i64,
@@ -116,7 +116,7 @@ pub struct RedirectEntry {
     pub sequence_order: i64,
 }
 
-/// GeoIP data for an export row.
+/// `GeoIP` data for an export row.
 #[derive(Debug, Default)]
 pub struct GeoIpData {
     pub country_code: Option<String>,
@@ -144,7 +144,7 @@ pub struct WhoisData {
 /// for a single URL record, providing a unified view for exporters.
 #[derive(Debug)]
 pub struct ExportRow {
-    /// Main row data from url_status table
+    /// Main row data from `url_status` table
     pub main: MainRowData,
 
     /// Redirect chain
@@ -174,7 +174,7 @@ pub struct ExportRow {
     pub txt_records: Vec<TxtRecord>,
     pub mx_records: Vec<MxRecord>,
 
-    /// Analytics IDs (as "provider:tracking_id" strings)
+    /// Analytics IDs (as "`provider:tracking_id`" strings)
     pub analytics_ids_str: String,
     pub analytics_count: usize,
 
@@ -212,13 +212,13 @@ pub struct ExportRow {
     /// Partial failures (DNS/TLS errors that didn't block processing)
     pub partial_failures: Vec<PartialFailure>,
 
-    /// GeoIP data
+    /// `GeoIP` data
     pub geoip: GeoIpData,
 
     /// WHOIS data
     pub whois: WhoisData,
 
-    /// Favicon hash (Shodan-compatible MurmurHash3)
+    /// Favicon hash (Shodan-compatible `MurmurHash3`)
     pub favicon_hash: Option<i32>,
     /// Favicon URL
     pub favicon_url: Option<String>,
@@ -289,7 +289,7 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `main` - Main row data extracted from the url_status table
+/// * `main` - Main row data extracted from the `url_status` table
 ///
 /// # Returns
 ///
@@ -758,7 +758,7 @@ pub fn parse_key_value_pairs(kv_str: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Parse headers string into a HashMap.
+/// Parse headers string into a `HashMap`.
 ///
 /// The input string is in format "header1:value1;header2:value2;..."
 /// Note: values may contain colons, so we only split on the first colon.
@@ -790,7 +790,7 @@ pub fn parse_string_list(list_str: &str) -> Vec<String> {
     list_str.split(',').map(|s| s.to_string()).collect()
 }
 
-/// Build the URL from final_domain.
+/// Build the URL from `final_domain`.
 pub fn build_url(final_domain: &str) -> String {
     if final_domain.starts_with("http://") || final_domain.starts_with("https://") {
         final_domain.to_string()

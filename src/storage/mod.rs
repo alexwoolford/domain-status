@@ -7,7 +7,7 @@
 //! - Database migrations
 //! - Circuit breaker for write operations
 //!
-//! All database operations use SQLite with WAL mode enabled for concurrent access.
+//! All database operations use `SQLite` with WAL mode enabled for concurrent access.
 
 pub mod circuit_breaker;
 pub mod failure;

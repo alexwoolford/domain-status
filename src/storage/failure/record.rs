@@ -44,7 +44,7 @@ pub struct FailureRecordParams<'a> {
     pub url: &'a str,
     /// The error that occurred
     pub error: &'a Error,
-    /// Failure context (final_url, redirect_chain, headers)
+    /// Failure context (`final_url`, `redirect_chain`, headers)
     pub context: FailureContext,
     /// Number of retry attempts made
     pub retry_count: u32,

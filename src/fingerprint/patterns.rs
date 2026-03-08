@@ -51,7 +51,7 @@ pub(crate) struct MetaMatchResult {
 ///
 /// * `meta_key` - The meta key from the technology ruleset
 /// * `patterns` - Vector of patterns to match against meta values
-/// * `meta_tags` - HashMap of extracted meta tags (key format: "prefix:name")
+/// * `meta_tags` - `HashMap` of extracted meta tags (key format: "prefix:name")
 ///
 /// # Returns
 ///
@@ -180,8 +180,8 @@ struct ParsedPattern {
 /// Parses a Wappalyzer pattern string into pattern and version template.
 ///
 /// Wappalyzer patterns can contain metadata after "\;" separators:
-/// - Pattern: "nginx/(\\d+)\\;version:\\1" -> pattern="nginx/(\\d+)", version_template="\\1"
-/// - Pattern: "jquery\\;confidence:50" -> pattern="jquery", version_template=None
+/// - Pattern: "nginx/(\\d+)\\;version:\\1" -> pattern="nginx/(\\d+)", `version_template`="\\1"
+/// - Pattern: "jquery\\;confidence:50" -> pattern="jquery", `version_template=None`
 ///
 /// # Arguments
 ///
@@ -324,7 +324,7 @@ fn handle_empty_pattern(version_template: Option<&str>) -> PatternMatchResult {
 /// - Regex patterns (if they start with ^ or contain regex special chars)
 /// - Patterns with version extraction (e.g., "version:\\1")
 ///
-/// Returns PatternMatchResult with match status and extracted version (if any).
+/// Returns `PatternMatchResult` with match status and extracted version (if any).
 pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
     let parsed = parse_pattern(pattern);
 

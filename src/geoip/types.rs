@@ -1,11 +1,11 @@
-//! GeoIP data structures.
+//! `GeoIP` data structures.
 //!
-//! This module defines the data structures used for GeoIP lookups and metadata.
+//! This module defines the data structures used for `GeoIP` lookups and metadata.
 
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-/// Metadata about the GeoIP database
+/// Metadata about the `GeoIP` database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeoIpMetadata {
     /// Source path or URL
@@ -16,7 +16,7 @@ pub struct GeoIpMetadata {
     pub last_updated: SystemTime,
 }
 
-/// GeoIP lookup result
+/// `GeoIP` lookup result
 #[derive(Debug, Clone, Default)]
 pub struct GeoIpResult {
     pub country_code: Option<String>,

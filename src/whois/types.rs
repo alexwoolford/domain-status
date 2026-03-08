@@ -60,7 +60,7 @@ pub(crate) struct WhoisCacheEntry {
     pub(crate) domain: String,
 }
 
-/// Serializable version of WhoisResult for caching
+/// Serializable version of `WhoisResult` for caching
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WhoisCacheResult {
     creation_date: Option<i64>,

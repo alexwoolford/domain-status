@@ -159,10 +159,10 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
 /// Checks if an IPv6 address is private/internal (RFC 4193, RFC 4291).
 ///
 /// Private ranges:
-/// - ::1 (loopback)
-/// - fc00::/7 (unique local addresses)
-/// - fe80::/10 (link-local)
-/// - ff00::/8 (multicast)
+/// - `::1` (loopback)
+/// - `fc00::/7` (unique local addresses)
+/// - `fe80::/10` (link-local)
+/// - `ff00::/8` (multicast)
 fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     let segments = ip.segments();
 

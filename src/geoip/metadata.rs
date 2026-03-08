@@ -1,6 +1,6 @@
-//! Metadata management for GeoIP databases.
+//! Metadata management for `GeoIP` databases.
 //!
-//! This module provides functions to extract, load, and save GeoIP database metadata.
+//! This module provides functions to extract, load, and save `GeoIP` database metadata.
 
 use anyhow::Result;
 use maxminddb::Reader;
@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use super::types::GeoIpMetadata;
 
-/// Extracts metadata from a GeoIP database
+/// Extracts metadata from a `GeoIP` database
 pub(crate) fn extract_metadata<T: AsRef<[u8]>>(reader: &Reader<T>, source: &str) -> GeoIpMetadata {
     // Try to get build epoch from database metadata
     // MaxMind databases have a build_epoch field in their metadata

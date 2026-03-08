@@ -28,8 +28,8 @@ use anyhow::Error;
 /// # Implementation Details
 ///
 /// Uses error chain inspection to properly identify error types without relying on
-/// fragile string matching. Checks for specific error types (reqwest::Error, url::ParseError,
-/// sqlx::Error) via downcasting, which is more reliable than string matching.
+/// fragile string matching. Checks for specific error types (`reqwest::Error`, `url::ParseError`,
+/// `sqlx::Error`) via downcasting, which is more reliable than string matching.
 ///
 /// **Default behavior:** Unrecognized errors are NOT retried (fail-fast). Only
 /// explicitly-identified transient errors trigger retries.

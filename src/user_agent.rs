@@ -30,7 +30,7 @@ struct UserAgentMetadata {
 /// Fetches the latest Chrome version from Chrome's release API.
 ///
 /// Uses Chrome's release API to get the latest stable version.
-/// Falls back to FALLBACK_CHROME_VERSION if fetch fails.
+/// Falls back to `FALLBACK_CHROME_VERSION` if fetch fails.
 async fn fetch_latest_chrome_version() -> String {
     // Try multiple sources for reliability
     // Note: ChromeDriver API may return older versions, so we try Chrome for Testing first

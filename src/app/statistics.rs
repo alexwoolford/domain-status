@@ -70,7 +70,7 @@ pub async fn print_and_save_final_statistics(
 /// Prints a simple one-line summary of the run.
 ///
 /// This provides immediate feedback to the user in a concise format.
-/// Works with both plain and JSON log formats (log::info! handles formatting).
+/// Works with both plain and JSON log formats (`log::info`! handles formatting).
 #[allow(dead_code)] // Used internally by print_and_save_final_statistics
 fn print_simple_summary(
     total_urls: i32,
@@ -90,7 +90,7 @@ fn print_simple_summary(
 
 /// Prints timing statistics if enabled.
 ///
-/// Optionally accepts flags to indicate whether GeoIP and WHOIS are enabled,
+/// Optionally accepts flags to indicate whether `GeoIP` and WHOIS are enabled,
 /// which will be displayed in the output when these features are disabled.
 pub fn print_timing_statistics(
     timing_stats: &Arc<TimingStats>,

@@ -163,7 +163,7 @@ mod tests {
         Arc::new(pool)
     }
 
-    /// finalize_scan returns a ScanReport with correct totals and run_id; does not panic.
+    /// `finalize_scan` returns a `ScanReport` with correct totals and `run_id`; does not panic.
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_finalize_scan_returns_correct_report() {

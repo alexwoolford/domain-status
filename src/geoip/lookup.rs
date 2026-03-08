@@ -1,12 +1,12 @@
 //! IP address lookup functions.
 //!
-//! This module provides functions to look up IP addresses in the GeoIP databases
+//! This module provides functions to look up IP addresses in the `GeoIP` databases
 //! and retrieve metadata about the loaded databases.
 
 use super::types::{GeoIpMetadata, GeoIpResult};
 use crate::geoip::{GeoIpReaderCache, GEOIP_ASN_READER, GEOIP_CITY_READER};
 
-/// Owned GeoIP service that can be instantiated in tests without relying on process-global state.
+/// Owned `GeoIP` service that can be instantiated in tests without relying on process-global state.
 #[derive(Clone)]
 pub struct GeoIpService {
     city_reader: GeoIpReaderCache,
@@ -23,7 +23,7 @@ impl Default for GeoIpService {
 }
 
 impl GeoIpService {
-    /// Create an empty service with no GeoIP databases loaded.
+    /// Create an empty service with no `GeoIP` databases loaded.
     #[must_use]
     pub fn empty() -> Self {
         Self {
@@ -32,7 +32,7 @@ impl GeoIpService {
         }
     }
 
-    /// Looks up an IP address in the GeoIP databases (City and ASN).
+    /// Looks up an IP address in the `GeoIP` databases (City and ASN).
     #[must_use]
     pub fn lookup_ip(&self, ip: &str) -> Option<GeoIpResult> {
         let city_reader = match self.city_reader.read() {
@@ -109,14 +109,14 @@ impl GeoIpService {
         Some(geo_result)
     }
 
-    /// Gets the current GeoIP City metadata if initialized.
+    /// Gets the current `GeoIP` City metadata if initialized.
     #[must_use]
     pub fn get_metadata(&self) -> Option<GeoIpMetadata> {
         let reader = self.city_reader.read().ok()?;
         reader.as_ref().map(|(_, metadata)| metadata.clone())
     }
 
-    /// Checks if GeoIP is enabled (database is loaded).
+    /// Checks if `GeoIP` is enabled (database is loaded).
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.city_reader
@@ -127,18 +127,18 @@ impl GeoIpService {
     }
 }
 
-/// Looks up an IP address using the default GeoIP service.
+/// Looks up an IP address using the default `GeoIP` service.
 pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     GeoIpService::default().lookup_ip(ip)
 }
 
-/// Gets the current GeoIP City metadata if initialized.
+/// Gets the current `GeoIP` City metadata if initialized.
 #[allow(dead_code)]
 pub fn get_metadata() -> Option<GeoIpMetadata> {
     GeoIpService::default().get_metadata()
 }
 
-/// Checks if GeoIP is enabled (database is loaded).
+/// Checks if `GeoIP` is enabled (database is loaded).
 pub fn is_enabled() -> bool {
     GeoIpService::default().is_enabled()
 }

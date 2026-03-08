@@ -34,7 +34,7 @@ pub struct ScanResources {
     // Database
     /// Database connection pool
     pub pool: DbPool,
-    /// Database write circuit breaker for resilience (passed to ProcessingContext)
+    /// Database write circuit breaker for resilience (passed to `ProcessingContext`)
     #[allow(dead_code)] // Used via shared_ctx; kept on struct for drop/ownership
     pub db_circuit_breaker: Arc<crate::storage::circuit_breaker::DbWriteCircuitBreaker>,
 
@@ -91,7 +91,7 @@ pub struct ScanResources {
     /// Fingerprint detection ruleset (kept loaded during scan)
     #[allow(dead_code)] // Kept for reference; detection uses shared_ctx
     pub ruleset: Arc<FingerprintRuleset>,
-    /// Optional GeoIP database metadata (kept for reference)
+    /// Optional `GeoIP` database metadata (kept for reference)
     #[allow(dead_code)] // Kept for reference during scan
     pub geoip_metadata: Option<GeoIpMetadata>,
 

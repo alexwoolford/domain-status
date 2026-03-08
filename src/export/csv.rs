@@ -1,6 +1,6 @@
 //! CSV export functionality.
 //!
-//! Exports domain_status data to CSV format (simplified, flattened view).
+//! Exports `domain_status` data to CSV format (simplified, flattened view).
 //! One row per URL with all related data flattened into columns.
 
 use anyhow::{Context, Result};
@@ -57,6 +57,9 @@ fn format_date(ts_ms: Option<i64>) -> String {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
 #[allow(clippy::too_many_lines)]
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)

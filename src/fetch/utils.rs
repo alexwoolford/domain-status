@@ -4,9 +4,9 @@
 
 /// Serializes a value to JSON string.
 ///
-/// Note: JSON object key order is not guaranteed by the JSON spec, but serde_json
-/// typically preserves insertion order for HashMap. If deterministic key ordering
-/// is required, use BTreeMap in the source data structure instead.
+/// Note: JSON object key order is not guaranteed by the JSON spec, but `serde_json`
+/// typically preserves insertion order for `HashMap`. If deterministic key ordering
+/// is required, use `BTreeMap` in the source data structure instead.
 ///
 /// # Errors
 ///

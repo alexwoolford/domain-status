@@ -9,7 +9,7 @@ use crate::error_handling::DatabaseError;
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to url_status.id
+/// * `url_status_id` - Foreign key to `url_status.id`
 /// * `whois` - WHOIS lookup result
 pub async fn insert_whois_data(
     pool: &SqlitePool,

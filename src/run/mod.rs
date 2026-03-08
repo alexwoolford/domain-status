@@ -41,7 +41,7 @@ pub struct ScanReport {
     pub successful: usize,
     /// Number of URLs that failed to process
     pub failed: usize,
-    /// Path to the SQLite database containing results
+    /// Path to the `SQLite` database containing results
     pub db_path: PathBuf,
     /// Run identifier (format: `run_<timestamp_millis>`)
     pub run_id: String,
@@ -71,7 +71,7 @@ fn invoke_progress_callback(
 /// Runs a URL scan with the provided configuration.
 ///
 /// This is the main entry point for the library. It reads URLs from the input file,
-/// processes them concurrently, and stores results in a SQLite database.
+/// processes them concurrently, and stores results in a `SQLite` database.
 ///
 /// # Arguments
 ///

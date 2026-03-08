@@ -1,4 +1,4 @@
-//! GeoIP database loading from files and URLs.
+//! `GeoIP` database loading from files and URLs.
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
@@ -15,7 +15,7 @@ use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self};
 use crate::security::validate_url_safe;
 
-/// Loads GeoIP database from a local file path
+/// Loads `GeoIP` database from a local file path
 pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
     log::info!("Loading GeoIP database from: {}", path);
 
@@ -42,7 +42,7 @@ pub(super) fn geoip_cache_paths(cache_dir: &Path, db_name: &str) -> (PathBuf, Pa
     (cache_file, metadata_file)
 }
 
-/// Checks if a cached GeoIP database exists and is fresh.
+/// Checks if a cached `GeoIP` database exists and is fresh.
 ///
 /// Returns the cached reader and metadata if cache is valid and fresh.
 /// Returns `None` if cache doesn't exist, is expired, or is corrupted.
@@ -103,9 +103,9 @@ async fn try_load_from_cache(
     }
 }
 
-/// Downloads GeoIP database from URL and caches it locally.
+/// Downloads `GeoIP` database from URL and caches it locally.
 ///
-/// Handles both direct .mmdb file downloads and tar.gz archives (MaxMind format).
+/// Handles both direct .mmdb file downloads and tar.gz archives (`MaxMind` format).
 ///
 /// # Arguments
 ///
@@ -174,7 +174,7 @@ pub(crate) async fn load_from_url(
     }))
 }
 
-/// Downloads GeoIP database with size limit enforcement
+/// Downloads `GeoIP` database with size limit enforcement
 async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
 
@@ -238,7 +238,7 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
     Ok(downloaded_bytes)
 }
 
-/// Processes downloaded GeoIP bytes (extraction, caching, metadata)
+/// Processes downloaded `GeoIP` bytes (extraction, caching, metadata)
 async fn process_downloaded_geoip(
     downloaded_bytes: Vec<u8>,
     url: &str,

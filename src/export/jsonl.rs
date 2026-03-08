@@ -1,6 +1,6 @@
 //! JSONL export functionality.
 //!
-//! Exports domain_status data to JSONL (JSON Lines) format.
+//! Exports `domain_status` data to JSONL (JSON Lines) format.
 //! Each line is a complete JSON object representing one URL scan result.
 //! This format is ideal for programmatic processing, piping to jq, or loading into databases.
 
@@ -22,7 +22,7 @@ use super::row::{
 /// Each line is a complete JSON object with all fields for one URL scan result.
 /// This format preserves nested structures better than CSV and is ideal for:
 /// - Piping to `jq` for filtering/transformation
-/// - Loading into databases (MongoDB, Elasticsearch, etc.)
+/// - Loading into databases (`MongoDB`, Elasticsearch, etc.)
 /// - Programmatic processing in scripts
 ///
 /// # Arguments
@@ -56,6 +56,9 @@ use super::row::{
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
 #[allow(clippy::too_many_lines)]
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)

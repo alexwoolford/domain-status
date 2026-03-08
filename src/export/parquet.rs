@@ -1,8 +1,8 @@
 //! Parquet export functionality.
 //!
-//! Exports domain_status data to Apache Parquet format (typed columnar format for analytics).
+//! Exports `domain_status` data to Apache Parquet format (typed columnar format for analytics).
 //! Multi-valued fields are stored as `List<Struct>` or `List<Utf8>` arrays.
-//! This format is ideal for loading into DuckDB, Pandas, Spark, or any Arrow-compatible tool.
+//! This format is ideal for loading into `DuckDB`, Pandas, Spark, or any Arrow-compatible tool.
 
 use anyhow::{bail, Context, Result};
 use arrow::array::{
@@ -296,7 +296,7 @@ fn build_schema() -> Schema {
     ])
 }
 
-/// Helper to create a ListBuilder for List<Struct{Utf8, Utf8}> (two string fields).
+/// Helper to create a `ListBuilder` for List<Struct{Utf8, Utf8}> (two string fields).
 fn new_two_string_list_builder(f1: &str, f2: &str) -> ListBuilder<StructBuilder> {
     let fields = vec![
         Field::new(f1, DataType::Utf8, false),
@@ -312,7 +312,7 @@ fn new_two_string_list_builder(f1: &str, f2: &str) -> ListBuilder<StructBuilder>
     ListBuilder::new(builder)
 }
 
-/// Helper to create a ListBuilder for List<Struct{Utf8, Utf8, Utf8}> (three string fields).
+/// Helper to create a `ListBuilder` for List<Struct{Utf8, Utf8, Utf8}> (three string fields).
 fn new_three_string_list_builder(f1: &str, f2: &str, f3: &str) -> ListBuilder<StructBuilder> {
     let fields = vec![
         Field::new(f1, DataType::Utf8, false),
@@ -332,7 +332,7 @@ fn new_three_string_list_builder(f1: &str, f2: &str, f3: &str) -> ListBuilder<St
 
 use super::row::ExportRow;
 
-/// Append an optional string to a StringBuilder.
+/// Append an optional string to a `StringBuilder`.
 fn append_opt_str(builder: &mut StringBuilder, value: &Option<String>) {
     match value {
         Some(v) => builder.append_value(v),
@@ -340,7 +340,7 @@ fn append_opt_str(builder: &mut StringBuilder, value: &Option<String>) {
     }
 }
 
-/// Append an optional i64 to an Int64Builder.
+/// Append an optional i64 to an `Int64Builder`.
 fn append_opt_i64(builder: &mut Int64Builder, value: Option<i64>) {
     match value {
         Some(v) => builder.append_value(v),
@@ -348,7 +348,7 @@ fn append_opt_i64(builder: &mut Int64Builder, value: Option<i64>) {
     }
 }
 
-/// Append an optional f64 to a Float64Builder.
+/// Append an optional f64 to a `Float64Builder`.
 fn append_opt_f64(builder: &mut Float64Builder, value: Option<f64>) {
     match value {
         Some(v) => builder.append_value(v),
@@ -356,7 +356,7 @@ fn append_opt_f64(builder: &mut Float64Builder, value: Option<f64>) {
     }
 }
 
-/// Append an optional i32 to an Int32Builder.
+/// Append an optional i32 to an `Int32Builder`.
 fn append_opt_i32(builder: &mut Int32Builder, value: Option<i32>) {
     match value {
         Some(v) => builder.append_value(v),
@@ -364,7 +364,7 @@ fn append_opt_i32(builder: &mut Int32Builder, value: Option<i32>) {
     }
 }
 
-/// Write a batch of ExportRows as a RecordBatch to the Parquet writer.
+/// Write a batch of `ExportRows` as a `RecordBatch` to the Parquet writer.
 #[allow(clippy::too_many_lines)]
 fn write_batch(
     writer: &mut ArrowWriter<File>,
@@ -523,7 +523,7 @@ fn write_batch(
 
         // SAFETY: HTTP status codes fit in i32 (max 599)
         #[allow(clippy::cast_possible_wrap)]
-        http_status_b.append_value(row.main.status as i32);
+        http_status_b.append_value(i32::from(row.main.status));
         http_status_text_b.append_value(&row.main.status_desc);
         response_time_b.append_value(row.main.response_time);
         title_b.append_value(&row.main.title);
@@ -936,6 +936,9 @@ fn write_batch(
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the database pool cannot be created, the query fails, or writing the Parquet file fails.
 pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
     let output_path = opts.output.as_ref().ok_or_else(|| {
         anyhow::anyhow!(

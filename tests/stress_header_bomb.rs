@@ -11,13 +11,13 @@
 //!
 //! **ROOT CAUSE** (Historical):
 //! - src/fetch/handler/request.rs:108-112 extracted headers without count limit
-//! - Header VALUES were truncated to 1000 chars (MAX_HEADER_VALUE_SIZE)
+//! - Header VALUES were truncated to 1000 chars (`MAX_HEADER_VALUE_SIZE`)
 //! - But header COUNT was unlimited
 //! - Malicious server could send 10,000 headers × 1KB each = 10MB before body
 //!
 //! **FIX IMPLEMENTED** (v0.1.9+):
-//! - MAX_HEADER_COUNT = 100 (src/config/constants.rs:93)
-//! - Enforced in src/fetch/handler/request.rs:106-124 with take(MAX_HEADER_COUNT)
+//! - `MAX_HEADER_COUNT` = 100 (src/config/constants.rs:93)
+//! - Enforced in src/fetch/handler/request.rs:106-124 with `take(MAX_HEADER_COUNT)`
 //! - Excess headers are ignored with logged warning (potential malicious behavior)
 //!
 //! **Attack Vector** (Now Mitigated):

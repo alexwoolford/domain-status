@@ -13,12 +13,12 @@ use anyhow::{Context, Result};
 ///
 /// # Arguments
 ///
-/// * `_list` - The psl::List instance (unused, kept for API compatibility)
+/// * `_list` - The `psl::List` instance (unused, kept for API compatibility)
 /// * `url` - The URL to extract the domain from
 ///
 /// # Returns
 ///
-/// The registrable domain (e.g., "example.com" from "https://www.example.com/path")
+/// The registrable domain (e.g., "example.com" from "<https://www.example.com/path>")
 ///
 /// # Errors
 ///

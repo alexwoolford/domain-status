@@ -1,7 +1,7 @@
 //! Analytics and tracking ID extraction.
 //!
 //! This module extracts analytics and tracking IDs from HTML content and JavaScript,
-//! including Google Analytics, Facebook Pixel, Google Tag Manager, and Google AdSense.
+//! including Google Analytics, Facebook Pixel, Google Tag Manager, and Google `AdSense`.
 
 use regex::Regex;
 use std::fmt;
@@ -86,7 +86,7 @@ fn is_valid_gtm_id(id: &str) -> bool {
 /// - Google Analytics: `ga('create', 'UA-XXXXX-Y')`, `gtag('config', 'G-XXXXXXXXXX')`
 /// - Facebook Pixel: `fbq('init', 'XXXXX')`
 /// - Google Tag Manager: `GTM-XXXXX` in script src or dataLayer
-/// - Google AdSense: Publisher IDs in script src or data attributes
+/// - Google `AdSense`: Publisher IDs in script src or data attributes
 ///
 /// # Arguments
 ///

@@ -16,7 +16,7 @@
 //! - With EDNS0, TXT records can be much larger (up to 4KB per response typically)
 //!
 //! **FIX IMPLEMENTED** (v0.1.9+):
-//! - MAX_TXT_RECORD_SIZE = 1024 bytes (src/config/constants.rs:36)
+//! - `MAX_TXT_RECORD_SIZE` = 1024 bytes (src/config/constants.rs:36)
 //! - Enforced in src/dns/records.rs:87-101 with truncation and warning
 //! - Records exceeding 1KB are truncated with logged warning
 //!
@@ -35,8 +35,8 @@
 //! **Impact**: Memory exhaustion, scanner crash under concurrent DNS queries
 //!
 //! **Recommended Fix**:
-//! - Add MAX_TXT_RECORD_SIZE = 1024 to src/config/constants.rs
-//! - Add MAX_TXT_RECORD_COUNT = 10 to limit number of TXT records processed
+//! - Add `MAX_TXT_RECORD_SIZE` = 1024 to src/config/constants.rs
+//! - Add `MAX_TXT_RECORD_COUNT` = 10 to limit number of TXT records processed
 //! - Truncate oversized TXT records in src/dns/records.rs
 //! - Log warning when limits exceeded (potential DNS tunneling/attack)
 
@@ -45,7 +45,7 @@
 /// This test shows how the current implementation would handle a large
 /// TXT record by simulating the concatenation logic.
 ///
-/// **NOTE**: We cannot easily mock DNS responses with hickory_resolver,
+/// **NOTE**: We cannot easily mock DNS responses with `hickory_resolver`,
 /// so this test documents the vulnerability through simulation.
 #[tokio::test]
 #[ignore] // Run with: cargo test --test stress_dns_tunneling -- --ignored --nocapture

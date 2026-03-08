@@ -9,7 +9,7 @@ mod helpers;
 
 use helpers::{create_test_pool_with_path, create_test_run, create_test_url_status};
 
-/// Creates test data: URL with technologies, GeoIP, WHOIS, etc.
+/// Creates test data: URL with technologies, `GeoIP`, WHOIS, etc.
 async fn create_test_url_with_enrichment(
     pool: &SqlitePool,
     domain: &str,

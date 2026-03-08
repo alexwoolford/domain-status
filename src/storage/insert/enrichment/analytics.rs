@@ -6,15 +6,15 @@ use crate::error_handling::DatabaseError;
 
 /// Inserts analytics/tracking IDs for a URL status record.
 ///
-/// This function inserts analytics IDs (Google Analytics, Facebook Pixel, GTM, AdSense)
+/// This function inserts analytics IDs (Google Analytics, Facebook Pixel, GTM, `AdSense`)
 /// into the `url_analytics_ids` table. These IDs enable graph analysis by linking
 /// domains that share the same tracking IDs (indicating common ownership or management).
 ///
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to url_status.id
-/// * `analytics_ids` - Vector of AnalyticsId structs (provider, id)
+/// * `url_status_id` - Foreign key to `url_status.id`
+/// * `analytics_ids` - Vector of `AnalyticsId` structs (provider, id)
 pub async fn insert_analytics_ids(
     pool: &SqlitePool,
     url_status_id: i64,

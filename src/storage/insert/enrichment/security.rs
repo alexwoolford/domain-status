@@ -9,7 +9,7 @@ use crate::error_handling::DatabaseError;
 /// # Arguments
 ///
 /// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to url_status.id
+/// * `url_status_id` - Foreign key to `url_status.id`
 /// * `warnings` - Vector of security warnings
 pub async fn insert_security_warnings(
     pool: &SqlitePool,

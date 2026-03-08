@@ -137,7 +137,7 @@ mod tests {
     use super::*;
     use crate::fingerprint::ruleset::init_ruleset;
 
-    /// Test meta tag detection matching wappalyzergo's TestBodyDetect meta test
+    /// Test meta tag detection matching wappalyzergo's `TestBodyDetect` meta test
     #[tokio::test]
     async fn test_body_meta() {
         // Skip test if ruleset initialization fails (e.g., no network in CI)
@@ -200,7 +200,7 @@ mod tests {
     }
 
     /// Test HTML pattern detection with implied technologies
-    /// Matching wappalyzergo's TestBodyDetect html-implied test
+    /// Matching wappalyzergo's `TestBodyDetect` html-implied test
     #[tokio::test]
     async fn test_body_html_implied() {
         // Skip test if ruleset initialization fails (e.g., no network in CI)
@@ -270,7 +270,7 @@ mod tests {
         );
     }
 
-    /// Test HTML pattern detection (WordPress)
+    /// Test HTML pattern detection (`WordPress`)
     #[tokio::test]
     #[ignore] // Requires network access to fetch fingerprint ruleset
     async fn test_body_html_pattern() {

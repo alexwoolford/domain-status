@@ -5,7 +5,7 @@
 //! filters reduce false positives.
 //!
 //! Each finding includes:
-//! - **secret_type**: gitleaks rule id (e.g. `aws-access-token`)
+//! - **`secret_type`**: gitleaks rule id (e.g. `aws-access-token`)
 //! - **severity**: critical / high / medium / low (mapped from rule id or default High)
 //! - **location**: heuristic for where in the HTML the secret was found
 //! - **context**: ~80 chars before + match + ~80 chars after for analyst triage
@@ -22,7 +22,7 @@ const CONTEXT_CHARS: usize = 80;
 pub enum SecretSeverity {
     /// Can directly compromise systems or charge money (e.g., AWS secret key, Stripe secret key, private keys).
     Critical,
-    /// Significant access but may need pairing or have limits (e.g., AWS access key alone, OpenAI key).
+    /// Significant access but may need pairing or have limits (e.g., AWS access key alone, `OpenAI` key).
     High,
     /// Potentially sensitive but often restricted or scoped (e.g., Google API key, Slack webhook).
     Medium,
@@ -130,7 +130,7 @@ pub enum SecretType {
 
 #[allow(dead_code)]
 impl SecretType {
-    /// Returns the secret type as a snake_case string for DB storage.
+    /// Returns the secret type as a `snake_case` string for DB storage.
     pub fn as_str(&self) -> &'static str {
         match self {
             // Cloud
@@ -284,7 +284,7 @@ pub struct ExposedSecret {
     pub context: String,
     /// Severity classification (critical / high / medium / low).
     pub severity: SecretSeverity,
-    /// Heuristic location hint (inline_script, html_comment, url_parameter, etc.).
+    /// Heuristic location hint (`inline_script`, `html_comment`, `url_parameter`, etc.).
     pub location: String,
 }
 
@@ -436,7 +436,7 @@ fn line_containing(body: &str, start: usize, end: usize) -> &str {
     &body[line_start..line_end]
 }
 
-/// Extracts the secret from a regex match per Gitleaks: SecretGroup (1-based) if set, else first non-empty capture group, else full match.
+/// Extracts the secret from a regex match per Gitleaks: `SecretGroup` (1-based) if set, else first non-empty capture group, else full match.
 fn extract_secret(
     captures: Option<regex::Captures>,
     full_match: &str,
@@ -555,7 +555,7 @@ fn infer_location(context: &str) -> &'static str {
 ///
 /// Loads rules from the bundled `config/gitleaks.toml`, runs each regex over the body,
 /// applies entropy and allowlist filters, and returns findings with gitleaks rule id
-/// as secret_type and derived severity.
+/// as `secret_type` and derived severity.
 pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     let config = &crate::parse::gitleaks::GITLEAKS;
     let mut results = Vec::new();
@@ -940,7 +940,7 @@ mod tests {
         assert!(!redacted.contains(AWS_KEY));
     }
 
-    /// Condition AND with has_paths: for single-blob we never have a file path, so AND never succeeds and we must not skip.
+    /// Condition AND with `has_paths`: for single-blob we never have a file path, so AND never succeeds and we must not skip.
     #[test]
     fn test_rule_allowlist_condition_and_with_paths_does_not_skip() {
         use crate::parse::gitleaks::CompiledRuleAllowlist;

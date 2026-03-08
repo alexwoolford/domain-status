@@ -122,7 +122,7 @@ mod tests {
 
         // First delay should be at least RETRY_INITIAL_DELAY_MS
         // (ExponentialBackoff may have a minimum delay)
-        let expected_ms = crate::config::RETRY_INITIAL_DELAY_MS as u128;
+        let expected_ms = u128::from(crate::config::RETRY_INITIAL_DELAY_MS);
         let actual_ms = first_delay.as_millis();
         assert!(
             actual_ms >= expected_ms,
@@ -145,7 +145,7 @@ mod tests {
             assert!(curr >= prev, "Delay should increase: {} >= {}", curr, prev);
 
             // If not at max, should be approximately double
-            let max_delay_ms = (crate::config::RETRY_MAX_DELAY_SECS * 1000) as u128;
+            let max_delay_ms = u128::from(crate::config::RETRY_MAX_DELAY_SECS * 1000);
             if curr < max_delay_ms {
                 // SAFETY: Cast u128 to f64 for retry backoff ratio test
                 // - Duration delays are in milliseconds (typically 10-5000ms for retries)
@@ -176,7 +176,7 @@ mod tests {
         // All delays should be <= max_delay
         for delay in strategy {
             assert!(
-                delay.as_millis() <= max_delay_ms as u128,
+                delay.as_millis() <= u128::from(max_delay_ms),
                 "Delay {}ms exceeds max {}ms",
                 delay.as_millis(),
                 max_delay_ms

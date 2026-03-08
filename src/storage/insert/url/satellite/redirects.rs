@@ -5,7 +5,7 @@ use sqlx::Transaction;
 
 use super::super::super::utils::build_batch_insert_query;
 
-/// Inserts redirect chain into url_redirect_chain table using batch insert.
+/// Inserts redirect chain into `url_redirect_chain` table using batch insert.
 pub(crate) async fn insert_redirect_chain(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,

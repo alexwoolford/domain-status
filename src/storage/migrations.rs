@@ -1,6 +1,6 @@
 //! Database migration management.
 //!
-//! This module handles SQLx migrations embedded into the binary at compile time.
+//! This module handles `SQLx` migrations embedded into the binary at compile time.
 //! Migrations are extracted to a temporary directory at runtime and then executed.
 //! This ensures migrations work for distributed binaries without requiring the
 //! migrations directory to be present alongside the executable.
@@ -12,7 +12,7 @@ use tempfile::TempDir;
 // Embed migrations directory into the binary at compile time
 static MIGRATIONS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 
-/// Runs SQLx migrations embedded in the binary.
+/// Runs `SQLx` migrations embedded in the binary.
 ///
 /// This function extracts embedded migrations to a temporary directory and runs them.
 /// This ensures migrations are always available, even when the binary is distributed
@@ -20,7 +20,7 @@ static MIGRATIONS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 ///
 /// In development builds, it uses the source migrations directory directly (faster).
 /// In distributed binaries, it extracts embedded migrations to a temp directory
-/// (wrapped in spawn_blocking to avoid blocking the tokio runtime).
+/// (wrapped in `spawn_blocking` to avoid blocking the tokio runtime).
 ///
 /// # Examples
 ///
@@ -35,6 +35,9 @@ static MIGRATIONS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns `Err` when the migrator fails or embedded migrations cannot be extracted or run.
 pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
     // In development, try to use the source migrations directory first (faster)
     let source_migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");

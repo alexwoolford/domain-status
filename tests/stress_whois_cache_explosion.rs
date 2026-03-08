@@ -12,7 +12,7 @@
 //! **ROOT CAUSE**:
 //! - src/whois/cache.rs:36-51 saves WHOIS results to disk as JSON files
 //! - One file per domain: {domain}_com.json (~5KB per file)
-//! - Cache has 7-day TTL (CACHE_TTL_SECS)
+//! - Cache has 7-day TTL (`CACHE_TTL_SECS`)
 //! - Expired files deleted on access (lazy cleanup)
 //! - NO cache quota limit
 //! - NO LRU (Least Recently Used) eviction
@@ -37,7 +37,7 @@
 //! **Impact**: Disk exhaustion, system failure, degraded I/O performance
 //!
 //! **Recommended Fix**:
-//! - Add WHOIS_CACHE_MAX_SIZE_GB = 10 to config
+//! - Add `WHOIS_CACHE_MAX_SIZE_GB` = 10 to config
 //! - Implement LRU eviction when quota exceeded
 //! - Add background cleanup job (not just lazy cleanup)
 //! - Monitor cache size and alert when approaching quota
@@ -47,7 +47,7 @@ use tempfile::TempDir;
 
 /// Simulates WHOIS cache growth with realistic data.
 ///
-/// Creates cache files matching the structure used by save_to_cache(),
+/// Creates cache files matching the structure used by `save_to_cache()`,
 /// measuring disk usage as cache grows.
 #[tokio::test]
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
@@ -101,12 +101,12 @@ async fn test_whois_cache_growth_simulation() {
     );
     println!(
         "Average per domain: {:.1} KB",
-        disk_usage as f64 / domain_count as f64 / 1024.0
+        disk_usage as f64 / f64::from(domain_count) / 1024.0
     );
     println!();
 
     // Extrapolate to production scale
-    let kb_per_domain = disk_usage as f64 / domain_count as f64 / 1024.0;
+    let kb_per_domain = disk_usage as f64 / f64::from(domain_count) / 1024.0;
 
     println!("=== Production Scale Extrapolation ===");
     let scenarios = vec![
@@ -118,7 +118,7 @@ async fn test_whois_cache_growth_simulation() {
     ];
 
     for (scale, description) in scenarios {
-        let projected_gb = (kb_per_domain * scale as f64) / 1_048_576.0;
+        let projected_gb = (kb_per_domain * f64::from(scale)) / 1_048_576.0;
         println!("{}: {:.1} GB", description, projected_gb);
     }
 

@@ -55,7 +55,7 @@ impl<W: Write> Write for IgnoreBrokenPipe<W> {
 }
 
 /// Helper: Fetch a list of string values from a query that returns a single column.
-/// Returns (joined_string, count).
+/// Returns (`joined_string`, count).
 pub(crate) async fn fetch_string_list(
     pool: &DbPool,
     query: &str,
@@ -86,7 +86,7 @@ pub(crate) async fn fetch_count_query(
 }
 
 /// Helper: Fetch key-value pairs and format as "key:value" strings.
-/// Returns (joined_string, count).
+/// Returns (`joined_string`, count).
 pub(crate) async fn fetch_key_value_list(
     pool: &DbPool,
     query: &str,
@@ -113,7 +113,7 @@ pub(crate) async fn fetch_key_value_list(
 }
 
 /// Helper: Fetch filtered HTTP headers and format as "name:value" strings.
-/// Returns (joined_string, total_count).
+/// Returns (`joined_string`, `total_count`).
 /// The joined string contains only filtered headers (separated by semicolons),
 /// but the count is the total number of headers in the table.
 pub(crate) async fn fetch_filtered_http_headers(

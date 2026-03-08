@@ -28,7 +28,7 @@ use fetch::fetch_from_url;
 use github::get_latest_commit_sha;
 use local::load_from_path;
 
-/// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then HTTPArchive).
+/// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then `HTTPArchive`).
 /// wappalyzergo uses the same two sources; we merge with later overwriting earlier for the same technology.
 const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
     "https://raw.githubusercontent.com/enthec/webappanalyzer/main/src/technologies",
@@ -46,8 +46,8 @@ static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
 ///
 /// Rules are cached locally and refreshed if older than 7 days.
 /// If `fingerprints_source` is None, uses default GitHub sources:
-/// - https://github.com/enthec/webappanalyzer
-/// - https://github.com/HTTPArchive/wappalyzer
+/// - <https://github.com/enthec/webappanalyzer>
+/// - <https://github.com/HTTPArchive/wappalyzer>
 ///
 /// The ruleset is fetched from both sources and merged, with later sources
 /// overwriting earlier ones for the same technology.

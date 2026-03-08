@@ -16,7 +16,7 @@ pub const LOGGING_INTERVAL: usize = 5;
 /// Set to 35s to allow for slow sites while still being reasonable
 /// Formula: HTTP timeout (10s) + DNS timeout (3s) + TCP/TLS timeouts (10s) + enrichment (5s) + buffer (7s) = ~35s
 /// Note: DNS timeout reduced to 3s helps fail fast on DNS issues, but overall timeout kept at 35s
-/// to account for enrichment operations (GeoIP, WHOIS, technology detection, etc.)
+/// to account for enrichment operations (`GeoIP`, WHOIS, technology detection, etc.)
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(35);
 /// Default database file path
 pub const DB_PATH: &str = "./domain_status.db";
@@ -47,7 +47,7 @@ pub const TCP_CONNECT_TIMEOUT_SECS: u64 = 5;
 pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 5;
 /// WHOIS lookup timeout in seconds
 /// Most WHOIS queries complete in <2s. Set to 5s to provide buffer while preventing worker blocking.
-/// Without this, whois-service defaults to 30s which could consume most of URL_PROCESSING_TIMEOUT.
+/// Without this, whois-service defaults to 30s which could consume most of `URL_PROCESSING_TIMEOUT`.
 pub const WHOIS_TIMEOUT_SECS: u64 = 5;
 
 /// Default User-Agent string for HTTP requests.
@@ -88,7 +88,7 @@ pub const FAVICON_FETCH_TIMEOUT_SECS: u64 = 5;
 // Script content size limits
 /// Maximum script content size in bytes (100KB per script)
 /// Limits the amount of inline JavaScript we extract per script tag
-/// This prevents DoS attacks via large inline scripts
+/// This prevents `DoS` attacks via large inline scripts
 /// Enforced in src/fetch/response/html.rs when extracting inline script content
 pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
 
@@ -135,7 +135,7 @@ pub const RETRY_FACTOR: u64 = 2;
 pub const RETRY_MAX_DELAY_SECS: u64 = 15;
 /// Maximum number of retry attempts (including initial attempt)
 /// Set to 3 = initial attempt + 2 retries (total 3 attempts)
-/// This prevents infinite retries and ensures we don't exceed URL_PROCESSING_TIMEOUT
+/// This prevents infinite retries and ensures we don't exceed `URL_PROCESSING_TIMEOUT`
 pub const RETRY_MAX_ATTEMPTS: usize = 3;
 
 // Status server timing
@@ -148,18 +148,18 @@ pub const HTTP_STATUS_TOO_MANY_REQUESTS: u16 = 429;
 
 // Network download limits (for remote rulesets and GeoIP)
 /// Maximum size for fingerprint ruleset downloads in bytes (10MB)
-/// Prevents DoS attacks via extremely large ruleset files
+/// Prevents `DoS` attacks via extremely large ruleset files
 pub const MAX_RULESET_DOWNLOAD_SIZE: usize = 10 * 1024 * 1024;
-/// Maximum size for GeoIP database downloads in bytes (100MB)
-/// GeoIP databases are large but should not exceed this limit
+/// Maximum size for `GeoIP` database downloads in bytes (100MB)
+/// `GeoIP` databases are large but should not exceed this limit
 pub const MAX_GEOIP_DOWNLOAD_SIZE: usize = 100 * 1024 * 1024;
-/// Maximum extracted GeoIP `.mmdb` entry size in bytes (100MB)
+/// Maximum extracted `GeoIP` `.mmdb` entry size in bytes (100MB)
 /// Prevents tar.gz archive bombs from expanding into oversized in-memory payloads.
 pub const MAX_GEOIP_ARCHIVE_ENTRY_SIZE: usize = 100 * 1024 * 1024;
-/// Maximum number of archive entries to inspect when extracting GeoIP tarballs.
-/// MaxMind archives contain only a handful of files; larger counts are suspicious.
+/// Maximum number of archive entries to inspect when extracting `GeoIP` tarballs.
+/// `MaxMind` archives contain only a handful of files; larger counts are suspicious.
 pub const MAX_GEOIP_ARCHIVE_ENTRY_COUNT: usize = 128;
-/// Maximum number of retries for network downloads (rulesets, GeoIP)
+/// Maximum number of retries for network downloads (rulesets, `GeoIP`)
 pub const MAX_NETWORK_DOWNLOAD_RETRIES: usize = 3;
 
 // Cache TTL constants (in seconds)
@@ -181,7 +181,7 @@ pub const MAX_WHOIS_CACHE_FILE_SIZE: u64 = 512 * 1024;
 /// User-Agent cache TTL: 30 days
 /// Chrome releases roughly every 4 weeks, so 30 days ensures we stay current
 pub const USER_AGENT_CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
-/// GeoIP cache TTL: 7 days
+/// `GeoIP` cache TTL: 7 days
 pub const GEOIP_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 /// Maximum nested related records exported per table for a single URL row.
 /// Caps per-row memory/CPU amplification when exporting hostile or extremely large datasets.
