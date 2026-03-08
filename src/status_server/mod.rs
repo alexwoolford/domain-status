@@ -1,6 +1,7 @@
 //! HTTP status server for monitoring long-running jobs.
 //!
-//! Provides two endpoints:
+//! Provides three endpoints:
+//! - `/health` - Liveness check (200 OK when server is up)
 //! - `/metrics` - Prometheus-compatible metrics
 //! - `/status` - JSON status endpoint with detailed progress information
 //!
@@ -13,7 +14,7 @@ use axum::routing::get;
 use axum::Router;
 use tokio_util::sync::CancellationToken;
 
-use handlers::{metrics_handler, status_handler};
+use handlers::{health_handler, metrics_handler, status_handler};
 pub use types::StatusState;
 
 /// Managed background status server with explicit shutdown semantics.
@@ -40,6 +41,7 @@ impl StatusServerHandle {
 /// Build the status server router with the supplied shared state.
 pub fn build_router(state: StatusState) -> Router {
     Router::new()
+        .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
         .route("/status", get(status_handler))
         .with_state(state)
@@ -57,6 +59,7 @@ pub async fn spawn_status_server(
         .map_err(|e| anyhow::anyhow!("Failed to bind status server to port {}: {}", port, e))?;
 
     log::info!("Status server listening on http://127.0.0.1:{}/", port);
+    log::info!("  - Health: http://127.0.0.1:{}/health", port);
     log::info!("  - Metrics: http://127.0.0.1:{}/metrics", port);
     log::info!("  - Status: http://127.0.0.1:{}/status", port);
 
@@ -99,7 +102,24 @@ mod tests {
                 crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
             ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_build_router_serves_health_endpoint() {
+        let app = build_router(create_test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("health response");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]

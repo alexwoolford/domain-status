@@ -124,6 +124,13 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
             request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
             db_circuit_breaker: Arc::clone(&resources.db_circuit_breaker),
             runtime_metrics: Arc::clone(&resources.runtime_metrics),
+            run_id: Some(resources.run_id.clone()),
+            run_start_time_unix_secs: Some({
+                #[allow(clippy::cast_precision_loss)]
+                {
+                    (resources.start_time_epoch as f64) / 1000.0
+                }
+            }),
         };
         Some(crate::status_server::spawn_status_server(port, status_state).await?)
     } else {

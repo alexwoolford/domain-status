@@ -13,6 +13,13 @@ fn micros_to_ms(micros: u64) -> u64 {
     (micros + 500) / 1000
 }
 
+/// Escapes a string for use as a Prometheus label value (double-quoted; backslash and quote escaped).
+fn escape_prometheus_label_value(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 /// Renders the Prometheus metrics payload for the given state and elapsed time.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn render_metrics(state: &StatusState, elapsed: f64) -> String {
@@ -102,8 +109,27 @@ domain_status_timing_total_ms {}
         String::new()
     };
 
+    let run_id_label = state
+        .run_id
+        .as_deref()
+        .map(escape_prometheus_label_value)
+        .unwrap_or_default();
+    let start_time_secs = state.run_start_time_unix_secs.unwrap_or(0.0);
+
     format!(
-        r#"# HELP domain_status_total_urls Total number of URLs to process
+        r#"# HELP domain_status_run_info Run identifier for correlating with database and logs
+# TYPE domain_status_run_info gauge
+domain_status_run_info{{run_id="{}"}} 1
+
+# HELP domain_status_elapsed_seconds Seconds since the current run started
+# TYPE domain_status_elapsed_seconds gauge
+domain_status_elapsed_seconds {}
+
+# HELP domain_status_start_time_seconds Unix timestamp when the run started
+# TYPE domain_status_start_time_seconds gauge
+domain_status_start_time_seconds {}
+
+# HELP domain_status_total_urls Total number of URLs to process
 # TYPE domain_status_total_urls gauge
 domain_status_total_urls {}
 
@@ -167,6 +193,9 @@ domain_status_db_circuit_open {}
 # TYPE domain_status_current_rps gauge
 domain_status_current_rps {}
 {}"#,
+        run_id_label,
+        elapsed,
+        start_time_secs,
         total_urls_in_file,
         completed,
         failed,
@@ -231,6 +260,8 @@ mod tests {
                 crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
             ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         }
     }
 
@@ -297,12 +328,26 @@ mod tests {
                 metrics.record_retry();
                 metrics
             }),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         let metrics = render_metrics(&state, 5.0);
         assert_eq!(
             metrics.trim(),
-            r#"# HELP domain_status_total_urls Total number of URLs to process
+            r#"# HELP domain_status_run_info Run identifier for correlating with database and logs
+# TYPE domain_status_run_info gauge
+domain_status_run_info{run_id=""} 1
+
+# HELP domain_status_elapsed_seconds Seconds since the current run started
+# TYPE domain_status_elapsed_seconds gauge
+domain_status_elapsed_seconds 5
+
+# HELP domain_status_start_time_seconds Unix timestamp when the run started
+# TYPE domain_status_start_time_seconds gauge
+domain_status_start_time_seconds 0
+
+# HELP domain_status_total_urls Total number of URLs to process
 # TYPE domain_status_total_urls gauge
 domain_status_total_urls 100
 
@@ -427,6 +472,8 @@ domain_status_timing_total_ms 2"#.trim()
                 crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
             ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            run_id: None,
+            run_start_time_unix_secs: None,
         };
 
         let metrics = render_metrics(&state, 0.0);
