@@ -1,6 +1,7 @@
 //! CLI parsing and command execution.
 
 use anyhow::{Context, Result};
+use clap::error::ErrorKind;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::ffi::OsString;
@@ -353,7 +354,16 @@ where
     T: Into<OsString> + Clone,
 {
     load_environment();
-    let cli_command = parse_cli_command_from(args)?;
+    let cli_command = match parse_cli_command_from(args) {
+        Ok(c) => c,
+        Err(e) => {
+            if e.kind() == ErrorKind::DisplayVersion || e.kind() == ErrorKind::DisplayHelp {
+                let _ = e.print();
+                return Ok(e.exit_code());
+            }
+            return Err(e.into());
+        }
+    };
     run_cli_command(cli_command).await
 }
 
