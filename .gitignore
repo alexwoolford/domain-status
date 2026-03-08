@@ -97,3 +97,5 @@ compare_detection
 *.db
 :memory:
 proptest-regressions/
+
+rust-reference-projects/
