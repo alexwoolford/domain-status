@@ -34,6 +34,7 @@ impl KeyAlgorithm {
     ///
     /// For known algorithms, returns a static string.
     /// For `Other`, returns the stored OID string.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             KeyAlgorithm::RSA => "RSA",
@@ -45,6 +46,7 @@ impl KeyAlgorithm {
     }
 
     /// Parses a key algorithm from an X.509 OID string.
+    #[must_use]
     pub fn from_oid(oid_str: &str) -> Self {
         if oid_str == "1.2.840.113549.1.1.1" {
             KeyAlgorithm::RSA
@@ -90,6 +92,7 @@ pub enum TlsVersion {
 
 impl TlsVersion {
     /// Returns the version name as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             TlsVersion::Tls10 => "TLSv1.0",
@@ -105,6 +108,7 @@ impl TlsVersion {
     ///
     /// TLS 1.2 and TLS 1.3 are considered secure. Everything else
     /// (TLS 1.1, TLS 1.0, SSLv3, Unknown) is considered weak.
+    #[must_use]
     pub fn is_weak(&self) -> bool {
         !matches!(self, TlsVersion::Tls12 | TlsVersion::Tls13)
     }

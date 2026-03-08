@@ -16,12 +16,14 @@ categories = ["web-programming", "command-line-utilities", "development-tools"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
 [lints.clippy]
-# === Correctness (prevent bugs) ===
-cast_possible_truncation = "warn"        # usize→u32, u64→u32 truncation
+# === Correctness (deny to prevent regressions) ===
+cast_possible_truncation = "deny"        # usize→u32, u64→u32 truncation
+float_cmp = "deny"                       # Direct float equality checks
+duration_subsec = "deny"                 # Unchecked duration subtraction
+
+# === Correctness (warn) ===
 cast_precision_loss = "warn"             # usize→f64, i64→f64 precision loss
 cast_sign_loss = "warn"                  # i32→u32 sign loss
-float_cmp = "warn"                       # Direct float equality checks
-duration_subsec = "warn"                 # Unchecked duration subtraction
 
 # === Performance ===
 needless_pass_by_value = "warn"          # Unnecessary clones in parameters
@@ -32,11 +34,27 @@ unnecessary_wraps = "warn"               # Functions always return Ok
 too_many_lines = "warn"                  # Functions >100 lines
 cognitive_complexity = "warn"            # High cyclomatic complexity
 
-# === Allow noisy pedantic lints ===
-must_use_candidate = "allow"             # Many false positives
+# === Pedantic (phase 1) ===
+must_use_candidate = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "warn"
+
+# === Pedantic (phase 2) – enable as warn in follow-up PR after fixing doc/casts ===
+cast_lossless = "allow"
+default_trait_access = "allow"
+doc_markdown = "allow"
+explicit_iter_loop = "allow"
+
+# === Allow noisy / optional ===
 missing_errors_doc = "allow"             # Not critical
 module_name_repetitions = "allow"        # Common in Rust
 similar_names = "allow"                  # Too strict
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 
 [lib]
 name = "domain_status"

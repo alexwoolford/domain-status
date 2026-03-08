@@ -36,6 +36,7 @@ pub use resolver::init_resolver;
 /// # Returns
 ///
 /// An `Arc<Semaphore>` that can be shared across multiple tasks.
+#[must_use]
 pub fn init_semaphore(count: usize) -> Arc<Semaphore> {
     Arc::new(Semaphore::new(count))
 }
@@ -48,6 +49,7 @@ pub fn init_semaphore(count: usize) -> Arc<Semaphore> {
 /// # Returns
 ///
 /// An `Arc<psl::List>` that can be shared across multiple tasks for domain extraction.
+#[must_use]
 pub fn init_extractor() -> Arc<psl::List> {
     Arc::new(psl::List)
 }

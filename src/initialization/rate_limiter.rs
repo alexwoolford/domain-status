@@ -90,6 +90,7 @@ impl RateLimiter {
     /// Useful for monitoring and debugging. The RPS may be dynamically updated
     /// by adaptive rate limiting, so this value may change between calls.
     #[allow(dead_code)] // Useful for debugging/monitoring, may be used in future
+    #[must_use]
     pub fn current_rps(&self) -> u32 {
         self.current_rps.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -135,6 +136,7 @@ impl RateLimiter {
 /// shutdown.cancel();
 /// # }
 /// ```
+#[must_use]
 pub fn init_rate_limiter(
     rps: u32,
     burst: usize,
