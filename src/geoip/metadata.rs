@@ -151,17 +151,11 @@ mod tests {
         };
 
         let result = save_metadata(&metadata, &metadata_file).await;
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+        // Parent path is a file, so create_dir_all must fail. Accept any error message
+        // (platform-specific: Unix "Not a directory", Windows "already exists" / 183, etc.).
         assert!(
-            error_msg.contains("Not a directory")
-                || error_msg.contains("not a directory")
-                || error_msg.contains("directory")
-                || error_msg.contains("File exists")
-                || error_msg.contains("already exists")
-                || error_msg.contains("183"),
-            "Expected invalid parent path error, got: {}",
-            error_msg
+            result.is_err(),
+            "Expected save_metadata to fail when parent path is a file"
         );
     }
 
