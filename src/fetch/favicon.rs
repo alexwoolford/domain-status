@@ -129,13 +129,17 @@ fn resolve_favicon_url(href: &str, base_url: &str) -> Option<String> {
 }
 
 /// Builds the fallback `/favicon.ico` URL from the final URL's origin.
+/// Returns `None` for non-http(s) URLs (e.g. `ftp://`) or unparseable URLs.
 fn fallback_favicon_url(final_url: &str) -> Option<String> {
-    url::Url::parse(final_url).ok().map(|u| {
-        let host = u.host_str().unwrap_or("");
-        match u.port() {
-            Some(port) => format!("{}://{}:{}/favicon.ico", u.scheme(), host, port),
-            None => format!("{}://{}/favicon.ico", u.scheme(), host),
-        }
+    let u = url::Url::parse(final_url).ok()?;
+    let scheme = u.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let host = u.host_str().unwrap_or("");
+    Some(match u.port() {
+        Some(port) => format!("{scheme}://{host}:{port}/favicon.ico"),
+        None => format!("{scheme}://{host}/favicon.ico"),
     })
 }
 
@@ -180,6 +184,31 @@ pub(crate) async fn fetch_and_hash_favicon(
 mod tests {
     use super::*;
 
+    /// Builds the exact format Shodan uses: base64 with newline every 76 chars and trailing newline.
+    fn shodan_format(base64_str: &str) -> String {
+        let mut formatted = String::with_capacity(base64_str.len() + base64_str.len() / 76 + 1);
+        for (i, ch) in base64_str.chars().enumerate() {
+            formatted.push(ch);
+            if (i + 1) % 76 == 0 {
+                formatted.push('\n');
+            }
+        }
+        formatted.push('\n');
+        formatted
+    }
+
+    #[test]
+    fn test_compute_shodan_favicon_hash_contract_matches_spec() {
+        // Contract: hash must match Shodan spec (base64.encodebytes + mmh3 32-bit seed 0).
+        // We build the spec string independently and hash it; compare to our implementation.
+        let bytes = b"\x00\x00\x01\x00";
+        let base64_str = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let formatted = shodan_format(&base64_str);
+        let expected_hash =
+            murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0) as i32;
+        assert_eq!(compute_shodan_favicon_hash(bytes), expected_hash);
+    }
+
     #[test]
     fn test_compute_shodan_favicon_hash_known_value() {
         // Verify against a known Shodan hash for a trivial favicon
@@ -190,6 +219,25 @@ mod tests {
         let hash = compute_shodan_favicon_hash(bytes);
         // The hash should be a non-zero i32
         assert_ne!(hash, 0);
+    }
+
+    #[test]
+    fn test_compute_shodan_favicon_hash_base64_76_char_boundary() {
+        // Input that produces base64 length multiple of 76: ensures newline placement is correct.
+        // 57 raw bytes -> 76 base64 chars (one full line), then trailing newline.
+        let bytes: Vec<u8> = (0u8..57).collect();
+        let base64_str = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        assert_eq!(
+            base64_str.len(),
+            76,
+            "test assumption: 57 bytes -> 76 base64 chars"
+        );
+        let formatted = shodan_format(&base64_str);
+        assert!(formatted.ends_with('\n'));
+        assert_eq!(formatted.matches('\n').count(), 2); // one after 76 chars, one trailing
+        let expected_hash =
+            murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0) as i32;
+        assert_eq!(compute_shodan_favicon_hash(&bytes), expected_hash);
     }
 
     #[test]
@@ -241,5 +289,42 @@ mod tests {
             result,
             Some("https://example.com:8443/favicon.ico".to_string())
         );
+    }
+
+    #[test]
+    fn test_resolve_favicon_url_invalid_base_url_returns_none() {
+        let result = resolve_favicon_url("/favicon.ico", "not-a-valid-url");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_favicon_url_relative_with_empty_base_returns_none() {
+        let result = resolve_favicon_url("/favicon.ico", "");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fallback_favicon_url_non_http_returns_none() {
+        let result = fallback_favicon_url("ftp://example.com/path");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fallback_favicon_url_unparseable_returns_none() {
+        let result = fallback_favicon_url("not-a-url");
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_and_hash_favicon_returns_none_on_4xx() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let favicon_url = format!("{}/favicon.ico", server.uri());
+        let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
+        let result = fetch_and_hash_favicon(&client, None, &favicon_url).await;
+        assert!(result.is_none(), "4xx response must yield None");
     }
 }

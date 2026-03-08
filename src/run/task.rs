@@ -295,7 +295,92 @@ async fn handle_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive_rate_limiter::AdaptiveRateLimiter;
+    use crate::error_handling::ProcessingStats;
+    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
+    use crate::utils::TimingStats;
+    use hickory_resolver::config::ResolverOpts;
+    use hickory_resolver::TokioResolver;
     use std::sync::atomic::AtomicUsize;
+
+    /// Builds a minimal `ProcessingContext` for task tests (in-memory DB, no migrations).
+    /// `record_url_failure` will fail when inserting (tables not created) — use for
+    /// testing "record failure failed" path.
+    async fn minimal_ctx_without_migrations() -> Arc<ProcessingContext> {
+        let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("test redirect client"),
+        );
+        let extractor = Arc::new(psl::List);
+        let resolver = Arc::new(
+            TokioResolver::builder_tokio()
+                .unwrap()
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+        let pool = Arc::new(
+            sqlx::SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("test pool"),
+        );
+        let ctx = ProcessingContext::new(
+            NetworkContext::new(client, redirect_client, extractor, resolver),
+            DatabaseContext::new(pool, Arc::new(DbWriteCircuitBreaker::default())),
+            ConfigContext::new(
+                Arc::new(ProcessingStats::new()),
+                Arc::new(TimingStats::new()),
+                Some("run-1".to_string()),
+                false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            ),
+        );
+        Arc::new(ctx)
+    }
+
+    /// Builds a minimal `ProcessingContext` with migrations so `record_url_failure` can succeed.
+    async fn minimal_ctx_with_migrations() -> Arc<ProcessingContext> {
+        let pool = Arc::new(
+            sqlx::SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("test pool"),
+        );
+        crate::storage::run_migrations(pool.as_ref())
+            .await
+            .expect("migrations");
+        let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
+        let redirect_client = Arc::new(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("test redirect client"),
+        );
+        let ctx = ProcessingContext::new(
+            NetworkContext::new(
+                client,
+                redirect_client,
+                Arc::new(psl::List),
+                Arc::new(
+                    TokioResolver::builder_tokio()
+                        .unwrap()
+                        .with_options(ResolverOpts::default())
+                        .build(),
+                ),
+            ),
+            DatabaseContext::new(pool, Arc::new(DbWriteCircuitBreaker::default())),
+            ConfigContext::new(
+                Arc::new(ProcessingStats::new()),
+                Arc::new(TimingStats::new()),
+                Some("run-1".to_string()),
+                false,
+                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+            ),
+        );
+        Arc::new(ctx)
+    }
 
     #[tokio::test]
     async fn test_handle_success_counts_inserted_url_as_successful() {
@@ -347,5 +432,199 @@ mod tests {
         assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
         assert_eq!(skipped_urls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_increments_failed_urls_and_invokes_callback() {
+        let url: Arc<str> = Arc::from("https://example.com/fail");
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let ctx = minimal_ctx_with_migrations().await;
+        let progress_calls = Arc::new(AtomicUsize::new(0));
+        let callback: ProgressCallback = Some(Arc::new({
+            let progress_calls = Arc::clone(&progress_calls);
+            move |completed, failed, _total| {
+                progress_calls.store(completed + failed, Ordering::SeqCst);
+            }
+        }));
+
+        let err = anyhow::anyhow!("simulated failure");
+        handle_failure(
+            &url,
+            err,
+            0,
+            std::time::Instant::now(),
+            &ctx,
+            &completed_urls,
+            &failed_urls,
+            1,
+            &callback,
+            None,
+        )
+        .await;
+
+        assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_with_429_error_completes_without_panic() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(429))
+            .mount(&server)
+            .await;
+
+        let resp = reqwest::get(server.uri()).await.unwrap();
+        let err = resp.error_for_status().unwrap_err();
+        let anyhow_err = anyhow::anyhow!(err);
+
+        let url: Arc<str> = Arc::from(server.uri().as_str());
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let ctx = minimal_ctx_with_migrations().await;
+        let adaptive = Arc::new(AdaptiveRateLimiter::new(
+            10,
+            None,
+            None,
+            Some(0.2),
+            None,
+            None,
+        ));
+
+        handle_failure(
+            &url,
+            anyhow_err,
+            1,
+            std::time::Instant::now(),
+            &ctx,
+            &completed_urls,
+            &failed_urls,
+            1,
+            &None,
+            Some(&adaptive),
+        )
+        .await;
+
+        assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_with_non_429_error_does_not_panic() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let resp = reqwest::get(server.uri()).await.unwrap();
+        let err = resp.error_for_status().unwrap_err();
+        let anyhow_err = anyhow::anyhow!(err);
+
+        let url: Arc<str> = Arc::from(server.uri().as_str());
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let ctx = minimal_ctx_with_migrations().await;
+        let adaptive = Arc::new(AdaptiveRateLimiter::new(
+            10,
+            None,
+            None,
+            Some(0.2),
+            None,
+            None,
+        ));
+
+        handle_failure(
+            &url,
+            anyhow_err,
+            0,
+            std::time::Instant::now(),
+            &ctx,
+            &completed_urls,
+            &failed_urls,
+            1,
+            &None,
+            Some(&adaptive),
+        )
+        .await;
+
+        assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_timeout_increments_failed_urls_and_error_stats() {
+        let url: Arc<str> = Arc::from("https://example.com/timeout");
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let ctx = minimal_ctx_with_migrations().await;
+        let progress_calls = Arc::new(AtomicUsize::new(0));
+        let callback: ProgressCallback = Some(Arc::new({
+            let progress_calls = Arc::clone(&progress_calls);
+            move |completed, failed, _total| {
+                progress_calls.store(completed + failed, Ordering::SeqCst);
+            }
+        }));
+        let adaptive = Arc::new(AdaptiveRateLimiter::new(
+            10,
+            None,
+            None,
+            Some(0.2),
+            None,
+            None,
+        ));
+
+        handle_timeout(
+            &url,
+            std::time::Instant::now(),
+            &ctx,
+            &completed_urls,
+            &failed_urls,
+            1,
+            &callback,
+            Some(&adaptive),
+        )
+        .await;
+
+        assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            ctx.config
+                .error_stats
+                .get_error_count(crate::error_handling::ErrorType::ProcessUrlTimeout),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_when_record_url_failure_fails_does_not_panic() {
+        let url: Arc<str> = Arc::from("https://example.com/record-fail");
+        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let ctx = minimal_ctx_without_migrations().await;
+        let progress_calls = Arc::new(AtomicUsize::new(0));
+        let callback: ProgressCallback = Some(Arc::new({
+            let progress_calls = Arc::clone(&progress_calls);
+            move |_completed, failed, _total| {
+                progress_calls.store(failed, Ordering::SeqCst);
+            }
+        }));
+
+        let err = anyhow::anyhow!("simulated failure");
+        handle_failure(
+            &url,
+            err,
+            0,
+            std::time::Instant::now(),
+            &ctx,
+            &completed_urls,
+            &failed_urls,
+            1,
+            &callback,
+            None,
+        )
+        .await;
+
+        assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
     }
 }

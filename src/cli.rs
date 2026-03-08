@@ -552,4 +552,45 @@ mod tests {
         let report = sample_report(max_urls, max_urls.saturating_sub(1), 1);
         assert_eq!(evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report), 0);
     }
+
+    /// Boundary: exactly at threshold must return 0 (condition is `>`, not `>=`).
+    #[test]
+    fn test_evaluate_exit_code_pct_exactly_at_threshold_returns_zero() {
+        // 10% failed, threshold 10: 10.0 > 10 is false → exit 0
+        let report = sample_report(100, 90, 10);
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            0,
+            "exactly 10% failed with threshold 10 must return 0 (>)"
+        );
+    }
+
+    /// Boundary: just over threshold must return 2.
+    #[test]
+    fn test_evaluate_exit_code_pct_just_over_threshold_returns_two() {
+        // 11% failed, threshold 10: 11.0 > 10 is true → exit 2
+        let report = sample_report(100, 89, 11);
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            2,
+            "just over 10% failed with threshold 10 must return 2"
+        );
+    }
+
+    /// Floating-point boundary: 1/10 and 2/20 are 10%; both must yield 0 for threshold 10.
+    #[test]
+    fn test_evaluate_exit_code_pct_float_boundary() {
+        let report_1_10 = sample_report(10, 9, 1);
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report_1_10),
+            0,
+            "1/10 = 10% with threshold 10 must return 0"
+        );
+        let report_2_20 = sample_report(20, 18, 2);
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report_2_20),
+            0,
+            "2/20 = 10% with threshold 10 must return 0"
+        );
+    }
 }

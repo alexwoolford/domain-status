@@ -485,3 +485,16 @@ fn test_special_ip_addresses_validation() {
         assert!(ip.is_ok(), "Special IP {} should validate", ip_str);
     }
 }
+
+/// Adversarial: lookup that may fail (reserved .invalid TLD or network) must return Err or Ok, never panic.
+#[tokio::test]
+async fn test_lookup_failure_returns_error_not_panic() {
+    let client = WhoisClient::new_without_cache().await.unwrap();
+    // .invalid is reserved (RFC 2606); lookup may fail with whois/network error
+    let result = client.lookup("example.invalid").await;
+    // Must not panic; either Ok (if servers return something) or Err with a proper WhoisError
+    if let Err(e) = &result {
+        // Ensure we get a known error variant (not an unhandled panic)
+        let _ = format!("{:?}", e);
+    }
+}

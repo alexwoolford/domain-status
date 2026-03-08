@@ -149,6 +149,23 @@ mod tests {
         // which is technically valid in DNS contexts.
     }
 
+    /// Adversarial: malformed or boundary domain inputs must not panic; return Err or fallback.
+    #[test]
+    fn test_extract_tld_adversarial_inputs() {
+        // Empty must fail
+        assert!(extract_tld("").is_err());
+
+        // Single dot: PSL may fail or fallback; must not panic
+        let _ = extract_tld(".");
+
+        // Spaces only: must not panic
+        let _ = extract_tld("   ");
+
+        // Very long domain (boundary): must not panic
+        let long = "a.".to_string() + &"b".repeat(200);
+        let _ = extract_tld(&long);
+    }
+
     #[test]
     fn test_extract_tld_edge_cases() {
         // Single letter TLD (valid in DNS)
