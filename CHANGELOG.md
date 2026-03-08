@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-03-08
+
+### Added
+- Impactful adversarial and boundary tests for run/task, cli, favicon, geoip, fetch/handler, and vendor whois-service (contracts, failure paths, threshold boundaries).
+
 ### Changed
 - **Timing fields**: Internal duration fields renamed from `_ms` to `_us` where they store microseconds (`UrlTimingMetrics`, `TimingStats`, and status server timing). Epoch/timestamp columns (e.g. `start_time_ms`, `observed_at_ms`) remain in milliseconds; no database migration. Public API (e.g. `/status` JSON) still reports times in milliseconds.
 
