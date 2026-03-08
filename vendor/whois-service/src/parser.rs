@@ -250,3 +250,38 @@ impl WhoisParser {
         (Some(parsed), analysis)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Adversarial: malformed or empty WHOIS data must not panic; parser returns ParsedWhoisData.
+    #[test]
+    fn test_parse_whois_data_empty_does_not_panic() {
+        let parsed = WhoisParser::parse_whois_data("");
+        assert!(parsed.registrar.is_none());
+        assert!(parsed.name_servers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_whois_data_malformed_garbage_does_not_panic() {
+        let parsed = WhoisParser::parse_whois_data("not a valid whois response\n\x00\n!!!\n");
+        // Parser should not panic; may or may not extract anything
+        assert!(parsed.name_servers.is_empty() || !parsed.name_servers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_whois_data_very_long_line_does_not_panic() {
+        let long_line = "key: ".to_string() + &"x".repeat(100_000);
+        let parsed = WhoisParser::parse_whois_data(&long_line);
+        assert!(parsed.registrar.is_none());
+    }
+
+    #[test]
+    fn test_parse_whois_data_only_comments_and_empty_lines() {
+        let data = "% Comment\n\n# Another\n\n>>> Header\n  \n";
+        let parsed = WhoisParser::parse_whois_data(data);
+        assert!(parsed.registrar.is_none());
+        assert!(parsed.name_servers.is_empty());
+    }
+}

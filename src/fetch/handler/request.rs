@@ -582,6 +582,41 @@ mod tests {
         // (Actual HTTP->HTTPS detection requires real redirect, tested in integration)
     }
 
+    /// Adversarial: redirect chain that ends in 4xx; outcome must be Err and redirect must be tracked.
+    #[tokio::test]
+    async fn test_handle_http_request_redirect_to_4xx_returns_error_and_tracks_redirect() {
+        let server = Server::run();
+        let start_url = server.url("/start").to_string();
+        let final_url = server.url("/final").to_string();
+
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/start")).respond_with(
+                status_code(302)
+                    .insert_header("Location", final_url.as_str())
+                    .body("Redirect"),
+            ),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/final"))
+                .times(2) // redirect resolution + main request
+                .respond_with(status_code(404).body("Not Found")),
+        );
+
+        let ctx = create_test_context(&server).await;
+        let start_time = std::time::Instant::now();
+
+        let result = handle_http_request(&ctx, &start_url, start_time).await;
+
+        assert!(result.is_err(), "redirect to 4xx must yield Err");
+        assert_eq!(
+            ctx.config
+                .error_stats
+                .get_info_count(crate::error_handling::InfoType::HttpRedirect),
+            1,
+            "redirect must be tracked when chain ends in 4xx"
+        );
+    }
+
     #[tokio::test]
     async fn test_handle_http_request_failure_context_attached() {
         let server = Server::run();

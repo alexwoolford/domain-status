@@ -177,6 +177,32 @@ mod tests {
         }
     }
 
+    /// Boundary/adversarial: invalid or malformed IPs must return None without panic.
+    #[test]
+    fn test_lookup_ip_invalid_input_returns_none() {
+        let service = GeoIpService::empty();
+        let invalid = [
+            "",
+            "   ",
+            "not.an.ip",
+            "1.2.3.4.5",
+            "1.2.3",
+            "8.8.8.8\n",
+            "8.8.8.8\t",
+            "-1.0.0.0",
+            "0xdead",
+            "::g",
+            "2001:db8::1%",
+        ];
+        for ip in invalid {
+            assert!(
+                service.lookup_ip(ip).is_none(),
+                "expected None for invalid input {:?}",
+                ip
+            );
+        }
+    }
+
     #[test]
     fn test_default_wrapper_delegates_without_panicking() {
         let _ = lookup_ip("8.8.8.8");
