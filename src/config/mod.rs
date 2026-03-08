@@ -12,4 +12,6 @@ mod types;
 // Re-export all constants
 pub use constants::*;
 pub use headers::*;
-pub use types::{Config, ConfigValidationError, FailOn, LogFormat, LogLevel};
+pub use types::{
+    Config, ConfigValidationError, FailOn, LogFormat, LogLevel, ScanDependencyOverrides,
+};

@@ -46,6 +46,7 @@ fn create_test_config(
     Config {
         file: input_file,
         log_level: LogLevel::Error, // Reduce noise in tests
+        log_level_filter_override: None,
         log_format: LogFormat::Plain,
         db_path,
         max_concurrency,
@@ -62,6 +63,7 @@ fn create_test_config(
         log_file: None,
         progress_callback: None,
         max_per_domain: 0, // Disable per-domain limiting for tests
+        dependency_overrides: None,
     }
 }
 

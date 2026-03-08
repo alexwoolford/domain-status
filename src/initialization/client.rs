@@ -141,6 +141,7 @@ mod tests {
             fail_on_pct_threshold: 10,
             rate_limit_rps: 15,
             log_level: crate::config::LogLevel::Info,
+            log_level_filter_override: None,
             log_format: crate::config::LogFormat::Plain,
             status_port: None,
             fingerprints: None,
@@ -150,6 +151,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             max_per_domain: 5,
+            dependency_overrides: None,
         }
     }
 

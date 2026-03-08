@@ -157,6 +157,14 @@ cargo build --release
 
 This creates an executable in `./target/release/domain_status` (or `domain_status.exe` on Windows).
 
+**Shell completions and man page:** The build script generates shell completions (bash, zsh, fish, PowerShell, elvish) and a man page (`domain_status.1`). After `cargo build` or `cargo build --release`, they appear under `target/debug/build/domain_status-<hash>/out/` or `target/release/build/domain_status-<hash>/out/`. To generate into a fixed directory (e.g. for packaging), set `DOMAIN_STATUS_GEN_DIR` and run the build:
+
+```bash
+DOMAIN_STATUS_GEN_DIR=./completions cargo build --release
+```
+
+Then install the man page (e.g. `man -l completions/domain_status.1` or copy to `$MANPATH`) and source the completion script for your shell (e.g. `source completions/domain_status.bash` for Bash).
+
 **Note:** SQLite is bundled in the binary - no system SQLite installation required. The tool is completely self-contained.
 
 ## 🌟 Features

@@ -442,6 +442,7 @@ mod tests {
             fail_on_pct_threshold: 10,
             enable_whois: false,
             log_level: LogLevel::Info,
+            log_level_filter_override: None,
             log_format: LogFormat::Plain,
             user_agent: crate::config::DEFAULT_USER_AGENT.to_string(),
             fingerprints: None,
@@ -450,6 +451,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             max_per_domain: 5,
+            dependency_overrides: None,
         };
 
         let result = run_scan(config).await;
@@ -523,6 +525,7 @@ mod tests {
             fail_on_pct_threshold: 10,
             enable_whois: false,
             log_level: LogLevel::Info,
+            log_level_filter_override: None,
             log_format: LogFormat::Plain,
             user_agent: crate::config::DEFAULT_USER_AGENT.to_string(),
             fingerprints: None,
@@ -531,6 +534,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             max_per_domain: 5,
+            dependency_overrides: None,
         };
 
         let result = run_scan(config).await;

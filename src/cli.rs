@@ -3,6 +3,8 @@
 use anyhow::{Context, Result};
 use clap::error::ErrorKind;
 use clap::Parser;
+use clap_verbosity_flag::InfoLevel;
+use clap_verbosity_flag::Verbosity;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -19,8 +21,8 @@ use crate::{run_scan, Config, ScanReport};
 #[command(
     name = "domain_status",
     about = "Domain intelligence scanner - scan URLs and export results.",
-    version = env!("CARGO_PKG_VERSION"),
-    long_version = env!("CARGO_PKG_VERSION"),
+    version = env!("DOMAIN_STATUS_VERSION"),
+    long_version = env!("DOMAIN_STATUS_VERSION"),
     subcommand_required = true
 )]
 pub enum CliCommand {
@@ -42,6 +44,10 @@ pub struct ScanCommand {
     /// Log level: error|warn|info|debug|trace
     #[arg(long, value_enum, default_value_t = LogLevel::Info)]
     pub log_level: LogLevel,
+
+    /// Increase logging verbosity (-v = debug, -vv = trace). Overrides `--log-level` when set.
+    #[command(flatten)]
+    pub verbosity: Verbosity<InfoLevel>,
 
     /// Log format: plain|json
     #[arg(long, value_enum, default_value_t = LogFormat::Plain)]
@@ -149,10 +155,13 @@ pub enum ExportFormat {
 
 impl From<ScanCommand> for Config {
     fn from(cli: ScanCommand) -> Self {
+        let log_level_filter_override =
+            Some(cli.verbosity.log_level_filter()).filter(|f| *f != log::LevelFilter::Info);
         Self {
             file: cli.file,
             log_level: cli.log_level,
             log_format: cli.log_format,
+            log_level_filter_override,
             db_path: cli.db_path,
             max_concurrency: cli.max_concurrency,
             timeout_seconds: cli.timeout_seconds,
@@ -168,6 +177,7 @@ impl From<ScanCommand> for Config {
             fail_on_pct_threshold: cli.fail_on_pct_threshold,
             log_file: Some(cli.log_file),
             progress_callback: None,
+            dependency_overrides: None,
         }
     }
 }
@@ -203,11 +213,15 @@ pub fn load_environment() {
     }
 }
 
-fn init_scan_logging(log_level: &LogLevel, log_file: &Path) -> Result<()> {
-    init_logger_to_file(log_level.clone().into(), log_file)
-        .context("Failed to initialize file logger")?;
+fn init_scan_logging(
+    log_level: &LogLevel,
+    log_file: &Path,
+    log_level_override: Option<log::LevelFilter>,
+) -> Result<()> {
+    let level = log_level_override.unwrap_or_else(|| log_level.clone().into());
+    init_logger_to_file(level, log_file).context("Failed to initialize file logger")?;
     eprintln!("📝 Logs: {}", log_file.display());
-    log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
+    log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
     Ok(())
 }
 
@@ -240,7 +254,11 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
         .log_file
         .as_ref()
         .context("Configuration error: log_file not set")?;
-    init_scan_logging(&config.log_level, log_file)?;
+    init_scan_logging(
+        &config.log_level,
+        log_file,
+        config.log_level_filter_override,
+    )?;
 
     let pb = create_progress_bar()?;
     config.progress_callback = Some(create_progress_callback(Arc::clone(&pb)));
@@ -270,7 +288,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
 async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
     init_logger_with(LogLevel::Info.into(), LogFormat::Plain)
         .context("Failed to initialize logger")?;
-    log::info!("domain_status version {}", env!("CARGO_PKG_VERSION"));
+    log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
 
     let output_path = if let Some(ref path_str) = export_cmd.output {
         if path_str == "-" {
@@ -399,25 +417,26 @@ where
 /// ```
 #[must_use]
 pub fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanReport) -> i32 {
+    use crate::exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_SUCCESS};
     match fail_on {
-        FailOn::Never => 0,
+        FailOn::Never => EXIT_SUCCESS,
         FailOn::AnyFailure => {
             if report.failed > 0 {
-                2
+                EXIT_POLICY_FAILURE
             } else {
-                0
+                EXIT_SUCCESS
             }
         }
         FailOn::PctGreaterThan => {
             if report.total_urls == 0 {
-                return 3;
+                return EXIT_NO_URLS_PCT;
             }
             #[allow(clippy::cast_precision_loss)]
             let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
             if failure_pct > f64::from(pct_threshold) {
-                2
+                EXIT_POLICY_FAILURE
             } else {
-                0
+                EXIT_SUCCESS
             }
         }
     }
@@ -489,6 +508,7 @@ mod tests {
         let scan_cmd = ScanCommand {
             file: PathBuf::from("test.txt"),
             log_level: LogLevel::Debug,
+            verbosity: Verbosity::default(),
             log_format: LogFormat::Json,
             db_path: PathBuf::from("custom.db"),
             max_concurrency: 50,
@@ -530,47 +550,53 @@ mod tests {
 
     #[test]
     fn test_evaluate_exit_code_real_logic() {
+        use crate::exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_SUCCESS};
         assert_eq!(
             evaluate_exit_code(&FailOn::Never, 10, &sample_report(10, 5, 5)),
-            0
+            EXIT_SUCCESS
         );
         assert_eq!(
             evaluate_exit_code(&FailOn::AnyFailure, 10, &sample_report(10, 5, 5)),
-            2
+            EXIT_POLICY_FAILURE
         );
         assert_eq!(
             evaluate_exit_code(&FailOn::AnyFailure, 10, &sample_report(10, 10, 0)),
-            0
+            EXIT_SUCCESS
         );
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &sample_report(0, 0, 0)),
-            3
+            EXIT_NO_URLS_PCT
         );
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &sample_report(100, 95, 5)),
-            0
+            EXIT_SUCCESS
         );
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &sample_report(100, 89, 11)),
-            2
+            EXIT_POLICY_FAILURE
         );
     }
 
     #[test]
     fn test_evaluate_exit_code_large_counts_do_not_overflow() {
+        use crate::exit_codes::EXIT_SUCCESS;
         let max_urls = usize::MAX;
         let report = sample_report(max_urls, max_urls.saturating_sub(1), 1);
-        assert_eq!(evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report), 0);
+        assert_eq!(
+            evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
+            EXIT_SUCCESS
+        );
     }
 
     /// Boundary: exactly at threshold must return 0 (condition is `>`, not `>=`).
     #[test]
     fn test_evaluate_exit_code_pct_exactly_at_threshold_returns_zero() {
+        use crate::exit_codes::EXIT_SUCCESS;
         // 10% failed, threshold 10: 10.0 > 10 is false → exit 0
         let report = sample_report(100, 90, 10);
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
-            0,
+            EXIT_SUCCESS,
             "exactly 10% failed with threshold 10 must return 0 (>)"
         );
     }
@@ -578,11 +604,12 @@ mod tests {
     /// Boundary: just over threshold must return 2.
     #[test]
     fn test_evaluate_exit_code_pct_just_over_threshold_returns_two() {
+        use crate::exit_codes::EXIT_POLICY_FAILURE;
         // 11% failed, threshold 10: 11.0 > 10 is true → exit 2
         let report = sample_report(100, 89, 11);
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report),
-            2,
+            EXIT_POLICY_FAILURE,
             "just over 10% failed with threshold 10 must return 2"
         );
     }
@@ -590,16 +617,17 @@ mod tests {
     /// Floating-point boundary: 1/10 and 2/20 are 10%; both must yield 0 for threshold 10.
     #[test]
     fn test_evaluate_exit_code_pct_float_boundary() {
+        use crate::exit_codes::EXIT_SUCCESS;
         let report_1_10 = sample_report(10, 9, 1);
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report_1_10),
-            0,
+            EXIT_SUCCESS,
             "1/10 = 10% with threshold 10 must return 0"
         );
         let report_2_20 = sample_report(20, 18, 2);
         assert_eq!(
             evaluate_exit_code(&FailOn::PctGreaterThan, 10, &report_2_20),
-            0,
+            EXIT_SUCCESS,
             "2/20 = 10% with threshold 10 must return 0"
         );
     }

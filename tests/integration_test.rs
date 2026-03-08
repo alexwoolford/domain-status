@@ -148,6 +148,7 @@ mod tests {
             rate_limit_rps: 0,   // Disable rate limiting for test
             enable_whois: false, // Disable WHOIS for faster tests
             log_level: domain_status::LogLevel::Error, // Reduce log noise in tests
+            log_level_filter_override: None,
             log_format: domain_status::LogFormat::Plain,
             timeout_seconds: 5,
             user_agent: "domain_status-test/1.0".to_string(),
@@ -160,6 +161,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             max_per_domain: 0, // Disable per-domain limiting for tests
+            dependency_overrides: None,
         };
 
         // Run the scan using the library
