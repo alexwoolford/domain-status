@@ -7,8 +7,12 @@
 //!
 //! The server runs in the background and does not block URL processing.
 
+mod error;
 mod handlers;
 mod types;
+
+#[allow(unused_imports)] // Re-exported for use when fallible handlers are added
+pub use error::StatusServerError;
 
 use axum::routing::get;
 use axum::Router;

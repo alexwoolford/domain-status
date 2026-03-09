@@ -17,7 +17,6 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use anyhow::Result;
 use log::warn;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -106,10 +105,13 @@ fn invoke_progress_callback(
 /// # }
 /// ```
 #[allow(clippy::too_many_lines)]
-pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
+pub async fn run_scan(
+    config: crate::config::Config,
+) -> Result<ScanReport, crate::error_handling::RunScanError> {
     // Phase 1: Initialize all resources
-    let (resources, mut url_source, total_lines, progress_callback) =
-        init_scan_resources(config).await?;
+    let (resources, mut url_source, total_lines, progress_callback) = init_scan_resources(config)
+        .await
+        .map_err(|e| crate::error_handling::RunScanError::Startup(e.into()))?;
 
     // Phase 2: Start status server if configured
     let mut status_server = if let Some(port) = resources.config.status_port {
@@ -132,7 +134,11 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
                 }
             }),
         };
-        Some(crate::status_server::spawn_status_server(port, status_state).await?)
+        Some(
+            crate::status_server::spawn_status_server(port, status_state)
+                .await
+                .map_err(|e| crate::error_handling::RunScanError::Startup(e.into()))?,
+        )
     } else {
         None
     };
@@ -207,10 +213,12 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
                         status_server.take(),
                     )
                     .await;
-                    return Err(anyhow::anyhow!(
-                        "Too many consecutive read errors ({}): {}",
-                        consecutive_errors,
-                        e
+                    return Err(crate::error_handling::RunScanError::Runtime(
+                        anyhow::anyhow!(
+                            "Too many consecutive read errors ({}): {}",
+                            consecutive_errors,
+                            e
+                        ),
                     ));
                 }
                 warn!("Failed to read line from input: {e}");
@@ -274,7 +282,9 @@ pub async fn run_scan(config: crate::config::Config) -> Result<ScanReport> {
         status_server,
     };
 
-    finalize::finalize_scan(resources, loop_result).await
+    finalize::finalize_scan(resources, loop_result)
+        .await
+        .map_err(crate::error_handling::RunScanError::Runtime)
 }
 
 #[cfg(test)]

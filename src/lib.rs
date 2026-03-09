@@ -74,7 +74,9 @@ pub mod whois;
 // Re-export public API
 pub use cli::evaluate_exit_code;
 pub use config::{Config, FailOn, LogFormat, LogLevel, ScanDependencyOverrides};
-pub use error_handling::{DatabaseError, FingerprintError, ReqwestErrorExt};
+pub use error_handling::{
+    log_error_chain, DatabaseError, FingerprintError, ReqwestErrorExt, RunScanError, StartupError,
+};
 pub use exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_RUNTIME_ERROR, EXIT_SUCCESS};
 pub use geoip::GeoIpService;
 pub use models::{KeyAlgorithm, TlsVersion};
