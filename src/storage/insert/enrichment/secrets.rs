@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
 use crate::parse::ExposedSecret;
+use crate::storage::insert::retry::with_sqlite_retry;
 
 /// Inserts detected exposed secrets into the database.
 ///
@@ -17,32 +18,35 @@ pub async fn insert_exposed_secrets(
     url_status_id: i64,
     secrets: &[ExposedSecret],
 ) -> Result<(), DatabaseError> {
-    for secret in secrets {
-        if let Err(e) = sqlx::query(
-            "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(url_status_id, secret_type, matched_value) DO UPDATE SET
-             severity=excluded.severity, location=excluded.location, context=excluded.context",
-        )
-        .bind(url_status_id)
-        .bind(&secret.secret_type)
-        .bind(&secret.matched_value)
-        .bind(secret.severity.as_str())
-        .bind(&secret.location)
-        .bind(&secret.context)
-        .execute(pool)
-        .await
-        {
-            log::warn!(
-                "Failed to insert exposed secret ({}) for url_status_id {}: {}",
-                secret.secret_type,
-                url_status_id,
-                e
-            );
+    with_sqlite_retry(|| async {
+        for secret in secrets {
+            if let Err(e) = sqlx::query(
+                "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(url_status_id, secret_type, matched_value) DO UPDATE SET
+                 severity=excluded.severity, location=excluded.location, context=excluded.context",
+            )
+            .bind(url_status_id)
+            .bind(&secret.secret_type)
+            .bind(&secret.matched_value)
+            .bind(secret.severity.as_str())
+            .bind(&secret.location)
+            .bind(&secret.context)
+            .execute(pool)
+            .await
+            {
+                log::warn!(
+                    "Failed to insert exposed secret ({}) for url_status_id {}: {}",
+                    secret.secret_type,
+                    url_status_id,
+                    e
+                );
+            }
         }
-    }
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]
