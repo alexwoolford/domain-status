@@ -83,8 +83,6 @@ where
 pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessUrlResult {
     log::debug!("Starting process for URL: {}", url.as_ref());
 
-    let start_time = std::time::Instant::now();
-
     // Track retry attempts using Arc<AtomicU32> (needed for async closures with move semantics)
     // The counter is incremented each time the closure is called (once per attempt)
     let attempt_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -96,6 +94,9 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
             move || {
                 let url = Arc::clone(&url); // Arc clone for each retry attempt (just pointer increment)
                 let ctx = Arc::clone(&ctx);
+                // Start time per attempt so response_time_seconds reflects only this attempt,
+                // not retry backoff sleep (avoids inflating metrics for retried requests).
+                let start_time = std::time::Instant::now();
                 async move { handle_http_request(&ctx, url.as_ref(), start_time).await }
             }
         },
