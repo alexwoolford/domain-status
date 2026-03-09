@@ -417,45 +417,50 @@ pub(crate) fn extract_version_from_template(
         return None;
     }
 
-    // Replace \1, \2, etc. with actual capture group values
-    // In the template string, \1 is stored as a single backslash followed by 1
-    // We need to match both \\1 (escaped in Rust string) and \1 (from JSON)
-    // IMPORTANT: Only replace placeholders that actually exist in the template
-    // Replace in reverse order (highest first) to avoid partial matches (e.g., \10 vs \1)
-    let mut result = version_expr.to_string();
-
-    // Find which placeholders are actually in the template (check \1 through \9)
+    // Which placeholders exist in the template (for semicolon sanity check later)
     let mut placeholders_in_template = std::collections::HashSet::new();
     for i in 1..=9 {
         let placeholder_double = format!("\\\\{}", i);
         let placeholder_single = format!("\\{}", i);
-        if result.contains(&placeholder_double) || result.contains(&placeholder_single) {
+        if version_expr.contains(&placeholder_double) || version_expr.contains(&placeholder_single)
+        {
             placeholders_in_template.insert(i);
         }
     }
 
-    // Replace placeholders in reverse order (highest first) to avoid partial matches
-    for i in (1..captures.len()).rev() {
-        if placeholders_in_template.contains(&i) {
-            if let Some(cap_value) = captures.get(i) {
-                // Try both \\1 (double backslash - Rust string literal) and \1 (single backslash - from JSON)
-                let placeholder_double = format!("\\\\{}", i);
-                let placeholder_single = format!("\\{}", i);
-                result = result.replace(&placeholder_double, cap_value.as_str());
-                result = result.replace(&placeholder_single, cap_value.as_str());
+    // Ternary must be evaluated on the raw template (with \1, \2 placeholders) BEFORE
+    // substituting capture values. Otherwise a captured value containing '?' or ':'
+    // (e.g. "beta:v2") would be split by the ternary parser and corrupt the version string.
+    let mut result = if version_expr.contains('?') {
+        evaluate_version_ternary(version_expr, captures)
+    } else {
+        // Replace \1, \2, etc. with actual capture group values
+        // In the template string, \1 is stored as a single backslash followed by 1
+        // We need to match both \\1 (escaped in Rust string) and \1 (from JSON)
+        // IMPORTANT: Only replace placeholders that actually exist in the template
+        // Replace in reverse order (highest first) to avoid partial matches (e.g., \10 vs \1)
+        let mut res = version_expr.to_string();
+
+        // Replace placeholders in reverse order (highest first) to avoid partial matches
+        for i in (1..captures.len()).rev() {
+            if placeholders_in_template.contains(&i) {
+                if let Some(cap_value) = captures.get(i) {
+                    let placeholder_double = format!("\\\\{}", i);
+                    let placeholder_single = format!("\\{}", i);
+                    res = res.replace(&placeholder_double, cap_value.as_str());
+                    res = res.replace(&placeholder_single, cap_value.as_str());
+                }
             }
         }
-    }
 
-    // Remove any remaining placeholders (unmatched groups)
-    // This handles cases where template has \3 but only \1 and \2 matched
-    // Match both \\\d+ (escaped) and \\d+ (from JSON)
+        // Remove any remaining placeholders (unmatched groups)
+        let re_placeholder = regex::Regex::new(r"\\\d+").ok()?;
+        re_placeholder.replace_all(&res, "").to_string()
+    };
+
+    // Remove any remaining placeholders (e.g. ternary chose branch with \3 but only \1,\2 matched)
     let re_placeholder = regex::Regex::new(r"\\\d+").ok()?;
     result = re_placeholder.replace_all(&result, "").to_string();
-
-    // Handle ternary expressions (e.g., "\\1?\\1:\\2")
-    // wappalyzergo evaluates these: if submatches exist, use first part, else use second part
-    result = evaluate_version_ternary(&result, captures);
 
     if result.is_empty() {
         None
@@ -1282,6 +1287,23 @@ mod tests {
 
         // Should match and evaluate ternary
         assert!(result.matched);
+    }
+
+    #[test]
+    fn test_ternary_evaluated_before_placeholder_replacement() {
+        // Regression: version string containing '?' or ':' must not be split by the ternary parser.
+        // Template \1?\1:\2 with group 1 = "beta:v2" used to be replaced first, producing
+        // "beta:v2?beta:v2:\2", which the parser split on ? and :, corrupting the version.
+        // Ternary must be evaluated on the raw template (with \1, \2), then placeholders
+        // replaced in the chosen branch only.
+        let pattern = r"^(beta:v\d+)(\.\d+)?\;version:\1?\1:\2";
+        let result = matches_pattern(pattern, "beta:v2");
+        assert!(result.matched, "Pattern should match");
+        assert_eq!(
+            result.version,
+            Some("beta:v2".to_string()),
+            "Version must be intact, not split on ':' by ternary parser"
+        );
     }
 
     #[test]

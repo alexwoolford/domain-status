@@ -97,7 +97,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
             spf_record, dmarc_record, cipher_suite, key_algorithm, run_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(final_domain, observed_at_ms) DO UPDATE SET
+        ON CONFLICT(run_id, final_domain) DO UPDATE SET
             initial_domain=excluded.initial_domain,
             ip_address=excluded.ip_address,
             reverse_dns_name=excluded.reverse_dns_name,
@@ -113,6 +113,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             ssl_cert_valid_from_ms=excluded.ssl_cert_valid_from_ms,
             ssl_cert_valid_to_ms=excluded.ssl_cert_valid_to_ms,
             is_mobile_friendly=excluded.is_mobile_friendly,
+            observed_at_ms=excluded.observed_at_ms,
             spf_record=excluded.spf_record,
             dmarc_record=excluded.dmarc_record,
             cipher_suite=excluded.cipher_suite,

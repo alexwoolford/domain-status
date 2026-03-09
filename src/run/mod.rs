@@ -243,6 +243,13 @@ pub async fn run_scan(
                     resources
                         .total_urls_attempted
                         .fetch_add(1, Ordering::SeqCst);
+                    resources.skipped_urls.fetch_add(1, Ordering::SeqCst);
+                    invoke_progress_callback(
+                        &progress_callback,
+                        &resources.completed_urls,
+                        &resources.failed_urls,
+                        total_lines,
+                    );
                     continue;
                 };
 
@@ -255,6 +262,13 @@ pub async fn run_scan(
                         resources
                             .total_urls_attempted
                             .fetch_add(1, Ordering::SeqCst);
+                        resources.skipped_urls.fetch_add(1, Ordering::SeqCst);
+                        invoke_progress_callback(
+                            &progress_callback,
+                            &resources.completed_urls,
+                            &resources.failed_urls,
+                            total_lines,
+                        );
                         continue;
                     }
                 }

@@ -16,6 +16,10 @@ use super::types::{WhoisCacheEntry, WhoisResult};
 /// Default cache TTL: 7 days (WHOIS data changes infrequently)
 pub(crate) const CACHE_TTL_SECS: u64 = crate::config::WHOIS_CACHE_TTL_SECS;
 
+/// When over the entry limit, run the full directory-scan eviction at most every N saves.
+/// This avoids an O(N²) I/O bomb where every save after the limit triggered a scan.
+const ENFORCE_INTERVAL_WHEN_OVER_LIMIT: usize = 1000;
+
 /// Cache store with injectable time source for deterministic tests.
 pub(crate) struct WhoisCacheStore<C = SystemClock> {
     clock: C,
@@ -116,12 +120,14 @@ impl<C: Clock> WhoisCacheStore<C> {
             .context("Failed to write cache file")?;
 
         let count = WHOIS_SAVE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        let should_enforce = count >= self.max_entries || count == 1;
+        let over_limit = count >= self.max_entries;
+        let first_time_over = over_limit && count.saturating_sub(self.max_entries) <= 1;
+        let interval_hit = over_limit
+            && count > self.max_entries
+            && (count - self.max_entries - 1) % ENFORCE_INTERVAL_WHEN_OVER_LIMIT == 0;
+        let should_enforce = count == 1 || first_time_over || interval_hit;
         if should_enforce {
             self.enforce_cache_limit(cache_path).await?;
-            if count >= self.max_entries {
-                WHOIS_SAVE_COUNT.store(self.max_entries, Ordering::Relaxed);
-            }
         }
         Ok(())
     }
