@@ -61,7 +61,7 @@ fn create_test_config(
         log_file: None,
         progress_callback: None,
         dependency_overrides: None,
-        allow_localhost_for_tests: false,
+        allow_localhost_for_tests: true, // Mock server is 127.0.0.1; required for rate-limit and concurrency tests
     }
 }
 
