@@ -3,7 +3,7 @@ name = "domain_status_cli"
 version = "0.1.15"
 edition = "2021"
 description = "CLI definition for domain_status (single source of truth for completions and man page)"
-publish = false
+publish = true
 
 [dependencies]
 clap = { version = "^4.5", features = ["derive", "env"] }
