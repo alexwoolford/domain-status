@@ -17,6 +17,7 @@ async fn main() -> Result<()> {
             for cause in e.chain().skip(1) {
                 eprintln!("  {cause}");
             }
+            domain_status::print_io_error_hint_if_applicable(&e);
             domain_status::exit_codes::EXIT_RUNTIME_ERROR
         }
     };

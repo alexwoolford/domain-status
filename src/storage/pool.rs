@@ -16,6 +16,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
 
 use crate::error_handling::DatabaseError;
+use crate::utils::IoErrorContext;
 
 /// Type alias for database connection pool.
 /// Used throughout the codebase for consistency.
@@ -60,6 +61,8 @@ pub async fn init_db_pool_with_path(
             .write(true)
             .create_new(true)
             .open(&path_for_task)
+            .with_path(&path_for_task)
+            .map(|_| ())
     })
     .await
     .map_err(|e| {
@@ -68,8 +71,8 @@ pub async fn init_db_pool_with_path(
     })?;
 
     match file_creation_result {
-        Ok(_) => info!("Database file created successfully."),
-        Err(ref e) if e.kind() == ErrorKind::AlreadyExists => {
+        Ok(()) => info!("Database file created successfully."),
+        Err(ref e) if e.io_error.kind() == ErrorKind::AlreadyExists => {
             info!("Database file already exists.")
         }
         Err(e) => {

@@ -14,6 +14,7 @@ use std::time::Duration;
 use crate::config::{FailOn, LogFormat, LogLevel, DEFAULT_USER_AGENT};
 use crate::export::{export_csv, ExportOptions};
 use crate::initialization::{init_crypto_provider, init_logger_to_file, init_logger_with};
+use crate::utils::warn_if_world_readable;
 use crate::{run_scan, Config, ScanReport};
 
 /// CLI-specific configuration with clap parsing.
@@ -222,6 +223,7 @@ fn load_file_env_config(
     let mut builder = config::Config::builder();
 
     if let Some(ref path) = config_name {
+        warn_if_world_readable(path);
         let path_str = path.to_string_lossy();
         builder = builder.add_source(config::File::with_name(path_str.as_ref()).required(true));
     } else if Path::new("domain_status.toml").exists() {

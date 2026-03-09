@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::io::{self, Write};
 
 use crate::storage::init_db_pool_with_path;
+use crate::utils::IoErrorContext;
 
 use super::queries::{build_export_query, IgnoreBrokenPipe};
 use super::row::{
@@ -75,10 +76,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
     let mut writer: Box<dyn Write> = if let Some(output_path) = opts.output.as_ref() {
         let file = tokio::fs::File::create(output_path)
             .await
-            .context(format!(
-                "Failed to create output file: {}",
-                output_path.display()
-            ))?
+            .with_path(output_path)?
             .into_std()
             .await;
         Box::new(file)
