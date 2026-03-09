@@ -24,7 +24,8 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
     let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
-    let processed = completed + failed;
+    let skipped = state.skipped_urls.load(Ordering::SeqCst);
+    let processed = completed + failed + skipped;
     let active_urls = attempted.saturating_sub(processed);
     // Progress is based on lines dealt with (attempted or skipped), so the bar reaches 100% when done
     #[allow(clippy::cast_precision_loss)]
@@ -219,6 +220,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(100)),
             completed_urls: Arc::new(AtomicUsize::new(50)),
             failed_urls: Arc::new(AtomicUsize::new(10)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
@@ -251,6 +253,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(80)),
             completed_urls: Arc::new(AtomicUsize::new(50)),
             failed_urls: Arc::new(AtomicUsize::new(10)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new({
                 let stats = ProcessingStats::new();
@@ -348,6 +351,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(0)),
             completed_urls: Arc::new(AtomicUsize::new(0)),
             failed_urls: Arc::new(AtomicUsize::new(0)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
@@ -371,6 +375,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(100)),
             completed_urls: Arc::new(AtomicUsize::new(150)),
             failed_urls: Arc::new(AtomicUsize::new(50)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,

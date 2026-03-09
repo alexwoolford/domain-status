@@ -241,11 +241,11 @@ fn create_progress_bar() -> Result<Arc<ProgressBar>> {
 
 fn create_progress_callback(
     pb: Arc<ProgressBar>,
-) -> Arc<dyn Fn(usize, usize, usize) + Send + Sync> {
-    Arc::new(move |completed, failed, total| {
+) -> Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync> {
+    Arc::new(move |completed, failed, skipped, total| {
         pb.set_length(total as u64);
-        pb.set_position((completed + failed) as u64);
-        pb.set_message(format!("✓{} ✗{}", completed, failed));
+        pb.set_position((completed + failed + skipped) as u64);
+        pb.set_message(format!("✓{} ✗{} ⊘{}", completed, failed, skipped));
     })
 }
 

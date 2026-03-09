@@ -6,8 +6,8 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-/// Type alias for progress callback function.
-pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize) + Send + Sync>>;
+/// Type alias for progress callback function (completed, failed, skipped, total).
+pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>;
 
 use tokio::io::Lines;
 use tokio::sync::OwnedSemaphorePermit;
@@ -132,6 +132,8 @@ pub struct UrlTaskParams {
     pub url: Arc<str>,
     /// Shared processing context
     pub ctx: Arc<ProcessingContext>,
+    /// Cancellation token so workers can respond to Ctrl-C
+    pub cancel: CancellationToken,
     /// Semaphore permit (dropped when task completes)
     pub permit: OwnedSemaphorePermit,
     /// Optional rate limiter

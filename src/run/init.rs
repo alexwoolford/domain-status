@@ -21,8 +21,8 @@ use crate::utils::TimingStats;
 
 use super::resources::{ScanResources, UrlSource};
 
-/// Type alias for the progress callback function.
-pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize) + Send + Sync>>;
+/// Type alias for the progress callback function (completed, failed, skipped, total).
+pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>;
 
 /// Initialize all resources needed for a scan.
 ///

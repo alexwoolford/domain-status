@@ -27,7 +27,8 @@ pub(crate) fn render_metrics(state: &StatusState, elapsed: f64) -> String {
     let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
-    let active = attempted.saturating_sub(completed + failed);
+    let skipped = state.skipped_urls.load(Ordering::SeqCst);
+    let active = attempted.saturating_sub(completed + failed + skipped);
     #[allow(clippy::cast_precision_loss)]
     let rate = if elapsed > 0.0 {
         completed as f64 / elapsed
@@ -233,6 +234,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(100)),
             completed_urls: Arc::new(AtomicUsize::new(50)),
             failed_urls: Arc::new(AtomicUsize::new(10)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
@@ -288,6 +290,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(60)),
             completed_urls: Arc::new(AtomicUsize::new(50)),
             failed_urls: Arc::new(AtomicUsize::new(10)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new({
                 let stats = ProcessingStats::new();
@@ -427,6 +430,7 @@ domain_status_timing_total_ms 2"#.trim()
             total_urls_attempted: Arc::new(AtomicUsize::new(0)),
             completed_urls: Arc::new(AtomicUsize::new(0)),
             failed_urls: Arc::new(AtomicUsize::new(0)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: Some(Arc::new(TimingStats::new())),
