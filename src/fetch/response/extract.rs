@@ -70,6 +70,7 @@ async fn stream_body_with_limit(
 /// Returns `Ok(None)` if content-type is not HTML or body is empty.
 /// When body exceeds the size limit, returns `Ok(Some(ResponseData))` with metadata
 /// (status, headers, TLS-relevant URL/domain) and empty body so the record is still stored.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
@@ -162,8 +163,23 @@ pub(crate) async fn extract_response_data(
     };
 
     if body.is_empty() {
-        log::info!("Skipping {} - empty response body", final_domain);
-        return Ok(None);
+        // Preserve metadata (status, headers, TLS, DNS) like the 2MB-exceeded path.
+        log::info!(
+            "Empty response body for {}, recording metadata only",
+            final_domain
+        );
+        return Ok(Some(ResponseData {
+            final_url,
+            initial_domain,
+            final_domain,
+            host,
+            status: status.as_u16(),
+            status_desc,
+            headers,
+            security_headers,
+            http_headers,
+            body: String::new(),
+        }));
     }
 
     log::debug!("Body length for {final_domain}: {} bytes", body.len());

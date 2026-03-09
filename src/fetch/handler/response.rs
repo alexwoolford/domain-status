@@ -79,7 +79,6 @@ pub async fn handle_response(
     .await?
     else {
         // Non-HTML or empty response, skip silently
-        // This is logged at debug level in extract_response_data
         debug!(
             "Skipping URL {} (non-HTML content-type or empty body)",
             final_url_str
