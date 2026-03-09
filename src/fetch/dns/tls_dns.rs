@@ -46,7 +46,7 @@ pub(crate) async fn fetch_tls_and_dns(
         // TLS certificate extraction (only for HTTPS)
         async {
             if final_url.starts_with("https://") {
-                get_ssl_certificate_info(host.to_string()).await
+                get_ssl_certificate_info(host.to_string(), resolver).await
             } else {
                 use crate::models::CertificateInfo;
                 Ok(CertificateInfo {
