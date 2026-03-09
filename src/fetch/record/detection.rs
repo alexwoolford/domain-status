@@ -3,6 +3,7 @@
 use crate::fetch::response::{HtmlData, ResponseData};
 
 /// Detects technologies with error handling and logging.
+/// Runs CPU-bound regex matching on a blocking thread to avoid starving the async executor.
 ///
 /// Returns a vector of detected technologies with name and optional version.
 pub(crate) async fn detect_technologies_safely(
@@ -10,20 +11,52 @@ pub(crate) async fn detect_technologies_safely(
     resp_data: &ResponseData,
     error_stats: &crate::error_handling::ProcessingStats,
 ) -> Vec<crate::fingerprint::DetectedTechnology> {
+    // Fetch ruleset on async runtime (fast; in-memory).
+    let ruleset = match crate::fingerprint::get_ruleset().await {
+        Some(r) => r,
+        None => {
+            log::warn!(
+                "Technology detection skipped for {}: ruleset not initialized",
+                resp_data.final_domain
+            );
+            return Vec::new();
+        }
+    };
+
     // wappalyzergo normalizes body to lowercase: normalizedBody := bytes.ToLower(body)
-    // HTML patterns match against the entire normalized body, not just extracted text
     let normalized_body = resp_data.body.to_lowercase();
-    match crate::fingerprint::detect_technologies(
-        &html_data.meta_tags,
-        &html_data.script_sources,
-        &html_data.script_content,
-        &normalized_body, // Pass full normalized body for HTML pattern matching
-        &resp_data.headers,
-        &resp_data.final_url,
-        &html_data.script_tag_ids,
-    )
+
+    // Clone data for use inside spawn_blocking (closure must own values).
+    let headers = resp_data.headers.clone();
+    let meta_tags = html_data.meta_tags.clone();
+    let script_sources = html_data.script_sources.clone();
+    let script_content = html_data.script_content.clone();
+    let url = resp_data.final_url.clone();
+    let script_tag_ids = html_data.script_tag_ids.clone();
+
+    // Run CPU-bound regex work on blocking thread pool to avoid executor starvation.
+    let result = tokio::task::spawn_blocking(move || {
+        crate::fingerprint::detect_technologies_blocking(
+            &ruleset,
+            &headers,
+            &meta_tags,
+            &script_sources,
+            &script_content,
+            &normalized_body,
+            &url,
+            &script_tag_ids,
+        )
+    })
     .await
-    {
+    .map_err(|e| {
+        crate::error_handling::FingerprintError::DetectionFailed(anyhow::anyhow!(
+            "Technology detection task panicked: {}",
+            e
+        ))
+    })
+    .and_then(|r| r);
+
+    match result {
         Ok(techs) => {
             if !techs.is_empty() {
                 log::debug!(

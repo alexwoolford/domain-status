@@ -26,9 +26,10 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let processed = completed + failed;
     let active_urls = attempted.saturating_sub(processed);
+    // Progress is based on lines dealt with (attempted or skipped), so the bar reaches 100% when done
     #[allow(clippy::cast_precision_loss)]
     let percentage = if total_urls_in_file > 0 {
-        (processed as f64 / total_urls_in_file as f64) * 100.0
+        (attempted as f64 / total_urls_in_file as f64) * 100.0
     } else {
         0.0
     };
@@ -38,9 +39,7 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
     } else {
         0.0
     };
-    let pending_urls = total_urls_in_file
-        .saturating_sub(completed)
-        .saturating_sub(failed);
+    let pending_urls = total_urls_in_file.saturating_sub(attempted);
 
     StatusResponse {
         total_urls: total_urls_in_file,
@@ -292,8 +291,8 @@ mod tests {
                 completed_urls: 50,
                 failed_urls: 10,
                 active_urls: 20,
-                pending_urls: Some(40),
-                percentage_complete: 60.0,
+                pending_urls: Some(20), // total - attempted (lines not yet dealt with)
+                percentage_complete: 80.0, // attempted / total (progress reaches 100% when done)
                 elapsed_seconds: 5.0,
                 rate_per_second: 10.0,
                 current_rps: None,

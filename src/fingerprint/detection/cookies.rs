@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
 use crate::fingerprint::ruleset::get_ruleset;
 
@@ -19,6 +20,7 @@ pub struct CookieMatchResult {
 ///
 /// This matches wappalyzergo's `checkCookies()` → `matchMapString(cookies, cookiesPart)` flow.
 /// Supports wildcard cookie names (e.g., `_ga_*` matches `_ga_123456`).
+#[allow(dead_code)] // kept for fingerprint tests; main path uses check_cookies_with_ruleset
 pub async fn check_cookies(
     cookies: &HashMap<String, String>,
 ) -> anyhow::Result<Vec<CookieMatchResult>> {
@@ -99,6 +101,73 @@ pub async fn check_cookies(
     }
 
     Ok(results)
+}
+
+/// Synchronous cookie check using a pre-fetched ruleset (for use on blocking threads).
+pub(crate) fn check_cookies_with_ruleset(
+    ruleset: &FingerprintRuleset,
+    cookies: &HashMap<String, String>,
+) -> Vec<CookieMatchResult> {
+    let mut results = Vec::new();
+    for (tech_name, tech) in &ruleset.technologies {
+        if tech.cookies.is_empty() {
+            continue;
+        }
+        let mut matched = false;
+        let mut version: Option<String> = None;
+        for (cookie_name, pattern) in &tech.cookies {
+            if cookie_name.contains('*') {
+                let wildcard_pattern = cookie_name.replace('*', ".*");
+                let cookie_regex = match regex::Regex::new(&format!("^{}$", wildcard_pattern)) {
+                    Ok(re) => re,
+                    Err(_) => continue,
+                };
+                for (actual_cookie_name, cookie_value) in cookies {
+                    if cookie_regex.is_match(actual_cookie_name) {
+                        if pattern.is_empty() {
+                            matched = true;
+                            break;
+                        }
+                        let result = matches_pattern(pattern, cookie_value);
+                        if result.matched {
+                            matched = true;
+                            if version.is_none() && result.version.is_some() {
+                                version = result.version.clone();
+                            }
+                            if version.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if let Some(cookie_value) = cookies.get(cookie_name) {
+                if pattern.is_empty() {
+                    matched = true;
+                    break;
+                }
+                let result = matches_pattern(pattern, cookie_value);
+                if result.matched {
+                    matched = true;
+                    if version.is_none() && result.version.is_some() {
+                        version = result.version.clone();
+                    }
+                    if version.is_some() {
+                        break;
+                    }
+                }
+            }
+            if matched && version.is_some() {
+                break;
+            }
+        }
+        if matched {
+            results.push(CookieMatchResult {
+                tech_name: tech_name.clone(),
+                version,
+            });
+        }
+    }
+    results
 }
 
 #[cfg(test)]
