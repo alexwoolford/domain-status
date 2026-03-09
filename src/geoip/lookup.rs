@@ -13,6 +13,12 @@ pub struct GeoIpService {
     asn_reader: GeoIpReaderCache,
 }
 
+impl std::fmt::Debug for GeoIpService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeoIpService").finish_non_exhaustive()
+    }
+}
+
 impl Default for GeoIpService {
     fn default() -> Self {
         Self {

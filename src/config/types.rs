@@ -28,7 +28,7 @@ use crate::config::constants::DEFAULT_USER_AGENT;
 /// };
 /// let report = run_scan(config).await?;
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ScanDependencyOverrides {
     /// If set, this client is used instead of creating one from config (e.g. a mock in tests).
     pub http_client: Option<Client>,

@@ -30,8 +30,18 @@
 //!
 //! This library requires a Tokio runtime. Use `#[tokio::main]` in your application
 //! or ensure you're calling library functions within an async context.
+//!
+//! # Stability and API guarantees
+//!
+//! - **Stable:** Exit codes (see project docs), [`Config`] validation rules, and public function signatures and types follow `SemVer`.
+//! - **May change:** Exact wording of error messages, the internal error chain and downcasting behavior, and default config values (e.g. timeouts, limits) may change in patch or minor releases to improve safety or diagnostics.
 
-#![deny(clippy::enum_glob_use, missing_docs, unsafe_code)]
+#![deny(
+    clippy::enum_glob_use,
+    missing_debug_implementations,
+    missing_docs,
+    unsafe_code
+)]
 
 mod adaptive_rate_limiter;
 mod app;
@@ -64,7 +74,7 @@ pub mod whois;
 // Re-export public API
 pub use cli::evaluate_exit_code;
 pub use config::{Config, FailOn, LogFormat, LogLevel, ScanDependencyOverrides};
-pub use error_handling::{DatabaseError, FingerprintError};
+pub use error_handling::{DatabaseError, FingerprintError, ReqwestErrorExt};
 pub use exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_RUNTIME_ERROR, EXIT_SUCCESS};
 pub use geoip::GeoIpService;
 pub use models::{KeyAlgorithm, TlsVersion};

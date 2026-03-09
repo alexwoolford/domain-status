@@ -110,6 +110,7 @@ pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error_handling::ReqwestErrorExt;
     use std::time::Duration;
 
     #[test]
@@ -220,60 +221,61 @@ mod tests {
         );
     }
 
-    // Test individual status codes (using separate tests to avoid lifetime issues)
+    // Test individual status codes (using separate tests to avoid lifetime issues).
+    // Each test asserts both categorization and retriability contract (ReqwestErrorExt::is_retriable).
     #[tokio::test]
     async fn test_categorize_reqwest_error_400() {
-        test_status_code(400, ErrorType::HttpRequestBadRequest).await;
+        test_status_code(400, ErrorType::HttpRequestBadRequest, false).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_401() {
-        test_status_code(401, ErrorType::HttpRequestUnauthorized).await;
+        test_status_code(401, ErrorType::HttpRequestUnauthorized, false).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_403() {
-        test_status_code(403, ErrorType::HttpRequestBotDetectionError).await;
+        test_status_code(403, ErrorType::HttpRequestBotDetectionError, false).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_404() {
-        test_status_code(404, ErrorType::HttpRequestNotFound).await;
+        test_status_code(404, ErrorType::HttpRequestNotFound, false).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_429() {
-        test_status_code(429, ErrorType::HttpRequestTooManyRequests).await;
+        test_status_code(429, ErrorType::HttpRequestTooManyRequests, true).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_500() {
-        test_status_code(500, ErrorType::HttpRequestInternalServerError).await;
+        test_status_code(500, ErrorType::HttpRequestInternalServerError, true).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_502() {
-        test_status_code(502, ErrorType::HttpRequestBadGateway).await;
+        test_status_code(502, ErrorType::HttpRequestBadGateway, true).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_503() {
-        test_status_code(503, ErrorType::HttpRequestServiceUnavailable).await;
+        test_status_code(503, ErrorType::HttpRequestServiceUnavailable, true).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_504() {
-        test_status_code(504, ErrorType::HttpRequestGatewayTimeout).await;
+        test_status_code(504, ErrorType::HttpRequestGatewayTimeout, true).await;
     }
 
     #[tokio::test]
     async fn test_categorize_reqwest_error_521() {
         // 521 (Cloudflare) is now categorized as HttpRequestOtherError (server error)
-        test_status_code(521, ErrorType::HttpRequestOtherError).await;
+        test_status_code(521, ErrorType::HttpRequestOtherError, true).await;
     }
 
-    // Helper function to test a single status code
-    async fn test_status_code(code: u16, expected_error_type: ErrorType) {
+    // Helper function to test a single status code (categorization + retriability contract).
+    async fn test_status_code(code: u16, expected_error_type: ErrorType, expected_retriable: bool) {
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
@@ -309,6 +311,13 @@ mod tests {
             "Status code {} should be categorized as {:?}",
             code, expected_error_type
         );
+        assert_eq!(
+            error.is_retriable(),
+            expected_retriable,
+            "Status code {} retriability should be {}",
+            code,
+            expected_retriable
+        );
     }
 
     #[tokio::test]
@@ -331,6 +340,10 @@ mod tests {
             categorized,
             ErrorType::HttpRequestOtherError,
             "Other 4xx errors should be categorized as HttpRequestOtherError"
+        );
+        assert!(
+            !error.is_retriable(),
+            "Other 4xx (418) should not be retriable"
         );
     }
 
@@ -355,6 +368,7 @@ mod tests {
             ErrorType::HttpRequestOtherError,
             "Other 5xx errors should be categorized as HttpRequestOtherError"
         );
+        assert!(error.is_retriable(), "Other 5xx (507) should be retriable");
     }
 
     #[tokio::test]
@@ -383,6 +397,10 @@ mod tests {
                 || categorized == ErrorType::HttpRequestConnectError,
             "Timeout errors should be categorized as TimeoutError or ConnectError, got {:?}",
             categorized
+        );
+        assert!(
+            error.is_retriable(),
+            "Timeout/connect errors should be retriable"
         );
     }
 
@@ -416,6 +434,10 @@ mod tests {
                 || categorized == ErrorType::HttpRequestRequestError,
             "Connection errors should be categorized as ConnectError, TimeoutError, or RequestError, got {:?}",
             categorized
+        );
+        assert!(
+            error.is_retriable(),
+            "Connection errors should be retriable"
         );
     }
 }

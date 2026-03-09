@@ -1,0 +1,25 @@
+# Example configuration for domain_status (optional).
+#
+# Use: --config path/to/this/file or set DOMAIN_STATUS_CONFIG_FILE.
+# Environment variables DOMAIN_STATUS_* override file values (e.g. DOMAIN_STATUS_MAX_CONCURRENCY=50).
+# CLI options override both. Precedence: CLI > env > file > defaults.
+#
+# Copy to domain_status.toml in the current directory for automatic discovery, or
+# reference explicitly: domain_status scan --config ./domain_status.toml urls.txt
+
+# file          = "urls.txt"           # Input URL list (often overridden by CLI positional)
+# db_path       = "./domain_status.db"
+# max_concurrency = 30
+# timeout_seconds = 10
+# user_agent    = "domain_status/0.1"
+# rate_limit_rps = 15
+# max_per_domain = 5
+# log_level     = "info"               # error | warn | info | debug | trace
+# log_format    = "plain"              # plain | json
+# log_file      = "domain_status.log"
+# fingerprints  = "https://raw.githubusercontent.com/..."  # Optional ruleset URL or path
+# geoip         = "/path/to/GeoLite2-City.mmdb"        # Or download URL
+# status_port   = 8080                 # Optional HTTP status server port
+# enable_whois  = false
+# fail_on       = "never"             # never | any_failure | pct>
+# fail_on_pct_threshold = 10           # Used when fail_on = "pct>"

@@ -20,6 +20,7 @@ use crate::error_handling::ErrorType;
 /// This struct maps directly to the `url_status` table. The `timestamp` field
 /// is stored as milliseconds since Unix epoch. All string fields that can be
 /// empty are stored as `TEXT NOT NULL` with empty strings as fallback.
+#[derive(Debug)]
 pub struct UrlRecord {
     /// The original domain/URL before any redirects
     pub initial_domain: String,

@@ -1,11 +1,11 @@
 //! CLI parsing and command execution.
 
 use anyhow::{Context, Result};
-use clap::error::ErrorKind;
 use clap::Parser;
 use clap_verbosity_flag::InfoLevel;
 use clap_verbosity_flag::Verbosity;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,7 +23,8 @@ use crate::{run_scan, Config, ScanReport};
     about = "Domain intelligence scanner - scan URLs and export results.",
     version = env!("DOMAIN_STATUS_VERSION"),
     long_version = env!("DOMAIN_STATUS_VERSION"),
-    subcommand_required = true
+    subcommand_required = true,
+    arg_required_else_help = true
 )]
 pub enum CliCommand {
     /// Scan URLs and store results in `SQLite` database.
@@ -37,6 +38,10 @@ pub enum CliCommand {
 /// CLI scan command.
 #[derive(Debug, Parser, Clone)]
 pub struct ScanCommand {
+    /// Config file path (optional). Also set via `DOMAIN_STATUS_CONFIG_FILE`. Supports TOML. Env vars `DOMAIN_STATUS_*` override file.
+    #[arg(long, value_parser)]
+    pub config: Option<PathBuf>,
+
     /// File to read
     #[arg(value_parser)]
     pub file: PathBuf,
@@ -101,8 +106,13 @@ pub struct ScanCommand {
     #[arg(long, value_enum, default_value_t = FailOn::Never)]
     pub fail_on: FailOn,
 
-    /// Failure percentage threshold for `--fail-on pct>X`.
-    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(0..=100))]
+    /// Failure percentage threshold for `--fail-on pct>`. Only used when `--fail-on pct>` is set.
+    #[arg(
+        long,
+        default_value_t = 10,
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        requires_if("pct>", "fail_on")
+    )]
     pub fail_on_pct_threshold: u8,
 
     /// Log file path for detailed logging.
@@ -192,6 +202,181 @@ where
     T: Into<OsString> + Clone,
 {
     CliCommand::try_parse_from(args)
+}
+
+/// Loads config from optional file and env vars with prefix `DOMAIN_STATUS_`.
+///
+/// Precedence when merging later: CLI > env > file > defaults.
+/// Returns `Ok(None)` when no config file is requested and no default file exists.
+///
+/// # Errors
+/// Fails when a requested config file is missing or invalid.
+fn load_file_env_config(
+    explicit_config_path: Option<&Path>,
+) -> Result<Option<HashMap<String, String>>> {
+    let config_name = std::env::var("DOMAIN_STATUS_CONFIG_FILE")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| explicit_config_path.map(Path::to_path_buf));
+
+    let mut builder = config::Config::builder();
+
+    if let Some(ref path) = config_name {
+        let path_str = path.to_string_lossy();
+        builder = builder.add_source(config::File::with_name(path_str.as_ref()).required(true));
+    } else if Path::new("domain_status.toml").exists() {
+        builder = builder.add_source(config::File::with_name("domain_status").required(false));
+    } else {
+        // No file source; env-only is still useful
+    }
+
+    builder = builder.add_source(config::Environment::with_prefix("DOMAIN_STATUS"));
+
+    match builder.build() {
+        Ok(settings) => match settings.try_deserialize::<HashMap<String, String>>() {
+            Ok(map) => Ok(Some(map)),
+            Err(e) => Err(anyhow::anyhow!("Invalid configuration: {e}")),
+        },
+        Err(e) => Err(anyhow::anyhow!("Failed to load configuration: {e}")),
+    }
+}
+
+/// Applies key-value config (from file + env) onto `Config`. Only known keys are applied; invalid values are skipped.
+fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, String>) {
+    for (key, value) in map {
+        let key_lower = key.to_lowercase();
+        match key_lower.as_str() {
+            "file" => config.file = PathBuf::from(value),
+            "db_path" => config.db_path = PathBuf::from(value),
+            "log_file" => config.log_file = Some(PathBuf::from(value)),
+            "log_level" => {
+                if let Some(lvl) = parse_log_level(value) {
+                    config.log_level = lvl;
+                }
+            }
+            "log_format" => {
+                if let Some(fmt) = parse_log_format(value) {
+                    config.log_format = fmt;
+                }
+            }
+            "max_concurrency" => {
+                if let Ok(n) = value.parse::<usize>() {
+                    config.max_concurrency = n;
+                }
+            }
+            "timeout_seconds" => {
+                if let Ok(n) = value.parse::<u64>() {
+                    config.timeout_seconds = n;
+                }
+            }
+            "user_agent" => config.user_agent = value.clone(),
+            "rate_limit_rps" => {
+                if let Ok(n) = value.parse::<u32>() {
+                    config.rate_limit_rps = n;
+                }
+            }
+            "max_per_domain" => {
+                if let Ok(n) = value.parse::<usize>() {
+                    config.max_per_domain = n;
+                }
+            }
+            "adaptive_error_threshold" => {
+                if let Ok(n) = value.parse::<f64>() {
+                    config.adaptive_error_threshold = n;
+                }
+            }
+            "fingerprints" => config.fingerprints = Some(value.clone()),
+            "geoip" => config.geoip = Some(value.clone()),
+            "status_port" => {
+                if let Ok(n) = value.parse::<u16>() {
+                    config.status_port = Some(n);
+                }
+            }
+            "enable_whois" => {
+                config.enable_whois = parse_bool(value).unwrap_or(false);
+            }
+            "fail_on" => {
+                if let Some(f) = parse_fail_on(value) {
+                    config.fail_on = f;
+                }
+            }
+            "fail_on_pct_threshold" => {
+                if let Ok(n) = value.parse::<u8>() {
+                    config.fail_on_pct_threshold = n;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn parse_log_level(s: &str) -> Option<LogLevel> {
+    match s.to_lowercase().as_str() {
+        "error" => Some(LogLevel::Error),
+        "warn" => Some(LogLevel::Warn),
+        "info" => Some(LogLevel::Info),
+        "debug" => Some(LogLevel::Debug),
+        "trace" => Some(LogLevel::Trace),
+        _ => None,
+    }
+}
+
+fn parse_log_format(s: &str) -> Option<LogFormat> {
+    match s.to_lowercase().as_str() {
+        "plain" => Some(LogFormat::Plain),
+        "json" => Some(LogFormat::Json),
+        _ => None,
+    }
+}
+
+fn parse_fail_on(s: &str) -> Option<FailOn> {
+    match s.to_lowercase().as_str() {
+        "never" => Some(FailOn::Never),
+        "any_failure" | "anyfailure" => Some(FailOn::AnyFailure),
+        "pct>" => Some(FailOn::PctGreaterThan),
+        _ => None,
+    }
+}
+
+fn parse_bool(s: &str) -> Option<bool> {
+    match s.to_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Builds `Config` with precedence: CLI > env > config file > defaults.
+fn build_config_from_scan_command(scan_cmd: ScanCommand) -> Result<Config> {
+    let mut config = Config::default();
+
+    if let Some(map) = load_file_env_config(scan_cmd.config.as_deref())? {
+        apply_file_env_map_to_config(&mut config, &map);
+    }
+
+    let cli_config = Config::from(scan_cmd);
+    config.file = cli_config.file;
+    config.log_level = cli_config.log_level;
+    config.log_level_filter_override = cli_config.log_level_filter_override;
+    config.log_format = cli_config.log_format;
+    config.db_path = cli_config.db_path;
+    config.max_concurrency = cli_config.max_concurrency;
+    config.timeout_seconds = cli_config.timeout_seconds;
+    config.user_agent = cli_config.user_agent;
+    config.rate_limit_rps = cli_config.rate_limit_rps;
+    config.max_per_domain = cli_config.max_per_domain;
+    config.adaptive_error_threshold = cli_config.adaptive_error_threshold;
+    config.fingerprints = cli_config.fingerprints;
+    config.geoip = cli_config.geoip;
+    config.status_port = cli_config.status_port;
+    config.enable_whois = cli_config.enable_whois;
+    config.fail_on = cli_config.fail_on;
+    config.fail_on_pct_threshold = cli_config.fail_on_pct_threshold;
+    config.log_file = cli_config.log_file;
+    config.progress_callback = None;
+    config.dependency_overrides = None;
+
+    Ok(config)
 }
 
 /// Loads environment variables from `.env` file if it exists.
@@ -357,7 +542,10 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
 /// Returns `Err` when scan or export execution fails (I/O, database, or runtime errors).
 pub async fn run_cli_command(cli_command: CliCommand) -> Result<i32> {
     match cli_command {
-        CliCommand::Scan(scan_cmd) => execute_scan_with_reporting(scan_cmd.into()).await,
+        CliCommand::Scan(scan_cmd) => {
+            let config = build_config_from_scan_command(scan_cmd)?;
+            execute_scan_with_reporting(config).await
+        }
         CliCommand::Export(export_cmd) => execute_export_command(export_cmd).await,
     }
 }
@@ -375,11 +563,8 @@ where
     let cli_command = match parse_cli_command_from(args) {
         Ok(c) => c,
         Err(e) => {
-            if e.kind() == ErrorKind::DisplayVersion || e.kind() == ErrorKind::DisplayHelp {
-                let _ = e.print();
-                return Ok(e.exit_code());
-            }
-            return Err(e.into());
+            let _ = e.print();
+            return Ok(e.exit_code());
         }
     };
     run_cli_command(cli_command).await
@@ -506,6 +691,7 @@ mod tests {
     #[test]
     fn test_scan_command_into_config_preserves_fields() {
         let scan_cmd = ScanCommand {
+            config: None,
             file: PathBuf::from("test.txt"),
             log_level: LogLevel::Debug,
             verbosity: Verbosity::default(),
