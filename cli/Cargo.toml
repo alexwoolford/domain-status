@@ -3,6 +3,10 @@ name = "domain_status_cli"
 version = "0.1.15"
 edition = "2021"
 description = "CLI definition for domain_status (single source of truth for completions and man page)"
+license = "MIT"
+repository = "https://github.com/alexwoolford/domain_status"
+homepage = "https://github.com/alexwoolford/domain_status"
+documentation = "https://docs.rs/domain_status"
 publish = true
 
 [dependencies]
