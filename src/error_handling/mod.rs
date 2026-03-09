@@ -56,8 +56,20 @@ pub use reqwest_ext::ReqwestErrorExt;
 pub use resolve_ext::{categorize_resolve_error, DnsResolveErrorKind};
 pub use stats::ProcessingStats;
 pub use types::{
-    DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, WarningType,
+    DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, RunScanError,
+    StartupError, WarningType,
 };
+
+/// Logs each cause in an error chain with `log::error!`.
+///
+/// Call this after printing the error to stderr so that failures are also written
+/// to the configured log backend (e.g. when logging to a file). Keeps stderr and
+/// log output in sync.
+pub fn log_error_chain(e: &anyhow::Error) {
+    for cause in e.chain() {
+        log::error!("{cause}");
+    }
+}
 
 #[cfg(test)]
 mod tests {

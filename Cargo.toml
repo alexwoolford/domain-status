@@ -82,7 +82,9 @@ url = "^2.5"
 serde_json = "^1.0"
 
 # CLI and error handling
-clap = { version = "^4.5", features = ["derive"] }
+clap = { version = "^4.5", features = ["derive", "env"] }
+clap_complete = "^4.5"
+clap_mangen = "^0.2"
 clap-verbosity-flag = "3.0"
 anyhow = "^1.0"
 thiserror = "^2.0"
@@ -138,6 +140,8 @@ proptest = "^1.4"          # Property-based testing
 insta = { version = "^1.38", features = ["yaml"] }  # Snapshot/golden testing
 pretty_assertions = "^1.4"  # Better test output
 assert_cmd = "^2.0"         # CLI testing
+assert_fs = "^1.1"           # Temp dirs and file layout for tests
+rstest = "^0.21"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
 tower = "0.5.3"
 rcgen = "0.14.7"
