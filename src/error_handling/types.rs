@@ -7,6 +7,41 @@ use reqwest::Error as ReqwestError;
 use strum_macros::EnumIter as EnumIterMacro;
 use thiserror::Error;
 
+/// Errors that occur before or during scan setup (config, init, bind).
+///
+/// Use this to separate "startup" failures from "runtime" failures during the main loop,
+/// enabling consistent logging and optional exit-code differentiation.
+#[derive(Debug, Error)]
+pub enum StartupError {
+    /// Configuration validation failed.
+    #[error("{0}")]
+    ConfigValidation(#[from] crate::config::ConfigValidationError),
+
+    /// An initialization step failed (logger, HTTP client, DNS resolver).
+    #[error("{0}")]
+    Initialization(#[from] InitializationError),
+
+    /// IO error with context (e.g. path or operation name).
+    #[error("{0}\ncaused by: {1}")]
+    Io(String, std::io::Error),
+
+    /// Other startup failure (e.g. `init_scan_resources`, status server bind).
+    #[error("{0}")]
+    Anyhow(#[from] anyhow::Error),
+}
+
+/// Error returned by `run_scan`: either during setup (startup) or during the main loop (runtime).
+#[derive(Debug, Error)]
+pub enum RunScanError {
+    /// Failure during scan setup (config validation, resource init, status server bind).
+    #[error("Startup error: {0}")]
+    Startup(#[from] StartupError),
+
+    /// Failure during the scan loop or finalization.
+    #[error("Runtime error: {0}")]
+    Runtime(#[from] anyhow::Error),
+}
+
 /// Error types for initialization failures.
 #[derive(Error, Debug)]
 #[allow(clippy::enum_variant_names)] // All variants end with "Error" by convention

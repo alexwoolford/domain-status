@@ -821,14 +821,16 @@ mod tests {
         })
         .await;
 
-        // Should fail with file creation error
+        // Should fail with file creation / path error (wording is OS-dependent)
         assert!(result.is_err(), "Should fail when file cannot be created");
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("Failed to create output file")
                 || error_msg.contains("No such file")
-                || error_msg.contains("Permission denied"),
-            "Error should mention file creation issue, got: {}",
+                || error_msg.contains("Permission denied")
+                || error_msg.contains("cannot find the path")
+                || error_msg.contains("path specified"),
+            "Error should mention file creation/path issue, got: {}",
             error_msg
         );
     }
