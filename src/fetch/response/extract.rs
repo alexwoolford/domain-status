@@ -67,7 +67,9 @@ async fn stream_body_with_limit(
 /// # Errors
 ///
 /// Returns an error if domain extraction fails or response body cannot be read.
-/// Returns `Ok(None)` if content-type is not HTML or body is empty/large.
+/// Returns `Ok(None)` if content-type is not HTML or body is empty.
+/// When body exceeds the size limit, returns `Ok(Some(ResponseData))` with metadata
+/// (status, headers, TLS-relevant URL/domain) and empty body so the record is still stored.
 pub(crate) async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
@@ -135,8 +137,23 @@ pub(crate) async fn extract_response_data(
     {
         Ok(Some(text)) => text,
         Ok(None) => {
-            debug!("Body exceeded limit for {final_domain}, skipping");
-            return Ok(None);
+            // Body exceeded limit: return partial data (metadata only) so status, headers,
+            // TLS, DNS, etc. are still recorded; HTML parsing is skipped.
+            debug!(
+                "Body exceeded limit for {final_domain}, recording metadata only (no HTML parse)"
+            );
+            return Ok(Some(ResponseData {
+                final_url,
+                initial_domain,
+                final_domain,
+                host,
+                status: status.as_u16(),
+                status_desc,
+                headers,
+                security_headers,
+                http_headers,
+                body: String::new(),
+            }));
         }
         Err(e) => {
             log::warn!("Failed to read response body for {final_domain}: {e}");
@@ -467,8 +484,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_response_data_large_body_skipped() {
-        // Test that large bodies are skipped (returns Ok(None))
-        // Note: Domain extraction will fail with IPv6, but we can verify the logic path
+        // When body exceeds limit and domain extraction succeeds, we return Ok(Some(ResponseData))
+        // with empty body (metadata only). This test uses IPv6 server URL so domain extraction
+        // fails before we hit that path; we only verify the function runs.
         let server = Server::run();
         let server_url = server.url("/large").to_string();
         let test_url = "https://example.com/large";
