@@ -259,14 +259,25 @@ pub async fn run_scan(
                     }
                 }
 
-                let permit = match Arc::clone(&resources.semaphore).acquire_owned().await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        warn!("Semaphore closed, skipping URL: {url}");
-                        resources
-                            .total_urls_attempted
-                            .fetch_add(1, Ordering::SeqCst);
-                        continue;
+                // Race semaphore acquisition against cancellation so we don't block on the
+                // permit wait with no way to respond to Ctrl-C (avoids deadlock when all
+                // worker permits are in use).
+                let permit = tokio::select! {
+                    result = Arc::clone(&resources.semaphore).acquire_owned() => {
+                        match result {
+                            Ok(p) => p,
+                            Err(_) => {
+                                warn!("Semaphore closed, skipping URL: {url}");
+                                resources
+                                    .total_urls_attempted
+                                    .fetch_add(1, Ordering::SeqCst);
+                                continue;
+                            }
+                        }
+                    }
+                    _ = cancel.cancelled() => {
+                        log::info!("Received interrupt (Ctrl-C), finishing current work and finalizing...");
+                        break;
                     }
                 };
 
