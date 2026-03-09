@@ -453,6 +453,7 @@ where
 ///     total_urls: 10,
 ///     successful: 8,
 ///     failed: 2,
+///     skipped: 0,
 ///     elapsed_seconds: 1.5,
 ///     db_path: PathBuf::from("./domain_status.db"),
 /// };
