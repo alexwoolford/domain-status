@@ -89,6 +89,9 @@ pub const FAVICON_FETCH_TIMEOUT_SECS: u64 = 5;
 /// This prevents `DoS` attacks via large inline scripts
 /// Enforced in src/fetch/response/html.rs when extracting inline script content
 pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
+/// Maximum total inline script content across all scripts on a page (500KB)
+/// Prevents unbounded memory use when a page has many inline scripts
+pub const MAX_TOTAL_SCRIPT_CONTENT: usize = 500 * 1024; // 500KB total
 
 // HTML text extraction limits
 /// Maximum HTML text content to extract in characters (50KB)

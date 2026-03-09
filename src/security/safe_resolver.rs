@@ -106,6 +106,10 @@ pub(crate) fn is_public_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 pub(crate) fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    // IPv4-mapped addresses (::ffff:x.x.x.x) — delegate to IPv4 check
+    if let Some(ipv4) = ip.to_ipv4_mapped() {
+        return is_public_ipv4(ipv4);
+    }
     let s = ip.segments();
     // ::1 loopback
     if s == [0, 0, 0, 0, 0, 0, 0, 1] {
@@ -171,6 +175,19 @@ mod tests {
         assert!(!is_public_ipv6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
         assert!(!is_public_ipv6(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 1)));
         assert!(!is_public_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)));
+    }
+
+    #[test]
+    fn test_ipv4_mapped_ipv6_blocked() {
+        // ::ffff:127.0.0.1 (IPv4-mapped loopback) must be rejected
+        let mapped_loopback = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001);
+        assert!(!is_public_ipv6(mapped_loopback));
+        // ::ffff:10.0.0.1 (IPv4-mapped private)
+        let mapped_private = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001);
+        assert!(!is_public_ipv6(mapped_private));
+        // ::ffff:8.8.8.8 (IPv4-mapped public) should be allowed
+        let mapped_public = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808);
+        assert!(is_public_ipv6(mapped_public));
     }
 
     #[tokio::test]

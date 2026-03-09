@@ -16,7 +16,7 @@ mod url_validation;
 
 pub use analysis::analyze_security;
 pub use types::SecurityWarning;
-pub use url_validation::validate_url_safe;
+pub use url_validation::{ssrf_safe_redirect_policy, validate_url_safe};
 
 #[cfg(test)]
 mod tests {

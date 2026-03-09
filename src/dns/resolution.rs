@@ -8,6 +8,11 @@ use hickory_resolver::TokioResolver;
 
 /// Resolves a hostname to an IP address using DNS.
 ///
+/// Prefers a public IP when the response contains both public and private
+/// addresses, so the returned value matches what [`SafeResolver`](crate::security::safe_resolver::SafeResolver) would use
+/// for the actual connection (consistent analytics and no misleading private-IP
+/// entries when DNS returns multiple addresses).
+///
 /// # Arguments
 ///
 /// * `host` - The hostname to resolve
@@ -15,7 +20,8 @@ use hickory_resolver::TokioResolver;
 ///
 /// # Returns
 ///
-/// The first IP address found, or an error if resolution fails.
+/// A public IP if present, otherwise the first IP in the response, or an error
+/// if resolution fails or no addresses are found.
 ///
 /// # Errors
 ///
@@ -25,7 +31,8 @@ pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<
     let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
     let ip = response
         .iter()
-        .next()
+        .find(|ip| crate::security::safe_resolver::is_public_ip(*ip))
+        .or_else(|| response.iter().next())
         .ok_or_else(|| Error::msg("No IP addresses found"))?
         .to_string();
     Ok(ip)

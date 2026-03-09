@@ -164,7 +164,16 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
 /// - `fe80::/10` (link-local)
 /// - `ff00::/8` (multicast)
 fn is_private_ipv6(ip: Ipv6Addr) -> bool {
+    // IPv4-mapped addresses (::ffff:x.x.x.x) — delegate to IPv4 check
+    if let Some(ipv4) = ip.to_ipv4_mapped() {
+        return is_private_ipv4(ipv4);
+    }
     let segments = ip.segments();
+
+    // :: unspecified
+    if segments == [0; 8] {
+        return true;
+    }
 
     // ::1 (loopback)
     if segments == [0, 0, 0, 0, 0, 0, 0, 1] {
@@ -187,6 +196,21 @@ fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     }
 
     false
+}
+
+/// Returns a reqwest redirect policy that validates each redirect target with SSRF checks.
+///
+/// Use this for clients that need to follow redirects (e.g. GitHub CDN, `MaxMind` downloads)
+/// while blocking redirects to private/reserved IPs. Prefer this over `Policy::none()` so
+/// legitimate redirects still work; redirects to internal IPs cause the attempt to stop.
+pub fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if validate_url_safe(attempt.url().as_str()).is_err() {
+            attempt.stop()
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 /// Checks if a domain name is a localhost variant.
@@ -243,9 +267,13 @@ mod tests {
     fn test_validate_url_safe_private_ipv6() {
         // Private IPv6 addresses should be blocked
         assert!(validate_url_safe("http://[::1]").is_err()); // Loopback
+        assert!(validate_url_safe("http://[::]").is_err()); // Unspecified
         assert!(validate_url_safe("http://[fc00::1]").is_err()); // Unique local
         assert!(validate_url_safe("http://[fe80::1]").is_err()); // Link-local
         assert!(validate_url_safe("http://[ff00::1]").is_err()); // Multicast
+                                                                 // IPv4-mapped private addresses must be blocked
+        assert!(validate_url_safe("http://[::ffff:127.0.0.1]").is_err());
+        assert!(validate_url_safe("http://[::ffff:192.168.1.1]").is_err());
     }
 
     #[test]
@@ -298,15 +326,36 @@ mod tests {
     #[test]
     fn test_is_private_ipv6() {
         // Private ranges
+        assert!(is_private_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))); // :: unspecified
         assert!(is_private_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))); // ::1
         assert!(is_private_ipv6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))); // fc00::/7
         assert!(is_private_ipv6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))); // fe80::/10
         assert!(is_private_ipv6(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 1))); // ff00::/8
+                                                                              // IPv4-mapped private
+        assert!(is_private_ipv6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001
+        ))); // ::ffff:127.0.0.1
+        assert!(is_private_ipv6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0xc0a8, 0x0101
+        ))); // ::ffff:192.168.1.1
 
         // Public IPs
         assert!(!is_private_ipv6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
         ))); // 2001:db8::1
+        assert!(!is_private_ipv6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808
+        ))); // ::ffff:8.8.8.8
+    }
+
+    #[test]
+    fn test_ssrf_safe_redirect_policy_builds() {
+        // Smoke test: policy can be used to build a client (defense-in-depth for redirect bypass)
+        let client = reqwest::Client::builder()
+            .redirect(ssrf_safe_redirect_policy())
+            .build()
+            .expect("client with SSRF-safe redirect policy should build");
+        drop(client);
     }
 
     #[test]

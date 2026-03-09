@@ -157,7 +157,7 @@ async fn handle_failure(
 
     let context = crate::storage::failure::extract_failure_context(&error);
 
-    if let Err(record_err) = record_url_failure(crate::storage::failure::FailureRecordParams {
+    record_url_failure(crate::storage::failure::FailureRecordParams {
         pool: &ctx.db.pool,
         extractor: &ctx.network.extractor,
         url: url.as_ref(),
@@ -167,14 +167,7 @@ async fn handle_failure(
         elapsed_time: elapsed,
         run_id: ctx.config.run_id.as_deref(),
     })
-    .await
-    {
-        log::warn!(
-            "Failed to record failure for {}: {}",
-            url.as_ref(),
-            record_err
-        );
-    }
+    .await;
 }
 
 /// Handle URL processing timeout.
@@ -218,7 +211,7 @@ async fn handle_timeout(
     // RETRY_MAX_ATTEMPTS is a compile-time constant set to 3, which is well within
     // the range of u32 (0 to 4,294,967,295).
     #[allow(clippy::cast_possible_truncation)]
-    if let Err(record_err) = record_url_failure(crate::storage::failure::FailureRecordParams {
+    record_url_failure(crate::storage::failure::FailureRecordParams {
         pool: &ctx.db.pool,
         extractor: &ctx.network.extractor,
         url: url.as_ref(),
@@ -228,14 +221,7 @@ async fn handle_timeout(
         elapsed_time: elapsed,
         run_id: ctx.config.run_id.as_deref(),
     })
-    .await
-    {
-        log::warn!(
-            "Failed to record timeout failure for {}: {}",
-            url.as_ref(),
-            record_err
-        );
-    }
+    .await;
 
     ctx.config
         .error_stats
