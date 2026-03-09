@@ -107,6 +107,7 @@ maxminddb = "^0.27"
 flate2 = "^1.1"
 tar = "^0.4"
 dotenvy = "^0.15"
+config = { version = "0.14", default-features = false, features = ["toml"] }
 whois-service = { version = "0.2.1", default-features = false }
 axum = "^0.8"
 include_dir = "^0.7"

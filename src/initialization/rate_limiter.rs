@@ -30,6 +30,18 @@ pub struct RateLimiter {
     shutdown: tokio_util::sync::CancellationToken,
 }
 
+impl std::fmt::Debug for RateLimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimiter")
+            .field("capacity", &self.capacity)
+            .field(
+                "current_rps",
+                &self.current_rps.load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 fn compute_refill_permits(
     current_rps: u32,
     elapsed: std::time::Duration,

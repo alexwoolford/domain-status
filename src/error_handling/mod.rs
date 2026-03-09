@@ -45,11 +45,13 @@
 //! 5. Attach context with `.context()` or `.with_context()` when using `anyhow::Error`
 
 mod categorization;
+mod reqwest_ext;
 mod stats;
 mod types;
 
 // Re-export public API
 pub use categorization::{categorize_reqwest_error, get_retry_strategy, update_error_stats};
+pub use reqwest_ext::ReqwestErrorExt;
 pub use stats::ProcessingStats;
 pub use types::{
     DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, WarningType,

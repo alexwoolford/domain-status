@@ -23,6 +23,7 @@ use satellite::{
 ///
 /// This struct groups all parameters needed to insert a URL record, reducing
 /// function argument count and improving maintainability.
+#[derive(Debug)]
 pub struct UrlRecordInsertParams<'a> {
     /// Database connection pool
     pub pool: &'a SqlitePool,

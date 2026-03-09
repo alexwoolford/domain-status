@@ -6,6 +6,14 @@
 //! Key functions:
 //! - `extract_domain()` - Extracts the registrable domain from a URL
 //! - `normalize_domain()` - Normalizes domain names (lowercase, removes www)
+//!
+//! ## Strict hostname validation
+//!
+//! For URL-based input, PSL and `url` parsing are sufficient. If we add features that
+//! accept raw hostnames or subdomains (e.g. config-driven allowlists or subdomain
+//! enumeration), consider using a crate such as [`addr`](https://crates.io/crates/addr)
+//! for strict hostname validation (invalid labels, leading/trailing dots, character
+//! allowlists) alongside PSL.
 
 use anyhow::{Context, Result};
 
