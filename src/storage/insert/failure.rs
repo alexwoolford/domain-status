@@ -290,8 +290,9 @@ async fn insert_url_failure_impl(
     }
 }
 
-/// Inserts a partial failure record into the database.
+/// Inserts a partial failure record into the database with retry logic.
 ///
+/// Retries transient database errors (locked, busy) up to 3 times with exponential backoff.
 /// Partial failures are DNS/TLS errors that occurred during supplementary data
 /// collection but didn't prevent the URL from being successfully processed.
 ///
@@ -304,6 +305,14 @@ async fn insert_url_failure_impl(
 ///
 /// The ID of the inserted partial failure record, or a `DatabaseError` if insertion fails.
 pub async fn insert_url_partial_failure(
+    pool: &SqlitePool,
+    partial_failure: &UrlPartialFailureRecord,
+) -> Result<i64, DatabaseError> {
+    with_sqlite_retry(|| insert_url_partial_failure_impl(pool, partial_failure)).await
+}
+
+/// Internal implementation of `insert_url_partial_failure` (without retry logic).
+async fn insert_url_partial_failure_impl(
     pool: &SqlitePool,
     partial_failure: &UrlPartialFailureRecord,
 ) -> Result<i64, DatabaseError> {
