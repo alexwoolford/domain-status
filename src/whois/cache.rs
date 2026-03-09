@@ -2,9 +2,14 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 use crate::clock::{Clock, SystemClock};
+
+/// Process-wide count of WHOIS cache saves. Used to skip the full directory scan
+/// when the cache is below the limit (common case).
+static WHOIS_SAVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 use super::types::{WhoisCacheEntry, WhoisResult};
 
@@ -110,7 +115,15 @@ impl<C: Clock> WhoisCacheStore<C> {
             .await
             .context("Failed to write cache file")?;
 
-        self.enforce_cache_limit(cache_path).await
+        let count = WHOIS_SAVE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        let should_enforce = count >= self.max_entries || count == 1;
+        if should_enforce {
+            self.enforce_cache_limit(cache_path).await?;
+            if count >= self.max_entries {
+                WHOIS_SAVE_COUNT.store(self.max_entries, Ordering::Relaxed);
+            }
+        }
+        Ok(())
     }
 
     async fn enforce_cache_limit(&self, cache_path: &Path) -> Result<()> {
