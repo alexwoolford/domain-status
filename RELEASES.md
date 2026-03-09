@@ -110,26 +110,21 @@ Currently, macOS binaries are unsigned, which triggers Gatekeeper warnings. To e
 
 **Note**: For open-source projects, code signing is optional but improves user experience. Many projects skip it due to the cost and complexity.
 
-## Future: Publishing to crates.io
+## Publishing to crates.io
 
-When ready to publish to crates.io:
+The main crate depends on `domain_status_cli` (path dependency). When publishing, Cargo expects that dependency on the registry, so publish the CLI crate first, then the main crate.
 
-1. Ensure `Cargo.toml` has all required metadata:
-   - `name`, `version`, `description`, `license`, `authors`
-   - `repository`, `homepage`, `documentation` (optional but recommended)
-   - `keywords`, `categories` (optional but helpful)
+1. Log in (once per machine): `cargo login` and paste your crates.io API token.
 
-2. Run checks:
+2. Publish the CLI crate first:
    ```bash
-   cargo publish --dry-run
+   cargo publish -p domain_status_cli --allow-dirty
    ```
 
-3. Publish:
+3. Publish the main crate:
    ```bash
-   cargo publish
+   cargo publish --allow-dirty
    ```
+   Use `--allow-dirty` only if you have uncommitted files that are not part of the package (e.g. validation exports). Otherwise omit it.
 
-4. Update README.md with installation instructions:
-   ```bash
-   cargo install domain_status
-   ```
+4. Optional dry run: `cargo publish -p domain_status_cli --dry-run` and `cargo publish --dry-run` before step 2–3.
