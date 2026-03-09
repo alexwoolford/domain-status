@@ -208,7 +208,7 @@ pub struct Config {
     /// so they can be safely read from multiple threads.
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
-    pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,
+    pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
 
     /// Optional dependency overrides for tests (inject mock HTTP client, etc.).
     ///
@@ -630,7 +630,8 @@ mod tests {
     fn test_config_debug_with_callback() {
         // Test Debug formatting when progress_callback is set
         use std::sync::Arc;
-        let callback = Arc::new(|_completed: usize, _failed: usize, _total: usize| {});
+        let callback =
+            Arc::new(|_completed: usize, _failed: usize, _skipped: usize, _total: usize| {});
         let config = Config {
             progress_callback: Some(callback),
             ..Default::default()

@@ -741,7 +741,7 @@ pub fn parse_key_value_pairs(kv_str: &str) -> Vec<(String, String)> {
         .filter_map(|s| {
             let parts: Vec<&str> = s.split(':').collect();
             if parts.len() >= 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
+                Some((parts[0].to_string(), parts[1..].join(":")))
             } else {
                 None
             }

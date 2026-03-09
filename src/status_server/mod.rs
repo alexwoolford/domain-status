@@ -98,6 +98,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(100)),
             completed_urls: Arc::new(AtomicUsize::new(50)),
             failed_urls: Arc::new(AtomicUsize::new(10)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,

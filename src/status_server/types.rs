@@ -20,6 +20,8 @@ pub struct StatusState {
     pub total_urls_attempted: Arc<AtomicUsize>,
     pub completed_urls: Arc<AtomicUsize>,
     pub failed_urls: Arc<AtomicUsize>,
+    /// URLs skipped (e.g. invalid or SSRF-unsafe) before processing
+    pub skipped_urls: Arc<AtomicUsize>,
     pub start_time: Arc<Instant>,
     pub error_stats: Arc<ProcessingStats>,
     /// Timing statistics for performance monitoring
@@ -123,6 +125,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(0)),
             completed_urls: Arc::new(AtomicUsize::new(0)),
             failed_urls: Arc::new(AtomicUsize::new(0)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
@@ -148,6 +151,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(0)),
             completed_urls: Arc::new(AtomicUsize::new(10)),
             failed_urls: Arc::new(AtomicUsize::new(2)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
@@ -317,6 +321,7 @@ mod tests {
             total_urls_attempted: Arc::new(AtomicUsize::new(0)),
             completed_urls: Arc::new(AtomicUsize::new(0)),
             failed_urls: Arc::new(AtomicUsize::new(0)),
+            skipped_urls: Arc::new(AtomicUsize::new(0)),
             start_time: Arc::new(Instant::now()),
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: Some(Arc::new(TimingStats::new())),

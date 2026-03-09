@@ -29,6 +29,7 @@ pub async fn process_url_task(params: UrlTaskParams) {
     let UrlTaskParams {
         url,
         ctx,
+        cancel,
         permit: _permit, // Hold permit until task completes
         request_limiter,
         completed_urls,
@@ -39,9 +40,20 @@ pub async fn process_url_task(params: UrlTaskParams) {
         progress_callback,
     } = params;
 
+    if cancel.is_cancelled() {
+        return;
+    }
+
     // Apply rate limiting if configured
     if let Some(ref limiter) = request_limiter {
-        limiter.acquire().await;
+        tokio::select! {
+            _ = limiter.acquire() => {}
+            _ = cancel.cancelled() => return,
+        }
+    }
+
+    if cancel.is_cancelled() {
+        return;
     }
 
     let process_start = std::time::Instant::now();
@@ -83,6 +95,7 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 &ctx,
                 &completed_urls,
                 &failed_urls,
+                &skipped_urls,
                 total_urls_for_callback,
                 &progress_callback,
             )
@@ -95,6 +108,7 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 &ctx,
                 &completed_urls,
                 &failed_urls,
+                &skipped_urls,
                 total_urls_for_callback,
                 &progress_callback,
             )
@@ -128,6 +142,7 @@ async fn handle_success(
         progress_callback,
         completed_urls,
         failed_urls,
+        skipped_urls,
         total_urls_for_callback,
     );
 }
@@ -142,6 +157,7 @@ async fn handle_failure(
     ctx: &Arc<crate::fetch::ProcessingContext>,
     completed_urls: &Arc<std::sync::atomic::AtomicUsize>,
     failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
+    skipped_urls: &Arc<std::sync::atomic::AtomicUsize>,
     total_urls_for_callback: usize,
     progress_callback: &ProgressCallback,
 ) {
@@ -151,6 +167,7 @@ async fn handle_failure(
         progress_callback,
         completed_urls,
         failed_urls,
+        skipped_urls,
         total_urls_for_callback,
     );
     log::warn!("Failed to process URL {}: {error}", url.as_ref());
@@ -178,6 +195,7 @@ async fn handle_timeout(
     ctx: &Arc<crate::fetch::ProcessingContext>,
     completed_urls: &Arc<std::sync::atomic::AtomicUsize>,
     failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
+    skipped_urls: &Arc<std::sync::atomic::AtomicUsize>,
     total_urls_for_callback: usize,
     progress_callback: &ProgressCallback,
 ) {
@@ -187,6 +205,7 @@ async fn handle_timeout(
         progress_callback,
         completed_urls,
         failed_urls,
+        skipped_urls,
         total_urls_for_callback,
     );
     log::warn!(
@@ -379,11 +398,12 @@ mod tests {
         let url: Arc<str> = Arc::from("https://example.com/fail");
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
         let progress_calls = Arc::new(AtomicUsize::new(0));
         let callback: ProgressCallback = Some(Arc::new({
             let progress_calls = Arc::clone(&progress_calls);
-            move |completed, failed, _total| {
+            move |completed, failed, _skipped, _total| {
                 progress_calls.store(completed + failed, Ordering::SeqCst);
             }
         }));
@@ -397,6 +417,7 @@ mod tests {
             &ctx,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             1,
             &callback,
         )
@@ -421,6 +442,7 @@ mod tests {
         let url: Arc<str> = Arc::from(server.uri().as_str());
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
 
         handle_failure(
@@ -431,6 +453,7 @@ mod tests {
             &ctx,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             1,
             &None,
         )
@@ -454,6 +477,7 @@ mod tests {
         let url: Arc<str> = Arc::from(server.uri().as_str());
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
 
         handle_failure(
@@ -464,6 +488,7 @@ mod tests {
             &ctx,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             1,
             &None,
         )
@@ -477,11 +502,12 @@ mod tests {
         let url: Arc<str> = Arc::from("https://example.com/timeout");
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
         let progress_calls = Arc::new(AtomicUsize::new(0));
         let callback: ProgressCallback = Some(Arc::new({
             let progress_calls = Arc::clone(&progress_calls);
-            move |completed, failed, _total| {
+            move |completed, failed, _skipped, _total| {
                 progress_calls.store(completed + failed, Ordering::SeqCst);
             }
         }));
@@ -492,6 +518,7 @@ mod tests {
             &ctx,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             1,
             &callback,
         )
@@ -512,11 +539,12 @@ mod tests {
         let url: Arc<str> = Arc::from("https://example.com/record-fail");
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
         let progress_calls = Arc::new(AtomicUsize::new(0));
         let callback: ProgressCallback = Some(Arc::new({
             let progress_calls = Arc::clone(&progress_calls);
-            move |_completed, failed, _total| {
+            move |_completed, failed, _skipped, _total| {
                 progress_calls.store(failed, Ordering::SeqCst);
             }
         }));
@@ -530,6 +558,7 @@ mod tests {
             &ctx,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             1,
             &callback,
         )

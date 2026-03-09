@@ -56,15 +56,17 @@ pub struct ScanReport {
 /// This reduces code duplication by centralizing the callback invocation logic.
 #[allow(clippy::type_complexity)]
 fn invoke_progress_callback(
-    callback: &Option<Arc<dyn Fn(usize, usize, usize) + Send + Sync>>,
+    callback: &Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
     completed: &Arc<std::sync::atomic::AtomicUsize>,
     failed: &Arc<std::sync::atomic::AtomicUsize>,
+    skipped: &Arc<std::sync::atomic::AtomicUsize>,
     total: usize,
 ) {
     if let Some(ref cb) = callback {
         cb(
             completed.load(Ordering::SeqCst),
             failed.load(Ordering::SeqCst),
+            skipped.load(Ordering::SeqCst),
             total,
         );
     }
@@ -123,6 +125,7 @@ pub async fn run_scan(
             total_urls_attempted: Arc::clone(&resources.total_urls_attempted),
             completed_urls: Arc::clone(&resources.completed_urls),
             failed_urls: Arc::clone(&resources.failed_urls),
+            skipped_urls: Arc::clone(&resources.skipped_urls),
             start_time: Arc::new(resources.start_time),
             error_stats: resources.error_stats.clone(),
             timing_stats: Some(Arc::clone(&resources.timing_stats)),
@@ -248,6 +251,7 @@ pub async fn run_scan(
                         &progress_callback,
                         &resources.completed_urls,
                         &resources.failed_urls,
+                        &resources.skipped_urls,
                         total_lines,
                     );
                     continue;
@@ -267,6 +271,7 @@ pub async fn run_scan(
                             &progress_callback,
                             &resources.completed_urls,
                             &resources.failed_urls,
+                            &resources.skipped_urls,
                             total_lines,
                         );
                         continue;
@@ -302,6 +307,7 @@ pub async fn run_scan(
                 let task_params = UrlTaskParams {
                     url: Arc::from(url.as_str()),
                     ctx: Arc::clone(&resources.shared_ctx),
+                    cancel: cancel.clone(),
                     permit,
                     request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
                     completed_urls: Arc::clone(&resources.completed_urls),
@@ -323,11 +329,25 @@ pub async fn run_scan(
         }
     }
 
-    // Phase 5: Drain all remaining tasks (blocking wait until all complete)
-    while let Some(task_result) = tasks.join_next().await {
-        if let Err(join_error) = task_result {
-            resources.failed_urls.fetch_add(1, Ordering::SeqCst);
-            log::warn!("Failed to join task (panicked): {:?}", join_error);
+    // Phase 5: Drain remaining tasks with timeout so Ctrl-C doesn't hang indefinitely
+    const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    loop {
+        match tokio::time::timeout(DRAIN_TIMEOUT, tasks.join_next()).await {
+            Ok(Some(task_result)) => {
+                if let Err(join_error) = task_result {
+                    resources.failed_urls.fetch_add(1, Ordering::SeqCst);
+                    log::warn!("Failed to join task (panicked): {:?}", join_error);
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {
+                log::info!(
+                    "Drain timeout ({}s) reached, finalizing with remaining tasks aborted",
+                    DRAIN_TIMEOUT.as_secs()
+                );
+                cancel.cancel();
+                break;
+            }
         }
     }
 
