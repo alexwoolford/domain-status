@@ -9,6 +9,7 @@
 //! All initialization functions return proper error types for error handling.
 
 mod client;
+mod log_filters;
 mod logger;
 mod rate_limiter;
 mod resolver;

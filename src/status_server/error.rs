@@ -2,6 +2,11 @@
 //!
 //! Use when adding fallible handlers so that failures become consistent HTTP
 //! responses and can be logged in one place (e.g. via `log_error_chain`).
+//!
+//! This module is intentionally unused until fallible handlers are added; the type
+//! is kept so new handlers can return `Result<T, StatusServerError>` without
+//! adding new code in this file.
+#![allow(dead_code)]
 
 use axum::{
     http::StatusCode,
@@ -16,7 +21,6 @@ use std::fmt;
 /// handlers (health, metrics, status) are infallible; use this when adding
 /// new endpoints that may fail.
 #[derive(Debug)]
-#[allow(dead_code)] // Used when fallible handlers are added
 pub struct StatusServerError {
     /// HTTP status code for the response.
     pub status: StatusCode,
@@ -41,7 +45,6 @@ impl IntoResponse for StatusServerError {
 
 impl StatusServerError {
     /// Internal server error (500).
-    #[allow(dead_code)]
     pub fn internal(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -50,7 +53,6 @@ impl StatusServerError {
     }
 
     /// Service unavailable (503), e.g. when the scan is not ready.
-    #[allow(dead_code)]
     pub fn unavailable(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,

@@ -64,6 +64,31 @@ impl<T> IoErrorContext<T> for Result<T, io::Error> {
     }
 }
 
+/// Ensures the parent directory of `file_path` exists and, on Unix, has mode `0o700`.
+///
+/// Use before creating a database file, log file, or other sensitive output so the
+/// containing directory is owner-only (Mullvad-style). No-op if the parent is `.` or
+/// the path has no parent.
+///
+/// # Errors
+/// Returns `Err` if creating the directory or setting permissions fails.
+pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
+    let Some(parent) = file_path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() || parent == Path::new(".") {
+        return Ok(());
+    }
+    std::fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(parent)?.permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(parent, perms)?;
+    }
+    Ok(())
+}
+
 /// Logs a warning if the file at `path` is world-readable (Unix only).
 ///
 /// Call when reading config or other sensitive files so users are prompted to

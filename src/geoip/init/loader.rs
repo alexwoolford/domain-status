@@ -177,9 +177,13 @@ pub(crate) async fn load_from_url(
 /// Downloads `GeoIP` database with size limit enforcement
 async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    use crate::initialization::init_resolver;
+    use crate::security::safe_resolver::SafeResolver;
 
+    let resolver =
+        init_resolver().context("Failed to initialize DNS resolver for GeoIP download")?;
     let client = reqwest::Client::builder()
-        .dns_resolver(Arc::new(crate::security::safe_resolver::SafeResolver))
+        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .timeout(Duration::from_secs(300)) // 5 minutes for large file
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;

@@ -164,17 +164,20 @@ pub async fn init_scan_resources(
         .await
         .context("Failed to initialize database pool")?;
 
-    // Initialize network clients
+    // Initialize DNS resolver first so HTTP clients can use it (and its timeouts)
+    let resolver = init_resolver().context("Failed to initialize DNS resolver")?;
+
+    // Initialize network clients (SafeResolver uses the same resolver and timeouts)
     let client = if let Some(ref overrides) = config.dependency_overrides {
         if let Some(ref c) = overrides.http_client {
             Arc::new(c.clone())
         } else {
-            init_client(&config)
+            init_client(&config, Arc::clone(&resolver))
                 .await
                 .context("Failed to initialize HTTP client")?
         }
     } else {
-        init_client(&config)
+        init_client(&config, Arc::clone(&resolver))
             .await
             .context("Failed to initialize HTTP client")?
     };
@@ -182,17 +185,16 @@ pub async fn init_scan_resources(
         if let Some(ref c) = overrides.http_client {
             Arc::new(c.clone())
         } else {
-            init_redirect_client(&config)
+            init_redirect_client(&config, Arc::clone(&resolver))
                 .await
                 .context("Failed to initialize redirect client")?
         }
     } else {
-        init_redirect_client(&config)
+        init_redirect_client(&config, Arc::clone(&resolver))
             .await
             .context("Failed to initialize redirect client")?
     };
     let extractor = init_extractor();
-    let resolver = init_resolver().context("Failed to initialize DNS resolver")?;
 
     // Run migrations
     crate::storage::run_migrations(&pool)

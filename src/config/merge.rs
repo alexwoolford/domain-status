@@ -118,36 +118,130 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
 
 /// Builds `Config` with precedence: CLI > env > config file > defaults.
 ///
+/// When `cli_explicit` is `Some(keys)`, only config fields whose name is in `keys` are
+/// overwritten with `cli_config`; others keep file+env values. When `None`, every field
+/// is overwritten (backward compatible). Use `Some` so file/env values are preserved
+/// for options the user did not set on the CLI or via env.
+///
 /// Call this from the CLI layer after loading the file+env map and converting
-/// the scan command to `Config` via `Config::from(scan_cmd)`.
+/// the scan command to `Config` via `config_from_scan_command(scan_cmd)`.
 #[must_use]
 pub fn merge_file_env_and_cli(
     file_env_map: Option<&HashMap<String, String>>,
     cli_config: Config,
+    cli_explicit: Option<&[&str]>,
 ) -> Config {
+    let overwrite = |key: &str| -> bool { cli_explicit.is_none_or(|keys| keys.contains(&key)) };
+
     let mut config = Config::default();
     if let Some(map) = file_env_map {
         apply_file_env_map_to_config(&mut config, map);
     }
-    config.file = cli_config.file;
-    config.log_level = cli_config.log_level;
-    config.log_level_filter_override = cli_config.log_level_filter_override;
-    config.log_format = cli_config.log_format;
-    config.db_path = cli_config.db_path;
-    config.max_concurrency = cli_config.max_concurrency;
-    config.timeout_seconds = cli_config.timeout_seconds;
-    config.user_agent = cli_config.user_agent;
-    config.rate_limit_rps = cli_config.rate_limit_rps;
-    config.max_per_domain = cli_config.max_per_domain;
-    config.adaptive_error_threshold = cli_config.adaptive_error_threshold;
-    config.fingerprints = cli_config.fingerprints;
-    config.geoip = cli_config.geoip;
-    config.status_port = cli_config.status_port;
-    config.enable_whois = cli_config.enable_whois;
-    config.fail_on = cli_config.fail_on;
-    config.fail_on_pct_threshold = cli_config.fail_on_pct_threshold;
-    config.log_file = cli_config.log_file;
+
+    if overwrite("file") {
+        config.file = cli_config.file;
+    }
+    if overwrite("log_level") {
+        config.log_level = cli_config.log_level;
+    }
+    if overwrite("log_level_filter_override") {
+        config.log_level_filter_override = cli_config.log_level_filter_override;
+    }
+    if overwrite("log_format") {
+        config.log_format = cli_config.log_format;
+    }
+    if overwrite("db_path") {
+        config.db_path = cli_config.db_path;
+    }
+    if overwrite("max_concurrency") {
+        config.max_concurrency = cli_config.max_concurrency;
+    }
+    if overwrite("timeout_seconds") {
+        config.timeout_seconds = cli_config.timeout_seconds;
+    }
+    if overwrite("user_agent") {
+        config.user_agent = cli_config.user_agent;
+    }
+    if overwrite("rate_limit_rps") {
+        config.rate_limit_rps = cli_config.rate_limit_rps;
+    }
+    if overwrite("max_per_domain") {
+        config.max_per_domain = cli_config.max_per_domain;
+    }
+    if overwrite("adaptive_error_threshold") {
+        config.adaptive_error_threshold = cli_config.adaptive_error_threshold;
+    }
+    if overwrite("fingerprints") {
+        config.fingerprints = cli_config.fingerprints;
+    }
+    if overwrite("geoip") {
+        config.geoip = cli_config.geoip;
+    }
+    if overwrite("status_port") {
+        config.status_port = cli_config.status_port;
+    }
+    if overwrite("enable_whois") {
+        config.enable_whois = cli_config.enable_whois;
+    }
+    if overwrite("fail_on") {
+        config.fail_on = cli_config.fail_on;
+    }
+    if overwrite("fail_on_pct_threshold") {
+        config.fail_on_pct_threshold = cli_config.fail_on_pct_threshold;
+    }
+    if overwrite("log_file") {
+        config.log_file = cli_config.log_file;
+    }
+
     config.progress_callback = None;
     config.dependency_overrides = None;
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_preserves_file_env_when_cli_not_explicit() {
+        let mut file_env = HashMap::new();
+        file_env.insert("file".to_string(), "/path/to/urls.txt".to_string());
+        file_env.insert("log_level".to_string(), "debug".to_string());
+        file_env.insert("max_concurrency".to_string(), "100".to_string());
+
+        let cli_config = Config {
+            file: PathBuf::from("/cli/urls.txt"),
+            log_level: LogLevel::Info,
+            max_concurrency: 30,
+            ..Default::default()
+        };
+
+        // Explicit empty: user set nothing, so file+env values are preserved
+        let merged = merge_file_env_and_cli(Some(&file_env), cli_config.clone(), Some(&[]));
+        assert!(
+            matches!(merged.log_level, LogLevel::Debug),
+            "file+env log_level preserved when not explicit"
+        );
+        assert_eq!(
+            merged.max_concurrency, 100,
+            "file+env max_concurrency preserved when not explicit"
+        );
+
+        // Only log_level explicitly set: only it is overwritten
+        let merged2 =
+            merge_file_env_and_cli(Some(&file_env), cli_config.clone(), Some(&["log_level"]));
+        assert!(
+            matches!(merged2.log_level, LogLevel::Info),
+            "cli log_level overwrites when explicit"
+        );
+        assert_eq!(
+            merged2.max_concurrency, 100,
+            "file+env max_concurrency still preserved"
+        );
+
+        // None: backward compat, all overwritten
+        let merged3 = merge_file_env_and_cli(Some(&file_env), cli_config, None);
+        assert!(matches!(merged3.log_level, LogLevel::Info));
+        assert_eq!(merged3.max_concurrency, 30);
+    }
 }

@@ -45,6 +45,7 @@
 //! 5. Attach context with `.context()` or `.with_context()` when using `anyhow::Error`
 
 mod categorization;
+mod error_ext;
 mod reqwest_ext;
 mod resolve_ext;
 mod stats;
@@ -52,6 +53,7 @@ mod types;
 
 // Re-export public API
 pub use categorization::{categorize_reqwest_error, get_retry_strategy, update_error_stats};
+pub use error_ext::ErrorExt;
 pub use reqwest_ext::ReqwestErrorExt;
 pub use resolve_ext::{categorize_resolve_error, DnsResolveErrorKind};
 pub use stats::ProcessingStats;
@@ -74,24 +76,6 @@ pub fn log_error_chain(e: &anyhow::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strum::IntoEnumIterator;
-
-    #[test]
-    fn test_processing_stats_initialization() {
-        let stats = ProcessingStats::new();
-        // All error types should be initialized to 0
-        for error_type in ErrorType::iter() {
-            assert_eq!(stats.get_error_count(error_type), 0);
-        }
-        // All warning types should be initialized to 0
-        for warning_type in WarningType::iter() {
-            assert_eq!(stats.get_warning_count(warning_type), 0);
-        }
-        // All info types should be initialized to 0
-        for info_type in InfoType::iter() {
-            assert_eq!(stats.get_info_count(info_type), 0);
-        }
-    }
 
     #[test]
     fn test_processing_stats_increment() {

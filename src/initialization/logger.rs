@@ -9,6 +9,8 @@ use std::sync::Mutex;
 
 use crate::config::LogFormat;
 use crate::error_handling::InitializationError;
+use crate::initialization::log_filters;
+use crate::utils::ensure_parent_dir_secure;
 use colored::*;
 use log::LevelFilter;
 
@@ -55,16 +57,7 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 
     // Override with CLI-provided level (takes precedence over RUST_LOG)
     builder.filter_level(level);
-    builder.filter_module("html5ever", LevelFilter::Error);
-    builder.filter_module("sqlx", LevelFilter::Info);
-    builder.filter_module("reqwest", LevelFilter::Info);
-    builder.filter_module("hyper", LevelFilter::Info);
-    builder.filter_module("selectors", LevelFilter::Warn);
-    // Suppress hickory UDP client stream warnings about malformed DNS messages
-    // These are expected when DNS responses are truncated or malformed, and hickory handles them gracefully
-    // Filter all hickory_proto warnings to Error level to suppress UDP malformed message warnings
-    builder.filter_module("hickory_proto", LevelFilter::Error);
-    builder.filter_module("domain_status", level);
+    log_filters::apply_silenced_crates(&mut builder, level);
 
     // Explicitly write logs to stderr to avoid polluting stdout when piping
     builder.target(env_logger::Target::Stderr);
@@ -138,6 +131,10 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 /// # Errors
 /// Returns `Err` when the log file cannot be created or logger setup fails.
 pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), InitializationError> {
+    ensure_parent_dir_secure(log_file).map_err(|e| {
+        InitializationError::LoggerSetupError(format!("Failed to create log directory: {}", e))
+    })?;
+
     // Create/truncate the log file
     let file = File::create(log_file).map_err(|e| {
         InitializationError::LoggerSetupError(format!("Failed to create log file: {}", e))
@@ -147,13 +144,7 @@ pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), In
     let mut builder = env_logger::Builder::from_default_env();
 
     builder.filter_level(level);
-    builder.filter_module("html5ever", LevelFilter::Error);
-    builder.filter_module("sqlx", LevelFilter::Info);
-    builder.filter_module("reqwest", LevelFilter::Info);
-    builder.filter_module("hyper", LevelFilter::Info);
-    builder.filter_module("selectors", LevelFilter::Warn);
-    builder.filter_module("hickory_proto", LevelFilter::Error);
-    builder.filter_module("domain_status", level);
+    log_filters::apply_silenced_crates(&mut builder, level);
 
     // Format with timestamps (no colors since it's going to a file)
     builder.format(move |buf, record| {

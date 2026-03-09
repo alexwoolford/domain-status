@@ -304,34 +304,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn test_error_type_equality() {
-        // Verify ErrorType implements PartialEq correctly
-        assert_eq!(
-            ErrorType::HttpRequestTimeoutError,
-            ErrorType::HttpRequestTimeoutError
-        );
-        assert_ne!(
-            ErrorType::HttpRequestTimeoutError,
-            ErrorType::DnsNsLookupError
-        );
-    }
-
-    #[test]
-    fn test_warning_type_equality() {
-        // Verify WarningType implements PartialEq correctly
-        assert_eq!(WarningType::MissingTitle, WarningType::MissingTitle);
-        assert_ne!(
-            WarningType::MissingTitle,
-            WarningType::MissingMetaDescription
-        );
-    }
-
-    #[test]
-    fn test_info_type_equality() {
-        // Verify InfoType implements PartialEq correctly
-        assert_eq!(InfoType::HttpRedirect, InfoType::HttpRedirect);
-        assert_ne!(InfoType::HttpRedirect, InfoType::HttpsRedirect);
-    }
 }

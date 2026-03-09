@@ -13,10 +13,8 @@ async fn main() -> Result<()> {
     let exit_code = match domain_status::cli::run_cli_from_args(std::env::args_os()).await {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("domain_status error: {e}");
-            for cause in e.chain().skip(1) {
-                eprintln!("  {cause}");
-            }
+            use domain_status::ErrorExt;
+            eprintln!("domain_status: {}", e.display_chain());
             domain_status::log_error_chain(&e);
             domain_status::print_io_error_hint_if_applicable(&e);
             domain_status::exit_codes::EXIT_RUNTIME_ERROR

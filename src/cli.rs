@@ -1,14 +1,14 @@
 //! CLI parsing and command execution.
+//!
+//! CLI definition lives in the `domain_status_cli` crate (single source of truth
+//! for build.rs completions and man page). We parse with that crate and convert to
+//! [`Config`] and export types as needed.
 
 use std::io;
 
 use anyhow::{Context, Result};
-use clap::CommandFactory;
-use clap::Parser;
 use clap_complete::Shell;
 use clap_mangen::Man;
-use clap_verbosity_flag::InfoLevel;
-use clap_verbosity_flag::Verbosity;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -16,199 +16,75 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::{FailOn, LogFormat, LogLevel, DEFAULT_USER_AGENT};
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser};
+use domain_status_cli::{
+    ExportFormat as CliExportFormat, FailOn as CliFailOn, LogFormat as CliLogFormat,
+    LogLevel as CliLogLevel,
+};
+
+use crate::config::{FailOn, LogFormat, LogLevel};
 use crate::export::{export_csv, ExportOptions};
 use crate::initialization::{init_crypto_provider, init_logger_to_file, init_logger_with};
 use crate::utils::warn_if_world_readable;
 use crate::{run_scan, Config, ScanReport};
 
-/// CLI-specific configuration with clap parsing.
-#[derive(Debug, Parser, Clone)]
-#[command(
-    name = "domain_status",
-    about = "Domain intelligence scanner - scan URLs and export results.",
-    version = env!("DOMAIN_STATUS_VERSION"),
-    long_version = env!("DOMAIN_STATUS_VERSION"),
-    subcommand_required = true,
-    arg_required_else_help = true
-)]
-pub enum CliCommand {
-    /// Scan URLs and store results in `SQLite` database.
-    #[command(name = "scan")]
-    Scan(ScanCommand),
-    /// Export data from `SQLite` database to various formats.
-    #[command(name = "export")]
-    Export(ExportCommand),
-}
+// Re-export CLI types so existing tests and callers can use the same names.
+pub use domain_status_cli::{CliCommand, ExportCommand, ExportFormat, ScanCommand};
 
-/// CLI scan command.
-#[derive(Debug, Parser, Clone)]
-pub struct ScanCommand {
-    /// Config file path (optional). Supports TOML. Env vars `DOMAIN_STATUS_*` override file.
-    #[arg(long, value_parser, env = "DOMAIN_STATUS_CONFIG_FILE")]
-    pub config: Option<PathBuf>,
-
-    /// File to read
-    #[arg(value_parser)]
-    pub file: PathBuf,
-
-    /// Log level: error|warn|info|debug|trace
-    #[arg(long, value_enum, default_value_t = LogLevel::Info, env = "DOMAIN_STATUS_LOG_LEVEL")]
-    pub log_level: LogLevel,
-
-    /// Increase logging verbosity (-v = debug, -vv = trace). Overrides `--log-level` when set.
-    #[command(flatten)]
-    pub verbosity: Verbosity<InfoLevel>,
-
-    /// Log format: plain|json
-    #[arg(long, value_enum, default_value_t = LogFormat::Plain, env = "DOMAIN_STATUS_LOG_FORMAT")]
-    pub log_format: LogFormat,
-
-    /// Database path (`SQLite` file)
-    #[arg(
-        long,
-        value_parser,
-        default_value = "./domain_status.db",
-        env = "DOMAIN_STATUS_DB_PATH"
-    )]
-    pub db_path: PathBuf,
-
-    /// Maximum concurrent requests
-    #[arg(long, default_value_t = 30)]
-    pub max_concurrency: usize,
-
-    /// Per-request timeout in seconds
-    #[arg(long, default_value_t = 10)]
-    pub timeout_seconds: u64,
-
-    /// HTTP User-Agent header value.
-    #[arg(long, default_value = DEFAULT_USER_AGENT)]
-    pub user_agent: String,
-
-    /// Initial requests per second (adaptive rate limiting always enabled)
-    #[arg(long, default_value_t = 15)]
-    pub rate_limit_rps: u32,
-
-    /// Maximum concurrent requests per registered domain.
-    #[arg(long, default_value_t = 5)]
-    pub max_per_domain: usize,
-
-    /// Error rate threshold for adaptive rate limiting (0.0-1.0, default: 0.2 = 20%)
-    #[arg(long, default_value_t = 0.2, hide = true)]
-    pub adaptive_error_threshold: f64,
-
-    /// Fingerprints source URL or local path.
-    #[arg(long)]
-    pub fingerprints: Option<String>,
-
-    /// `GeoIP` database path (`MaxMind` `GeoLite2` .mmdb file) or download URL.
-    #[arg(long)]
-    pub geoip: Option<String>,
-
-    /// HTTP status server port (optional, disabled by default)
-    #[arg(long, env = "DOMAIN_STATUS_STATUS_PORT")]
-    pub status_port: Option<u16>,
-
-    /// Enable WHOIS/RDAP lookup for domain registration information.
-    #[arg(long)]
-    pub enable_whois: bool,
-
-    /// Exit code policy for handling failures.
-    #[arg(long, value_enum, default_value_t = FailOn::Never)]
-    pub fail_on: FailOn,
-
-    /// Failure percentage threshold for `--fail-on pct>`. Only used when `--fail-on pct>` is set.
-    #[arg(
-        long,
-        default_value_t = 10,
-        value_parser = clap::value_parser!(u8).range(0..=100),
-        requires_if("pct>", "fail_on")
-    )]
-    pub fail_on_pct_threshold: u8,
-
-    /// Log file path for detailed logging.
-    #[arg(long, default_value = "domain_status.log")]
-    pub log_file: PathBuf,
-}
-
-/// CLI export command.
-#[derive(Debug, Parser, Clone)]
-pub struct ExportCommand {
-    /// Database path (`SQLite` file)
-    #[arg(
-        long,
-        value_parser,
-        default_value = "./domain_status.db",
-        env = "DOMAIN_STATUS_DB_PATH"
-    )]
-    pub db_path: PathBuf,
-
-    /// Export format: csv|jsonl|parquet
-    #[arg(long, value_enum, default_value = "csv")]
-    pub format: ExportFormat,
-
-    /// Output file path
-    #[arg(long)]
-    pub output: Option<String>,
-
-    /// Filter by run ID
-    #[arg(long)]
-    pub run_id: Option<String>,
-
-    /// Filter by domain (matches initial or final domain)
-    #[arg(long)]
-    pub domain: Option<String>,
-
-    /// Filter by HTTP status code
-    #[arg(long)]
-    pub status: Option<u16>,
-
-    /// Filter by timestamp (export records after this timestamp, in milliseconds since epoch)
-    #[arg(long)]
-    pub since: Option<i64>,
-}
-
-/// CLI export format.
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum ExportFormat {
-    /// CSV export.
-    Csv,
-    /// JSONL export.
-    Jsonl,
-    /// Parquet export.
-    Parquet,
-}
-
-impl From<ScanCommand> for Config {
-    fn from(cli: ScanCommand) -> Self {
-        let log_level_filter_override =
-            Some(cli.verbosity.log_level_filter()).filter(|f| *f != log::LevelFilter::Info);
-        Self {
-            file: cli.file,
-            log_level: cli.log_level,
-            log_format: cli.log_format,
-            log_level_filter_override,
-            db_path: cli.db_path,
-            max_concurrency: cli.max_concurrency,
-            timeout_seconds: cli.timeout_seconds,
-            user_agent: cli.user_agent,
-            rate_limit_rps: cli.rate_limit_rps,
-            max_per_domain: cli.max_per_domain,
-            adaptive_error_threshold: cli.adaptive_error_threshold,
-            fingerprints: cli.fingerprints,
-            geoip: cli.geoip,
-            status_port: cli.status_port,
-            enable_whois: cli.enable_whois,
-            fail_on: cli.fail_on,
-            fail_on_pct_threshold: cli.fail_on_pct_threshold,
-            log_file: Some(cli.log_file),
-            progress_callback: None,
-            dependency_overrides: None,
-        }
+fn log_level_cli_to_config(l: &CliLogLevel) -> LogLevel {
+    match l {
+        CliLogLevel::Error => LogLevel::Error,
+        CliLogLevel::Warn => LogLevel::Warn,
+        CliLogLevel::Info => LogLevel::Info,
+        CliLogLevel::Debug => LogLevel::Debug,
+        CliLogLevel::Trace => LogLevel::Trace,
     }
 }
 
-/// Parse CLI arguments using the real clap configuration.
+fn log_format_cli_to_config(f: &CliLogFormat) -> LogFormat {
+    match f {
+        CliLogFormat::Plain => LogFormat::Plain,
+        CliLogFormat::Json => LogFormat::Json,
+    }
+}
+
+fn fail_on_cli_to_config(f: &CliFailOn) -> FailOn {
+    match f {
+        CliFailOn::Never => FailOn::Never,
+        CliFailOn::AnyFailure => FailOn::AnyFailure,
+        CliFailOn::PctGreaterThan => FailOn::PctGreaterThan,
+    }
+}
+
+fn config_from_scan_command(cli: ScanCommand) -> Config {
+    let log_level_filter_override =
+        Some(cli.verbosity.log_level_filter()).filter(|f| *f != log::LevelFilter::Info);
+    Config {
+        file: cli.file,
+        log_level: log_level_cli_to_config(&cli.log_level),
+        log_format: log_format_cli_to_config(&cli.log_format),
+        log_level_filter_override,
+        db_path: cli.db_path,
+        max_concurrency: cli.max_concurrency,
+        timeout_seconds: cli.timeout_seconds,
+        user_agent: cli.user_agent,
+        rate_limit_rps: cli.rate_limit_rps,
+        max_per_domain: cli.max_per_domain,
+        adaptive_error_threshold: cli.adaptive_error_threshold,
+        fingerprints: cli.fingerprints,
+        geoip: cli.geoip,
+        status_port: cli.status_port,
+        enable_whois: cli.enable_whois,
+        fail_on: fail_on_cli_to_config(&cli.fail_on),
+        fail_on_pct_threshold: cli.fail_on_pct_threshold,
+        log_file: Some(cli.log_file),
+        progress_callback: None,
+        dependency_overrides: None,
+    }
+}
+
+/// Parse CLI arguments using the shared CLI definition.
 ///
 /// # Errors
 /// Returns `Err` when argument parsing fails (e.g. invalid or missing required options).
@@ -258,12 +134,66 @@ fn load_file_env_config(
     }
 }
 
+/// Scan CLI arg ids that correspond to config fields. Used to detect which values
+/// were set by the user (command line or env) vs defaulted.
+const SCAN_CONFIG_ARG_IDS: &[&str] = &[
+    "file",
+    "log_level",
+    "log_format",
+    "db_path",
+    "max_concurrency",
+    "timeout_seconds",
+    "user_agent",
+    "rate_limit_rps",
+    "max_per_domain",
+    "adaptive_error_threshold",
+    "fingerprints",
+    "geoip",
+    "status_port",
+    "enable_whois",
+    "fail_on",
+    "fail_on_pct_threshold",
+    "log_file",
+];
+
+/// Returns config field names that were explicitly set (command line or env), not defaulted.
+fn get_explicit_config_keys(scan_matches: &clap::ArgMatches) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    for id in SCAN_CONFIG_ARG_IDS {
+        if let Some(src) = scan_matches.value_source(id) {
+            if matches!(src, ValueSource::CommandLine | ValueSource::EnvVariable) {
+                keys.push(*id);
+            }
+        }
+    }
+    // Verbosity (-v/-q) sets log_level_filter_override; check flattened verbosity args.
+    for id in ["verbose", "quiet"] {
+        if let Some(src) = scan_matches.value_source(id) {
+            if matches!(src, ValueSource::CommandLine | ValueSource::EnvVariable) {
+                keys.push("log_level_filter_override");
+                break;
+            }
+        }
+    }
+    keys
+}
+
 /// Builds `Config` with precedence: CLI > env > config file > defaults.
-fn build_config_from_scan_command(scan_cmd: ScanCommand) -> Result<Config> {
+/// When `scan_arg_matches` is `Some`, only fields explicitly set by the user (CLI or env)
+/// overwrite file+env; others keep file/env values. When `None`, all CLI-derived values
+/// overwrite (backward compatible).
+fn build_config_from_scan_command(
+    scan_cmd: ScanCommand,
+    scan_arg_matches: Option<&clap::ArgMatches>,
+) -> Result<Config> {
     let file_env_map = load_file_env_config(scan_cmd.config.as_deref())?;
+    let cli_config = config_from_scan_command(scan_cmd);
+    let cli_explicit = scan_arg_matches.map(get_explicit_config_keys);
+    let explicit_slice = cli_explicit.as_deref();
     Ok(crate::config::merge_file_env_and_cli(
         file_env_map.as_ref(),
-        Config::from(scan_cmd),
+        cli_config,
+        explicit_slice,
     ))
 }
 
@@ -373,17 +303,17 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
         }
     } else {
         let extension = match export_cmd.format {
-            ExportFormat::Csv => "csv",
-            ExportFormat::Jsonl => "jsonl",
-            ExportFormat::Parquet => "parquet",
+            CliExportFormat::Csv => "csv",
+            CliExportFormat::Jsonl => "jsonl",
+            CliExportFormat::Parquet => "parquet",
         };
         Some(PathBuf::from(format!("domain_status_export.{}", extension)))
     };
 
     let lib_format = match export_cmd.format {
-        ExportFormat::Csv => crate::export::ExportFormat::Csv,
-        ExportFormat::Jsonl => crate::export::ExportFormat::Jsonl,
-        ExportFormat::Parquet => crate::export::ExportFormat::Parquet,
+        CliExportFormat::Csv => crate::export::ExportFormat::Csv,
+        CliExportFormat::Jsonl => crate::export::ExportFormat::Jsonl,
+        CliExportFormat::Parquet => crate::export::ExportFormat::Parquet,
     };
 
     let export_opts = ExportOptions {
@@ -397,19 +327,19 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
     };
 
     let (count, format_name) = match export_cmd.format {
-        ExportFormat::Csv => (
+        CliExportFormat::Csv => (
             export_csv(&export_opts)
                 .await
                 .context("Failed to export CSV")?,
             "CSV",
         ),
-        ExportFormat::Jsonl => (
+        CliExportFormat::Jsonl => (
             crate::export::export_jsonl(&export_opts)
                 .await
                 .context("Failed to export JSONL")?,
             "JSONL",
         ),
-        ExportFormat::Parquet => (
+        CliExportFormat::Parquet => (
             crate::export::export_parquet(&export_opts)
                 .await
                 .context("Failed to export Parquet")?,
@@ -428,12 +358,18 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
 
 /// Execute a parsed CLI command and return the intended process exit code.
 ///
+/// When `scan_arg_matches` is `Some`, config merge only overwrites file/env for fields
+/// explicitly set by the user (CLI or env). When `None`, all CLI-derived values overwrite.
+///
 /// # Errors
 /// Returns `Err` when scan or export execution fails (I/O, database, or runtime errors).
-pub async fn run_cli_command(cli_command: CliCommand) -> Result<i32> {
+pub async fn run_cli_command(
+    cli_command: CliCommand,
+    scan_arg_matches: Option<&clap::ArgMatches>,
+) -> Result<i32> {
     match cli_command {
         CliCommand::Scan(scan_cmd) => {
-            let config = build_config_from_scan_command(scan_cmd)?;
+            let config = build_config_from_scan_command(scan_cmd, scan_arg_matches)?;
             execute_scan_with_reporting(config).await
         }
         CliCommand::Export(export_cmd) => execute_export_command(export_cmd).await,
@@ -444,6 +380,9 @@ pub async fn run_cli_command(cli_command: CliCommand) -> Result<i32> {
 ///
 /// # Errors
 /// Returns `Err` when argument parsing fails or when the executed command fails.
+///
+/// # Panics
+/// Panics if the CLI definition has no subcommand (violates `subcommand_required`).
 pub async fn run_cli_from_args<I, T>(args: I) -> Result<i32>
 where
     I: IntoIterator<Item = T>,
@@ -452,34 +391,47 @@ where
     load_environment();
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
 
-    // Handle --print-completions <shell> and --print-manpage before normal parsing
+    // Handle --print-completions <shell> and --print-manpage before normal parsing (single source: domain_status_cli)
     if let Some(pos) = args
         .iter()
         .position(|a| a.to_str() == Some("--print-completions"))
     {
         if let Some(shell_arg) = args.get(pos + 1).and_then(|s| s.to_str()) {
             if let Ok(shell) = shell_arg.parse::<Shell>() {
-                let mut cmd = CliCommand::command();
+                let mut cmd = domain_status_cli::clap_command(env!("DOMAIN_STATUS_VERSION"));
                 clap_complete::generate(shell, &mut cmd, "domain_status", &mut io::stdout());
                 return Ok(0);
             }
         }
     }
     if args.iter().any(|a| a.to_str() == Some("--print-manpage")) {
-        let cmd = CliCommand::command();
+        let cmd = domain_status_cli::clap_command(env!("DOMAIN_STATUS_VERSION"));
         let man = Man::new(cmd);
         man.render(&mut io::stdout())?;
         return Ok(0);
     }
 
-    let cli_command = match parse_cli_command_from(args) {
-        Ok(c) => c,
+    let matches = match domain_status_cli::CliCommand::command().try_get_matches_from(&args) {
+        Ok(m) => m,
         Err(e) => {
             let _ = e.print();
             return Ok(e.exit_code());
         }
     };
-    run_cli_command(cli_command).await
+    let (sub_name, sub_matches) = matches
+        .subcommand()
+        .expect("subcommand_required and arg_required_else_help guarantee a subcommand");
+    let cli_command = match sub_name {
+        "scan" => CliCommand::Scan(
+            ScanCommand::from_arg_matches(sub_matches).map_err(|e| anyhow::anyhow!("{e}"))?,
+        ),
+        "export" => CliCommand::Export(
+            ExportCommand::from_arg_matches(sub_matches).map_err(|e| anyhow::anyhow!("{e}"))?,
+        ),
+        _ => unreachable!("only scan and export subcommands exist"),
+    };
+    let scan_matches = matches.subcommand_matches("scan");
+    run_cli_command(cli_command, scan_matches).await
 }
 
 /// Evaluates the numeric exit code for a completed scan.
@@ -557,13 +509,15 @@ mod tests {
 
     #[test]
     fn test_parse_real_scan_command_defaults() {
+        use domain_status_cli::FailOn as CliFailOn;
+
         let cli = parse_cli_command_from(["domain_status", "scan", "test.txt"]).unwrap();
 
         match cli {
             CliCommand::Scan(cmd) => {
                 assert_eq!(cmd.file, PathBuf::from("test.txt"));
                 assert_eq!(cmd.max_concurrency, 30);
-                assert_eq!(cmd.fail_on, FailOn::Never);
+                assert_eq!(cmd.fail_on, CliFailOn::Never);
                 assert_eq!(cmd.db_path, PathBuf::from("./domain_status.db"));
             }
             CliCommand::Export(_) => panic!("expected scan command"),
@@ -572,6 +526,8 @@ mod tests {
 
     #[test]
     fn test_parse_real_export_command_filters() {
+        use domain_status_cli::ExportFormat as CliExportFormat;
+
         let cli = parse_cli_command_from([
             "domain_status",
             "export",
@@ -594,7 +550,7 @@ mod tests {
                 assert_eq!(cmd.domain.as_deref(), Some("example.com"));
                 assert_eq!(cmd.status, Some(200));
                 assert_eq!(cmd.output.as_deref(), Some("out.jsonl"));
-                assert!(matches!(cmd.format, ExportFormat::Jsonl));
+                assert!(matches!(cmd.format, CliExportFormat::Jsonl));
             }
             CliCommand::Scan(_) => panic!("expected export command"),
         }
@@ -602,12 +558,16 @@ mod tests {
 
     #[test]
     fn test_scan_command_into_config_preserves_fields() {
+        use domain_status_cli::{
+            FailOn as CliFailOn, LogFormat as CliLogFormat, LogLevel as CliLogLevel,
+        };
+
         let scan_cmd = ScanCommand {
             config: None,
             file: PathBuf::from("test.txt"),
-            log_level: LogLevel::Debug,
-            verbosity: Verbosity::default(),
-            log_format: LogFormat::Json,
+            log_level: CliLogLevel::Debug,
+            verbosity: clap_verbosity_flag::Verbosity::<clap_verbosity_flag::InfoLevel>::default(),
+            log_format: CliLogFormat::Json,
             db_path: PathBuf::from("custom.db"),
             max_concurrency: 50,
             timeout_seconds: 20,
@@ -619,12 +579,12 @@ mod tests {
             geoip: Some("/path/to/geoip.mmdb".to_string()),
             status_port: Some(8080),
             enable_whois: true,
-            fail_on: FailOn::AnyFailure,
+            fail_on: CliFailOn::AnyFailure,
             fail_on_pct_threshold: 15,
             log_file: PathBuf::from("domain_status.log"),
         };
 
-        let config: Config = scan_cmd.into();
+        let config: Config = config_from_scan_command(scan_cmd);
         assert_eq!(config.file, PathBuf::from("test.txt"));
         assert_eq!(config.db_path, PathBuf::from("custom.db"));
         assert_eq!(config.max_concurrency, 50);

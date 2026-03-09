@@ -65,7 +65,7 @@ pub(crate) async fn insert_txt_records(
             "record_type",
             url_status_id,
             &txt_with_types,
-            None,
+            Some("ON CONFLICT(url_status_id, record_type, record_value) DO NOTHING"),
         )
         .await
         {
@@ -215,6 +215,34 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get::<String, _>("record_type"), "OTHER");
         assert_eq!(rows[1].get::<String, _>("record_type"), "VERIFICATION");
+    }
+
+    #[tokio::test]
+    async fn test_insert_txt_records_rescan_no_duplicates() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let txt_records_json =
+            Some(r#"["v=spf1 include:_spf.example.com ~all", "v=dmarc1; p=none"]"#.to_string());
+
+        // First insert
+        let mut tx1 = pool.begin().await.expect("Failed to start transaction");
+        insert_txt_records(&mut tx1, url_status_id, &txt_records_json).await;
+        tx1.commit().await.expect("Failed to commit transaction");
+
+        // Rescan: insert same records again (ON CONFLICT DO NOTHING)
+        let mut tx2 = pool.begin().await.expect("Failed to start transaction");
+        insert_txt_records(&mut tx2, url_status_id, &txt_records_json).await;
+        tx2.commit().await.expect("Failed to commit transaction");
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_txt_records WHERE url_status_id = ?")
+                .bind(url_status_id)
+                .fetch_one(&pool)
+                .await
+                .expect("Failed to count TXT records");
+
+        assert_eq!(count, 2, "Rescan should not create duplicate TXT records");
     }
 
     #[tokio::test]

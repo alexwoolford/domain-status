@@ -144,7 +144,7 @@ pub async fn handle_http_request(
                     .await
                 }
                 Err(e) => {
-                    update_error_stats(&ctx.config.error_stats, &e).await;
+                    update_error_stats(&ctx.config.error_stats, &e);
 
                     // Track bot detection (403) as info metric
                     if let Some(status) = e.status() {
@@ -174,7 +174,7 @@ pub async fn handle_http_request(
             }
         }
         Err(e) => {
-            update_error_stats(&ctx.config.error_stats, &e).await;
+            update_error_stats(&ctx.config.error_stats, &e);
             log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
                 scrubbed_url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
