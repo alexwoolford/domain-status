@@ -498,6 +498,7 @@ mod tests {
             total_urls,
             successful,
             failed,
+            skipped: 0,
             elapsed_seconds: 1.0,
             db_path: PathBuf::from("test.db"),
             run_id: "test-run-1".to_string(),

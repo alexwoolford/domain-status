@@ -60,6 +60,7 @@ One row per scan invocation.
 | `total_urls` | `INTEGER DEFAULT 0` | Total URLs attempted |
 | `successful_urls` | `INTEGER DEFAULT 0` | Successful URL observations |
 | `failed_urls` | `INTEGER DEFAULT 0` | Failed URL attempts |
+| `skipped_urls` | `INTEGER DEFAULT 0` | URLs intentionally skipped (e.g. duplicate domain in same run) |
 
 ### `url_status`
 

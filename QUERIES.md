@@ -244,7 +244,8 @@ SELECT
     elapsed_seconds,
     total_urls,
     successful_urls,
-    failed_urls
+    failed_urls,
+    skipped_urls
 FROM runs
 ORDER BY start_time_ms DESC;
 ```

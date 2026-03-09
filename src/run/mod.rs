@@ -41,6 +41,8 @@ pub struct ScanReport {
     pub successful: usize,
     /// Number of URLs that failed to process
     pub failed: usize,
+    /// Number of URLs intentionally skipped (e.g. duplicate domain in same run)
+    pub skipped: usize,
     /// Path to the `SQLite` database containing results
     pub db_path: PathBuf,
     /// Run identifier (format: `run_<timestamp_millis>`)
@@ -238,6 +240,9 @@ pub async fn run_scan(
                 }
 
                 let Some(url) = validate_and_normalize_url(trimmed) else {
+                    resources
+                        .total_urls_attempted
+                        .fetch_add(1, Ordering::SeqCst);
                     continue;
                 };
 
@@ -247,6 +252,9 @@ pub async fn run_scan(
                 if !resources.config.allow_localhost_for_tests {
                     if let Err(e) = validate_url_safe(&url) {
                         warn!("Skipping SSRF-unsafe URL: {e}");
+                        resources
+                            .total_urls_attempted
+                            .fetch_add(1, Ordering::SeqCst);
                         continue;
                     }
                 }
@@ -255,6 +263,9 @@ pub async fn run_scan(
                     Ok(permit) => permit,
                     Err(_) => {
                         warn!("Semaphore closed, skipping URL: {url}");
+                        resources
+                            .total_urls_attempted
+                            .fetch_add(1, Ordering::SeqCst);
                         continue;
                     }
                 };
@@ -400,14 +411,15 @@ mod tests {
                 assert_eq!(report.total_urls, 0);
                 assert_eq!(report.successful, 0);
                 assert_eq!(report.failed, 0);
+                assert_eq!(report.skipped, 0);
 
                 // Verify finalize_scan wrote run stats to DB (run row matches report)
                 let pool =
                     sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
                         .await
                         .expect("connect to test db");
-                let row: (i64, i64, i64) = sqlx::query_as(
-                    "SELECT total_urls, successful_urls, failed_urls FROM runs WHERE run_id = ?",
+                let row: (i64, i64, i64, i64) = sqlx::query_as(
+                    "SELECT total_urls, successful_urls, failed_urls, skipped_urls FROM runs WHERE run_id = ?",
                 )
                 .bind(&report.run_id)
                 .fetch_one(&pool)
@@ -427,6 +439,11 @@ mod tests {
                     usize::try_from(row.2).expect("failed_urls non-negative"),
                     report.failed,
                     "DB failed_urls should match report"
+                );
+                assert_eq!(
+                    usize::try_from(row.3).expect("skipped_urls non-negative"),
+                    report.skipped,
+                    "DB skipped_urls should match report"
                 );
             }
             Err(e) => {

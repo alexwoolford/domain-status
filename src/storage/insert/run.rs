@@ -22,6 +22,7 @@ pub struct RunStats<'a> {
     pub total_urls: i32,
     pub successful_urls: i32,
     pub failed_urls: i32,
+    pub skipped_urls: i32,
     pub elapsed_seconds: f64,
 }
 
@@ -67,13 +68,14 @@ pub async fn update_run_stats(
 
     sqlx::query(
         "UPDATE runs
-         SET end_time_ms = ?, total_urls = ?, successful_urls = ?, failed_urls = ?, elapsed_seconds = ?
+         SET end_time_ms = ?, total_urls = ?, successful_urls = ?, failed_urls = ?, skipped_urls = ?, elapsed_seconds = ?
          WHERE run_id = ?",
     )
     .bind(end_time_ms)
     .bind(stats.total_urls)
     .bind(stats.successful_urls)
     .bind(stats.failed_urls)
+    .bind(stats.skipped_urls)
     .bind(stats.elapsed_seconds)
     .bind(stats.run_id)
     .execute(pool)
@@ -114,7 +116,7 @@ pub async fn query_run_history(
 ) -> Result<Vec<RunSummary>, DatabaseError> {
     let query = if let Some(limit) = limit {
         format!(
-            "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds
+            "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, skipped_urls, elapsed_seconds
              FROM runs
              WHERE end_time_ms IS NOT NULL
              ORDER BY start_time_ms DESC
@@ -122,7 +124,7 @@ pub async fn query_run_history(
             limit
         )
     } else {
-        "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds
+        "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, skipped_urls, elapsed_seconds
          FROM runs
          WHERE end_time_ms IS NOT NULL
          ORDER BY start_time_ms DESC"
@@ -144,6 +146,7 @@ pub async fn query_run_history(
             total_urls: row.get("total_urls"),
             successful_urls: row.get("successful_urls"),
             failed_urls: row.get("failed_urls"),
+            skipped_urls: row.get("skipped_urls"),
             elapsed_seconds: row.get("elapsed_seconds"),
         })
         .collect();
@@ -168,6 +171,8 @@ pub struct RunSummary {
     pub successful_urls: i32,
     /// Number of URLs that failed to process.
     pub failed_urls: i32,
+    /// Number of URLs intentionally skipped (e.g. duplicate domain in same run).
+    pub skipped_urls: i32,
     /// Total execution time in seconds (None if run still in progress).
     pub elapsed_seconds: Option<f64>,
 }
@@ -340,6 +345,7 @@ mod tests {
             total_urls: 100,
             successful_urls: 95,
             failed_urls: 5,
+            skipped_urls: 0,
             elapsed_seconds: 10.5,
         };
         let result = update_run_stats(&pool, &stats).await;
@@ -348,7 +354,7 @@ mod tests {
 
         // Verify update
         let row = sqlx::query(
-            "SELECT end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
+            "SELECT end_time_ms, total_urls, successful_urls, failed_urls, skipped_urls, elapsed_seconds FROM runs WHERE run_id = ?",
         )
         .bind("test-run-stats")
         .fetch_one(&pool)
@@ -360,6 +366,7 @@ mod tests {
         assert_eq!(row.get::<i32, _>("total_urls"), 100);
         assert_eq!(row.get::<i32, _>("successful_urls"), 95);
         assert_eq!(row.get::<i32, _>("failed_urls"), 5);
+        assert_eq!(row.get::<i32, _>("skipped_urls"), 0);
         assert_eq!(row.get::<Option<f64>, _>("elapsed_seconds"), Some(10.5));
     }
 
@@ -386,6 +393,7 @@ mod tests {
             total_urls: 0,
             successful_urls: 0,
             failed_urls: 0,
+            skipped_urls: 0,
             elapsed_seconds: 0.0,
         };
         let result = update_run_stats(&pool, &stats).await;
@@ -394,7 +402,7 @@ mod tests {
 
         // Verify update
         let row = sqlx::query(
-            "SELECT total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
+            "SELECT total_urls, successful_urls, failed_urls, skipped_urls, elapsed_seconds FROM runs WHERE run_id = ?",
         )
         .bind("test-run-zero")
         .fetch_one(&pool)
@@ -404,6 +412,7 @@ mod tests {
         assert_eq!(row.get::<i32, _>("total_urls"), 0);
         assert_eq!(row.get::<i32, _>("successful_urls"), 0);
         assert_eq!(row.get::<i32, _>("failed_urls"), 0);
+        assert_eq!(row.get::<i32, _>("skipped_urls"), 0);
         assert_eq!(row.get::<Option<f64>, _>("elapsed_seconds"), Some(0.0));
     }
 
@@ -417,6 +426,7 @@ mod tests {
             total_urls: 100,
             successful_urls: 95,
             failed_urls: 5,
+            skipped_urls: 0,
             elapsed_seconds: 15.0,
         };
         let result = update_run_stats(&pool, &stats).await;
@@ -457,6 +467,7 @@ mod tests {
             total_urls: 50,
             successful_urls: 48,
             failed_urls: 2,
+            skipped_urls: 0,
             elapsed_seconds: 25.3,
         };
         let result = update_run_stats(&pool, &stats).await;
@@ -464,7 +475,7 @@ mod tests {
 
         // Verify complete record
         let row = sqlx::query(
-            "SELECT run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, elapsed_seconds FROM runs WHERE run_id = ?",
+            "SELECT run_id, version, fingerprints_source, fingerprints_version, geoip_version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, skipped_urls, elapsed_seconds FROM runs WHERE run_id = ?",
         )
         .bind("complete-run")
         .fetch_one(&pool)
@@ -486,6 +497,7 @@ mod tests {
         assert_eq!(row.get::<i32, _>("total_urls"), 50);
         assert_eq!(row.get::<i32, _>("successful_urls"), 48);
         assert_eq!(row.get::<i32, _>("failed_urls"), 2);
+        assert_eq!(row.get::<i32, _>("skipped_urls"), 0);
         assert_eq!(row.get::<Option<f64>, _>("elapsed_seconds"), Some(25.3));
     }
 
@@ -514,6 +526,7 @@ mod tests {
                 total_urls: 10,
                 successful_urls: 9,
                 failed_urls: 1,
+                skipped_urls: 0,
                 elapsed_seconds: 5.0,
             };
             update_run_stats(&pool, &stats)
@@ -557,6 +570,7 @@ mod tests {
                 total_urls: 10,
                 successful_urls: 9,
                 failed_urls: 1,
+                skipped_urls: 0,
                 elapsed_seconds: 5.0,
             };
             update_run_stats(&pool, &stats)
@@ -628,6 +642,7 @@ mod tests {
                 total_urls: 10,
                 successful_urls: 9,
                 failed_urls: 1,
+                skipped_urls: 0,
                 elapsed_seconds: 5.0,
             };
             update_run_stats(&pool, &stats)
