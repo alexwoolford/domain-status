@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use crate::config::{MAX_NETWORK_DOWNLOAD_RETRIES, MAX_RULESET_DOWNLOAD_SIZE};
 use crate::fingerprint::models::Technology;
-use crate::security::validate_url_safe;
+use crate::security::{ssrf_safe_redirect_policy, validate_url_safe};
 
 use super::github::fetch_from_github_directory;
 
@@ -37,6 +37,7 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
         init_resolver().context("Failed to initialize DNS resolver for ruleset fetch")?;
     let client = reqwest::Client::builder()
         .dns_resolver(Arc::new(SafeResolver::new(resolver)))
+        .redirect(ssrf_safe_redirect_policy())
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;

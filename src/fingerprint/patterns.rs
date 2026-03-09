@@ -467,7 +467,7 @@ pub(crate) fn extract_version_from_template(
         // This prevents issues like "64;5.3" when template was just "\1"
         if trimmed.contains(';') {
             // Check if template had multiple placeholders (like \1;\2) - if so, semicolon is intentional
-            let has_multiple_placeholders = version_expr.matches(r"\d+").count() > 1;
+            let has_multiple_placeholders = placeholders_in_template.len() > 1;
             if !has_multiple_placeholders {
                 // Template only had one placeholder, but we got semicolon - take first part only
                 let first_part = trimmed.split(';').next().unwrap_or(&trimmed).trim();

@@ -61,10 +61,11 @@ pub fn extract_contact_links(document: &Html) -> Vec<ContactLink> {
 
     for element in document.select(&ANCHOR_SELECTOR) {
         if let Some(href) = element.value().attr("href") {
+            // Use lowercased href only for prefix matching; extract value from original to preserve casing (RFC 5321 local part, vanity numbers).
             let href_lower = href.to_lowercase();
 
-            if let Some(rest) = href_lower.strip_prefix("mailto:") {
-                // Strip query parameters (?subject=..., ?body=..., etc.)
+            if href_lower.starts_with("mailto:") {
+                let rest = &href["mailto:".len()..];
                 let value = rest.split('?').next().unwrap_or(rest).trim().to_string();
                 if value.is_empty() {
                     continue;
@@ -77,8 +78,8 @@ pub fn extract_contact_links(document: &Html) -> Vec<ContactLink> {
                         raw_href: href.to_string(),
                     });
                 }
-            } else if let Some(rest) = href_lower.strip_prefix("tel:") {
-                let value = rest.trim().to_string();
+            } else if href_lower.starts_with("tel:") {
+                let value = href["tel:".len()..].trim().to_string();
                 if value.is_empty() {
                     continue;
                 }
@@ -190,8 +191,8 @@ mod tests {
         let links = extract_contact_links(&html);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].contact_type, ContactType::Email);
-        // Value is lowercased because we lowercase the href
-        assert_eq!(links[0].value, "info@example.com");
+        // Value preserves original casing (prefix match is case-insensitive)
+        assert_eq!(links[0].value, "INFO@EXAMPLE.COM");
     }
 
     #[test]

@@ -4,7 +4,6 @@
 //! associated context and satellite data.
 
 use crate::domain::extract_domain;
-use crate::error_handling::DatabaseError;
 use crate::security::redaction::{scrub_headers, scrub_url};
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
@@ -66,7 +65,7 @@ pub struct FailureRecordParams<'a> {
 // Large function handling comprehensive failure recording with context extraction and database insertion.
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
-pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), DatabaseError> {
+pub async fn record_url_failure(params: FailureRecordParams<'_>) {
     let attempted_url = scrub_url(params.url);
 
     // Extract context from error chain if not provided directly
@@ -128,12 +127,13 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), D
             // For complex errors (long chain), include chain summary
             let chain_count = params.error.chain().count();
             if chain_count > 3 {
+                // Exclude the reqwest message we already have to avoid duplication in the chain summary
                 let chain_summary: Vec<String> = params
                     .error
                     .chain()
-                    .skip(1) // Skip the reqwest error we already have
-                    .take(3) // Limit to first 3 additional causes
                     .map(|e| e.to_string())
+                    .filter(|s| s.as_str() != reqwest_msg.as_str())
+                    .take(3)
                     .collect();
                 if !chain_summary.is_empty() {
                     format!(
@@ -221,7 +221,6 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), D
             e
         );
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -254,8 +253,7 @@ mod tests {
         };
 
         // Should succeed (domain will be "unknown")
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify failure was recorded with "unknown" domain
         let row = sqlx::query(
@@ -297,8 +295,7 @@ mod tests {
             run_id: None,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify context was extracted and used
         let row = sqlx::query(
@@ -340,8 +337,7 @@ mod tests {
             run_id: None,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify header was truncated
         let row = sqlx::query(
@@ -386,9 +382,7 @@ mod tests {
             run_id: None,
         };
 
-        record_url_failure(params)
-            .await
-            .expect("failure should record");
+        record_url_failure(params).await;
 
         let row = sqlx::query(
             "SELECT header_value FROM url_failure_response_headers WHERE header_name = 'server'",
@@ -424,8 +418,7 @@ mod tests {
             run_id: None,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify error message was sanitized (no control characters)
         let row = sqlx::query(
@@ -481,8 +474,7 @@ mod tests {
             run_id: None,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify provided context was used
         let row = sqlx::query(
@@ -526,8 +518,7 @@ mod tests {
             run_id: None,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify extracted context was used
         let row = sqlx::query(
@@ -569,8 +560,7 @@ mod tests {
             run_id: None,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify error message was created (should contain root cause or chain summary)
         let row = sqlx::query(
@@ -617,8 +607,7 @@ mod tests {
             run_id,
         };
 
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
+        record_url_failure(params).await;
 
         // Verify run_id was stored
         let row = sqlx::query(

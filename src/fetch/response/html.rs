@@ -137,18 +137,20 @@ pub(crate) fn parse_html_content(
                 script_sources.push(src.to_string());
             }
         }
-        // Extract inline script content (limited to MAX_SCRIPT_CONTENT_SIZE per script for security)
-        // This prevents DoS attacks via large scripts
+        // Extract inline script content (limited per-script and cumulative for security)
         if element.value().attr("src").is_none() {
             let text = element.text().collect::<String>();
-            if !text.trim().is_empty() {
+            if !text.trim().is_empty()
+                && script_content.len() < crate::config::MAX_TOTAL_SCRIPT_CONTENT
+            {
                 inline_script_count += 1;
-                script_content.push_str(
-                    &text
-                        .chars()
-                        .take(crate::config::MAX_SCRIPT_CONTENT_SIZE)
-                        .collect::<String>(),
-                );
+                let chunk: String = text
+                    .chars()
+                    .take(crate::config::MAX_SCRIPT_CONTENT_SIZE)
+                    .collect();
+                // Reserve 1 char for newline so total never exceeds MAX_TOTAL_SCRIPT_CONTENT
+                let remaining = crate::config::MAX_TOTAL_SCRIPT_CONTENT - script_content.len() - 1;
+                script_content.push_str(&chunk.chars().take(remaining).collect::<String>());
                 script_content.push('\n'); // Separate scripts with newline
             }
         }

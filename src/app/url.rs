@@ -31,11 +31,11 @@ pub fn validate_and_normalize_url(url: &str) -> Option<String> {
         return None;
     }
 
-    // Normalize: add https:// prefix if missing
-    let normalized = if !url.starts_with("http://") && !url.starts_with("https://") {
-        format!("https://{url}")
-    } else {
+    // Normalize: add https:// prefix only when no scheme present (avoids https://ftp://... etc.)
+    let normalized = if url.contains("://") {
         url.to_string()
+    } else {
+        format!("https://{url}")
     };
 
     // Check normalized URL length (after adding https:// prefix, it could exceed limit)
@@ -181,52 +181,26 @@ mod tests {
 
     #[test]
     fn test_validate_and_normalize_url_unsupported_schemes() {
-        // Unsupported schemes: function normalizes first (adds https:// if missing)
-        // So "ftp://example.com" becomes "https://ftp://example.com" which the URL parser
-        // may accept as a URL with scheme "https" and host "ftp://example.com"
-        // However, the URL parser will then check the scheme, and if it's not http/https
-        // in the final parsed URL, it should be rejected. But the normalization happens first.
-        //
-        // Actually, "ftp://example.com" already has a scheme, so it doesn't get the https:// prefix.
-        // Wait, no - the check is !starts_with("http://") && !starts_with("https://")
-        // So "ftp://" doesn't start with either, so it gets "https://" prepended.
-        // This creates "https://ftp://example.com" which is malformed.
-        // The URL parser behavior may vary - test actual behavior:
-        let result = validate_and_normalize_url("ftp://example.com");
-        // The function may accept or reject this depending on URL parser behavior
-        // If it parses, the scheme check should reject non-http/https schemes
-        if let Some(url_str) = &result {
-            // If it was accepted, verify it's actually http/https
-            assert!(url_str.starts_with("http://") || url_str.starts_with("https://"));
-            // And verify the parsed scheme is http or https
-            if let Ok(parsed) = url::Url::parse(url_str) {
-                assert!(parsed.scheme() == "http" || parsed.scheme() == "https");
-            }
-        }
+        // URLs that already contain "://" are left as-is (no https:// prepended),
+        // then parsed and rejected by scheme check — no malformed "https://ftp://..."
+        assert_eq!(validate_and_normalize_url("ftp://example.com"), None);
+        assert_eq!(validate_and_normalize_url("file:///path/to/file"), None);
 
-        // file:// URLs
-        let result = validate_and_normalize_url("file:///path/to/file");
-        // file:// has a scheme, so normalization adds https:// prefix
-        // Result depends on URL parser behavior
-        // Test that if accepted, it's http/https
-        if let Some(url_str) = &result {
-            assert!(url_str.starts_with("http://") || url_str.starts_with("https://"));
-        }
-
-        // mailto: URLs (no host, just scheme:path)
-        let result = validate_and_normalize_url("mailto:test@example.com");
-        // mailto: doesn't have a host, normalization adds https:// prefix
-        // URL parser may reject or accept, but if accepted, scheme must be http/https
-        if let Some(url_str) = &result {
-            assert!(url_str.starts_with("http://") || url_str.starts_with("https://"));
+        // mailto: has no "://" so it still gets https:// prepended; parser may accept or reject
+        let mailto_result = validate_and_normalize_url("mailto:test@example.com");
+        if let Some(ref u) = mailto_result {
+            assert!(u.starts_with("http://") || u.starts_with("https://"));
         }
 
         // Test that http/https schemes are accepted
-        let result = validate_and_normalize_url("http://example.com");
-        assert_eq!(result, Some("http://example.com".to_string()));
-
-        let result = validate_and_normalize_url("https://example.com");
-        assert_eq!(result, Some("https://example.com".to_string()));
+        assert_eq!(
+            validate_and_normalize_url("http://example.com"),
+            Some("http://example.com".to_string())
+        );
+        assert_eq!(
+            validate_and_normalize_url("https://example.com"),
+            Some("https://example.com".to_string())
+        );
     }
 
     #[test]

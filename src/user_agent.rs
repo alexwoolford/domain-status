@@ -63,8 +63,10 @@ async fn fetch_latest_chrome_version() -> String {
 /// Attempts to fetch Chrome version from a specific source.
 async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    use crate::security::ssrf_safe_redirect_policy;
 
     let client = reqwest::Client::builder()
+        .redirect(ssrf_safe_redirect_policy())
         .timeout(Duration::from_secs(5))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
@@ -156,11 +158,11 @@ async fn load_from_cache(cache_dir: &Path) -> Result<String, anyhow::Error> {
     let metadata_json = fs::read_to_string(&metadata_path).await?;
     let metadata: UserAgentMetadata = serde_json::from_str(&metadata_json)?;
 
-    // Check if cache is fresh
-    if let Ok(age) = metadata.last_updated.elapsed() {
-        if age > CACHE_DURATION {
-            return Err(anyhow::anyhow!("Cache expired"));
-        }
+    // Check if cache is fresh (on clock skew elapsed() returns Err — treat as stale)
+    match metadata.last_updated.elapsed() {
+        Ok(age) if age > CACHE_DURATION => return Err(anyhow::anyhow!("Cache expired")),
+        Err(_) => return Err(anyhow::anyhow!("Cache invalid (clock skew)")),
+        _ => {}
     }
 
     Ok(metadata.chrome_version)

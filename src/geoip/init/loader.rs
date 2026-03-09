@@ -13,7 +13,7 @@ use crate::geoip::extract::extract_mmdb_from_tar_gz;
 use crate::geoip::metadata::{extract_metadata, load_metadata, save_metadata, write_atomic};
 use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self};
-use crate::security::validate_url_safe;
+use crate::security::{ssrf_safe_redirect_policy, validate_url_safe};
 
 /// Loads `GeoIP` database from a local file path
 pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
@@ -184,6 +184,7 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
         init_resolver().context("Failed to initialize DNS resolver for GeoIP download")?;
     let client = reqwest::Client::builder()
         .dns_resolver(Arc::new(SafeResolver::new(resolver)))
+        .redirect(ssrf_safe_redirect_policy())
         .timeout(Duration::from_secs(300)) // 5 minutes for large file
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;
