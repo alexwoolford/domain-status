@@ -87,12 +87,16 @@ pub async fn handle_response(
         return Ok(UrlProcessOutcome::Skipped);
     };
 
-    // Parse HTML content
-    let html_data = parse_html_content(
-        &resp_data.body,
-        &resp_data.final_domain,
-        &ctx.config.error_stats,
-    );
+    // Parse HTML content on a blocking thread to avoid starving Tokio worker threads.
+    // parse_html_content is CPU-bound (DOM parsing, regex, selectors); spawn_blocking
+    // keeps the async runtime responsive under high concurrency.
+    let body = resp_data.body.clone();
+    let final_domain = resp_data.final_domain.clone();
+    let error_stats = ctx.config.error_stats.clone();
+    let html_data =
+        tokio::task::spawn_blocking(move || parse_html_content(&body, &final_domain, &error_stats))
+            .await
+            .map_err(|e| anyhow::anyhow!("HTML parsing task failed: {}", e))?;
     metrics.html_parsing_us = duration_to_us(html_parse_start.elapsed());
 
     // Run tech detection and DNS/TLS in parallel (they're independent)
