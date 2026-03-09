@@ -46,12 +46,14 @@
 
 mod categorization;
 mod reqwest_ext;
+mod resolve_ext;
 mod stats;
 mod types;
 
 // Re-export public API
 pub use categorization::{categorize_reqwest_error, get_retry_strategy, update_error_stats};
 pub use reqwest_ext::ReqwestErrorExt;
+pub use resolve_ext::{categorize_resolve_error, DnsResolveErrorKind};
 pub use stats::ProcessingStats;
 pub use types::{
     DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, WarningType,

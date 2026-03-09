@@ -7,6 +7,7 @@
 
 use anyhow::{Error, Result};
 use hickory_resolver::proto::rr::{RData, RecordType};
+use hickory_resolver::proto::ProtoErrorKind;
 use hickory_resolver::TokioResolver;
 
 /// Queries NS (nameserver) records for a domain.
@@ -39,14 +40,14 @@ pub async fn lookup_ns_records(
             Ok(nameservers)
         }
         Err(e) => {
-            let error_msg = e.to_string();
-            // "no records found" is expected for some domains - return empty vector
-            if error_msg.contains("no records found") || error_msg.contains("NXDomain") {
+            // Use resolver error predicates (stable API) instead of string matching.
+            if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                // Actual failures (timeouts, network errors, etc.) should be propagated as errors
-                // so they can be recorded as partial failures
-                if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                let is_timeout = e
+                    .proto()
+                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                if is_timeout {
                     log::warn!("NS record lookup timed out for {domain}: {e}");
                 } else {
                     log::warn!("Failed to lookup NS records for {domain}: {e}");
@@ -120,14 +121,13 @@ pub async fn lookup_txt_records(
             Ok(txt_records)
         }
         Err(e) => {
-            let error_msg = e.to_string();
-            // "no records found" is expected for domains without TXT records - return empty vector
-            if error_msg.contains("no records found") || error_msg.contains("NXDomain") {
+            if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                // Actual failures (timeouts, network errors, etc.) should be propagated as errors
-                // so they can be recorded as partial failures
-                if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                let is_timeout = e
+                    .proto()
+                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                if is_timeout {
                     log::warn!("TXT record lookup timed out for {domain}: {e}");
                 } else {
                     log::warn!("Failed to lookup TXT records for {domain}: {e}");
@@ -170,14 +170,13 @@ pub async fn lookup_mx_records(
             Ok(mx_records)
         }
         Err(e) => {
-            let error_msg = e.to_string();
-            // "no records found" is expected for domains without mail servers - return empty vector
-            if error_msg.contains("no records found") || error_msg.contains("NXDomain") {
+            if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                // Actual failures (timeouts, network errors, etc.) should be propagated as errors
-                // so they can be recorded as partial failures
-                if error_msg.contains("timeout") || error_msg.contains("timed out") {
+                let is_timeout = e
+                    .proto()
+                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                if is_timeout {
                     log::warn!("MX record lookup timed out for {domain}: {e}");
                 } else {
                     log::warn!("Failed to lookup MX records for {domain}: {e}");

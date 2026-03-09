@@ -7,6 +7,11 @@
 //! - Mail exchanger queries (MX records)
 //!
 //! All operations are async and respect system DNS configuration.
+//!
+//! ## Testing
+//!
+//! DNS tests use live resolution. For hermetic tests, consider a mock DNS server
+//! (e.g. hickory-dns test-support style).
 
 mod extract;
 mod records;
