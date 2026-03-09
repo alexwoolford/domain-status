@@ -32,6 +32,10 @@ pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use ruleset::{get_ruleset_metadata, init_ruleset};
 
+// For spawn_blocking path (fetch layer): ruleset fetch + blocking detection
+pub(crate) use detection::detect_technologies_blocking;
+pub(crate) use ruleset::get_ruleset;
+
 #[cfg(test)]
 mod tests {
     use super::*;

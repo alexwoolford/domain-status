@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
 use crate::fingerprint::ruleset::get_ruleset;
 
@@ -18,6 +19,7 @@ pub struct HeaderMatchResult {
 /// Checks all technologies against headers and returns matches.
 ///
 /// This matches wappalyzergo's `checkHeaders()` → `matchMapString(headers, headersPart)` flow.
+#[allow(dead_code)] // kept for fingerprint tests; main path uses check_headers_with_ruleset
 pub async fn check_headers(
     headers: &HashMap<String, String>,
 ) -> anyhow::Result<Vec<HeaderMatchResult>> {
@@ -66,6 +68,46 @@ pub async fn check_headers(
     }
 
     Ok(results)
+}
+
+/// Synchronous header check using a pre-fetched ruleset (for use on blocking threads).
+pub(crate) fn check_headers_with_ruleset(
+    ruleset: &FingerprintRuleset,
+    headers: &HashMap<String, String>,
+) -> Vec<HeaderMatchResult> {
+    let mut results = Vec::new();
+    for (tech_name, tech) in &ruleset.technologies {
+        if tech.headers.is_empty() {
+            continue;
+        }
+        let mut matched = false;
+        let mut version: Option<String> = None;
+        for (header_name, pattern) in &tech.headers {
+            if let Some(header_value) = headers.get(header_name) {
+                if pattern.is_empty() {
+                    matched = true;
+                    break;
+                }
+                let result = matches_pattern(pattern, header_value);
+                if result.matched {
+                    matched = true;
+                    if version.is_none() && result.version.is_some() {
+                        version = result.version.clone();
+                    }
+                    if version.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        if matched {
+            results.push(HeaderMatchResult {
+                tech_name: tech_name.clone(),
+                version,
+            });
+        }
+    }
+    results
 }
 
 #[cfg(test)]

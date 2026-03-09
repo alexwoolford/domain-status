@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
 use crate::fingerprint::ruleset::get_ruleset;
 
@@ -27,6 +28,7 @@ pub struct BodyMatchResult {
 /// 4. URL patterns (checked last)
 ///
 /// wappalyzergo takes the first version found across all pattern types.
+#[allow(dead_code)] // kept for fingerprint tests; main path uses check_body_with_ruleset
 pub async fn check_body(
     html_body: &str,
     script_sources: &[String],
@@ -130,6 +132,88 @@ pub async fn check_body(
     }
 
     Ok(results)
+}
+
+/// Synchronous body check using a pre-fetched ruleset (for use on blocking threads).
+pub(crate) fn check_body_with_ruleset(
+    ruleset: &FingerprintRuleset,
+    html_body: &str,
+    script_sources: &[String],
+    meta_tags: &HashMap<String, Vec<String>>,
+    url: &str,
+) -> Vec<BodyMatchResult> {
+    let mut results = Vec::new();
+    for (tech_name, tech) in &ruleset.technologies {
+        if tech.html.is_empty()
+            && tech.script.is_empty()
+            && tech.meta.is_empty()
+            && tech.url.is_empty()
+        {
+            continue;
+        }
+        let mut matched = false;
+        let mut version: Option<String> = None;
+        for pattern in &tech.html {
+            let result = matches_pattern(pattern, html_body);
+            if result.matched {
+                matched = true;
+                if version.is_none() && result.version.is_some() {
+                    version = result.version;
+                }
+                if version.is_some() {
+                    break;
+                }
+            }
+        }
+        for script_src in script_sources {
+            for pattern in &tech.script {
+                let result = matches_pattern(pattern, script_src);
+                if result.matched {
+                    matched = true;
+                    if version.is_none() && result.version.is_some() {
+                        version = result.version;
+                    }
+                    if version.is_some() {
+                        break;
+                    }
+                }
+            }
+            if version.is_some() {
+                break;
+            }
+        }
+        for (meta_key, patterns) in &tech.meta {
+            let result = check_meta_patterns(meta_key, patterns, meta_tags);
+            if result.matched {
+                matched = true;
+                if version.is_none() && result.version.is_some() {
+                    version = result.version;
+                }
+                if version.is_some() {
+                    break;
+                }
+            }
+        }
+        for url_pattern in &tech.url {
+            let result = matches_pattern(url_pattern, url);
+            if result.matched {
+                matched = true;
+                if version.is_none() && result.version.is_some() {
+                    version = result.version;
+                }
+                if version.is_some() {
+                    break;
+                }
+            }
+        }
+        if matched {
+            results.push(BodyMatchResult {
+                tech_name: tech_name.clone(),
+                version,
+            });
+        }
+    }
+    results
 }
 
 #[cfg(test)]

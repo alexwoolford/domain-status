@@ -192,7 +192,7 @@ domain_status_current_rps {}
         if total_urls_in_file > 0 {
             #[allow(clippy::cast_precision_loss)]
             {
-                ((completed + failed) as f64 / total_urls_in_file as f64) * 100.0
+                (attempted as f64 / total_urls_in_file as f64) * 100.0
             }
         } else {
             0.0

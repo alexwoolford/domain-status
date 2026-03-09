@@ -11,13 +11,15 @@ mod utils;
 
 use reqwest::header::HeaderMap;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::error_handling::FingerprintError;
+use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::ruleset::get_ruleset;
 
-use body::check_body;
-use cookies::check_cookies;
-use headers::check_headers;
+use body::{check_body, check_body_with_ruleset};
+use cookies::{check_cookies, check_cookies_with_ruleset};
+use headers::{check_headers, check_headers_with_ruleset};
 use matching::apply_technology_exclusions;
 use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 
@@ -53,6 +55,7 @@ pub struct DetectedTechnology {
 // Large function handling comprehensive technology detection across multiple signal types.
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
+#[allow(dead_code)] // kept for public API and fingerprint tests; main path uses detect_technologies_blocking
 pub async fn detect_technologies(
     meta_tags: &HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name
     script_sources: &[String],
@@ -206,6 +209,144 @@ pub async fn detect_technologies(
 
     log::debug!(
         "Technology detection summary for {}: {} detected ({} after exclusions)",
+        url,
+        detected.len(),
+        final_detected.len()
+    );
+
+    Ok(final_detected
+        .into_iter()
+        .map(|(name, version)| DetectedTechnology { name, version })
+        .collect())
+}
+
+/// CPU-bound technology detection using a pre-fetched ruleset.
+/// Intended to be run on a blocking thread (e.g. via `tokio::task::spawn_blocking`)
+/// to avoid starving the async executor with regex work.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::unnecessary_wraps)] // Caller expects Result for map_err/and_then
+pub(crate) fn detect_technologies_blocking(
+    ruleset: &Arc<FingerprintRuleset>,
+    headers: &HeaderMap,
+    meta_tags: &HashMap<String, Vec<String>>,
+    script_sources: &[String],
+    script_content: &str,
+    html_body: &str,
+    url: &str,
+    _script_tag_ids: &HashSet<String>,
+) -> Result<Vec<DetectedTechnology>, FingerprintError> {
+    let cookies = extract_cookies_from_headers(headers);
+    let header_map = normalize_headers_to_map(headers);
+
+    log::debug!(
+        "Technology detection (blocking) for {}: {} inline script bytes, {} external script sources",
+        url,
+        script_content.len(),
+        script_sources.len()
+    );
+
+    #[derive(Clone)]
+    struct TechInfo {
+        version: Option<String>,
+    }
+    let mut detected: HashMap<String, TechInfo> = HashMap::with_capacity(32);
+
+    let header_results = check_headers_with_ruleset(ruleset, &header_map);
+    for result in header_results {
+        detected
+            .entry(result.tech_name.clone())
+            .and_modify(|existing| {
+                if existing.version.is_none() && result.version.is_some() {
+                    existing.version = result.version.clone();
+                }
+            })
+            .or_insert(TechInfo {
+                version: result.version,
+            });
+    }
+
+    if !cookies.is_empty() {
+        let cookie_results = check_cookies_with_ruleset(ruleset, &cookies);
+        for result in cookie_results {
+            detected
+                .entry(result.tech_name.clone())
+                .and_modify(|existing| {
+                    if existing.version.is_none() && result.version.is_some() {
+                        existing.version = result.version.clone();
+                    }
+                })
+                .or_insert(TechInfo {
+                    version: result.version,
+                });
+        }
+    }
+
+    let body_results = check_body_with_ruleset(ruleset, html_body, script_sources, meta_tags, url);
+    for result in body_results {
+        detected
+            .entry(result.tech_name.clone())
+            .and_modify(|existing| {
+                if existing.version.is_none() && result.version.is_some() {
+                    existing.version = result.version.clone();
+                }
+            })
+            .or_insert(TechInfo {
+                version: result.version,
+            });
+    }
+
+    let mut implied_to_add = Vec::new();
+    for tech_name in detected.keys() {
+        let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
+            &tech_name[..colon_pos]
+        } else {
+            tech_name
+        };
+        if let Some(tech) = ruleset.technologies.get(base_tech_name) {
+            for implied in &tech.implies {
+                implied_to_add.push((implied.to_string(), TechInfo { version: None }));
+            }
+        }
+    }
+    for (implied_name, tech_info) in implied_to_add {
+        if ruleset.technologies.contains_key(&implied_name) {
+            detected.entry(implied_name).or_insert(tech_info);
+        }
+    }
+
+    let detected_vec: Vec<(String, Option<String>)> = detected
+        .iter()
+        .map(|(name, info)| (name.clone(), info.version.clone()))
+        .collect();
+
+    let detected_formatted_for_exclusions: HashSet<String> = detected_vec
+        .iter()
+        .map(|(name, version)| {
+            if let Some(ref ver) = version {
+                format!("{}:{}", name, ver)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+    let final_detected_formatted =
+        apply_technology_exclusions(&detected_formatted_for_exclusions, ruleset);
+
+    let final_detected: Vec<(String, Option<String>)> = detected_vec
+        .into_iter()
+        .filter(|(name, version)| {
+            let formatted = if let Some(ref ver) = version {
+                format!("{}:{}", name, ver)
+            } else {
+                name.clone()
+            };
+            final_detected_formatted.contains(&formatted)
+        })
+        .collect();
+
+    log::debug!(
+        "Technology detection (blocking) summary for {}: {} detected ({} after exclusions)",
         url,
         detected.len(),
         final_detected.len()
