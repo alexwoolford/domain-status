@@ -160,6 +160,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             dependency_overrides: None,
+            allow_localhost_for_tests: true, // Mock server is bound to 127.0.0.1/::1
         };
 
         // Run the scan using the library

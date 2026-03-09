@@ -164,6 +164,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             dependency_overrides: None,
+            allow_localhost_for_tests: false,
         }
     }
 

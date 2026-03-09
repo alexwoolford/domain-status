@@ -216,6 +216,13 @@ pub struct Config {
     /// instances. Production callers should leave this `None`.
     #[doc(hidden)]
     pub dependency_overrides: Option<ScanDependencyOverrides>,
+
+    /// If true, skip SSRF validation for initial URLs (localhost/private IPs allowed).
+    ///
+    /// **For integration tests only.** Set to `true` when scanning mock servers bound to
+    /// 127.0.0.1 or ::1. Must not be set in production.
+    #[doc(hidden)]
+    pub allow_localhost_for_tests: bool,
 }
 
 impl Default for Config {
@@ -239,6 +246,7 @@ impl Default for Config {
             log_file: None,
             progress_callback: None,
             dependency_overrides: None,
+            allow_localhost_for_tests: false,
         }
     }
 }
@@ -270,6 +278,7 @@ impl std::fmt::Debug for Config {
                 "dependency_overrides",
                 &self.dependency_overrides.as_ref().map(|_| "<overrides>"),
             )
+            .field("allow_localhost_for_tests", &self.allow_localhost_for_tests)
             .finish()
     }
 }
