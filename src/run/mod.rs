@@ -105,7 +105,7 @@ fn invoke_progress_callback(
 /// # Ok(())
 /// # }
 /// ```
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn run_scan(
     config: crate::config::Config,
 ) -> Result<ScanReport, crate::error_handling::RunScanError> {
@@ -145,6 +145,12 @@ pub async fn run_scan(
 
     // Phase 3: Start progress logging and run the main scan loop
     let cancel = CancellationToken::new();
+    let cancel_for_signal = cancel.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            cancel_for_signal.cancel();
+        }
+    });
     let cancel_logging = cancel.child_token();
 
     let completed_urls_for_logging = Arc::clone(&resources.completed_urls);
@@ -195,83 +201,90 @@ pub async fn run_scan(
             }
         }
 
-        let line_result = url_source.next_line().await;
-        let line = match line_result {
-            Ok(Some(line)) => {
-                consecutive_errors = 0;
-                line
-            }
-            Ok(None) => break,
-            Err(e) => {
-                consecutive_errors += 1;
-                if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
-                    crate::app::shutdown_gracefully(
-                        cancel.clone(),
-                        logging_task.take(),
-                        resources.rate_limiter_shutdown.clone(),
-                        status_server.take(),
-                    )
-                    .await;
-                    return Err(crate::error_handling::RunScanError::Runtime(
-                        anyhow::anyhow!(
-                            "Too many consecutive read errors ({}): {}",
-                            consecutive_errors,
-                            e
-                        ),
-                    ));
+        tokio::select! {
+            line_result = url_source.next_line() => {
+                let line = match line_result {
+                    Ok(Some(line)) => {
+                        consecutive_errors = 0;
+                        line
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
+                            crate::app::shutdown_gracefully(
+                                cancel.clone(),
+                                logging_task.take(),
+                                resources.rate_limiter_shutdown.clone(),
+                                status_server.take(),
+                            )
+                            .await;
+                            return Err(crate::error_handling::RunScanError::Runtime(
+                                anyhow::anyhow!(
+                                    "Too many consecutive read errors ({}): {}",
+                                    consecutive_errors,
+                                    e
+                                ),
+                            ));
+                        }
+                        warn!("Failed to read line from input: {e}");
+                        continue;
+                    }
+                };
+
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
                 }
-                warn!("Failed to read line from input: {e}");
-                continue;
-            }
-        };
 
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
+                let Some(url) = validate_and_normalize_url(trimmed) else {
+                    continue;
+                };
+
+                // SSRF protection: reject private IPs, localhost, and unsafe schemes on the initial URL.
+                // IP literals bypass the HTTP client's SafeResolver (no DNS lookup), so we must validate here.
+                // allow_localhost_for_tests lets integration tests use mock servers bound to 127.0.0.1/::1.
+                if !resources.config.allow_localhost_for_tests {
+                    if let Err(e) = validate_url_safe(&url) {
+                        warn!("Skipping SSRF-unsafe URL: {e}");
+                        continue;
+                    }
+                }
+
+                let permit = match Arc::clone(&resources.semaphore).acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        warn!("Semaphore closed, skipping URL: {url}");
+                        continue;
+                    }
+                };
+
+                resources
+                    .total_urls_attempted
+                    .fetch_add(1, Ordering::SeqCst);
+
+                let task_params = UrlTaskParams {
+                    url: Arc::from(url.as_str()),
+                    ctx: Arc::clone(&resources.shared_ctx),
+                    permit,
+                    request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
+                    completed_urls: Arc::clone(&resources.completed_urls),
+                    successful_urls: Arc::clone(&resources.successful_urls),
+                    skipped_urls: Arc::clone(&resources.skipped_urls),
+                    failed_urls: Arc::clone(&resources.failed_urls),
+                    total_urls_for_callback: total_lines,
+                    progress_callback: progress_callback.clone(),
+                };
+
+                // JoinSet::spawn() is like FuturesUnordered::push(tokio::spawn(...))
+                // but manages the JoinHandle internally without accumulating them all in memory
+                tasks.spawn(task::process_url_task(task_params));
+            }
+            _ = cancel.cancelled() => {
+                log::info!("Received interrupt (Ctrl-C), finishing current work and finalizing...");
+                break;
+            }
         }
-
-        let Some(url) = validate_and_normalize_url(trimmed) else {
-            continue;
-        };
-
-        // SSRF protection: reject private IPs, localhost, and unsafe schemes on the initial URL.
-        // IP literals bypass the HTTP client's SafeResolver (no DNS lookup), so we must validate here.
-        // allow_localhost_for_tests lets integration tests use mock servers bound to 127.0.0.1/::1.
-        if !resources.config.allow_localhost_for_tests {
-            if let Err(e) = validate_url_safe(&url) {
-                warn!("Skipping SSRF-unsafe URL: {e}");
-                continue;
-            }
-        }
-
-        let permit = match Arc::clone(&resources.semaphore).acquire_owned().await {
-            Ok(permit) => permit,
-            Err(_) => {
-                warn!("Semaphore closed, skipping URL: {url}");
-                continue;
-            }
-        };
-
-        resources
-            .total_urls_attempted
-            .fetch_add(1, Ordering::SeqCst);
-
-        let task_params = UrlTaskParams {
-            url: Arc::from(url.as_str()),
-            ctx: Arc::clone(&resources.shared_ctx),
-            permit,
-            request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
-            completed_urls: Arc::clone(&resources.completed_urls),
-            successful_urls: Arc::clone(&resources.successful_urls),
-            skipped_urls: Arc::clone(&resources.skipped_urls),
-            failed_urls: Arc::clone(&resources.failed_urls),
-            total_urls_for_callback: total_lines,
-            progress_callback: progress_callback.clone(),
-        };
-
-        // JoinSet::spawn() is like FuturesUnordered::push(tokio::spawn(...))
-        // but manages the JoinHandle internally without accumulating them all in memory
-        tasks.spawn(task::process_url_task(task_params));
     }
 
     // Phase 5: Drain all remaining tasks (blocking wait until all complete)
