@@ -14,31 +14,35 @@ use crate::utils::TimingStats;
 ///
 /// This function is used internally by the library and in tests.
 #[allow(dead_code)] // Used in tests
+#[allow(clippy::too_many_arguments)]
 pub async fn print_and_save_final_statistics(
     pool: &sqlx::SqlitePool,
     run_id: &str,
     total_urls_attempted: &Arc<AtomicUsize>,
     completed_urls: &Arc<AtomicUsize>,
     failed_urls: &Arc<AtomicUsize>,
+    skipped_urls: &Arc<AtomicUsize>,
     error_stats: &Arc<ProcessingStats>,
     elapsed_seconds: f64,
 ) -> Result<()> {
     // Calculate run statistics
     // All tasks have completed at this point, so counters should be final
+    // completed = successful + skipped; successful = completed - skipped
     // Safe casts: URL counts should be reasonable (< i32::MAX ~2B) for SQLite storage
-    // Realistic usage scenarios won't exceed this limit
     #[allow(clippy::cast_possible_truncation)]
     let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
+    let completed = completed_urls.load(Ordering::SeqCst);
+    let skipped = skipped_urls.load(Ordering::SeqCst);
     #[allow(clippy::cast_possible_truncation)]
-    let successful_urls = completed_urls.load(Ordering::SeqCst) as i32;
-    // Use actual failed_urls counter instead of calculating it
-    // This ensures accuracy even if there are pending URLs
+    let successful_urls = (completed.saturating_sub(skipped)) as i32;
     #[allow(clippy::cast_possible_truncation)]
     let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
+    #[allow(clippy::cast_possible_truncation)]
+    let skipped_urls_count = skipped as i32;
 
     info!(
-        "Run statistics: total={}, successful={}, failed={}",
-        total_urls, successful_urls, failed_urls_count
+        "Run statistics: total={}, successful={}, failed={}, skipped={}",
+        total_urls, successful_urls, failed_urls_count, skipped_urls_count
     );
 
     // Update run statistics in database
@@ -47,6 +51,7 @@ pub async fn print_and_save_final_statistics(
         total_urls,
         successful_urls,
         failed_urls: failed_urls_count,
+        skipped_urls: skipped_urls_count,
         elapsed_seconds,
     };
     database::update_run_stats(pool, &stats)
@@ -218,6 +223,7 @@ mod tests {
                 total_urls INTEGER,
                 successful_urls INTEGER,
                 failed_urls INTEGER,
+                skipped_urls INTEGER,
                 elapsed_seconds REAL,
                 fingerprints_source TEXT,
                 fingerprints_version TEXT,
@@ -232,6 +238,7 @@ mod tests {
         let total_urls = Arc::new(AtomicUsize::new(100));
         let completed_urls = Arc::new(AtomicUsize::new(85));
         let failed_urls = Arc::new(AtomicUsize::new(15));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Insert initial run record using insert_run_metadata
@@ -255,6 +262,7 @@ mod tests {
             &total_urls,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             &error_stats,
             10.5, // elapsed_seconds for test
         )
@@ -263,8 +271,8 @@ mod tests {
         assert!(result.is_ok(), "Function should succeed");
 
         // Verify statistics were updated
-        let row = sqlx::query_as::<_, (i32, i32, i32)>(
-            "SELECT total_urls, successful_urls, failed_urls FROM runs WHERE run_id = ?",
+        let row = sqlx::query_as::<_, (i32, i32, i32, i32)>(
+            "SELECT total_urls, successful_urls, failed_urls, skipped_urls FROM runs WHERE run_id = ?",
         )
         .bind(run_id)
         .fetch_one(&pool)
@@ -274,6 +282,7 @@ mod tests {
         assert_eq!(row.0, 100, "Total URLs should be 100");
         assert_eq!(row.1, 85, "Successful URLs should be 85");
         assert_eq!(row.2, 15, "Failed URLs should be 15 (100 - 85)");
+        assert_eq!(row.3, 0, "Skipped URLs should be 0");
     }
 
     #[tokio::test]
@@ -291,6 +300,7 @@ mod tests {
                 total_urls INTEGER,
                 successful_urls INTEGER,
                 failed_urls INTEGER,
+                skipped_urls INTEGER,
                 elapsed_seconds REAL,
                 fingerprints_source TEXT,
                 fingerprints_version TEXT,
@@ -305,6 +315,7 @@ mod tests {
         let total_urls = Arc::new(AtomicUsize::new(0));
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Insert initial run record using insert_run_metadata
@@ -327,6 +338,7 @@ mod tests {
             &total_urls,
             &completed_urls,
             &failed_urls,
+            &skipped_urls,
             &error_stats,
             0.0, // elapsed_seconds for test (zero URLs)
         )

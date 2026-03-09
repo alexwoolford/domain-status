@@ -77,6 +77,8 @@ pub async fn finalize_scan(
     let successful_urls = resources.successful_urls.load(Ordering::SeqCst) as i32;
     #[allow(clippy::cast_possible_truncation)]
     let failed_urls_count = resources.failed_urls.load(Ordering::SeqCst) as i32;
+    #[allow(clippy::cast_possible_truncation)]
+    let skipped_urls_count = resources.skipped_urls.load(Ordering::SeqCst) as i32;
 
     // Update run statistics in database
     let stats = RunStats {
@@ -84,6 +86,7 @@ pub async fn finalize_scan(
         total_urls,
         successful_urls,
         failed_urls: failed_urls_count,
+        skipped_urls: skipped_urls_count,
         elapsed_seconds,
     };
     update_run_stats(&resources.pool, &stats)
@@ -125,6 +128,8 @@ pub async fn finalize_scan(
         successful: successful_urls as usize,
         #[allow(clippy::cast_sign_loss)]
         failed: failed_urls_count as usize,
+        #[allow(clippy::cast_sign_loss)]
+        skipped: skipped_urls_count as usize,
         db_path: resources.config.db_path.clone(),
         run_id: resources.run_id,
         elapsed_seconds,
@@ -269,6 +274,7 @@ mod tests {
         assert_eq!(report.total_urls, 10);
         assert_eq!(report.successful, 8);
         assert_eq!(report.failed, 2);
+        assert_eq!(report.skipped, 0);
         assert_eq!(report.run_id, run_id);
         assert!(report.elapsed_seconds >= 0.0);
     }
