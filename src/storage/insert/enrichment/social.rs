@@ -20,7 +20,7 @@ pub async fn insert_social_media_links(
 ) -> Result<(), DatabaseError> {
     with_sqlite_retry(|| async {
         for link in links {
-            if let Err(e) = sqlx::query(
+            sqlx::query(
                 "INSERT INTO url_social_media_links (url_status_id, platform, profile_url, identifier)
                  VALUES (?, ?, ?, ?)
                  ON CONFLICT(url_status_id, platform, profile_url) DO UPDATE SET
@@ -32,14 +32,7 @@ pub async fn insert_social_media_links(
             .bind(&link.identifier)
             .execute(pool)
             .await
-            {
-                log::warn!(
-                    "Failed to insert social media link {} for platform {}: {}",
-                    link.url,
-                    link.platform.as_str(),
-                    e
-                );
-            }
+            .map_err(DatabaseError::SqlError)?;
         }
 
         Ok(())

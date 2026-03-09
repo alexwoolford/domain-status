@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::{log_progress, validate_and_normalize_url};
 use crate::config::{LOGGING_INTERVAL, STATUS_SERVER_LOGGING_INTERVAL_SECS};
+use crate::security::validate_url_safe;
 
 pub use resources::{ScanLoopResult, ScanResources, UrlTaskParams};
 
@@ -232,6 +233,13 @@ pub async fn run_scan(
         let Some(url) = validate_and_normalize_url(trimmed) else {
             continue;
         };
+
+        // SSRF protection: reject private IPs, localhost, and unsafe schemes on the initial URL.
+        // IP literals bypass the HTTP client's SafeResolver (no DNS lookup), so we must validate here.
+        if let Err(e) = validate_url_safe(&url) {
+            warn!("Skipping SSRF-unsafe URL: {e}");
+            continue;
+        }
 
         let permit = match Arc::clone(&resources.semaphore).acquire_owned().await {
             Ok(permit) => permit,

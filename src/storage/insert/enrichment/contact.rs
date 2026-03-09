@@ -20,7 +20,7 @@ pub async fn insert_contact_links(
 ) -> Result<(), DatabaseError> {
     with_sqlite_retry(|| async {
         for link in links {
-            if let Err(e) = sqlx::query(
+            sqlx::query(
                 "INSERT INTO url_contact_links (url_status_id, contact_type, contact_value, raw_href)
                  VALUES (?, ?, ?, ?)
                  ON CONFLICT(url_status_id, contact_type, contact_value) DO UPDATE SET
@@ -32,15 +32,7 @@ pub async fn insert_contact_links(
             .bind(&link.raw_href)
             .execute(pool)
             .await
-            {
-                log::warn!(
-                    "Failed to insert contact link {} ({}) for url_status_id {}: {}",
-                    link.value,
-                    link.contact_type.as_str(),
-                    url_status_id,
-                    e
-                );
-            }
+            .map_err(DatabaseError::SqlError)?;
         }
 
         Ok(())

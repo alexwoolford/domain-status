@@ -19,7 +19,7 @@ pub async fn insert_security_warnings(
 ) -> Result<(), DatabaseError> {
     with_sqlite_retry(|| async {
         for warning in warnings {
-            if let Err(e) = sqlx::query(
+            sqlx::query(
                 "INSERT INTO url_security_warnings (url_status_id, warning_code, warning_description)
                  VALUES (?, ?, ?)
                  ON CONFLICT(url_status_id, warning_code) DO UPDATE SET
@@ -30,14 +30,7 @@ pub async fn insert_security_warnings(
             .bind(warning.description())
             .execute(pool)
             .await
-            {
-                log::warn!(
-                    "Failed to insert security warning {} for url_status_id {}: {}",
-                    warning.code(),
-                    url_status_id,
-                    e
-                );
-            }
+            .map_err(DatabaseError::SqlError)?;
         }
 
         Ok(())
