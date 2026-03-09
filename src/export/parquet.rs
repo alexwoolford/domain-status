@@ -18,6 +18,7 @@ use std::fs::File;
 use std::sync::Arc;
 
 use crate::storage::init_db_pool_with_path;
+use crate::utils::IoErrorContext;
 
 use super::queries::build_export_query;
 use super::row::{build_export_row, extract_main_row_data};
@@ -967,8 +968,7 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
         .set_compression(Compression::SNAPPY)
         .build();
 
-    let file =
-        File::create(output_path).context(format!("Failed to create {}", output_path.display()))?;
+    let file = File::create(output_path).with_path(output_path)?;
 
     let mut writer = ArrowWriter::try_new(file, Arc::clone(&schema), Some(props))
         .context("Failed to create Parquet writer")?;

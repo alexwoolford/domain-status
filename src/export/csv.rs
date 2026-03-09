@@ -9,6 +9,7 @@ use futures::TryStreamExt;
 use std::io::{self, Write};
 
 use crate::storage::init_db_pool_with_path;
+use crate::utils::IoErrorContext;
 
 use super::queries::{build_export_query, IgnoreBrokenPipe};
 use super::row::{build_export_row, build_url, extract_main_row_data};
@@ -76,10 +77,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let mut writer: Writer<Box<dyn Write>> = if let Some(output_path) = opts.output.as_ref() {
         let file = tokio::fs::File::create(output_path)
             .await
-            .context(format!(
-                "Failed to create output file: {}",
-                output_path.display()
-            ))?
+            .with_path(output_path)?
             .into_std()
             .await;
         Writer::from_writer(Box::new(file) as Box<dyn Write>)

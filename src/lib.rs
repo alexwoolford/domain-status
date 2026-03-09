@@ -85,4 +85,5 @@ pub use storage::{
 // Re-export insert types for testing
 pub use storage::insert::{insert_url_record, UrlRecordInsertParams};
 // Re-export whois types for testing
+pub use utils::print_io_error_hint_if_applicable;
 pub use whois::{lookup_whois, WhoisResult};

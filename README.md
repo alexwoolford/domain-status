@@ -1024,6 +1024,7 @@ The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, token
    - Use environment variables for all secrets
    - Use GitHub Secrets for CI/CD tokens
    - Review gitleaks output if CI fails
+   - **Config and output file protection:** Protect config files and any files containing secrets (e.g. `.env`, the file from `--config` or `DOMAIN_STATUS_CONFIG_FILE`) with restrictive permissions (e.g. `chmod 600`). If the database or export output may contain sensitive data, avoid world-readable paths.
 
 ## 🔨 Development
 
