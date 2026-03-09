@@ -14,6 +14,7 @@ mod extract;
 
 use anyhow::Result;
 use chrono::NaiveDateTime;
+use hickory_resolver::TokioResolver;
 use log::error;
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::collections::HashSet;
@@ -83,15 +84,18 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
     }
 }
 
-async fn resolve_public_tls_addr(domain: &str) -> Result<SocketAddr> {
+async fn resolve_public_tls_addr(domain: &str, resolver: &TokioResolver) -> Result<SocketAddr> {
     crate::security::validate_url_safe(&format!("https://{domain}/"))?;
 
-    let mut addrs = tokio::net::lookup_host((domain, 443))
+    let response = resolver
+        .lookup_ip(domain)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to resolve {}: {}", domain, e))?;
 
-    addrs
-        .find(|addr| crate::security::safe_resolver::is_public_ip(addr.ip()))
+    response
+        .iter()
+        .find(|ip| crate::security::safe_resolver::is_public_ip(*ip))
+        .map(|ip| SocketAddr::new(ip, 443))
         .ok_or_else(|| anyhow::anyhow!("No public IP addresses resolved for {}", domain))
 }
 
@@ -156,6 +160,7 @@ fn parse_certificate_info_from_der(
 /// # Arguments
 ///
 /// * `domain` - The domain name to connect to (e.g., "example.com")
+/// * `resolver` - DNS resolver (hickory with configured timeout); avoids bypassing timeout via system DNS
 ///
 /// # Returns
 ///
@@ -171,7 +176,10 @@ fn parse_certificate_info_from_der(
 // Large function handling comprehensive TLS certificate extraction with connection setup and certificate parsing.
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
-pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo> {
+pub async fn get_ssl_certificate_info(
+    domain: String,
+    resolver: &TokioResolver,
+) -> Result<CertificateInfo> {
     log::debug!("Attempting to get SSL info for domain: {domain}");
 
     // Diagnostic certificate capture still accepts invalid certificates so we can
@@ -193,7 +201,7 @@ pub async fn get_ssl_certificate_info(domain: String) -> Result<CertificateInfo>
     };
 
     log::debug!("Attempting to connect to domain: {domain}");
-    let socket_addr = resolve_public_tls_addr(&domain).await?;
+    let socket_addr = resolve_public_tls_addr(&domain, resolver).await?;
     let sock = match tokio::time::timeout(
         std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
         TcpStream::connect(socket_addr),
@@ -307,12 +315,17 @@ mod tests {
         crate::initialization::init_crypto_provider();
     }
 
+    fn test_resolver() -> std::sync::Arc<TokioResolver> {
+        crate::initialization::init_resolver().expect("resolver for TLS tests")
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access - run with `cargo test -- --ignored`
     async fn test_get_ssl_certificate_info_valid_domain() {
         init_crypto_for_test();
+        let resolver = test_resolver();
         // Test with a well-known domain that should have a valid certificate
-        let result = get_ssl_certificate_info("example.com".to_string()).await;
+        let result = get_ssl_certificate_info("example.com".to_string(), resolver.as_ref()).await;
         // This may succeed or fail depending on network, but should not panic
         match result {
             Ok(cert_info) => {
@@ -329,8 +342,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_ssl_certificate_info_invalid_domain() {
         init_crypto_for_test();
+        let resolver = test_resolver();
         // Test with an invalid domain name
-        let result = get_ssl_certificate_info("".to_string()).await;
+        let result = get_ssl_certificate_info("".to_string(), resolver.as_ref()).await;
         match result {
             Ok(_) => panic!("Expected error for invalid domain"),
             Err(e) => {
@@ -355,8 +369,9 @@ mod tests {
             "domain space.com", // Space in domain
         ];
 
+        let resolver = test_resolver();
         for domain in invalid_domains {
-            let result = get_ssl_certificate_info(domain.to_string()).await;
+            let result = get_ssl_certificate_info(domain.to_string(), resolver.as_ref()).await;
             // Should fail at domain validation or connection
             assert!(
                 result.is_err(),
@@ -369,9 +384,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_ssl_certificate_info_connection_refused() {
         init_crypto_for_test();
+        let resolver = test_resolver();
         // Use a port that's guaranteed to be closed (connection refused)
         // Port 1 is typically reserved and closed
-        let result = get_ssl_certificate_info("127.0.0.1".to_string()).await;
+        let result = get_ssl_certificate_info("127.0.0.1".to_string(), resolver.as_ref()).await;
         // Should fail with connection error or timeout
         match result {
             Ok(_) => panic!("Expected error for connection refused"),
@@ -394,9 +410,11 @@ mod tests {
     #[tokio::test]
     async fn test_get_ssl_certificate_info_nonexistent_domain_dns() {
         init_crypto_for_test();
+        let resolver = test_resolver();
         // Test with a domain that definitely doesn't exist (DNS failure)
         let result = get_ssl_certificate_info(
             "this-domain-definitely-does-not-exist-12345.invalid".to_string(),
+            resolver.as_ref(),
         )
         .await;
         // Should fail with DNS or connection error
@@ -421,10 +439,11 @@ mod tests {
     #[tokio::test]
     async fn test_get_ssl_certificate_info_tcp_timeout() {
         init_crypto_for_test();
+        let resolver = test_resolver();
         // Test with a domain that will timeout (using a non-routable IP)
         // 192.0.2.0/24 is reserved for documentation (TEST-NET-1)
         // It should timeout rather than fail immediately
-        let result = get_ssl_certificate_info("192.0.2.1".to_string()).await;
+        let result = get_ssl_certificate_info("192.0.2.1".to_string(), resolver.as_ref()).await;
         // Should fail with timeout or connection error
         match result {
             Ok(_) => panic!("Expected error for timeout scenario"),
