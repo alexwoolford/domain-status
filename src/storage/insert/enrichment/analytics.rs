@@ -3,6 +3,7 @@
 use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
+use crate::storage::insert::retry::with_sqlite_retry;
 
 /// Inserts analytics/tracking IDs for a URL status record.
 ///
@@ -20,21 +21,24 @@ pub async fn insert_analytics_ids(
     url_status_id: i64,
     analytics_ids: &[crate::parse::AnalyticsId],
 ) -> Result<(), DatabaseError> {
-    for analytics_id in analytics_ids {
-        sqlx::query(
-            "INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id)
-             VALUES (?, ?, ?)
-             ON CONFLICT(url_status_id, provider, tracking_id) DO NOTHING",
-        )
-        .bind(url_status_id)
-        .bind(analytics_id.provider.as_str())
-        .bind(&analytics_id.id)
-        .execute(pool)
-        .await
-        .map_err(DatabaseError::SqlError)?;
-    }
+    with_sqlite_retry(|| async {
+        for analytics_id in analytics_ids {
+            sqlx::query(
+                "INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(url_status_id, provider, tracking_id) DO NOTHING",
+            )
+            .bind(url_status_id)
+            .bind(analytics_id.provider.as_str())
+            .bind(&analytics_id.id)
+            .execute(pool)
+            .await
+            .map_err(DatabaseError::SqlError)?;
+        }
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

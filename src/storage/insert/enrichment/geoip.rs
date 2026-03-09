@@ -3,6 +3,7 @@
 use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
+use crate::storage::insert::retry::with_sqlite_retry;
 
 /// Inserts `GeoIP` data for a URL status record.
 ///
@@ -15,39 +16,42 @@ pub async fn insert_geoip_data(
     _ip_address: &str, // Kept for API compatibility, but not stored (use url_status.ip_address)
     geoip: &crate::geoip::GeoIpResult,
 ) -> Result<(), DatabaseError> {
-    sqlx::query(
-        "INSERT INTO url_geoip (
-            url_status_id, country_code, country_name, region, city,
-            latitude, longitude, postal_code, timezone, asn, asn_org
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(url_status_id) DO UPDATE SET
-            country_code=excluded.country_code,
-            country_name=excluded.country_name,
-            region=excluded.region,
-            city=excluded.city,
-            latitude=excluded.latitude,
-            longitude=excluded.longitude,
-            postal_code=excluded.postal_code,
-            timezone=excluded.timezone,
-            asn=excluded.asn,
-            asn_org=excluded.asn_org",
-    )
-    .bind(url_status_id)
-    .bind(&geoip.country_code)
-    .bind(&geoip.country_name)
-    .bind(&geoip.region)
-    .bind(&geoip.city)
-    .bind(geoip.latitude)
-    .bind(geoip.longitude)
-    .bind(&geoip.postal_code)
-    .bind(&geoip.timezone)
-    .bind(geoip.asn.map(i64::from))
-    .bind(&geoip.asn_org)
-    .execute(pool)
-    .await
-    .map_err(DatabaseError::SqlError)?;
+    with_sqlite_retry(|| async {
+        sqlx::query(
+            "INSERT INTO url_geoip (
+                url_status_id, country_code, country_name, region, city,
+                latitude, longitude, postal_code, timezone, asn, asn_org
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(url_status_id) DO UPDATE SET
+                country_code=excluded.country_code,
+                country_name=excluded.country_name,
+                region=excluded.region,
+                city=excluded.city,
+                latitude=excluded.latitude,
+                longitude=excluded.longitude,
+                postal_code=excluded.postal_code,
+                timezone=excluded.timezone,
+                asn=excluded.asn,
+                asn_org=excluded.asn_org",
+        )
+        .bind(url_status_id)
+        .bind(&geoip.country_code)
+        .bind(&geoip.country_name)
+        .bind(&geoip.region)
+        .bind(&geoip.city)
+        .bind(geoip.latitude)
+        .bind(geoip.longitude)
+        .bind(&geoip.postal_code)
+        .bind(&geoip.timezone)
+        .bind(geoip.asn.map(i64::from))
+        .bind(&geoip.asn_org)
+        .execute(pool)
+        .await
+        .map_err(DatabaseError::SqlError)?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

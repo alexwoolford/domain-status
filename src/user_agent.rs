@@ -158,11 +158,11 @@ async fn load_from_cache(cache_dir: &Path) -> Result<String, anyhow::Error> {
     let metadata_json = fs::read_to_string(&metadata_path).await?;
     let metadata: UserAgentMetadata = serde_json::from_str(&metadata_json)?;
 
-    // Check if cache is fresh (on clock skew elapsed() returns Err — treat as stale)
+    // Check if cache is fresh. If last_updated is in the future, elapsed() returns Err — treat as valid (skip age check).
     match metadata.last_updated.elapsed() {
         Ok(age) if age > CACHE_DURATION => return Err(anyhow::anyhow!("Cache expired")),
-        Err(_) => return Err(anyhow::anyhow!("Cache invalid (clock skew)")),
-        _ => {}
+        Ok(_) => {}  // Fresh
+        Err(_) => {} // Future timestamp (clock skew or test); cannot compute age, accept cache
     }
 
     Ok(metadata.chrome_version)

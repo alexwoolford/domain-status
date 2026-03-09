@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
 use crate::fetch::favicon::FaviconData;
+use crate::storage::insert::retry::with_sqlite_retry;
 
 /// Inserts favicon data for a URL status record.
 pub async fn insert_favicon_data(
@@ -11,23 +12,26 @@ pub async fn insert_favicon_data(
     url_status_id: i64,
     favicon: &FaviconData,
 ) -> Result<(), DatabaseError> {
-    sqlx::query(
-        "INSERT INTO url_favicons (url_status_id, favicon_url, hash, base64_data)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(url_status_id) DO UPDATE SET
-            favicon_url=excluded.favicon_url,
-            hash=excluded.hash,
-            base64_data=excluded.base64_data",
-    )
-    .bind(url_status_id)
-    .bind(&favicon.favicon_url)
-    .bind(favicon.hash)
-    .bind(&favicon.base64_data)
-    .execute(pool)
-    .await
-    .map_err(DatabaseError::SqlError)?;
+    with_sqlite_retry(|| async {
+        sqlx::query(
+            "INSERT INTO url_favicons (url_status_id, favicon_url, hash, base64_data)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(url_status_id) DO UPDATE SET
+                favicon_url=excluded.favicon_url,
+                hash=excluded.hash,
+                base64_data=excluded.base64_data",
+        )
+        .bind(url_status_id)
+        .bind(&favicon.favicon_url)
+        .bind(favicon.hash)
+        .bind(&favicon.base64_data)
+        .execute(pool)
+        .await
+        .map_err(DatabaseError::SqlError)?;
 
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]
