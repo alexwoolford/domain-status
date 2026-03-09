@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS url_status (
 
     -- Constraints
     UNIQUE(final_domain, observed_at_ms),
-    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE SET NULL
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
 );
 
 -- Indexes for common query patterns
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS url_failures (
     observed_at_ms INTEGER NOT NULL, -- When failure occurred (epoch ms)
     run_id TEXT,
 
-    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE SET NULL
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_url_failures_initial_domain ON url_failures(initial_domain);
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS url_partial_failures (
     run_id TEXT,
 
     FOREIGN KEY (url_status_id) REFERENCES url_status(id) ON DELETE CASCADE,
-    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE SET NULL
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_url_partial_failures_error_type ON url_partial_failures(error_type);

@@ -157,6 +157,7 @@ pub enum DetectedQueryType {
 #[derive(Debug, Clone)]
 pub struct ValidatedQuery {
     query_type: DetectedQueryType,
+    #[allow(dead_code)] // stored for Clone/Debug and possible future use (e.g. preserving user input)
     original: String,
 }
 

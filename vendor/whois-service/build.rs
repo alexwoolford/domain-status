@@ -26,11 +26,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Try to fetch latest IANA data, fallback to minimal set if it fails
     let mappings = match fetch_iana_mappings().await {
         Ok(mappings) => {
-            println!("cargo:warning=✅ Fetched {} RDAP mappings from IANA", mappings.len());
+            println!("cargo:rerun-if-env-changed=RDAP_FETCH");
             mappings
         }
         Err(e) => {
-            println!("cargo:warning=⚠️ Failed to fetch IANA data ({}), using minimal fallback", e);
+            eprintln!("whois-service build: failed to fetch IANA data ({}), using minimal fallback", e);
             get_minimal_fallback_mappings()
         }
     };

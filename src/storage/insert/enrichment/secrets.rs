@@ -20,7 +20,7 @@ pub async fn insert_exposed_secrets(
 ) -> Result<(), DatabaseError> {
     with_sqlite_retry(|| async {
         for secret in secrets {
-            if let Err(e) = sqlx::query(
+            sqlx::query(
                 "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
                  VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(url_status_id, secret_type, matched_value) DO UPDATE SET
@@ -34,14 +34,7 @@ pub async fn insert_exposed_secrets(
             .bind(&secret.context)
             .execute(pool)
             .await
-            {
-                log::warn!(
-                    "Failed to insert exposed secret ({}) for url_status_id {}: {}",
-                    secret.secret_type,
-                    url_status_id,
-                    e
-                );
-            }
+            .map_err(DatabaseError::SqlError)?;
         }
 
         Ok(())

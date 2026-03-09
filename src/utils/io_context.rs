@@ -82,10 +82,10 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
     if parent.as_os_str().is_empty() || parent == Path::new(".") {
         return Ok(());
     }
-    let already_exists = parent.is_dir();
+    let _already_exists = parent.is_dir();
     std::fs::create_dir_all(parent)?;
     #[cfg(unix)]
-    if !already_exists {
+    if !_already_exists {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(parent)?.permissions();
         perms.set_mode(0o700);
@@ -98,16 +98,16 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
 ///
 /// Call when reading config or other sensitive files so users are prompted to
 /// restrict permissions (e.g. `chmod 600`). No-op on non-Unix or if metadata cannot be read.
-pub fn warn_if_world_readable(path: &Path) {
+pub fn warn_if_world_readable(_path: &Path) {
     #[cfg(unix)]
     {
-        if let Ok(meta) = std::fs::metadata(path) {
+        if let Ok(meta) = std::fs::metadata(_path) {
             let mode = meta.permissions().mode();
             // World-readable or world-writable
             if (mode & 0o006) != 0 {
                 log::warn!(
                     "Config file {} is world-readable (mode {:o}); consider chmod 600 to protect secrets",
-                    path.display(),
+                    _path.display(),
                     mode & 0o777
                 );
             }
