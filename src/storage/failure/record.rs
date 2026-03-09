@@ -6,12 +6,10 @@
 use crate::domain::extract_domain;
 use crate::error_handling::DatabaseError;
 use crate::security::redaction::{scrub_headers, scrub_url};
-use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
 use anyhow::Error;
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
 use super::context::FailureContext;
 
@@ -52,8 +50,6 @@ pub struct FailureRecordParams<'a> {
     pub elapsed_time: f64,
     /// Run identifier (optional)
     pub run_id: Option<&'a str>,
-    /// Circuit breaker for database write operations
-    pub circuit_breaker: Arc<DbWriteCircuitBreaker>,
 }
 
 /// Records a URL failure in the database.
@@ -61,8 +57,8 @@ pub struct FailureRecordParams<'a> {
 /// This function extracts failure information from an error and inserts it
 /// into the database with all associated satellite data.
 ///
-/// Uses a circuit breaker to prevent resource exhaustion when database writes fail repeatedly.
-/// If the circuit is open, the failure is logged but not recorded in the database.
+/// On `SQLite` write failure this function panics to avoid producing incomplete data;
+/// repeated write failures indicate a disk or permissions problem.
 ///
 /// # Arguments
 ///
@@ -73,15 +69,6 @@ pub struct FailureRecordParams<'a> {
 pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), DatabaseError> {
     let attempted_url = scrub_url(params.url);
 
-    // Check if circuit breaker is open (database writes are blocked)
-    if params.circuit_breaker.is_circuit_open().await {
-        params.circuit_breaker.record_skipped_write();
-        log::warn!(
-            "Database write circuit breaker is open - skipping failure record for {} (circuit will retry after cooldown)",
-            attempted_url
-        );
-        return Ok(()); // Return Ok to avoid propagating error - we've logged the issue
-    }
     // Extract context from error chain if not provided directly
     // This allows us to get context even if it wasn't passed explicitly
     let extracted_context = super::context::extract_failure_context(params.error);
@@ -227,64 +214,22 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) -> Result<(), D
         request_headers,
     };
 
-    // Insert failure record
-    match insert_url_failure(params.pool, &failure).await {
-        Ok(_) => {
-            // Record success to reset circuit breaker
-            params.circuit_breaker.record_success().await;
-            Ok(())
-        }
-        Err(e) => {
-            // Record failure in circuit breaker
-            params.circuit_breaker.record_failure().await;
-            Err(e)
-        }
+    // Insert failure record; abort on write failure to avoid incomplete data
+    if let Err(e) = insert_url_failure(params.pool, &failure).await {
+        panic!(
+            "SQLite write failed while recording URL failure: {}. Aborting to avoid incomplete data. Check disk space and permissions.",
+            e
+        );
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use sqlx::Row;
-    use std::sync::Arc;
 
     use crate::storage::test_helpers::create_test_pool;
-
-    #[tokio::test]
-    async fn test_record_url_failure_circuit_breaker_open() {
-        // Test that failures are skipped when circuit breaker is open
-        // This is critical - prevents resource exhaustion during database outages
-        let pool = create_test_pool().await;
-        let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::with_threshold(
-            1,
-            std::time::Duration::from_millis(100),
-        ));
-
-        // Open circuit breaker
-        circuit_breaker.record_failure().await;
-        assert!(circuit_breaker.is_circuit_open().await);
-
-        let error = anyhow::anyhow!("Test error");
-        let context = FailureContext::default();
-
-        let params = FailureRecordParams {
-            pool: &pool,
-            extractor: &extractor,
-            url: "https://example.com",
-            error: &error,
-            context,
-            retry_count: 0,
-            elapsed_time: 1.0,
-            run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
-        };
-
-        // Should return Ok (skipped) when circuit is open
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
-    }
 
     #[tokio::test]
     async fn test_record_url_failure_domain_extraction_fallback() {
@@ -292,7 +237,6 @@ mod tests {
         // This is critical - failures should be recorded even if domain extraction fails
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         // Use invalid URL that will fail domain extraction
         let error = anyhow::anyhow!("Test error");
@@ -307,7 +251,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         // Should succeed (domain will be "unknown")
@@ -332,7 +275,6 @@ mod tests {
         // This is critical - context should be preserved even if not explicitly passed
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let context = FailureContext {
             final_url: Some("https://example.com".to_string()),
@@ -353,7 +295,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;
@@ -378,7 +319,6 @@ mod tests {
         // This is critical - prevents database bloat from large headers
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let long_header_value = "x".repeat(2000); // Exceeds MAX_HEADER_VALUE_LENGTH (1000)
         let context = FailureContext {
@@ -398,7 +338,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;
@@ -425,7 +364,6 @@ mod tests {
     async fn test_record_url_failure_header_truncation_handles_unicode() {
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let long_header_value =
             "测试🚀".repeat((crate::config::MAX_HEADER_VALUE_LENGTH / "测试🚀".len()) + 10);
@@ -446,7 +384,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker,
         };
 
         record_url_failure(params)
@@ -470,7 +407,6 @@ mod tests {
         // This is critical - prevents database issues from invalid characters
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         // Create error with control characters
         let error_msg = "Error with control chars: \x00\x01\x02\x03".to_string();
@@ -486,7 +422,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;
@@ -508,81 +443,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_record_url_failure_circuit_breaker_success_reset() {
-        // Test that successful insertion resets circuit breaker
-        // This is critical - circuit breaker should recover after successful writes
-        let pool = create_test_pool().await;
-        let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::with_threshold(
-            2,
-            std::time::Duration::from_millis(100),
-        ));
-
-        // Record one failure (not enough to open circuit)
-        circuit_breaker.record_failure().await;
-        assert_eq!(circuit_breaker.failure_count(), 1);
-
-        let error = anyhow::anyhow!("Test error");
-        let context = FailureContext::default();
-        let params = FailureRecordParams {
-            pool: &pool,
-            extractor: &extractor,
-            url: "https://example.com",
-            error: &error,
-            context,
-            retry_count: 0,
-            elapsed_time: 1.0,
-            run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
-        };
-
-        // Successful insertion should reset circuit breaker
-        let result = record_url_failure(params).await;
-        assert!(result.is_ok());
-        assert_eq!(circuit_breaker.failure_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_record_url_failure_circuit_breaker_failure_tracking() {
-        // Test that insertion failures are tracked in circuit breaker
-        // This is critical - circuit breaker must track failures correctly
-        let pool = create_test_pool().await;
-        let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::with_threshold(
-            5,
-            std::time::Duration::from_millis(100),
-        ));
-
-        // Close the pool to cause insertion failures
-        pool.close().await;
-
-        let error = anyhow::anyhow!("Test error");
-        let context = FailureContext::default();
-        let params = FailureRecordParams {
-            pool: &pool,
-            extractor: &extractor,
-            url: "https://example.com",
-            error: &error,
-            context,
-            retry_count: 0,
-            elapsed_time: 1.0,
-            run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
-        };
-
-        // Should fail and track in circuit breaker
-        let result = record_url_failure(params).await;
-        assert!(result.is_err());
-        assert_eq!(circuit_breaker.failure_count(), 1);
-    }
-
-    #[tokio::test]
     async fn test_record_url_failure_provided_context_takes_precedence() {
         // Test that provided context takes precedence over extracted context
         // This is critical - explicit context should not be overridden
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let provided_context = FailureContext {
             final_url: Some("https://provided.com".to_string()),
@@ -614,7 +479,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;
@@ -639,7 +503,6 @@ mod tests {
         // This is critical - context should be preserved when not explicitly provided
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let extracted_context = FailureContext {
             final_url: Some("https://extracted.com".to_string()),
@@ -661,7 +524,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;
@@ -686,7 +548,6 @@ mod tests {
         // This is critical - long error chains should be summarized, not truncated incorrectly
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         // Create error with long chain
         let error = anyhow::anyhow!("Root cause")
@@ -706,7 +567,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id: None,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;
@@ -732,7 +592,6 @@ mod tests {
         // This is critical - run_id links failures to specific scan runs
         let pool = create_test_pool().await;
         let extractor = psl::List;
-        let circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         // Create a test run first (run_id might be a foreign key)
         // Use a simple SQL insert instead of the full insert_run_metadata function
@@ -756,7 +615,6 @@ mod tests {
             retry_count: 0,
             elapsed_time: 1.0,
             run_id,
-            circuit_breaker: circuit_breaker.clone(),
         };
 
         let result = record_url_failure(params).await;

@@ -210,7 +210,6 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
-    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::utils::TimingStats;
     use hickory_resolver::{config::ResolverOpts, TokioResolver};
     use httptest::{matchers::*, responders::*, Expectation, Server};
@@ -239,7 +238,6 @@ mod tests {
         );
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
         let pool = Arc::new(
             sqlx::SqlitePool::connect("sqlite::memory:")
                 .await
@@ -248,7 +246,7 @@ mod tests {
 
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool, db_circuit_breaker),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 error_stats,
                 timing_stats,
@@ -284,7 +282,6 @@ mod tests {
         );
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
         let pool = Arc::new(
             sqlx::SqlitePool::connect("sqlite::memory:")
                 .await
@@ -298,7 +295,7 @@ mod tests {
 
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool, db_circuit_breaker),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 error_stats,
                 timing_stats,
@@ -1092,11 +1089,10 @@ mod tests {
         );
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
 
         let ctx = ProcessingContext::new(
             NetworkContext::new(client_arc, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool, db_circuit_breaker),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 error_stats,
                 timing_stats,

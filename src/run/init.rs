@@ -11,12 +11,10 @@ use chrono::Utc;
 use log::{info, warn};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::adaptive_rate_limiter::AdaptiveRateLimiter;
 use crate::config::{Config, DEFAULT_USER_AGENT};
 use crate::error_handling::ProcessingStats;
 use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
 use crate::initialization::*;
-use crate::per_domain_limiter::PerDomainLimiter;
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::{init_db_pool_with_path, insert_run_metadata, RunMetadata};
 use crate::utils::TimingStats;
@@ -116,47 +114,6 @@ pub async fn init_scan_resources(
             None => (None, None),
         };
 
-    // Initialize adaptive rate limiter
-    let (adaptive_limiter, adaptive_limiter_shutdown) = if config.rate_limit_rps > 0 {
-        let max_rps = config.rate_limit_rps.saturating_mul(2);
-        let adaptive = Arc::new(AdaptiveRateLimiter::new(
-            config.rate_limit_rps,
-            Some(1),
-            Some(max_rps),
-            Some(config.adaptive_error_threshold),
-            None,
-            None,
-        ));
-
-        let adaptive_shutdown = if let Some(ref rate_limiter) = request_limiter {
-            let rate_limiter_clone = Arc::clone(rate_limiter);
-            Some(adaptive.start_adaptive_adjustment(
-                move |new_rps| {
-                    rate_limiter_clone.update_rps(new_rps);
-                },
-                None,
-            ))
-        } else {
-            None
-        };
-
-        (Some(adaptive), adaptive_shutdown)
-    } else {
-        (None, None)
-    };
-
-    // Initialize per-domain rate limiter
-    let per_domain_limiter = if config.max_per_domain > 0 {
-        info!(
-            "Per-domain concurrency limit: {} concurrent requests per domain",
-            config.max_per_domain
-        );
-        Some(Arc::new(PerDomainLimiter::new(config.max_per_domain)))
-    } else {
-        info!("Per-domain concurrency limiting disabled");
-        None
-    };
-
     // Initialize database -- size the pool to match concurrency so workers don't starve
     #[allow(clippy::cast_possible_truncation)]
     let pool_size = (config.max_concurrency as u32).max(1);
@@ -246,11 +203,6 @@ pub async fn init_scan_resources(
     let timing_stats = Arc::new(TimingStats::new());
     let runtime_metrics = Arc::new(RuntimeMetrics::default());
 
-    // Initialize circuit breaker
-    let db_circuit_breaker =
-        Arc::new(crate::storage::circuit_breaker::DbWriteCircuitBreaker::new());
-    info!("Database write circuit breaker initialized (threshold: 5 failures, cooldown: 60s)");
-
     // Initialize counters
     let completed_urls = Arc::new(AtomicUsize::new(0));
     let successful_urls = Arc::new(AtomicUsize::new(0));
@@ -270,7 +222,7 @@ pub async fn init_scan_resources(
             Arc::clone(&extractor),
             Arc::clone(&resolver),
         ),
-        DatabaseContext::new(Arc::clone(&pool), Arc::clone(&db_circuit_breaker)),
+        DatabaseContext::new(Arc::clone(&pool)),
         ConfigContext::new(
             error_stats.clone(),
             Arc::clone(&timing_stats),
@@ -282,14 +234,10 @@ pub async fn init_scan_resources(
 
     let resources = ScanResources {
         pool,
-        db_circuit_breaker,
         shared_ctx,
         semaphore,
         request_limiter,
         rate_limiter_shutdown,
-        adaptive_limiter,
-        adaptive_limiter_shutdown,
-        per_domain_limiter,
         error_stats,
         timing_stats,
         runtime_metrics,

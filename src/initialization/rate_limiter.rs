@@ -18,14 +18,14 @@ use tokio::time::{interval, Duration as TokioDuration};
 /// - Burst capacity allows short bursts above the base rate
 /// - Uses a background task for token replenishment
 /// - Supports graceful shutdown via `CancellationToken`
-/// - Supports dynamic RPS updates (for adaptive rate limiting)
 ///
 /// Instances are usually created via [`init_rate_limiter()`].
 pub struct RateLimiter {
     permits: Arc<TokioSemaphore>,
     #[allow(dead_code)]
     capacity: usize,
-    current_rps: Arc<std::sync::atomic::AtomicU32>,
+    /// Fixed requests per second (set at creation, never changed).
+    rps: u32,
     #[allow(dead_code)] // Used for cancellation token reference
     shutdown: tokio_util::sync::CancellationToken,
 }
@@ -34,10 +34,7 @@ impl std::fmt::Debug for RateLimiter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RateLimiter")
             .field("capacity", &self.capacity)
-            .field(
-                "current_rps",
-                &self.current_rps.load(std::sync::atomic::Ordering::Relaxed),
-            )
+            .field("rps", &self.rps)
             .finish_non_exhaustive()
     }
 }
@@ -90,21 +87,11 @@ impl RateLimiter {
         }
     }
 
-    /// Updates the current RPS value (for adaptive rate limiting).
-    /// The background task will automatically adjust the token replenishment rate.
-    pub fn update_rps(&self, new_rps: u32) {
-        self.current_rps
-            .store(new_rps, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Gets the current RPS value.
-    ///
-    /// Useful for monitoring and debugging. The RPS may be dynamically updated
-    /// by adaptive rate limiting, so this value may change between calls.
-    #[allow(dead_code)] // Useful for debugging/monitoring, may be used in future
+    /// Gets the configured RPS value.
+    #[allow(dead_code)] // Useful for debugging/monitoring
     #[must_use]
     pub fn current_rps(&self) -> u32 {
-        self.current_rps.load(std::sync::atomic::Ordering::SeqCst)
+        self.rps
     }
 }
 
@@ -160,17 +147,15 @@ pub fn init_rate_limiter(
     let shutdown = tokio_util::sync::CancellationToken::new();
     let shutdown_clone = shutdown.clone();
 
-    let current_rps = Arc::new(std::sync::atomic::AtomicU32::new(rps));
     let limiter = Arc::new(RateLimiter {
         permits: Arc::new(TokioSemaphore::new(capacity)),
         capacity,
-        current_rps: Arc::clone(&current_rps),
+        rps,
         shutdown: shutdown_clone.clone(),
     });
 
     let permits = limiter.permits.clone();
-    let rps_for_ticker = Arc::clone(&current_rps);
-    // Use a fast ticker (every 100ms) and calculate how many permits to add based on current RPS
+    // Use a fast ticker (every 100ms) and add permits based on fixed RPS
     let mut ticker = interval(TokioDuration::from_millis(100));
     tokio::spawn(async move {
         let mut last_time = tokio::time::Instant::now();
@@ -180,18 +165,11 @@ pub fn init_rate_limiter(
                 _ = ticker.tick() => {
                     let now = tokio::time::Instant::now();
                     let elapsed = now.duration_since(last_time);
-                    let current_rps_value = rps_for_ticker.load(std::sync::atomic::Ordering::SeqCst);
 
-                    if current_rps_value > 0 {
-                        // Calculate how many permits to add based on elapsed time and current RPS
-                        // For example, if RPS is 10 and 100ms elapsed, we should add 1 permit (10 * 0.1 = 1)
-                        // Safe cast: RPS is u32, max value is 4,294,967,295, well within f64 precision
-                        // Safe cast: truncating fractional permits is intentional for integer token count
-                        // Values are bounded by RPS * elapsed (typically small values < 1000)
-                        // Safe cast: permits_to_add is u32, fits exactly in f64 without precision loss
+                    if rps > 0 {
                         let available = permits.available_permits();
                         let (permits_to_add, new_fractional_permits) = compute_refill_permits(
-                            current_rps_value,
+                            rps,
                             elapsed,
                             available,
                             capacity,
@@ -257,18 +235,6 @@ mod tests {
         assert!(blocked.is_err(), "third acquire should block until refill");
     }
 
-    #[tokio::test]
-    async fn test_rate_limiter_update_rps() {
-        let (limiter, _shutdown) = init_rate_limiter(10, 5).unwrap();
-        assert_eq!(limiter.current_rps(), 10);
-
-        limiter.update_rps(20);
-        assert_eq!(limiter.current_rps(), 20);
-
-        limiter.update_rps(5);
-        assert_eq!(limiter.current_rps(), 5);
-    }
-
     #[tokio::test(start_paused = true)]
     async fn test_rate_limiter_token_replenishment_unblocks_waiter() {
         let (limiter, _shutdown) = init_rate_limiter(10, 1).unwrap();
@@ -317,22 +283,6 @@ mod tests {
             fractional.abs() < f64::EPSILON,
             "overflow beyond burst capacity should be discarded"
         );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_rate_limiter_dynamic_rps_update_changes_refill_speed() {
-        let (limiter, _shutdown) = init_rate_limiter(1, 1).unwrap();
-
-        limiter.acquire().await;
-        let blocked = timeout(Duration::from_millis(1), limiter.acquire()).await;
-        assert!(blocked.is_err(), "single-token burst should be exhausted");
-
-        limiter.update_rps(10);
-
-        tokio::time::advance(Duration::from_millis(110)).await;
-        timeout(Duration::from_millis(10), limiter.acquire())
-            .await
-            .expect("updated RPS should replenish promptly");
     }
 
     #[tokio::test]

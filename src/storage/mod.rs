@@ -5,11 +5,9 @@
 //! - Direct record insertion (no batching - records written immediately)
 //! - Failure tracking and recording
 //! - Database migrations
-//! - Circuit breaker for write operations
 //!
 //! All database operations use `SQLite` with WAL mode enabled for concurrent access.
 
-pub mod circuit_breaker;
 pub mod failure;
 pub mod insert;
 pub mod migrations;

@@ -12,8 +12,7 @@
 # max_concurrency = 30
 # timeout_seconds = 10
 # user_agent    = "domain_status/0.1"
-# rate_limit_rps = 15
-# max_per_domain = 5
+# rate_limit_rps = 15   # Requests per second (0 to disable). If you see 429s, lower and re-run.
 # log_level     = "info"               # error | warn | info | debug | trace
 # log_format    = "plain"              # plain | json
 # log_file      = "domain_status.log"

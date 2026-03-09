@@ -67,12 +67,6 @@ pub struct ScanCommand {
     #[arg(long, default_value_t = 15)]
     pub rate_limit_rps: u32,
 
-    #[arg(long, default_value_t = 5)]
-    pub max_per_domain: usize,
-
-    #[arg(long, default_value_t = 0.2, hide = true)]
-    pub adaptive_error_threshold: f64,
-
     #[arg(long)]
     pub fingerprints: Option<String>,
 

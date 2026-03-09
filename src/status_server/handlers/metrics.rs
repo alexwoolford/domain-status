@@ -177,18 +177,6 @@ domain_status_runtime_retries_total {}
 # TYPE domain_status_runtime_non_retriable_failures_total counter
 domain_status_runtime_non_retriable_failures_total {}
 
-# HELP domain_status_db_write_failures_total Total database write failures seen by the circuit breaker
-# TYPE domain_status_db_write_failures_total counter
-domain_status_db_write_failures_total {}
-
-# HELP domain_status_db_skipped_failure_writes_total Total failure-record writes skipped because the DB circuit breaker was open
-# TYPE domain_status_db_skipped_failure_writes_total counter
-domain_status_db_skipped_failure_writes_total {}
-
-# HELP domain_status_db_circuit_open Whether the database write circuit breaker is currently open (1=open, 0=closed)
-# TYPE domain_status_db_circuit_open gauge
-domain_status_db_circuit_open {}
-
 # HELP domain_status_current_rps Current effective configured request rate
 # TYPE domain_status_current_rps gauge
 domain_status_current_rps {}
@@ -215,13 +203,6 @@ domain_status_current_rps {}
         total_info,
         state.runtime_metrics.retried_requests(),
         state.runtime_metrics.non_retriable_failures(),
-        state.db_circuit_breaker.total_failures(),
-        state.db_circuit_breaker.skipped_writes(),
-        if state.db_circuit_breaker.is_open_sync() {
-            1
-        } else {
-            0
-        },
         state
             .request_limiter
             .as_ref()
@@ -256,9 +237,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,
@@ -320,9 +298,6 @@ mod tests {
             }),
             timing_stats: Some(timing_stats),
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new({
                 let metrics = crate::runtime_metrics::RuntimeMetrics::default();
                 metrics.record_retry();
@@ -395,18 +370,6 @@ domain_status_runtime_retries_total 1
 # TYPE domain_status_runtime_non_retriable_failures_total counter
 domain_status_runtime_non_retriable_failures_total 0
 
-# HELP domain_status_db_write_failures_total Total database write failures seen by the circuit breaker
-# TYPE domain_status_db_write_failures_total counter
-domain_status_db_write_failures_total 0
-
-# HELP domain_status_db_skipped_failure_writes_total Total failure-record writes skipped because the DB circuit breaker was open
-# TYPE domain_status_db_skipped_failure_writes_total counter
-domain_status_db_skipped_failure_writes_total 0
-
-# HELP domain_status_db_circuit_open Whether the database write circuit breaker is currently open (1=open, 0=closed)
-# TYPE domain_status_db_circuit_open gauge
-domain_status_db_circuit_open 0
-
 # HELP domain_status_current_rps Current effective configured request rate
 # TYPE domain_status_current_rps gauge
 domain_status_current_rps 0
@@ -468,9 +431,6 @@ domain_status_timing_total_ms 2"#.trim()
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: Some(Arc::new(TimingStats::new())),
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,

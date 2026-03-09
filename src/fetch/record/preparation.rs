@@ -194,7 +194,6 @@ mod tests {
     use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
     use crate::fetch::response::{HtmlData, ResponseData};
     use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
-    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::utils::TimingStats;
     use hickory_resolver::config::ResolverOpts;
     use hickory_resolver::TokioResolver;
@@ -223,7 +222,6 @@ mod tests {
         let timing_stats = Arc::new(TimingStats::new());
         let run_id = Some("test-run".to_string());
         let enable_whois = false; // Disable WHOIS for faster tests
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
         let pool = Arc::new(
             sqlx::SqlitePool::connect("sqlite::memory:")
                 .await
@@ -232,7 +230,7 @@ mod tests {
 
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool, db_circuit_breaker),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 error_stats,
                 timing_stats,

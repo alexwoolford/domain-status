@@ -8,11 +8,7 @@
 use hickory_resolver::TokioResolver;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::{Arc, LazyLock};
-use tokio::sync::Semaphore;
-
-/// Concurrency limiter for DNS lookups (prevent resource exhaustion)
-static DNS_SEMAPHORE: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(64)));
+use std::sync::Arc;
 
 /// A DNS resolver that rejects private/loopback/link-local IPs.
 ///
@@ -37,11 +33,6 @@ impl Resolve for SafeResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let resolver = Arc::clone(&self.resolver);
         Box::pin(async move {
-            let _permit = DNS_SEMAPHORE
-                .acquire()
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-
             let lookup = resolver
                 .lookup_ip(name.as_str())
                 .await

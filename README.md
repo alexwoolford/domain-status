@@ -18,7 +18,7 @@ Give it a list of URLs → it fetches HTTP status, TLS certificates, DNS records
 - **Security analysts**: Identify outdated software, missing security headers, and configuration issues
 - **Domain managers**: Track registration status, DNS configuration, and site metadata for large portfolios
 
-**Why domain_status?** Unlike single-purpose tools (curl for status, whois for domain info, Wappalyzer for tech detection), domain_status consolidates all checks in one tool. Built with async Rust (Tokio) for high-performance concurrent processing, it efficiently handles hundreds or thousands of URLs while maintaining reliability through adaptive rate limiting and comprehensive error handling.
+**Why domain_status?** Unlike single-purpose tools (curl for status, whois for domain info, Wappalyzer for tech detection), domain_status consolidates all checks in one tool. Built with async Rust (Tokio) for high-performance concurrent processing, it efficiently handles hundreds or thousands of URLs while maintaining reliability through rate limiting and comprehensive error handling.
 
 ## Table of Contents
 
@@ -181,16 +181,16 @@ Then install the man page (e.g. `man -l completions/domain_status.1` or copy to 
 
 ### Performance
 - **Concurrent Processing**: Async/await with configurable concurrency limits (default: 30 concurrent requests, 15 RPS)
-- **Adaptive Rate Limiting**: Token-bucket rate limiting with automatic adjustment based on error rates (always enabled)
+- **Rate Limiting**: Optional token-bucket cap on requests per second (default: 15; 0 disables). If you see 429s, lower `--rate-limit-rps` and re-run.
 - **Resource Efficiency**: Shared HTTP clients, DNS resolver, and HTML parser instances across concurrent tasks
 
 ### Reliability
-- **Intelligent Error Handling**: Automatic retries with exponential backoff, error rate monitoring with dynamic throttling, and comprehensive processing statistics
+- **Intelligent Error Handling**: Automatic retries with exponential backoff and comprehensive processing statistics
 - **Robust Data Storage**: SQLite database with WAL mode, UPSERT semantics, and unique constraints for idempotent processing
 - **Timeout Protection**: Per-URL processing timeout (35 seconds) prevents hung requests
 
 ### Integration
-- **Flexible Configuration**: Extensive CLI options for logging, output format, timeouts, concurrency, per-domain concurrency caps, rate limits, database paths, and fingerprint rulesets
+- **Flexible Configuration**: Extensive CLI options for logging, output format, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
 - **Library API**: Use as a Rust library in your own projects
 - **Status Server**: Optional HTTP server for monitoring long-running jobs with Prometheus metrics
 - **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
@@ -239,7 +239,7 @@ Unlike single-purpose tools (curl, nmap, whois), domain_status consolidates many
 
 - **Rate Limiting**: Processing speed is constrained by:
   - Target server response times and rate limits
-  - Adaptive rate limiter (backs off on errors)
+  - Rate limit (fixed RPS; if you see 429s, lower `--rate-limit-rps` and re-run)
   - WHOIS lookups add ~1 second per domain
   - Typical throughput: 0.5-2 URLs/sec with default settings
 
@@ -276,9 +276,8 @@ domain_status scan <file> [OPTIONS]
 - `--log-file <PATH>`: Log file path (default: `domain_status.log`). Scan logs are written to this file.
 - `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
 - `--max-concurrency <N>`: Maximum concurrent requests (default: `30`)
-- `--max-per-domain <N>`: Maximum concurrent requests per registered domain (default: `5`, `0` disables the cap)
 - `--timeout-seconds <N>`: HTTP client timeout in seconds (default: `10`). Per-URL processing still has a wider overall timeout budget.
-- `--rate-limit-rps <N>`: Initial requests per second (adaptive rate limiting is enabled when this is greater than `0`; default: `15`)
+- `--rate-limit-rps <N>`: Requests per second cap (default: `15`; `0` disables). If you see 429 responses, lower this and re-run.
 - `--status-port <PORT>`: Start the local-only HTTP status server on `127.0.0.1:<PORT>` (disabled by default)
 - `--fail-on <POLICY>`: Exit code policy: `never` (default), `any-failure`, or `pct>`. See [Exit Code Control](#exit-code-control) for details.
 - `--fail-on-pct-threshold <N>`: Percentage threshold used with `--fail-on pct>` (default: `10`)
@@ -692,7 +691,7 @@ curl http://127.0.0.1:8080/health
 The status server provides:
 - **Health check**: `/health` returns 200 OK when the server is up (for Kubernetes liveness probes, load balancers, or reverse proxies)
 - **Real-time progress**: File size, attempted URLs, active URLs, completed URLs, failed URLs, pending URLs, and throughput
-- **Runtime health signals**: Current adaptive RPS, retry counts, non-retriable failures, DB write failures, skipped failure writes, and circuit-breaker state
+- **Runtime health signals**: Retry counts, non-retriable failures, and related metrics
 - **Error breakdown**: Detailed counts by error, warning, and informational event categories
 - **Prometheus compatibility**: Metrics endpoint ready for Prometheus scraping, with run identity and elapsed/start time for fleet dashboards
 
@@ -727,9 +726,6 @@ curl http://127.0.0.1:8080/status | jq
   "current_rps": 12,
   "retried_requests": 6,
   "non_retriable_failures": 1,
-  "db_write_failures": 0,
-  "skipped_failure_writes": 0,
-  "circuit_breaker_open": false,
   "errors": { "total": 17, "timeout": 0, "connection_error": 0, "http_error": 3, "dns_error": 14, "tls_error": 0, "parse_error": 0, "other_error": 0 },
   "warnings": { "total": 104, "missing_meta_keywords": 77, "missing_meta_description": 25, "missing_title": 2 },
   "info": { "total": 64, "http_redirect": 55, "https_redirect": 0, "bot_detection_403": 3, "multiple_redirects": 6 },
@@ -776,10 +772,7 @@ curl http://127.0.0.1:8080/metrics
 - `domain_status_info_total` (counter): Total info event count
 - `domain_status_runtime_retries_total` (counter): Retry attempts consumed
 - `domain_status_runtime_non_retriable_failures_total` (counter): Failures classified as terminal at the retry boundary
-- `domain_status_db_write_failures_total` (counter): Database write failures seen by the circuit breaker
-- `domain_status_db_skipped_failure_writes_total` (counter): Failure-write attempts skipped while the DB circuit breaker is open
-- `domain_status_db_circuit_open` (gauge): Whether the DB circuit breaker is currently open (`1` or `0`)
-- `domain_status_current_rps` (gauge): Current effective request rate after adaptive adjustments
+- `domain_status_current_rps` (gauge): Configured request rate (fixed for the run)
 - `domain_status_timing_*` (gauges): Average stage timings when timing statistics are available
 
 **Prometheus Integration:**
@@ -840,12 +833,7 @@ If you maintain your own fingerprint file (e.g., for internal technologies), you
 
 **Concurrency**: The default is 30 concurrent requests. If you have good bandwidth and target sites can handle it, you can increase `--max-concurrency`. Monitor the `/metrics` endpoint's rate to see actual throughput. Conversely, if you encounter many timeouts or want to be gentle on servers, lower concurrency.
 
-**Rate Limiting**: The default is 15 RPS with adaptive adjustment. The adaptive rate limiter:
-- Starts at initial RPS (default: 15)
-- Monitors 429 errors and timeouts in a sliding window
-- Automatically reduces RPS by 50% when error rate exceeds threshold (default: 20%)
-- Gradually increases RPS by 15% when error rate is below threshold
-- Maximum RPS capped at 2x initial value
+**Rate Limiting**: The default is 15 requests per second. This is a fixed cap for the run. If you see many 429 (Too Many Requests) responses, lower `--rate-limit-rps` and re-run the scan.
 
 **Memory**: Each concurrent task consumes memory for HTML and data. With default settings, memory usage is moderate. If scanning extremely large pages, consider that response bodies are capped at 2MB and HTML text extraction is limited to 50KB.
 
@@ -856,7 +844,7 @@ The tool automatically retries failed HTTP requests up to 2 additional times (3 
 ## ❓ Troubleshooting
 
 **Scan is very slow or stuck:**
-- Check if you hit a rate limit. domain_status automatically slows down on high error rate (adaptive rate limiting).
+- If you see 429 (Too Many Requests) responses, lower `--rate-limit-rps` and re-run.
 - Enabling WHOIS adds approximately 1 second per domain due to rate limits.
 - If it's truly stuck, check the log file (`domain_status.log` by default) or use `--log-level debug` for more detail.
 
@@ -977,13 +965,13 @@ Input File → URL Validation → Concurrent Processing → Data Extraction → 
 3. **Data Extraction**: Parses HTML, detects technologies, queries DNS/TLS/GeoIP/WHOIS (parallelized where possible)
 4. **Database Writer**: Direct writes to SQLite (WAL mode handles concurrency efficiently)
 5. **Error Handling**: Categorizes errors, implements retries with exponential backoff
-6. **Rate Limiting**: Token-bucket algorithm with adaptive adjustment
+6. **Rate Limiting**: Optional token-bucket cap on requests per second (fixed for the run)
 
 **Concurrency Model:**
 - Async runtime: Tokio
 - Concurrency control: Semaphore limits concurrent tasks
-- Rate limiting: Token-bucket with adaptive adjustment
-- Background tasks: Status server (optional), adaptive rate limiter
+- Rate limiting: Optional token-bucket (fixed RPS for the run)
+- Background tasks: Status server (optional), rate limiter refill task
 - Graceful shutdown: All background tasks cancellable via `CancellationToken`
 - Parallel execution: Technology detection and DNS/TLS fetching run in parallel (independent operations)
 

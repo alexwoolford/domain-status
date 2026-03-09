@@ -43,7 +43,6 @@
     unsafe_code
 )]
 
-mod adaptive_rate_limiter;
 mod app;
 pub mod cli;
 mod clock;
@@ -60,7 +59,6 @@ mod geoip;
 pub mod initialization;
 mod models;
 mod parse;
-mod per_domain_limiter;
 mod run;
 mod runtime_metrics;
 mod security;

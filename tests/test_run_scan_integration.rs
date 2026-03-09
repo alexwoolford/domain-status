@@ -2,8 +2,7 @@
 //!
 //! These tests verify the core orchestration logic including:
 //! - Concurrent execution with semaphore enforcement
-//! - Rate limiting (static and adaptive)
-//! - Adaptive rate limiting (429 response handling)
+//! - Rate limiting (static RPS)
 
 use domain_status::{run_scan, Config, FailOn, LogFormat, LogLevel};
 use std::io::Write;
@@ -53,7 +52,6 @@ fn create_test_config(
         timeout_seconds: 5,
         user_agent: "domain_status_test/1.0".to_string(),
         rate_limit_rps,
-        adaptive_error_threshold: 0.2, // 20% error threshold
         fingerprints: None,
         geoip: None,
         status_port: None,
@@ -62,7 +60,6 @@ fn create_test_config(
         fail_on_pct_threshold: 10,
         log_file: None,
         progress_callback: None,
-        max_per_domain: 0, // Disable per-domain limiting for tests
         dependency_overrides: None,
     }
 }
@@ -214,80 +211,5 @@ async fn test_run_scan_respects_rate_limit() {
     println!(
         "✅ Rate limit test passed: took {:?} for {} URLs at {} RPS",
         elapsed, total_urls, rate_limit_rps
-    );
-}
-
-/// Test that `run_scan` handles 429 errors with adaptive rate limiting
-///
-/// This test verifies that the adaptive rate limiter reduces RPS when
-/// encountering 429 (Too Many Requests) errors.
-#[tokio::test]
-#[ignore] // Takes >60s, run manually with: cargo test -- --ignored test_run_scan_handles_429_with_adaptive_rate_limiting
-async fn test_run_scan_handles_429_with_adaptive_rate_limiting() {
-    // Setup
-    let initial_rps = 50;
-    let total_urls = 30;
-    let max_concurrency = 10;
-
-    // Track request count
-    let request_count = Arc::new(AtomicUsize::new(0));
-
-    // Start mock server
-    let mock_server = MockServer::start().await;
-
-    let count_clone = Arc::clone(&request_count);
-
-    // Return 429 for first 50% of requests, then 200
-    Mock::given(method("GET"))
-        .and(path_regex(r"^/test/.*"))
-        .respond_with(move |_req: &wiremock::Request| {
-            let count = count_clone.fetch_add(1, Ordering::SeqCst);
-
-            // First 50% get 429
-            if count < 15 {
-                ResponseTemplate::new(429).set_body_string("Too Many Requests")
-            } else {
-                ResponseTemplate::new(200).set_body_string("OK")
-            }
-        })
-        .mount(&mock_server)
-        .await;
-
-    // Generate URLs
-    let urls: Vec<String> = (0..total_urls)
-        .map(|i| format!("{}/test/{}", mock_server.uri(), i))
-        .collect();
-
-    let url_file = write_urls_to_file(&urls);
-    let db_file = create_temp_db();
-
-    let config = create_test_config(
-        url_file.path().to_path_buf(),
-        db_file.path().to_path_buf(),
-        max_concurrency,
-        initial_rps,
-    );
-
-    // Run scan
-    let result = run_scan(config).await;
-
-    // The scan should complete even with 429 errors
-    // Some URLs will fail, but the adaptive limiter should reduce RPS
-    assert!(
-        result.is_ok(),
-        "run_scan should complete even with 429 errors"
-    );
-
-    let report = result.unwrap();
-
-    // Verify that some URLs failed due to 429
-    assert!(
-        report.failed > 0,
-        "Should have some failed URLs due to 429 errors"
-    );
-
-    println!(
-        "✅ Adaptive rate limiting test passed: {} failed out of {} total",
-        report.failed, total_urls
     );
 }

@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use crate::error_handling::ProcessingStats;
 use crate::runtime_metrics::RuntimeMetrics;
-use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
 
@@ -25,13 +24,11 @@ pub struct NetworkContext {
     pub resolver: Arc<TokioResolver>,
 }
 
-/// Database-related resources (connection pool, circuit breaker).
+/// Database-related resources (connection pool).
 #[derive(Clone)]
 pub struct DatabaseContext {
     /// Database connection pool (for failure recording)
     pub pool: DbPool,
-    /// Circuit breaker for database write operations
-    pub circuit_breaker: Arc<DbWriteCircuitBreaker>,
 }
 
 /// Configuration and statistics tracking.
@@ -81,12 +78,9 @@ impl NetworkContext {
 }
 
 impl DatabaseContext {
-    /// Creates a new `DatabaseContext` with the given resources.
-    pub fn new(pool: DbPool, circuit_breaker: Arc<DbWriteCircuitBreaker>) -> Self {
-        Self {
-            pool,
-            circuit_breaker,
-        }
+    /// Creates a new `DatabaseContext` with the given pool.
+    pub fn new(pool: DbPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -161,7 +155,6 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
         let run_id = Some("test-run-123".to_string());
         let enable_whois = true;
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
         let pool = Arc::new(
             sqlx::SqlitePool::connect("sqlite::memory:")
                 .await
@@ -177,7 +170,7 @@ mod tests {
                 extractor.clone(),
                 resolver.clone(),
             ),
-            DatabaseContext::new(pool.clone(), db_circuit_breaker.clone()),
+            DatabaseContext::new(pool.clone()),
             ConfigContext::new(
                 error_stats.clone(),
                 timing_stats.clone(),
@@ -207,10 +200,6 @@ mod tests {
         );
         assert_eq!(context.config.run_id, run_id);
         assert_eq!(context.config.enable_whois, enable_whois);
-        assert_eq!(
-            Arc::as_ptr(&context.db.circuit_breaker),
-            Arc::as_ptr(&db_circuit_breaker)
-        );
         assert_eq!(Arc::as_ptr(&context.db.pool), Arc::as_ptr(&pool));
         assert_eq!(
             Arc::as_ptr(&context.config.timing_stats),
@@ -237,7 +226,6 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
         let run_id = None;
         let enable_whois = false;
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::default());
         let pool = Arc::new(
             sqlx::SqlitePool::connect("sqlite::memory:")
                 .await
@@ -247,7 +235,7 @@ mod tests {
 
         let context = ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool, db_circuit_breaker),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 error_stats,
                 timing_stats,
