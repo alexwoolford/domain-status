@@ -61,6 +61,7 @@ fn create_test_config(
         log_file: None,
         progress_callback: None,
         dependency_overrides: None,
+        allow_localhost_for_tests: false,
     }
 }
 

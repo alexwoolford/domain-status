@@ -79,6 +79,7 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         log_file: Some(cli.log_file),
         progress_callback: None,
         dependency_overrides: None,
+        allow_localhost_for_tests: false,
     }
 }
 

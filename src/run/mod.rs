@@ -236,9 +236,12 @@ pub async fn run_scan(
 
         // SSRF protection: reject private IPs, localhost, and unsafe schemes on the initial URL.
         // IP literals bypass the HTTP client's SafeResolver (no DNS lookup), so we must validate here.
-        if let Err(e) = validate_url_safe(&url) {
-            warn!("Skipping SSRF-unsafe URL: {e}");
-            continue;
+        // allow_localhost_for_tests lets integration tests use mock servers bound to 127.0.0.1/::1.
+        if !resources.config.allow_localhost_for_tests {
+            if let Err(e) = validate_url_safe(&url) {
+                warn!("Skipping SSRF-unsafe URL: {e}");
+                continue;
+            }
         }
 
         let permit = match Arc::clone(&resources.semaphore).acquire_owned().await {
@@ -375,6 +378,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             dependency_overrides: None,
+            allow_localhost_for_tests: false,
         };
 
         let result = run_scan(config).await;
@@ -456,6 +460,7 @@ mod tests {
             log_file: None,
             progress_callback: None,
             dependency_overrides: None,
+            allow_localhost_for_tests: false,
         };
 
         let result = run_scan(config).await;

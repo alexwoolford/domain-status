@@ -94,8 +94,10 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
             move || {
                 let url = Arc::clone(&url); // Arc clone for each retry attempt (just pointer increment)
                 let ctx = Arc::clone(&ctx);
-                // Start time per attempt so response_time_seconds reflects only this attempt,
-                // not retry backoff sleep (avoids inflating metrics for retried requests).
+                // CRITICAL (retry timing poisoning): start_time MUST be set here, inside the
+                // per-attempt closure. If it were set once before the retry loop, backoff sleep
+                // at process.rs:57 would be included in elapsed time passed to handle_response,
+                // corrupting response_time_seconds and http_request_us for retried requests.
                 let start_time = std::time::Instant::now();
                 async move { handle_http_request(&ctx, url.as_ref(), start_time).await }
             }
@@ -133,7 +135,8 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
-    use std::time::Duration;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
 
     fn retriable_error() -> anyhow::Error {
         anyhow::anyhow!("DNS lookup failed")
@@ -221,5 +224,48 @@ mod tests {
             "retry budget should allow multiple attempts"
         );
         assert!(runtime_metrics.retried_requests() > 0);
+    }
+
+    /// Regression test for retry timing poisoning: the per-attempt closure must be invoked
+    /// once per attempt so that `start_time` is fresh each time. If `start_time` were set once
+    /// before the retry loop, `response_time_seconds` and `http_request_us` would include backoff.
+    #[tokio::test(start_paused = true)]
+    async fn test_retry_timing_start_time_per_attempt_not_poisoned_by_backoff() {
+        let attempt_count = Arc::new(AtomicU32::new(0));
+        let closure_invocations: Arc<Mutex<Vec<Instant>>> = Arc::new(Mutex::new(Vec::new()));
+        let runtime_metrics = crate::runtime_metrics::RuntimeMetrics::default();
+        let remaining_failures = Arc::new(AtomicU32::new(1)); // fail once, then succeed
+
+        let result = execute_with_retry(
+            {
+                let closure_invocations = Arc::clone(&closure_invocations);
+                let remaining_failures = Arc::clone(&remaining_failures);
+                move || {
+                    let closure_invocations = Arc::clone(&closure_invocations);
+                    let remaining_failures = Arc::clone(&remaining_failures);
+                    closure_invocations.lock().unwrap().push(Instant::now());
+                    async move {
+                        if remaining_failures.fetch_sub(1, Ordering::SeqCst) > 0 {
+                            Err::<(), _>(retriable_error())
+                        } else {
+                            Ok(())
+                        }
+                    }
+                }
+            },
+            &attempt_count,
+            &runtime_metrics,
+        );
+
+        tokio::pin!(result);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        result.await.expect("should succeed after one retry");
+
+        let invocations = closure_invocations.lock().unwrap();
+        assert_eq!(
+            invocations.len(),
+            2,
+            "closure must be invoked twice (initial attempt + retry); each invocation gets a fresh start_time so backoff is not included in response_time_seconds"
+        );
     }
 }

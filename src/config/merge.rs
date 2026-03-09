@@ -179,6 +179,7 @@ pub fn merge_file_env_and_cli(
 
     config.progress_callback = None;
     config.dependency_overrides = None;
+    config.allow_localhost_for_tests = false; // Never enable from file/CLI; tests set in code only
     config
 }
 

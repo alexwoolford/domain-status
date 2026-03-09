@@ -3,12 +3,26 @@
 //! This module handles following redirect chains manually to track the full path
 //! from initial URL to final destination.
 
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
 use reqwest::Url;
 use url::Host;
 
 use crate::fetch::request::RequestHeaders;
 use crate::security::validate_url_safe;
+
+/// True if the URL's host is loopback (127.0.0.0/8 or `::1`). Used in tests to allow httptest server URLs.
+fn is_loopback_url(url_str: &str) -> bool {
+    url::Url::parse(url_str)
+        .ok()
+        .and_then(|u| {
+            u.host().map(|h| match h {
+                url::Host::Ipv4(ip) => ip.is_loopback(),
+                url::Host::Ipv6(ip) => ip.is_loopback(),
+                url::Host::Domain(_) => false,
+            })
+        })
+        .unwrap_or(false)
+}
 
 /// Checks if two hosts match (same origin check for SSRF protection)
 /// Allows same-origin redirects (e.g., localhost to localhost) while blocking
@@ -64,6 +78,15 @@ pub async fn resolve_redirect_chain(
     // Validate max_hops
     if max_hops == 0 {
         return Err(anyhow::anyhow!("max_hops must be > 0"));
+    }
+
+    // SSRF protection: validate initial URL before any request. IP literals (e.g. http://169.254.169.254)
+    // bypass the HTTP client's DNS-based SafeResolver because reqwest connects directly without resolution.
+    // In test builds we allow loopback so tests using httptest's server.url() (e.g. http://[::1]:port) can run.
+    let skip_initial_validation = cfg!(test) && is_loopback_url(start_url);
+    if !skip_initial_validation {
+        validate_url_safe(start_url)
+            .with_context(|| format!("Unsafe initial URL rejected: {}", start_url))?;
     }
 
     // Pre-allocate chain with capacity to avoid reallocations
@@ -434,6 +457,27 @@ mod tests {
         // Should return the start URL since no valid redirect was found
         assert_eq!(chain.len(), 1);
         assert_eq!(result_final, start_url);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_redirect_chain_rejects_unsafe_initial_url() {
+        // SSRF: initial URL must be validated before any request. IP literals bypass DNS/SafeResolver.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        let result = resolve_redirect_chain("http://169.254.169.254", 10, &client).await;
+        assert!(
+            result.is_err(),
+            "Initial link-local URL must be rejected before any request"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("169.254") || err.contains("Unsafe") || err.contains("private"),
+            "Error should mention unsafe/private URL: {}",
+            err
+        );
     }
 
     #[tokio::test]
