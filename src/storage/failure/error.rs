@@ -4,16 +4,49 @@
 //! from error chains for failure categorization.
 
 use anyhow::Error;
+use hickory_resolver::ResolveError;
 use reqwest::Error as ReqwestError;
 
-use crate::error_handling::{categorize_reqwest_error, ErrorType};
+use crate::error_handling::{
+    categorize_reqwest_error, categorize_resolve_error, DnsResolveErrorKind, ErrorType,
+};
+
+/// Picks `DnsNsLookupError` / `DnsTxtLookupError` / `DnsMxLookupError` from message (used when we
+/// already know the error is DNS-related, e.g. from `ResolveError`).
+fn dns_error_type_from_message(msg: &str) -> ErrorType {
+    if msg.contains("txt") {
+        ErrorType::DnsTxtLookupError
+    } else if msg.contains("mx") || msg.contains("mail") {
+        ErrorType::DnsMxLookupError
+    } else {
+        ErrorType::DnsNsLookupError
+    }
+}
 
 /// Extracts error type from an error chain.
 ///
 /// Uses the shared `categorize_reqwest_error` function for consistency,
 /// but also enhances categorization by checking error messages for DNS/TLS patterns.
+/// When a `ResolveError` is found in the chain, uses predicate-based categorization
+/// instead of string matching.
 pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
-    // Check error chain for reqwest errors first
+    // Check error chain for DNS resolver errors (predicate-based, no string matching)
+    for cause in error.chain() {
+        if let Some(resolve_err) = cause.downcast_ref::<ResolveError>() {
+            let kind = categorize_resolve_error(resolve_err);
+            return match kind {
+                DnsResolveErrorKind::Timeout => ErrorType::ProcessUrlTimeout,
+                DnsResolveErrorKind::NxDomain | DnsResolveErrorKind::NoRecords => {
+                    dns_error_type_from_message(&resolve_err.to_string().to_lowercase())
+                }
+                DnsResolveErrorKind::Other => {
+                    dns_error_type_from_message(&resolve_err.to_string().to_lowercase())
+                }
+            };
+        }
+    }
+
+    // Check error chain for reqwest errors
     for cause in error.chain() {
         if let Some(reqwest_err) = cause.downcast_ref::<ReqwestError>() {
             // Use shared categorization function for consistency

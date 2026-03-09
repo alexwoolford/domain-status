@@ -41,12 +41,12 @@ use hickory_resolver::TokioResolver;
 pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
     use hickory_resolver::config::ResolverOpts;
 
-    // Configure DNS resolver with timeouts
+    // ResolverOpts: timeout, attempts, ndots. Cache and try_tcp_on_error left at resolver default;
+    // they can be tuned later via ResolverOpts if needed.
     let mut opts = ResolverOpts::default();
     opts.timeout = Duration::from_secs(crate::config::DNS_TIMEOUT_SECS);
-    opts.attempts = 1; // Single attempt to fail fast - DNS queries should succeed quickly or not at all
-                       // Set ndots to 0 to prevent search domain appending
-    opts.ndots = 0;
+    opts.attempts = 1; // Fail-fast for scans; avoid retries so slow DNS doesn't block the run.
+    opts.ndots = 0; // No search-domain expansion for scanned hostnames.
 
     // Use builder API for hickory-resolver 0.25+
     // The builder uses system config by default (reads resolv.conf), we just need to set options

@@ -9,6 +9,7 @@ use super::categorization::categorize_reqwest_error;
 use super::types::ErrorType;
 use crate::config::HTTP_STATUS_TOO_MANY_REQUESTS;
 
+#[allow(rustdoc::private_intra_doc_links)]
 /// Extension trait for [`reqwest::Error`] providing categorization and retriability.
 ///
 /// Use this when you already have a `reqwest::Error` and want to:
