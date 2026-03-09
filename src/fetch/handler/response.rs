@@ -25,7 +25,7 @@ use std::time::Instant;
 /// * `ctx` - Processing context containing all shared resources
 /// * `elapsed` - Response time in seconds (includes redirect resolution + HTTP request)
 /// * `redirect_chain` - Vector of redirect chain URLs (will be inserted into `url_redirect_chain` table)
-/// * `start_time` - Original start time from `process_url` (for accurate `total_ms` calculation)
+/// * `start_time` - Per-attempt start time (from start of this attempt, not before retry loop; for accurate `total_ms` and to avoid retry timing poisoning)
 ///
 /// # Errors
 ///
@@ -81,7 +81,7 @@ pub async fn handle_response(
         // Non-HTML or empty response, skip silently
         // This is logged at debug level in extract_response_data
         debug!(
-            "Skipping URL {} (non-HTML content-type, empty body, or body too large)",
+            "Skipping URL {} (non-HTML content-type or empty body)",
             final_url_str
         );
         return Ok(UrlProcessOutcome::Skipped);

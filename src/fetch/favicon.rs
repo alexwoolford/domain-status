@@ -37,7 +37,9 @@ pub(crate) fn compute_shodan_favicon_hash(raw_bytes: &[u8]) -> i32 {
             formatted.push('\n');
         }
     }
-    formatted.push('\n');
+    if !formatted.ends_with('\n') {
+        formatted.push('\n');
+    }
 
     // MurmurHash3 32-bit with seed 0, cast to i32 for Shodan compatibility
     let hash = murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0);
@@ -193,7 +195,9 @@ mod tests {
                 formatted.push('\n');
             }
         }
-        formatted.push('\n');
+        if !formatted.ends_with('\n') {
+            formatted.push('\n');
+        }
         formatted
     }
 
@@ -223,8 +227,8 @@ mod tests {
 
     #[test]
     fn test_compute_shodan_favicon_hash_base64_76_char_boundary() {
-        // Input that produces base64 length multiple of 76: ensures newline placement is correct.
-        // 57 raw bytes -> 76 base64 chars (one full line), then trailing newline.
+        // Input that produces base64 length multiple of 76: ensures newline placement matches Python.
+        // 57 raw bytes -> 76 base64 chars. Single newline at 76 serves as line break and trailing.
         let bytes: Vec<u8> = (0u8..57).collect();
         let base64_str = base64::engine::general_purpose::STANDARD.encode(&bytes);
         assert_eq!(
@@ -234,7 +238,7 @@ mod tests {
         );
         let formatted = shodan_format(&base64_str);
         assert!(formatted.ends_with('\n'));
-        assert_eq!(formatted.matches('\n').count(), 2); // one after 76 chars, one trailing
+        assert_eq!(formatted.matches('\n').count(), 1); // one newline at 76 (no double trailing)
         let expected_hash =
             murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0) as i32;
         assert_eq!(compute_shodan_favicon_hash(&bytes), expected_hash);
