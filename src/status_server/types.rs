@@ -7,7 +7,6 @@ use std::time::Instant;
 
 use crate::error_handling::ProcessingStats;
 use crate::runtime_metrics::RuntimeMetrics;
-use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
 use crate::utils::TimingStats;
 
 /// Shared state for the status server
@@ -27,8 +26,6 @@ pub struct StatusState {
     pub timing_stats: Option<Arc<TimingStats>>,
     /// Request-per-second limiter for current effective rate reporting
     pub request_limiter: Option<Arc<crate::initialization::RateLimiter>>,
-    /// Database write circuit breaker state
-    pub db_circuit_breaker: Arc<DbWriteCircuitBreaker>,
     /// Runtime retry/degradation counters
     pub runtime_metrics: Arc<RuntimeMetrics>,
     /// Run identifier (e.g. run_<epoch>) for correlating metrics with database and logs; optional when status server is used without a scan run
@@ -53,9 +50,6 @@ pub struct StatusResponse {
     pub current_rps: Option<u32>,
     pub retried_requests: usize,
     pub non_retriable_failures: usize,
-    pub db_write_failures: u32,
-    pub skipped_failure_writes: u32,
-    pub circuit_breaker_open: bool,
     pub errors: ErrorCounts,
     pub warnings: WarningCounts,
     pub info: InfoCounts,
@@ -133,7 +127,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,
@@ -159,7 +152,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,
@@ -189,9 +181,6 @@ mod tests {
             current_rps: Some(20),
             retried_requests: 4,
             non_retriable_failures: 2,
-            db_write_failures: 1,
-            skipped_failure_writes: 0,
-            circuit_breaker_open: false,
             errors: ErrorCounts {
                 total: 5,
                 timeout: 2,
@@ -244,9 +233,6 @@ mod tests {
             current_rps: None,
             retried_requests: 0,
             non_retriable_failures: 0,
-            db_write_failures: 0,
-            skipped_failure_writes: 0,
-            circuit_breaker_open: false,
             errors: ErrorCounts {
                 total: 0,
                 timeout: 0,
@@ -335,7 +321,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: Some(Arc::new(TimingStats::new())),
             request_limiter: None,
-            db_circuit_breaker: Arc::new(DbWriteCircuitBreaker::default()),
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,

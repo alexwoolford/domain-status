@@ -102,9 +102,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,

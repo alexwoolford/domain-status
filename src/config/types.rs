@@ -166,11 +166,8 @@ pub struct Config {
     /// HTTP User-Agent header value
     pub user_agent: String,
 
-    /// Initial requests per second (adaptive rate limiting always enabled)
+    /// Requests per second cap (0 to disable). If you see 429s, lower this and re-run.
     pub rate_limit_rps: u32,
-
-    /// Error rate threshold for adaptive rate limiting (0.0-1.0, default: 0.2 = 20%)
-    pub adaptive_error_threshold: f64,
 
     /// Fingerprints source URL or local path
     pub fingerprints: Option<String>,
@@ -183,13 +180,6 @@ pub struct Config {
 
     /// Enable WHOIS/RDAP lookup for domain registration information
     pub enable_whois: bool,
-
-    /// Maximum concurrent requests per registered domain (0 to disable).
-    ///
-    /// Prevents overwhelming any single server even when global concurrency is high.
-    /// For example, if `max_concurrency` is 30 and `max_per_domain` is 3,
-    /// at most 3 concurrent requests will target any single domain at once.
-    pub max_per_domain: usize,
 
     /// Exit code policy for handling failures
     pub fail_on: FailOn,
@@ -240,12 +230,10 @@ impl Default for Config {
             timeout_seconds: 10,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             rate_limit_rps: 15,
-            adaptive_error_threshold: 0.2,
             fingerprints: None,
             geoip: None,
             status_port: None,
             enable_whois: false,
-            max_per_domain: 5,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
             log_file: None,
@@ -267,12 +255,10 @@ impl std::fmt::Debug for Config {
             .field("timeout_seconds", &self.timeout_seconds)
             .field("user_agent", &self.user_agent)
             .field("rate_limit_rps", &self.rate_limit_rps)
-            .field("adaptive_error_threshold", &self.adaptive_error_threshold)
             .field("fingerprints", &self.fingerprints)
             .field("geoip", &self.geoip)
             .field("status_port", &self.status_port)
             .field("enable_whois", &self.enable_whois)
-            .field("max_per_domain", &self.max_per_domain)
             .field("fail_on", &self.fail_on)
             .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
             .field("log_file", &self.log_file)
@@ -353,14 +339,6 @@ impl Config {
             });
         }
 
-        // Validate adaptive_error_threshold
-        if self.adaptive_error_threshold < 0.0 || self.adaptive_error_threshold > 1.0 {
-            return Err(ConfigValidationError {
-                field: "adaptive_error_threshold".to_string(),
-                message: "must be between 0.0 and 1.0".to_string(),
-            });
-        }
-
         // Validate fail_on_pct_threshold
         if self.fail_on_pct_threshold > 100 {
             return Err(ConfigValidationError {
@@ -436,7 +414,6 @@ mod tests {
         assert_eq!(config.max_concurrency, 30);
         assert_eq!(config.timeout_seconds, 10);
         assert_eq!(config.rate_limit_rps, 15);
-        assert!((config.adaptive_error_threshold - 0.2).abs() < f64::EPSILON);
         assert_eq!(config.fail_on, FailOn::Never);
         assert_eq!(config.fail_on_pct_threshold, 10);
         assert!(!config.enable_whois);
@@ -551,43 +528,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validate_adaptive_error_threshold_negative() {
-        let config = Config {
-            adaptive_error_threshold: -0.1,
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        assert_eq!(err.field, "adaptive_error_threshold");
-        assert!(err.message.contains("between 0.0 and 1.0"));
-    }
-
-    #[test]
-    fn test_config_validate_adaptive_error_threshold_over_one() {
-        let config = Config {
-            adaptive_error_threshold: 1.1,
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        assert_eq!(err.field, "adaptive_error_threshold");
-    }
-
-    #[test]
-    fn test_config_validate_adaptive_error_threshold_boundary() {
-        // Test boundary values (0.0 and 1.0 should be valid)
-        let config_zero = Config {
-            adaptive_error_threshold: 0.0,
-            ..Default::default()
-        };
-        assert!(config_zero.validate().is_ok());
-
-        let config_one = Config {
-            adaptive_error_threshold: 1.0,
-            ..Default::default()
-        };
-        assert!(config_one.validate().is_ok());
-    }
-
-    #[test]
     fn test_config_validate_fail_on_pct_threshold_over_100() {
         let config = Config {
             fail_on_pct_threshold: 101,
@@ -698,7 +638,6 @@ mod tests {
             max_concurrency: Config::MAX_CONCURRENCY,
             rate_limit_rps: Config::MAX_RATE_LIMIT_RPS,
             timeout_seconds: 1,
-            adaptive_error_threshold: 1.0,
             fail_on_pct_threshold: 100,
             user_agent: "Valid User Agent".to_string(),
             ..Default::default()
@@ -766,36 +705,6 @@ mod tests {
             };
             prop_assert!(config.validate().is_err(),
                 "Rate limit > 100 should be invalid");
-        }
-
-        #[test]
-        fn test_config_validation_error_threshold(threshold in 0.0f64..=1.0) {
-            let config = Config {
-                adaptive_error_threshold: threshold,
-                ..Default::default()
-            };
-            prop_assert!(config.validate().is_ok(),
-                "Error threshold 0.0-1.0 should be valid");
-        }
-
-        #[test]
-        fn test_config_validation_error_threshold_invalid_high(threshold in 1.01f64..10.0) {
-            let config = Config {
-                adaptive_error_threshold: threshold,
-                ..Default::default()
-            };
-            prop_assert!(config.validate().is_err(),
-                "Error threshold > 1.0 should be invalid");
-        }
-
-        #[test]
-        fn test_config_validation_error_threshold_invalid_low(threshold in -10.0f64..-0.01) {
-            let config = Config {
-                adaptive_error_threshold: threshold,
-                ..Default::default()
-            };
-            prop_assert!(config.validate().is_err(),
-                "Error threshold < 0.0 should be invalid");
         }
 
         #[test]

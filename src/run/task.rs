@@ -6,7 +6,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::config::{HTTP_STATUS_TOO_MANY_REQUESTS, RETRY_MAX_ATTEMPTS, URL_PROCESSING_TIMEOUT};
+use crate::config::{RETRY_MAX_ATTEMPTS, URL_PROCESSING_TIMEOUT};
 use crate::error_handling::ErrorType;
 use crate::fetch::UrlProcessOutcome;
 use crate::storage::failure::record_url_failure;
@@ -21,7 +21,6 @@ use super::resources::{ProgressCallback, UrlTaskParams};
 /// - Rate limiting (if configured)
 /// - URL processing with timeout
 /// - Success/failure/timeout outcome handling
-/// - Adaptive rate limiting feedback
 ///
 /// # Arguments
 ///
@@ -32,8 +31,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
         ctx,
         permit: _permit, // Hold permit until task completes
         request_limiter,
-        adaptive_limiter,
-        per_domain_limiter,
         completed_urls,
         successful_urls,
         skipped_urls,
@@ -41,20 +38,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
         total_urls_for_callback,
         progress_callback,
     } = params;
-
-    // Acquire per-domain permit if enabled (before global rate limiter)
-    let _domain_permit = if let Some(ref limiter) = per_domain_limiter {
-        let domain_key = crate::per_domain_limiter::extract_domain_key(url.as_ref());
-        match limiter.acquire(&domain_key).await {
-            Ok(permit) => Some(permit),
-            Err(_) => {
-                log::warn!("Per-domain semaphore closed for {}, skipping", url.as_ref());
-                None
-            }
-        }
-    } else {
-        None
-    };
 
     // Apply rate limiting if configured
     if let Some(ref limiter) = request_limiter {
@@ -85,7 +68,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 &failed_urls,
                 total_urls_for_callback,
                 &progress_callback,
-                adaptive_limiter.as_ref(),
             )
             .await;
         }
@@ -103,7 +85,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 &failed_urls,
                 total_urls_for_callback,
                 &progress_callback,
-                adaptive_limiter.as_ref(),
             )
             .await;
         }
@@ -116,7 +97,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 &failed_urls,
                 total_urls_for_callback,
                 &progress_callback,
-                adaptive_limiter.as_ref(),
             )
             .await;
         }
@@ -134,7 +114,6 @@ async fn handle_success(
     failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
     total_urls_for_callback: usize,
     progress_callback: &ProgressCallback,
-    adaptive_limiter: Option<&Arc<crate::adaptive_rate_limiter::AdaptiveRateLimiter>>,
 ) {
     completed_urls.fetch_add(1, Ordering::SeqCst);
     match outcome {
@@ -151,9 +130,6 @@ async fn handle_success(
         failed_urls,
         total_urls_for_callback,
     );
-    if let Some(adaptive) = adaptive_limiter {
-        adaptive.record_success().await;
-    }
 }
 
 /// Handle failed URL processing.
@@ -168,7 +144,6 @@ async fn handle_failure(
     failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
     total_urls_for_callback: usize,
     progress_callback: &ProgressCallback,
-    adaptive_limiter: Option<&Arc<crate::adaptive_rate_limiter::AdaptiveRateLimiter>>,
 ) {
     failed_urls.fetch_add(1, Ordering::SeqCst);
     let elapsed = process_start.elapsed().as_secs_f64();
@@ -191,7 +166,6 @@ async fn handle_failure(
         retry_count,
         elapsed_time: elapsed,
         run_id: ctx.config.run_id.as_deref(),
-        circuit_breaker: Arc::clone(&ctx.db.circuit_breaker),
     })
     .await
     {
@@ -200,23 +174,6 @@ async fn handle_failure(
             url.as_ref(),
             record_err
         );
-    }
-
-    // Check for rate limiting response
-    if let Some(adaptive) = adaptive_limiter {
-        let is_429 = error.chain().any(|cause| {
-            if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-                reqwest_err
-                    .status()
-                    .map(|s| s.as_u16() == HTTP_STATUS_TOO_MANY_REQUESTS)
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        });
-        if is_429 {
-            adaptive.record_rate_limited().await;
-        }
     }
 }
 
@@ -230,7 +187,6 @@ async fn handle_timeout(
     failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
     total_urls_for_callback: usize,
     progress_callback: &ProgressCallback,
-    adaptive_limiter: Option<&Arc<crate::adaptive_rate_limiter::AdaptiveRateLimiter>>,
 ) {
     failed_urls.fetch_add(1, Ordering::SeqCst);
     let elapsed = process_start.elapsed().as_secs_f64();
@@ -271,7 +227,6 @@ async fn handle_timeout(
         retry_count: RETRY_MAX_ATTEMPTS as u32 - 1,
         elapsed_time: elapsed,
         run_id: ctx.config.run_id.as_deref(),
-        circuit_breaker: Arc::clone(&ctx.db.circuit_breaker),
     })
     .await
     {
@@ -285,27 +240,22 @@ async fn handle_timeout(
     ctx.config
         .error_stats
         .increment_error(ErrorType::ProcessUrlTimeout);
-
-    if let Some(adaptive) = adaptive_limiter {
-        adaptive.record_timeout().await;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adaptive_rate_limiter::AdaptiveRateLimiter;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
-    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::utils::TimingStats;
     use hickory_resolver::config::ResolverOpts;
     use hickory_resolver::TokioResolver;
     use std::sync::atomic::AtomicUsize;
 
     /// Builds a minimal `ProcessingContext` for task tests (in-memory DB, no migrations).
-    /// `record_url_failure` will fail when inserting (tables not created) — use for
-    /// testing "record failure failed" path.
+    /// `record_url_failure` will panic when inserting (tables not created); use
+    /// `minimal_ctx_with_migrations` when testing failure recording.
+    #[allow(dead_code)]
     async fn minimal_ctx_without_migrations() -> Arc<ProcessingContext> {
         let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
         let redirect_client = Arc::new(
@@ -328,7 +278,7 @@ mod tests {
         );
         let ctx = ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool, Arc::new(DbWriteCircuitBreaker::default())),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 Arc::new(ProcessingStats::new()),
                 Arc::new(TimingStats::new()),
@@ -350,6 +300,13 @@ mod tests {
         crate::storage::run_migrations(pool.as_ref())
             .await
             .expect("migrations");
+        // Satisfy FK for url_failures.run_id when run_id is Some("run-1")
+        sqlx::query("INSERT OR IGNORE INTO runs (run_id, start_time_ms) VALUES (?, ?)")
+            .bind("run-1")
+            .bind(chrono::Utc::now().timestamp_millis())
+            .execute(pool.as_ref())
+            .await
+            .expect("insert run");
         let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
         let redirect_client = Arc::new(
             reqwest::Client::builder()
@@ -369,7 +326,7 @@ mod tests {
                         .build(),
                 ),
             ),
-            DatabaseContext::new(pool, Arc::new(DbWriteCircuitBreaker::default())),
+            DatabaseContext::new(pool),
             ConfigContext::new(
                 Arc::new(ProcessingStats::new()),
                 Arc::new(TimingStats::new()),
@@ -398,7 +355,6 @@ mod tests {
             &failed_urls,
             1,
             &None,
-            None,
         )
         .await;
 
@@ -424,7 +380,6 @@ mod tests {
             &failed_urls,
             1,
             &None,
-            None,
         )
         .await;
 
@@ -458,7 +413,6 @@ mod tests {
             &failed_urls,
             1,
             &callback,
-            None,
         )
         .await;
 
@@ -482,14 +436,6 @@ mod tests {
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
-        let adaptive = Arc::new(AdaptiveRateLimiter::new(
-            10,
-            None,
-            None,
-            Some(0.2),
-            None,
-            None,
-        ));
 
         handle_failure(
             &url,
@@ -501,7 +447,6 @@ mod tests {
             &failed_urls,
             1,
             &None,
-            Some(&adaptive),
         )
         .await;
 
@@ -524,14 +469,6 @@ mod tests {
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
-        let adaptive = Arc::new(AdaptiveRateLimiter::new(
-            10,
-            None,
-            None,
-            Some(0.2),
-            None,
-            None,
-        ));
 
         handle_failure(
             &url,
@@ -543,7 +480,6 @@ mod tests {
             &failed_urls,
             1,
             &None,
-            Some(&adaptive),
         )
         .await;
 
@@ -563,14 +499,6 @@ mod tests {
                 progress_calls.store(completed + failed, Ordering::SeqCst);
             }
         }));
-        let adaptive = Arc::new(AdaptiveRateLimiter::new(
-            10,
-            None,
-            None,
-            Some(0.2),
-            None,
-            None,
-        ));
 
         handle_timeout(
             &url,
@@ -580,7 +508,6 @@ mod tests {
             &failed_urls,
             1,
             &callback,
-            Some(&adaptive),
         )
         .await;
 
@@ -595,11 +522,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_failure_when_record_url_failure_fails_does_not_panic() {
+    async fn test_handle_failure_records_failure_when_db_ok() {
         let url: Arc<str> = Arc::from("https://example.com/record-fail");
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
-        let ctx = minimal_ctx_without_migrations().await;
+        let ctx = minimal_ctx_with_migrations().await;
         let progress_calls = Arc::new(AtomicUsize::new(0));
         let callback: ProgressCallback = Some(Arc::new({
             let progress_calls = Arc::clone(&progress_calls);
@@ -619,7 +546,6 @@ mod tests {
             &failed_urls,
             1,
             &callback,
-            None,
         )
         .await;
 

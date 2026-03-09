@@ -152,7 +152,6 @@ mod tests {
             log_format: domain_status::LogFormat::Plain,
             timeout_seconds: 5,
             user_agent: "domain_status-test/1.0".to_string(),
-            adaptive_error_threshold: 0.2,
             fingerprints: None, // Use default (fetches from GitHub - GITHUB_TOKEN increases rate limit)
             geoip: None,        // Disable GeoIP for test
             status_port: None,
@@ -160,7 +159,6 @@ mod tests {
             fail_on_pct_threshold: 10,
             log_file: None,
             progress_callback: None,
-            max_per_domain: 0, // Disable per-domain limiting for tests
             dependency_overrides: None,
         };
 

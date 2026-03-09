@@ -72,6 +72,9 @@ impl<T> IoErrorContext<T> for Result<T, io::Error> {
 ///
 /// # Errors
 /// Returns `Err` if creating the directory or setting permissions fails.
+///
+/// Only sets permissions on directories this function creates; leaves pre-existing
+/// directories (e.g. system temp dirs) untouched to avoid "Operation not permitted".
 pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
     let Some(parent) = file_path.parent() else {
         return Ok(());
@@ -79,9 +82,11 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
     if parent.as_os_str().is_empty() || parent == Path::new(".") {
         return Ok(());
     }
+    let already_exists = parent.is_dir();
     std::fs::create_dir_all(parent)?;
     #[cfg(unix)]
-    {
+    if !already_exists {
+        use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(parent)?.permissions();
         perms.set_mode(0o700);
         std::fs::set_permissions(parent, perms)?;

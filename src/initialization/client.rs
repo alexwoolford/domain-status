@@ -161,10 +161,8 @@ mod tests {
             fingerprints: None,
             geoip: None,
             enable_whois: false,
-            adaptive_error_threshold: 0.2,
             log_file: None,
             progress_callback: None,
-            max_per_domain: 5,
             dependency_overrides: None,
         }
     }

@@ -58,9 +58,6 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
             .map(|limiter| limiter.current_rps()),
         retried_requests: state.runtime_metrics.retried_requests(),
         non_retriable_failures: state.runtime_metrics.non_retriable_failures(),
-        db_write_failures: state.db_circuit_breaker.total_failures(),
-        skipped_failure_writes: state.db_circuit_breaker.skipped_writes(),
-        circuit_breaker_open: state.db_circuit_breaker.is_open_sync(),
         errors: ErrorCounts {
             total: state.error_stats.total_errors(),
             timeout: state
@@ -227,9 +224,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,
@@ -279,9 +273,6 @@ mod tests {
                 stats
             })),
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new({
                 let metrics = crate::runtime_metrics::RuntimeMetrics::default();
                 metrics.record_retry();
@@ -308,9 +299,6 @@ mod tests {
                 current_rps: None,
                 retried_requests: 1,
                 non_retriable_failures: 1,
-                db_write_failures: 0,
-                skipped_failure_writes: 0,
-                circuit_breaker_open: false,
                 errors: ErrorCounts {
                     total: 3,
                     timeout: 2,
@@ -365,9 +353,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,
@@ -391,9 +376,6 @@ mod tests {
             error_stats: Arc::new(ProcessingStats::new()),
             timing_stats: None,
             request_limiter: None,
-            db_circuit_breaker: Arc::new(
-                crate::storage::circuit_breaker::DbWriteCircuitBreaker::default(),
-            ),
             runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
             run_id: None,
             run_start_time_unix_secs: None,

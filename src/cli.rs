@@ -70,8 +70,6 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         timeout_seconds: cli.timeout_seconds,
         user_agent: cli.user_agent,
         rate_limit_rps: cli.rate_limit_rps,
-        max_per_domain: cli.max_per_domain,
-        adaptive_error_threshold: cli.adaptive_error_threshold,
         fingerprints: cli.fingerprints,
         geoip: cli.geoip,
         status_port: cli.status_port,
@@ -145,8 +143,6 @@ const SCAN_CONFIG_ARG_IDS: &[&str] = &[
     "timeout_seconds",
     "user_agent",
     "rate_limit_rps",
-    "max_per_domain",
-    "adaptive_error_threshold",
     "fingerprints",
     "geoip",
     "status_port",
@@ -573,8 +569,6 @@ mod tests {
             timeout_seconds: 20,
             user_agent: "Custom Agent".to_string(),
             rate_limit_rps: 25,
-            max_per_domain: 3,
-            adaptive_error_threshold: 0.3,
             fingerprints: Some("https://example.com/tech.json".to_string()),
             geoip: Some("/path/to/geoip.mmdb".to_string()),
             status_port: Some(8080),
@@ -591,10 +585,6 @@ mod tests {
         assert_eq!(config.timeout_seconds, 20);
         assert_eq!(config.user_agent, "Custom Agent");
         assert_eq!(config.rate_limit_rps, 25);
-        #[allow(clippy::float_cmp)]
-        {
-            assert_eq!(config.adaptive_error_threshold, 0.3);
-        }
         assert_eq!(
             config.fingerprints,
             Some("https://example.com/tech.json".to_string())

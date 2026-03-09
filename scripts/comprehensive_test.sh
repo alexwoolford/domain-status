@@ -41,6 +41,7 @@ echo "[1/5] Running scan (--enable-whois, --status-port $STATUS_PORT)..."
   --enable-whois \
   --status-port "$STATUS_PORT" \
   --db-path "$DB" \
+  --log-file "$TMPDIR/domain_status.log" \
   --log-level warn \
   --timeout-seconds 20 \
   --max-concurrency 10 \

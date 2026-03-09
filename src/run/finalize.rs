@@ -51,7 +51,6 @@ pub async fn finalize_scan(
         cancel,
         logging_task,
         resources.rate_limiter_shutdown,
-        resources.adaptive_limiter_shutdown,
         status_server,
     )
     .await;
@@ -149,7 +148,6 @@ mod tests {
     use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
     use crate::fingerprint::{FingerprintMetadata, FingerprintRuleset};
     use crate::runtime_metrics::RuntimeMetrics;
-    use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
     use crate::storage::{insert_run_metadata, run_migrations, RunMetadata};
     use crate::utils::TimingStats;
 
@@ -190,7 +188,6 @@ mod tests {
         let start_time = std::time::Instant::now();
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
-        let db_circuit_breaker = Arc::new(DbWriteCircuitBreaker::new());
 
         let client = Arc::new(reqwest::Client::builder().build().expect("http client"));
         let redirect_client = Arc::new(
@@ -209,7 +206,7 @@ mod tests {
 
         let shared_ctx = Arc::new(ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(Arc::clone(&pool), Arc::clone(&db_circuit_breaker)),
+            DatabaseContext::new(Arc::clone(&pool)),
             ConfigContext::new(
                 Arc::clone(&error_stats),
                 Arc::clone(&timing_stats),
@@ -237,14 +234,10 @@ mod tests {
 
         let resources = ScanResources {
             pool,
-            db_circuit_breaker,
             shared_ctx,
             semaphore: Arc::new(Semaphore::new(1)),
             request_limiter: None,
             rate_limiter_shutdown: None,
-            adaptive_limiter: None,
-            adaptive_limiter_shutdown: None,
-            per_domain_limiter: None,
             error_stats,
             timing_stats,
             runtime_metrics: Arc::new(RuntimeMetrics::default()),

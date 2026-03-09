@@ -75,13 +75,13 @@ fn test_config_validation_does_not_panic_on_extreme_or_invalid_inputs() {
     );
 
     config = Config::default();
-    config.adaptive_error_threshold = f64::MAX;
+    config.rate_limit_rps = u32::MAX;
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| config.validate()))
         .expect("validate should not panic");
     assert!(result.is_err(), "out-of-range threshold should fail");
     assert_eq!(
         result.expect_err("validation error").field,
-        "adaptive_error_threshold"
+        "rate_limit_rps"
     );
 
     config = Config::default();

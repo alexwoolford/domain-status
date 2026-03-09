@@ -81,16 +81,6 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
                     config.rate_limit_rps = n;
                 }
             }
-            "max_per_domain" => {
-                if let Ok(n) = value.parse::<usize>() {
-                    config.max_per_domain = n;
-                }
-            }
-            "adaptive_error_threshold" => {
-                if let Ok(n) = value.parse::<f64>() {
-                    config.adaptive_error_threshold = n;
-                }
-            }
             "fingerprints" => config.fingerprints = Some(value.clone()),
             "geoip" => config.geoip = Some(value.clone()),
             "status_port" => {
@@ -164,12 +154,6 @@ pub fn merge_file_env_and_cli(
     }
     if overwrite("rate_limit_rps") {
         config.rate_limit_rps = cli_config.rate_limit_rps;
-    }
-    if overwrite("max_per_domain") {
-        config.max_per_domain = cli_config.max_per_domain;
-    }
-    if overwrite("adaptive_error_threshold") {
-        config.adaptive_error_threshold = cli_config.adaptive_error_threshold;
     }
     if overwrite("fingerprints") {
         config.fingerprints = cli_config.fingerprints;

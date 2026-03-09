@@ -124,7 +124,6 @@ pub async fn run_scan(
             error_stats: resources.error_stats.clone(),
             timing_stats: Some(Arc::clone(&resources.timing_stats)),
             request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
-            db_circuit_breaker: Arc::clone(&resources.db_circuit_breaker),
             runtime_metrics: Arc::clone(&resources.runtime_metrics),
             run_id: Some(resources.run_id.clone()),
             run_start_time_unix_secs: Some({
@@ -209,7 +208,6 @@ pub async fn run_scan(
                         cancel.clone(),
                         logging_task.take(),
                         resources.rate_limiter_shutdown.clone(),
-                        resources.adaptive_limiter_shutdown.clone(),
                         status_server.take(),
                     )
                     .await;
@@ -252,8 +250,6 @@ pub async fn run_scan(
             ctx: Arc::clone(&resources.shared_ctx),
             permit,
             request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
-            adaptive_limiter: resources.adaptive_limiter.as_ref().map(Arc::clone),
-            per_domain_limiter: resources.per_domain_limiter.as_ref().map(Arc::clone),
             completed_urls: Arc::clone(&resources.completed_urls),
             successful_urls: Arc::clone(&resources.successful_urls),
             skipped_urls: Arc::clone(&resources.skipped_urls),
@@ -358,7 +354,6 @@ mod tests {
             max_concurrency: 30,
             timeout_seconds: 10,
             rate_limit_rps: 15,
-            adaptive_error_threshold: 0.2,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
             enable_whois: false,
@@ -371,7 +366,6 @@ mod tests {
             status_port: None,
             log_file: None,
             progress_callback: None,
-            max_per_domain: 5,
             dependency_overrides: None,
         };
 
@@ -441,7 +435,6 @@ mod tests {
             max_concurrency: 1,
             timeout_seconds: 10,
             rate_limit_rps: 15,
-            adaptive_error_threshold: 0.2,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
             enable_whois: false,
@@ -454,7 +447,6 @@ mod tests {
             status_port: None,
             log_file: None,
             progress_callback: None,
-            max_per_domain: 5,
             dependency_overrides: None,
         };
 

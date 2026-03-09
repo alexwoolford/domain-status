@@ -107,23 +107,4 @@ mod tests {
         assert!(truncated.contains("truncated"));
         assert!(truncated.contains("3000"));
     }
-
-    #[tokio::test]
-    async fn test_circuit_breaker_integration() {
-        use crate::storage::circuit_breaker::DbWriteCircuitBreaker;
-
-        let cb = DbWriteCircuitBreaker::with_threshold(2, std::time::Duration::from_millis(50));
-
-        // Record failures
-        cb.record_failure().await;
-        assert!(!cb.is_circuit_open().await);
-
-        cb.record_failure().await;
-        assert!(cb.is_circuit_open().await);
-
-        // Record success should close circuit
-        cb.record_success().await;
-        assert!(!cb.is_circuit_open().await);
-        assert_eq!(cb.failure_count(), 0);
-    }
 }

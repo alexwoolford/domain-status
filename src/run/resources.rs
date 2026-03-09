@@ -13,14 +13,12 @@ use tokio::io::Lines;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio_util::sync::CancellationToken;
 
-use crate::adaptive_rate_limiter::AdaptiveRateLimiter;
 use crate::config::Config;
 use crate::error_handling::ProcessingStats;
 use crate::fetch::ProcessingContext;
 use crate::fingerprint::FingerprintRuleset;
 use crate::geoip::GeoIpMetadata;
 use crate::initialization::RateLimiter;
-use crate::per_domain_limiter::PerDomainLimiter;
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
@@ -34,9 +32,6 @@ pub struct ScanResources {
     // Database
     /// Database connection pool
     pub pool: DbPool,
-    /// Database write circuit breaker for resilience (passed to `ProcessingContext`)
-    #[allow(dead_code)] // Used via shared_ctx; kept on struct for drop/ownership
-    pub db_circuit_breaker: Arc<crate::storage::circuit_breaker::DbWriteCircuitBreaker>,
 
     // Network clients (via ProcessingContext)
     /// Shared processing context containing network clients and config
@@ -49,12 +44,6 @@ pub struct ScanResources {
     pub request_limiter: Option<Arc<RateLimiter>>,
     /// Shutdown handle for the rate limiter background task
     pub rate_limiter_shutdown: Option<CancellationToken>,
-    /// Optional adaptive rate limiter that adjusts based on error rates
-    pub adaptive_limiter: Option<Arc<AdaptiveRateLimiter>>,
-    /// Shutdown handle for the adaptive rate limiter background task
-    pub adaptive_limiter_shutdown: Option<CancellationToken>,
-    /// Optional per-domain concurrency limiter
-    pub per_domain_limiter: Option<Arc<PerDomainLimiter>>,
 
     // Statistics tracking
     /// Error statistics tracker
@@ -147,10 +136,6 @@ pub struct UrlTaskParams {
     pub permit: OwnedSemaphorePermit,
     /// Optional rate limiter
     pub request_limiter: Option<Arc<RateLimiter>>,
-    /// Optional adaptive rate limiter
-    pub adaptive_limiter: Option<Arc<AdaptiveRateLimiter>>,
-    /// Optional per-domain concurrency limiter
-    pub per_domain_limiter: Option<Arc<PerDomainLimiter>>,
     /// Completed URL counter
     pub completed_urls: Arc<AtomicUsize>,
     /// Persisted-success counter
