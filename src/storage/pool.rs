@@ -16,7 +16,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
 
 use crate::error_handling::DatabaseError;
-use crate::utils::IoErrorContext;
+use crate::utils::{ensure_parent_dir_secure, IoErrorContext};
 
 /// Type alias for database connection pool.
 /// Used throughout the codebase for consistency.
@@ -51,6 +51,11 @@ pub async fn init_db_pool_with_path(
     max_connections: u32,
 ) -> Result<DbPool, DatabaseError> {
     let db_path_str = db_path.to_string_lossy().to_string();
+
+    // Ensure parent directory exists with secure permissions (0o700 on Unix) before creating DB file.
+    ensure_parent_dir_secure(db_path).map_err(|e| {
+        DatabaseError::FileCreationError(format!("Failed to create database directory: {}", e))
+    })?;
 
     // Wrap blocking filesystem operation in spawn_blocking to avoid blocking tokio runtime.
     // This is a one-time startup operation, so impact is low, but good practice.

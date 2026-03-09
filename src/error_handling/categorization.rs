@@ -102,9 +102,9 @@ pub fn categorize_reqwest_error(error: &reqwest::Error) -> ErrorType {
 ///
 /// * `stats` - The processing statistics tracker to update
 /// * `error` - The `reqwest::Error` to categorize and record
-pub async fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error) {
-    let error_type = categorize_reqwest_error(error);
-    stats.increment_error(error_type);
+pub fn update_error_stats(stats: &ProcessingStats, error: &reqwest::Error) {
+    use super::ReqwestErrorExt;
+    stats.increment_error(error.categorize());
 }
 
 #[cfg(test)]
@@ -212,7 +212,7 @@ mod tests {
         let response = client.get(&url).send().await.unwrap();
         let error = response.error_for_status().unwrap_err();
 
-        update_error_stats(&stats, &error).await;
+        update_error_stats(&stats, &error);
 
         assert_eq!(
             stats.get_error_count(ErrorType::HttpRequestNotFound),

@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::Config;
+use crate::security::safe_resolver::SafeResolver;
+use hickory_resolver::TokioResolver;
 use reqwest::ClientBuilder;
 
 /// Initializes the HTTP client with default settings.
@@ -43,24 +45,28 @@ use reqwest::ClientBuilder;
 /// # Examples
 ///
 /// ```no_run
-/// use domain_status::{initialization::init_client, Config};
+/// use domain_status::{initialization::{init_client, init_resolver}, Config};
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let client = init_client(&Config::default()).await?;
+/// let resolver = init_resolver()?;
+/// let client = init_client(&Config::default(), resolver).await?;
 /// let response = client.get("https://example.com").send().await?;
 /// println!("{}", response.status());
 /// # Ok(())
 /// # }
 /// ```
-pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
+pub async fn init_client(
+    config: &Config,
+    resolver: Arc<TokioResolver>,
+) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-    use crate::security::safe_resolver::SafeResolver;
 
     // SECURITY: SafeResolver validates that all DNS-resolved IPs are public before
-    // reqwest opens a TCP socket, closing the DNS-rebinding TOCTOU gap.
+    // reqwest opens a TCP socket, closing the DNS-rebinding TOCTOU gap. It uses the
+    // same hickory resolver (and its timeouts) as the rest of the scan.
     let client = ClientBuilder::new()
-        .dns_resolver(Arc::new(SafeResolver))
+        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(config.timeout_seconds))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
@@ -95,24 +101,27 @@ pub async fn init_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwes
 /// # Examples
 ///
 /// ```no_run
-/// use domain_status::{initialization::init_redirect_client, Config};
+/// use domain_status::{initialization::{init_redirect_client, init_resolver}, Config};
 ///
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let client = init_redirect_client(&Config::default()).await?;
+/// let resolver = init_resolver()?;
+/// let client = init_redirect_client(&Config::default(), resolver).await?;
 /// let response = client.get("https://example.com").send().await?;
 /// println!("{}", response.status());
 /// # Ok(())
 /// # }
 /// ```
-pub async fn init_redirect_client(config: &Config) -> Result<Arc<reqwest::Client>, reqwest::Error> {
+pub async fn init_redirect_client(
+    config: &Config,
+    resolver: Arc<TokioResolver>,
+) -> Result<Arc<reqwest::Client>, reqwest::Error> {
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-    use crate::security::safe_resolver::SafeResolver;
 
     // SECURITY: SafeResolver validates resolved IPs are public, preventing
-    // DNS-rebinding attacks during redirect resolution.
+    // DNS-rebinding attacks during redirect resolution. Uses same resolver (and timeouts).
     let client = ClientBuilder::new()
-        .dns_resolver(Arc::new(SafeResolver))
+        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(config.timeout_seconds))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
@@ -125,9 +134,14 @@ pub async fn init_redirect_client(config: &Config) -> Result<Arc<reqwest::Client
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::initialization::init_resolver;
     use std::path::PathBuf;
 
     use crate::config::FailOn;
+
+    fn test_resolver() -> Arc<TokioResolver> {
+        init_resolver().expect("test resolver")
+    }
 
     fn create_test_config() -> Config {
         // Create Config manually with required fields
@@ -158,7 +172,8 @@ mod tests {
     #[tokio::test]
     async fn test_init_client_success() {
         let config = create_test_config();
-        let result = init_client(&config).await;
+        let resolver = test_resolver();
+        let result = init_client(&config, resolver).await;
         assert!(result.is_ok());
         let client = result.unwrap();
         assert_eq!(Arc::strong_count(&client), 1);
@@ -168,7 +183,7 @@ mod tests {
     async fn test_init_client_with_custom_timeout() {
         let mut config = create_test_config();
         config.timeout_seconds = 30;
-        let result = init_client(&config).await;
+        let result = init_client(&config, test_resolver()).await;
         assert!(result.is_ok());
     }
 
@@ -176,14 +191,14 @@ mod tests {
     async fn test_init_client_with_custom_user_agent() {
         let mut config = create_test_config();
         config.user_agent = "Custom-Agent/2.0".to_string();
-        let result = init_client(&config).await;
+        let result = init_client(&config, test_resolver()).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_init_redirect_client_success() {
         let config = create_test_config();
-        let result = init_redirect_client(&config).await;
+        let result = init_redirect_client(&config, test_resolver()).await;
         assert!(result.is_ok());
         let client = result.unwrap();
         assert_eq!(Arc::strong_count(&client), 1);
@@ -192,8 +207,9 @@ mod tests {
     #[tokio::test]
     async fn test_init_client_and_redirect_client_different_instances() {
         let config = create_test_config();
-        let client1 = init_client(&config).await.unwrap();
-        let client2 = init_redirect_client(&config).await.unwrap();
+        let resolver = test_resolver();
+        let client1 = init_client(&config, Arc::clone(&resolver)).await.unwrap();
+        let client2 = init_redirect_client(&config, resolver).await.unwrap();
         // They should be different Arc instances
         assert!(!Arc::ptr_eq(&client1, &client2));
     }
@@ -203,7 +219,7 @@ mod tests {
         // Test that empty user agent string is handled gracefully
         let mut config = create_test_config();
         config.user_agent = String::new();
-        let result = init_client(&config).await;
+        let result = init_client(&config, test_resolver()).await;
         // Should succeed even with empty user agent (reqwest allows it)
         assert!(result.is_ok());
     }
@@ -213,7 +229,7 @@ mod tests {
         // Test that zero timeout is handled (edge case - should still create client)
         let mut config = create_test_config();
         config.timeout_seconds = 0;
-        let result = init_client(&config).await;
+        let result = init_client(&config, test_resolver()).await;
         // Should succeed (zero timeout means no timeout, not immediate failure)
         assert!(result.is_ok());
     }
@@ -223,7 +239,7 @@ mod tests {
         // Test that very large timeout values don't cause overflow
         let mut config = create_test_config();
         config.timeout_seconds = u64::MAX / 1000; // Large but reasonable timeout
-        let result = init_client(&config).await;
+        let result = init_client(&config, test_resolver()).await;
         // Should succeed (Duration handles large values gracefully)
         assert!(result.is_ok());
     }
@@ -233,7 +249,7 @@ mod tests {
         // Test that empty user agent works for redirect client too
         let mut config = create_test_config();
         config.user_agent = String::new();
-        let result = init_redirect_client(&config).await;
+        let result = init_redirect_client(&config, test_resolver()).await;
         assert!(result.is_ok());
     }
 
@@ -242,7 +258,7 @@ mod tests {
         // Test that zero timeout works for redirect client
         let mut config = create_test_config();
         config.timeout_seconds = 0;
-        let result = init_redirect_client(&config).await;
+        let result = init_redirect_client(&config, test_resolver()).await;
         assert!(result.is_ok());
     }
 
@@ -268,7 +284,9 @@ mod tests {
         // (we don't add an expectation for /target)
 
         let config = create_test_config();
-        let client = init_client(&config).await.expect("Should create client");
+        let client = init_client(&config, test_resolver())
+            .await
+            .expect("Should create client");
 
         // Make request to the redirect URL
         let response = client
@@ -311,10 +329,11 @@ mod tests {
         );
 
         let config = create_test_config();
-        let main_client = init_client(&config)
+        let resolver = test_resolver();
+        let main_client = init_client(&config, Arc::clone(&resolver))
             .await
             .expect("Should create main client");
-        let redirect_client = init_redirect_client(&config)
+        let redirect_client = init_redirect_client(&config, resolver)
             .await
             .expect("Should create redirect client");
 
@@ -352,7 +371,9 @@ mod tests {
     #[ignore] // Requires network; uses badssl.com
     async fn test_init_client_rejects_invalid_tls_certificate() {
         let config = create_test_config();
-        let client = init_client(&config).await.expect("Should create client");
+        let client = init_client(&config, test_resolver())
+            .await
+            .expect("Should create client");
         // self-signed.badssl.com serves a self-signed certificate; strict TLS must fail
         let result = client.get("https://self-signed.badssl.com/").send().await;
         assert!(

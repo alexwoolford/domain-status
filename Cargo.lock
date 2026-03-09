@@ -1203,6 +1203,7 @@ dependencies = [
  "colored",
  "config",
  "csv",
+ "domain_status_cli",
  "dotenvy",
  "env_logger",
  "flate2",
@@ -1246,6 +1247,14 @@ dependencies = [
  "whois-service",
  "wiremock",
  "x509-parser",
+]
+
+[[package]]
+name = "domain_status_cli"
+version = "0.1.14"
+dependencies = [
+ "clap",
+ "clap-verbosity-flag",
 ]
 
 [[package]]

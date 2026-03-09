@@ -30,9 +30,13 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
     validate_url_safe(url).with_context(|| format!("Unsafe ruleset URL rejected: {}", url))?;
 
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    use crate::initialization::init_resolver;
+    use crate::security::safe_resolver::SafeResolver;
 
+    let resolver =
+        init_resolver().context("Failed to initialize DNS resolver for ruleset fetch")?;
     let client = reqwest::Client::builder()
-        .dns_resolver(Arc::new(crate::security::safe_resolver::SafeResolver))
+        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
         .build()?;

@@ -1,18 +1,16 @@
-//! Generates shell completions and man page from the CLI structure.
+//! Generates shell completions and man page from the shared CLI definition.
 //!
-//! Keep the command tree in sync with `src/cli.rs` (`CliCommand`, `ScanCommand`, `ExportCommand`).
+//! Single source of truth: `domain_status_cli::clap_command()` (same as used by the lib for parsing).
 
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
-use clap::Command;
 use clap::ValueEnum;
 use clap_complete::Shell;
 use clap_mangen::Man;
-
-const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+use domain_status_cli::clap_command;
 
 fn main() {
     emit_version_env();
@@ -55,7 +53,7 @@ fn emit_version_env() {
 }
 
 fn build_completion_manpage() -> Result<(), Box<dyn std::error::Error>> {
-    let cmd = domain_status_cli_command();
+    let cmd = clap_command(env!("CARGO_PKG_VERSION"));
 
     let gen_dir: PathBuf = env::var_os("DOMAIN_STATUS_GEN_DIR")
         .or_else(|| env::var_os("OUT_DIR"))
@@ -94,109 +92,4 @@ fn patch_bash_completion_for_paths(
         bash_file.write_all(patched.as_bytes())?;
     }
     Ok(())
-}
-
-/// Builds the same CLI as `src/cli.rs` for codegen only. Keep in sync with `CliCommand`.
-fn domain_status_cli_command() -> Command {
-    Command::new("domain_status")
-        .about("Domain intelligence scanner - scan URLs and export results.")
-        .version(env!("CARGO_PKG_VERSION"))
-        .subcommand_required(true)
-        .subcommand(scan_command())
-        .subcommand(export_command())
-}
-
-#[allow(clippy::cognitive_complexity)]
-fn scan_command() -> Command {
-    Command::new("scan")
-        .about("Scan URLs and store results in SQLite database.")
-        .arg(
-            clap::arg!(<file> "File to read")
-                .value_parser(clap::value_parser!(PathBuf)),
-        )
-        .arg(
-            clap::arg!(--"log-level" <LEVEL> "Log level: error|warn|info|debug|trace")
-                .default_value("info")
-                .value_parser(["error", "warn", "info", "debug", "trace"]),
-        )
-        .arg(
-            clap::arg!(--"log-format" <FORMAT> "Log format: plain|json")
-                .default_value("plain")
-                .value_parser(["plain", "json"]),
-        )
-        .arg(
-            clap::arg!(--"db-path" <PATH> "Database path (SQLite file)")
-                .default_value("./domain_status.db")
-                .value_parser(clap::value_parser!(PathBuf)),
-        )
-        .arg(
-            clap::arg!(--"max-concurrency" <N> "Maximum concurrent requests")
-                .default_value("30")
-                .value_parser(clap::value_parser!(usize)),
-        )
-        .arg(
-            clap::arg!(--"timeout-seconds" <SECS> "Per-request timeout in seconds")
-                .default_value("10")
-                .value_parser(clap::value_parser!(u64)),
-        )
-        .arg(
-            clap::arg!(--"user-agent" <UA> "HTTP User-Agent header value")
-                .default_value(DEFAULT_USER_AGENT),
-        )
-        .arg(
-            clap::arg!(--"rate-limit-rps" <RPS> "Initial requests per second (adaptive rate limiting always enabled)")
-                .default_value("15")
-                .value_parser(clap::value_parser!(u32)),
-        )
-        .arg(
-            clap::arg!(--"max-per-domain" <N> "Maximum concurrent requests per registered domain")
-                .default_value("5")
-                .value_parser(clap::value_parser!(usize)),
-        )
-        .arg(
-            clap::arg!(--"adaptive-error-threshold" <F> "Error rate threshold for adaptive rate limiting (0.0-1.0)")
-                .default_value("0.2")
-                .hide(true)
-                .value_parser(clap::value_parser!(f64)),
-        )
-        .arg(clap::arg!(--fingerprints <URL_OR_PATH> "Fingerprints source URL or local path"))
-        .arg(clap::arg!(--geoip <PATH_OR_URL> "GeoIP database path (MaxMind GeoLite2 .mmdb file) or download URL"))
-        .arg(clap::arg!(--"status-port" <PORT> "HTTP status server port (optional, disabled by default)").value_parser(clap::value_parser!(u16)))
-        .arg(clap::arg!(--"enable-whois" "Enable WHOIS/RDAP lookup for domain registration information"))
-        .arg(
-            clap::arg!(--"fail-on" <POLICY> "Exit code policy for handling failures")
-                .default_value("never")
-                .value_parser(["never", "any-failure", "pct>"]),
-        )
-        .arg(
-            clap::arg!(--"fail-on-pct-threshold" <PCT> "Failure percentage threshold for --fail-on pct>X")
-                .default_value("10")
-                .value_parser(clap::value_parser!(u8).range(0..=100)),
-        )
-        .arg(
-            clap::arg!(--"log-file" <PATH> "Log file path for detailed logging")
-                .default_value("domain_status.log")
-                .value_parser(clap::value_parser!(PathBuf)),
-        )
-}
-
-#[allow(clippy::cognitive_complexity)]
-fn export_command() -> Command {
-    Command::new("export")
-        .about("Export data from SQLite database to various formats.")
-        .arg(
-            clap::arg!(--"db-path" <PATH> "Database path (SQLite file)")
-                .default_value("./domain_status.db")
-                .value_parser(clap::value_parser!(PathBuf)),
-        )
-        .arg(
-            clap::arg!(--format <FMT> "Export format: csv|jsonl|parquet")
-                .default_value("csv")
-                .value_parser(["csv", "jsonl", "parquet"]),
-        )
-        .arg(clap::arg!(--output <PATH> "Output file path"))
-        .arg(clap::arg!(--"run-id" <ID> "Filter by run ID"))
-        .arg(clap::arg!(--domain <DOMAIN> "Filter by domain (matches initial or final domain)"))
-        .arg(clap::arg!(--status <CODE> "Filter by HTTP status code").value_parser(clap::value_parser!(u16)))
-        .arg(clap::arg!(--since <TS> "Filter by timestamp (export records after this timestamp, in milliseconds since epoch)").value_parser(clap::value_parser!(i64)))
 }

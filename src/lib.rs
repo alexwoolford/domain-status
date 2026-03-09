@@ -75,7 +75,8 @@ pub mod whois;
 pub use cli::evaluate_exit_code;
 pub use config::{Config, FailOn, LogFormat, LogLevel, ScanDependencyOverrides};
 pub use error_handling::{
-    log_error_chain, DatabaseError, FingerprintError, ReqwestErrorExt, RunScanError, StartupError,
+    log_error_chain, DatabaseError, ErrorExt, FingerprintError, ReqwestErrorExt, RunScanError,
+    StartupError,
 };
 pub use exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_RUNTIME_ERROR, EXIT_SUCCESS};
 pub use geoip::GeoIpService;

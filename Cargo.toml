@@ -1,3 +1,6 @@
+[workspace]
+members = ["cli"]
+
 [package]
 name = "domain_status"
 version = "0.1.14"
@@ -13,6 +16,7 @@ keywords = ["url", "scraper", "domain", "status", "monitoring"]
 categories = ["web-programming", "command-line-utilities", "development-tools"]
 
 [lints.rust]
+non_ascii_idents = "forbid"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
 [lints.clippy]
@@ -44,6 +48,7 @@ cast_lossless = "deny"
 default_trait_access = "deny"
 doc_markdown = "deny"
 explicit_iter_loop = "deny"
+undocumented_unsafe_blocks = "warn"
 
 # === Allow noisy / optional ===
 missing_errors_doc = "warn"              # Next ratchet: fix then promote to deny
@@ -81,7 +86,8 @@ scraper = "^0.25"
 url = "^2.5"
 serde_json = "^1.0"
 
-# CLI and error handling
+# CLI and error handling (CLI definition lives in domain_status_cli for single source of truth)
+domain_status_cli = { path = "cli" }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5"
 clap_mangen = "^0.2"
@@ -130,7 +136,8 @@ parquet = { version = "^58", default-features = false, features = ["arrow", "sna
 whois-service = { path = "vendor/whois-service" }
 
 [build-dependencies]
-clap = { version = "^4.5", features = ["cargo"] }
+clap = { version = "^4.5", features = ["derive"] }
+domain_status_cli = { path = "cli" }
 clap_complete = "^4.5"
 clap_mangen = "^0.2"
 

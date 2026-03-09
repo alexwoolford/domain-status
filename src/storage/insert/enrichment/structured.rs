@@ -27,7 +27,8 @@ pub async fn insert_structured_data(
 
         sqlx::query(
             "INSERT INTO url_structured_data (url_status_id, data_type, property_name, property_value)
-             VALUES (?, 'json_ld', '', ?)",
+             VALUES (?, 'json_ld', '', ?)
+             ON CONFLICT(url_status_id, data_type, property_name, property_value) DO NOTHING",
         )
         .bind(url_status_id)
         .bind(json_str)
@@ -40,7 +41,8 @@ pub async fn insert_structured_data(
     for (property, value) in &structured_data.open_graph {
         sqlx::query(
             "INSERT INTO url_structured_data (url_status_id, data_type, property_name, property_value)
-             VALUES (?, 'open_graph', ?, ?)",
+             VALUES (?, 'open_graph', ?, ?)
+             ON CONFLICT(url_status_id, data_type, property_name, property_value) DO NOTHING",
         )
         .bind(url_status_id)
         .bind(property)
@@ -54,7 +56,8 @@ pub async fn insert_structured_data(
     for (name, value) in &structured_data.twitter_cards {
         sqlx::query(
             "INSERT INTO url_structured_data (url_status_id, data_type, property_name, property_value)
-             VALUES (?, 'twitter_card', ?, ?)",
+             VALUES (?, 'twitter_card', ?, ?)
+             ON CONFLICT(url_status_id, data_type, property_name, property_value) DO NOTHING",
         )
         .bind(url_status_id)
         .bind(name)
@@ -68,7 +71,8 @@ pub async fn insert_structured_data(
     for schema_type in &structured_data.schema_types {
         sqlx::query(
             "INSERT INTO url_structured_data (url_status_id, data_type, property_name, property_value)
-             VALUES (?, 'schema_type', ?, '')",
+             VALUES (?, 'schema_type', ?, '')
+             ON CONFLICT(url_status_id, data_type, property_name, property_value) DO NOTHING",
         )
         .bind(url_status_id)
         .bind(schema_type)

@@ -1,10 +1,11 @@
 //! SSRF-safe DNS resolver for reqwest.
 //!
-//! Implements `reqwest::dns::Resolve` by delegating to the system resolver and
-//! then validating that every returned IP is public. Connections to private,
-//! loopback, or link-local addresses are rejected *before* reqwest opens a TCP
-//! socket, closing the TOCTOU / DNS-rebinding gap.
+//! Implements `reqwest::dns::Resolve` by delegating to the configured hickory
+//! resolver (with timeouts) and then validating that every returned IP is public.
+//! Connections to private, loopback, or link-local addresses are rejected *before*
+//! reqwest opens a TCP socket, closing the TOCTOU / DNS-rebinding gap.
 
+use hickory_resolver::TokioResolver;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, LazyLock};
@@ -15,28 +16,40 @@ static DNS_SEMAPHORE: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semap
 
 /// A DNS resolver that rejects private/loopback/link-local IPs.
 ///
-/// Wraps `tokio::net::lookup_host` (system resolver) and filters out
-/// any addresses that would constitute an SSRF risk. If *all* resolved
-/// IPs are private, the resolution fails with an error.
+/// Uses the configured [`TokioResolver`] (from `init_resolver()`) so DNS timeouts
+/// (e.g. 3s) are respected during HTTP requests. Resolved IPs are filtered so only
+/// public addresses are returned; if *all* resolved IPs are private, resolution
+/// fails with an error.
 #[derive(Debug, Clone)]
-pub struct SafeResolver;
+pub struct SafeResolver {
+    /// Shared hickory resolver (same timeout config as used elsewhere).
+    pub(crate) resolver: Arc<TokioResolver>,
+}
+
+impl SafeResolver {
+    /// Creates a `SafeResolver` that uses the given hickory resolver for lookups.
+    pub fn new(resolver: Arc<TokioResolver>) -> Self {
+        Self { resolver }
+    }
+}
 
 impl Resolve for SafeResolver {
     fn resolve(&self, name: Name) -> Resolving {
+        let resolver = Arc::clone(&self.resolver);
         Box::pin(async move {
             let _permit = DNS_SEMAPHORE
                 .acquire()
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
-            let host = format!("{}:0", name.as_str());
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host(&host)
+            let lookup = resolver
+                .lookup_ip(name.as_str())
                 .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
-                .collect();
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
-            let safe_addrs: Vec<SocketAddr> = addrs
-                .into_iter()
+            let safe_addrs: Vec<SocketAddr> = lookup
+                .iter()
+                .map(|ip| SocketAddr::new(ip, 0))
                 .filter(|addr| is_public_ip(addr.ip()))
                 .collect();
 
@@ -172,7 +185,8 @@ mod tests {
     #[tokio::test]
     async fn test_safe_resolver_public_domain() {
         use std::str::FromStr;
-        let resolver = SafeResolver;
+        let hickory = crate::initialization::init_resolver().expect("resolver");
+        let resolver = SafeResolver::new(hickory);
         let name = Name::from_str("example.com").unwrap();
         let result = resolver.resolve(name).await;
         assert!(result.is_ok(), "Public domain should resolve successfully");
@@ -190,7 +204,8 @@ mod tests {
     #[tokio::test]
     async fn test_safe_resolver_localhost_blocked() {
         use std::str::FromStr;
-        let resolver = SafeResolver;
+        let hickory = crate::initialization::init_resolver().expect("resolver");
+        let resolver = SafeResolver::new(hickory);
         let name = Name::from_str("localhost").unwrap();
         let result = resolver.resolve(name).await;
         assert!(

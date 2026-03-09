@@ -56,110 +56,71 @@ impl ProcessingStats {
 
     /// Increment an error counter.
     ///
-    /// # Safety
-    /// This should never panic if `ProcessingStats` is properly initialized via `new()`.
-    /// All error types are initialized in the constructor. If a panic occurs, it indicates
-    /// a bug in initialization or a missing enum variant.
+    /// Panics if `error` is not in the map (i.e. a new `ErrorType` variant was added
+    /// but not added to `new()`). All variants are initialized in `new()`.
     pub fn increment_error(&self, error: ErrorType) {
-        if let Some(counter) = self.errors.get(&error) {
-            counter.fetch_add(1, Ordering::Relaxed);
-        } else {
-            log::error!(
-                "Attempted to increment error counter for {:?} which is not in the map. \
-                 This indicates a bug in ProcessingStats initialization.",
-                error
-            );
-            // Don't panic - log and continue to avoid crashing the application
-        }
+        let counter = self
+            .errors
+            .get(&error)
+            .expect("ErrorType missing from ProcessingStats::new()");
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment a warning counter.
     ///
-    /// # Safety
-    /// This should never panic if `ProcessingStats` is properly initialized via `new()`.
-    /// All warning types are initialized in the constructor. If a panic occurs, it indicates
-    /// a bug in initialization or a missing enum variant.
+    /// Panics if `warning` is not in the map (i.e. a new `WarningType` variant was added
+    /// but not added to `new()`). All variants are initialized in `new()`.
     pub fn increment_warning(&self, warning: WarningType) {
-        if let Some(counter) = self.warnings.get(&warning) {
-            counter.fetch_add(1, Ordering::Relaxed);
-        } else {
-            log::error!(
-                "Attempted to increment warning counter for {:?} which is not in the map. \
-                 This indicates a bug in ProcessingStats initialization.",
-                warning
-            );
-            // Don't panic - log and continue to avoid crashing the application
-        }
+        let counter = self
+            .warnings
+            .get(&warning)
+            .expect("WarningType missing from ProcessingStats::new()");
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment an info counter.
     ///
-    /// # Safety
-    /// This should never panic if `ProcessingStats` is properly initialized via `new()`.
-    /// All info types are initialized in the constructor. If a panic occurs, it indicates
-    /// a bug in initialization or a missing enum variant.
+    /// Panics if `info_type` is not in the map (i.e. a new `InfoType` variant was added
+    /// but not added to `new()`). All variants are initialized in `new()`.
     pub fn increment_info(&self, info_type: InfoType) {
-        if let Some(counter) = self.info.get(&info_type) {
-            counter.fetch_add(1, Ordering::Relaxed);
-        } else {
-            log::error!(
-                "Attempted to increment info counter for {:?} which is not in the map. \
-                 This indicates a bug in ProcessingStats initialization.",
-                info_type
-            );
-            // Don't panic - log and continue to avoid crashing the application
-        }
+        let counter = self
+            .info
+            .get(&info_type)
+            .expect("InfoType missing from ProcessingStats::new()");
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get the count for an error type.
     ///
-    /// Returns 0 if the error type is not in the map (should never happen if properly initialized).
+    /// Returns 0 if the error type is not in the map (should never happen; all variants
+    /// are initialized in `new()`).
     pub fn get_error_count(&self, error: ErrorType) -> usize {
         self.errors
             .get(&error)
             .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "Error type {:?} not found in stats map, returning 0. \
-                     This indicates a bug in ProcessingStats initialization.",
-                    error
-                );
-                0
-            })
+            .unwrap_or(0)
     }
 
     /// Get the count for a warning type.
     ///
-    /// Returns 0 if the warning type is not in the map (should never happen if properly initialized).
+    /// Returns 0 if the warning type is not in the map (should never happen; all variants
+    /// are initialized in `new()`).
     pub fn get_warning_count(&self, warning: WarningType) -> usize {
         self.warnings
             .get(&warning)
             .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "Warning type {:?} not found in stats map, returning 0. \
-                     This indicates a bug in ProcessingStats initialization.",
-                    warning
-                );
-                0
-            })
+            .unwrap_or(0)
     }
 
     /// Get the count for an info type.
     ///
-    /// Returns 0 if the info type is not in the map (should never happen if properly initialized).
+    /// Returns 0 if the info type is not in the map (should never happen; all variants
+    /// are initialized in `new()`).
     pub fn get_info_count(&self, info_type: InfoType) -> usize {
         self.info
             .get(&info_type)
             .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "Info type {:?} not found in stats map, returning 0. \
-                     This indicates a bug in ProcessingStats initialization.",
-                    info_type
-                );
-                0
-            })
+            .unwrap_or(0)
     }
 
     /// Get total error count across all error types.
