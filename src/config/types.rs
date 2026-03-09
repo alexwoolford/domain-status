@@ -13,9 +13,9 @@ use crate::config::constants::DEFAULT_USER_AGENT;
 /// Optional dependency overrides for tests or custom environments.
 ///
 /// When set on [`Config`], these values are used instead of creating new
-/// instances in [`crate::run::init_scan_resources`]. This allows tests to
-/// inject mock HTTP clients, resolvers, or other dependencies without starting
-/// real servers or touching global state.
+/// instances during scan resource initialization. This allows tests to inject
+/// mock HTTP clients, resolvers, or other dependencies without starting real
+/// servers or touching global state.
 ///
 /// # Example (tests)
 ///
@@ -222,8 +222,8 @@ pub struct Config {
 
     /// Optional dependency overrides for tests (inject mock HTTP client, etc.).
     ///
-    /// When set, [`crate::run::init_scan_resources`] uses these instead of creating
-    /// new instances. Production callers should leave this `None`.
+    /// When set, scan resource initialization uses these instead of creating new
+    /// instances. Production callers should leave this `None`.
     #[doc(hidden)]
     pub dependency_overrides: Option<ScanDependencyOverrides>,
 }

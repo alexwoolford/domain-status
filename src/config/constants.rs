@@ -15,8 +15,6 @@ pub const LOGGING_INTERVAL: usize = 5;
 /// Per-URL processing timeout in seconds
 /// Set to 35s to allow for slow sites while still being reasonable
 /// Formula: HTTP timeout (10s) + DNS timeout (3s) + TCP/TLS timeouts (10s) + enrichment (5s) + buffer (7s) = ~35s
-/// Note: DNS timeout reduced to 3s helps fail fast on DNS issues, but overall timeout kept at 35s
-/// to account for enrichment operations (`GeoIP`, WHOIS, technology detection, etc.)
 pub const URL_PROCESSING_TIMEOUT: Duration = Duration::from_secs(35);
 /// Default database file path
 pub const DB_PATH: &str = "./domain_status.db";

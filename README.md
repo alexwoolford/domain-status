@@ -1060,6 +1060,8 @@ Common commands:
 - `just test` - Run tests
 - `just coverage` - Generate coverage
 
+For production-like scans use the release binary (`cargo build --release` then `./target/release/domain_status`). Debug builds are much slower (no optimizations), so more requests hit the per-URL timeout and local runs can show a lower success rate than production; that’s expected. Use release for any run where success rate matters.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPER_BOOTSTRAP.md](docs/DEVELOPER_BOOTSTRAP.md) for the complete contributor workflow.
 
 ## License

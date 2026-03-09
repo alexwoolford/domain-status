@@ -171,6 +171,7 @@ async fn handle_failure(
     adaptive_limiter: Option<&Arc<crate::adaptive_rate_limiter::AdaptiveRateLimiter>>,
 ) {
     failed_urls.fetch_add(1, Ordering::SeqCst);
+    let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
         progress_callback,
         completed_urls,
@@ -179,7 +180,6 @@ async fn handle_failure(
     );
     log::warn!("Failed to process URL {}: {error}", url.as_ref());
 
-    let elapsed = process_start.elapsed().as_secs_f64();
     let context = crate::storage::failure::extract_failure_context(&error);
 
     if let Err(record_err) = record_url_failure(crate::storage::failure::FailureRecordParams {
@@ -233,6 +233,7 @@ async fn handle_timeout(
     adaptive_limiter: Option<&Arc<crate::adaptive_rate_limiter::AdaptiveRateLimiter>>,
 ) {
     failed_urls.fetch_add(1, Ordering::SeqCst);
+    let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
         progress_callback,
         completed_urls,
@@ -244,8 +245,6 @@ async fn handle_timeout(
         url.as_ref(),
         URL_PROCESSING_TIMEOUT.as_secs()
     );
-
-    let elapsed = process_start.elapsed().as_secs_f64();
     let timeout_error = anyhow::anyhow!(
         "Process URL timeout after {} seconds for {}",
         URL_PROCESSING_TIMEOUT.as_secs(),

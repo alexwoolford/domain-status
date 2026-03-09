@@ -105,5 +105,7 @@ fn snapshot_cli_help() {
     let output = cmd.output().expect("run domain_status --help");
     assert!(output.status.success(), "help should succeed");
     let help = String::from_utf8_lossy(&output.stdout);
+    // Normalize executable name so snapshot is platform-agnostic (Windows: domain_status.exe)
+    let help = help.replace("domain_status.exe", "domain_status");
     insta::assert_snapshot!(help);
 }
