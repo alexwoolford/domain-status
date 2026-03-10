@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-03-09
+
+### Security
+- Fix RUSTSEC-2026-0037: update `quinn-proto` 0.11.13 → 0.11.14 (DoS in Quinn endpoints, severity 8.7).
+
+### Changed
+- Remove redundant `webpki-roots` dependency (already transitive via reqwest).
+- Move tokio `test-util` feature to dev-dependencies (not needed in release builds).
+- Replace `panic!` with `log::error!` in failure recording to prevent scan crashes on transient DB errors.
+
 ## [0.1.15] - 2026-03-09
 
 ### Changed
