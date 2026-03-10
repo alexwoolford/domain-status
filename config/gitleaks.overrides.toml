@@ -81,3 +81,35 @@ description = "JDBC connection string with embedded credentials"
 regex = '''(?i)jdbc:(?:mysql|postgresql|oracle|sqlserver|mariadb|h2|sqlite):[^\s"'<>]*(?:password|passwd)=([^\s&;"'<>]{3,})'''
 secretGroup = 1
 keywords = ["jdbc"]
+
+# ── HTTP Basic Auth (from Noseyparker np.http.1) ──
+# Detects base64-encoded credentials in Authorization: Basic headers.
+# Common in debug output, config dumps, and API documentation on live pages.
+# Requires 6+ base64 chars to avoid matching empty/trivial tokens.
+[[rules]]
+id = "http-basic-auth"
+description = "HTTP Basic Authentication credentials (base64-encoded user:password)"
+regex = '''(?i)(?:Authorization|authorization)\s*[=:'"`,\s]{1,10}Basic\s+([A-Za-z0-9+/]{6,}={0,2})(?:[^A-Za-z0-9+/=]|$)'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["basic"]
+
+# ── Credential-bearing URLs (from Titus kingfisher.uri.1) ──
+# Detects https:// or http:// URLs with embedded user:password before @.
+# Broader than the database-connection-uri rule (catches any protocol).
+[[rules]]
+id = "credential-bearing-url"
+description = "URL with embedded credentials (user:password@host)"
+regex = '''https?://[A-Za-z0-9._~%!$&'()*+,;=-]+:([A-Za-z0-9._~%!$&'()*+,;=/-]{3,})@(?:[A-Za-z0-9._-]+|\[[A-Fa-f0-9:.]+\])'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["http://", "https://"]
+
+# ── Mailchimp API keys (from TruffleHog) ──
+# Format: 32 hex chars + hyphen + datacenter (us1-us20).
+# Very distinctive format with extremely low false positive risk.
+[[rules]]
+id = "mailchimp-api-key"
+description = "Mailchimp API key with datacenter suffix"
+regex = '''[0-9a-f]{32}-us[0-9]{1,2}'''
+keywords = ["mailchimp", "-us"]
