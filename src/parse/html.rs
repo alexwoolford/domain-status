@@ -15,6 +15,8 @@ use crate::error_handling::ProcessingStats;
 const TITLE_SELECTOR_STR: &str = "title";
 const META_KEYWORDS_SELECTOR_STR: &str = "meta[name='keywords']";
 const META_DESCRIPTION_SELECTOR_STR: &str = "meta[name='description']";
+/// Case-insensitive viewport meta tag (CSS4 [attr i])
+const META_VIEWPORT_SELECTOR_STR: &str = "meta[name=\"viewport\" i]";
 
 static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse(TITLE_SELECTOR_STR)
@@ -30,6 +32,12 @@ static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
 static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse(META_DESCRIPTION_SELECTOR_STR)
         .expect("META_DESCRIPTION_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
+});
+
+static META_VIEWPORT_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(META_VIEWPORT_SELECTOR_STR).expect(
+        "META_VIEWPORT_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug",
+    )
 });
 
 /// Extracts the page title from an HTML document.
@@ -160,6 +168,9 @@ pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Opt
 
 /// Checks if an HTML document is mobile-friendly by looking for a viewport meta tag.
 ///
+/// Uses DOM parsing and a case-insensitive meta[name="viewport" i] selector so only
+/// a real viewport meta tag counts; body text or script containing "viewport" does not.
+///
 /// # Arguments
 ///
 /// * `html` - The raw HTML content
@@ -168,5 +179,6 @@ pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Opt
 ///
 /// `true` if a viewport meta tag is present, `false` otherwise.
 pub fn is_mobile_friendly(html: &str) -> bool {
-    html.contains("viewport")
+    let document = Html::parse_document(html);
+    document.select(&META_VIEWPORT_SELECTOR).next().is_some()
 }

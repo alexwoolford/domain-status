@@ -137,38 +137,47 @@ pub async fn detect_technologies(
             });
     }
 
-    // Add implied technologies (wappalyzergo adds these after each match)
+    // Add implied technologies (fixed-point: A→B, B→C must yield both B and C)
     let ruleset = get_ruleset()
         .await
         .ok_or(FingerprintError::RulesetNotInitialized)?;
 
-    let mut implied_to_add = Vec::new();
-    for tech_name in detected.keys() {
-        // Extract base tech name (strip version if present) for ruleset lookup
-        let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
-            &tech_name[..colon_pos]
-        } else {
-            tech_name
-        };
+    const MAX_IMPLIES_DEPTH: u32 = 10;
+    for _ in 0..MAX_IMPLIES_DEPTH {
+        let mut implied_to_add = Vec::new();
+        for tech_name in detected.keys() {
+            // Extract base tech name (strip version if present) for ruleset lookup
+            let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
+                &tech_name[..colon_pos]
+            } else {
+                tech_name
+            };
 
-        if let Some(tech) = ruleset.technologies.get(base_tech_name) {
-            for implied in &tech.implies {
-                // wappalyzergo's Fingerprint() uses implies string directly (fingerprints.go:271)
-                // but FingerprintWithInfo() filters to only include techs that exist in the ruleset
-                // (tech.go:263-265). Since we're storing to a database (like FingerprintWithInfo),
-                // we filter out implies that don't exist as technologies.
-                // wappalyzergo adds implies without version (fingerprints.go:270-273)
-                // Implied technologies should extract their own versions from their own patterns,
-                // not inherit the parent's version
-                implied_to_add.push((implied.to_string(), TechInfo { version: None }));
+            if let Some(tech) = ruleset.technologies.get(base_tech_name) {
+                for implied in &tech.implies {
+                    // wappalyzergo's Fingerprint() uses implies string directly (fingerprints.go:271)
+                    // but FingerprintWithInfo() filters to only include techs that exist in the ruleset
+                    // (tech.go:263-265). Since we're storing to a database (like FingerprintWithInfo),
+                    // we filter out implies that don't exist as technologies.
+                    // wappalyzergo adds implies without version (fingerprints.go:270-273)
+                    // Implied technologies should extract their own versions from their own patterns,
+                    // not inherit the parent's version
+                    implied_to_add.push((implied.to_string(), TechInfo { version: None }));
+                }
             }
         }
-    }
-    for (implied_name, tech_info) in implied_to_add {
-        // Filter: only add implies that exist as technologies in the ruleset
-        // This matches wappalyzergo's FingerprintWithInfo() behavior (tech.go:263-265)
-        if ruleset.technologies.contains_key(&implied_name) {
-            detected.entry(implied_name).or_insert(tech_info);
+        let mut added_any = false;
+        for (implied_name, tech_info) in implied_to_add {
+            // Filter: only add implies that exist as technologies in the ruleset
+            // This matches wappalyzergo's FingerprintWithInfo() behavior (tech.go:263-265)
+            if ruleset.technologies.contains_key(&implied_name)
+                && detected.insert(implied_name.clone(), tech_info).is_none()
+            {
+                added_any = true;
+            }
+        }
+        if !added_any {
+            break;
         }
     }
 
