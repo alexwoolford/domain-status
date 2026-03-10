@@ -31,23 +31,28 @@ use domain_status::{
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use tempfile::NamedTempFile;
 use tokio::time::{sleep, timeout};
 
 //-----------------------------------------------------------------------------
 // Test Helpers
 //-----------------------------------------------------------------------------
 
-/// Creates an in-memory `SQLite` database with full schema.
+/// Creates a temp-file `SQLite` database with full schema.
 ///
-/// Uses a shared in-memory DB so all pool connections see the same schema
-/// (required for macOS CI where different connections would otherwise get
-/// separate `:memory:` databases and see "no such table").
-/// Uses real migrations to ensure test environment matches production.
-async fn create_test_pool() -> SqlitePool {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+/// Uses a real file instead of `:memory:` with `shared_cache` to avoid a CI
+/// race condition: under heavy concurrent cancellation pressure, `SQLite`'s
+/// in-memory shared cache can lose schema visibility across pool connections,
+/// causing "no such table" errors on slower CI runners.
+///
+/// Returns both the pool and the `NamedTempFile` (caller must hold the handle
+/// to keep the file alive for the test duration).
+async fn create_test_pool() -> (SqlitePool, NamedTempFile) {
+    let tmp = NamedTempFile::new().expect("Failed to create temp file");
+    let db_path = tmp.path().to_str().expect("non-UTF-8 temp path");
+    let options = SqliteConnectOptions::from_str(&format!("sqlite:{db_path}"))
         .expect("Failed to create options")
-        .shared_cache(true)
-        .in_memory(true);
+        .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .connect_with(options)
         .await
@@ -57,7 +62,7 @@ async fn create_test_pool() -> SqlitePool {
         .await
         .expect("Failed to run migrations");
 
-    pool
+    (pool, tmp)
 }
 
 /// Creates a minimal but valid `UrlRecord` for testing.
@@ -226,7 +231,7 @@ async fn count_orphaned_satellites(pool: &SqlitePool) -> i64 {
 #[tokio::test]
 #[cfg(not(tarpaulin))] // Exclude from coverage - uses 1-microsecond timeout incompatible with instrumentation overhead
 async fn test_cancellation_during_simple_insert() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     let record = create_test_record("example.com");
@@ -298,7 +303,7 @@ async fn test_cancellation_during_simple_insert() {
 #[tokio::test]
 #[cfg(not(tarpaulin))] // Exclude from coverage - uses 100-microsecond timeout incompatible with instrumentation overhead
 async fn test_cancellation_during_satellite_writes() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     let record = create_test_record("example.com");
@@ -371,7 +376,7 @@ async fn test_cancellation_during_satellite_writes() {
 #[tokio::test]
 #[cfg(not(tarpaulin))] // Exclude from coverage - timing-sensitive test incompatible with instrumentation overhead
 async fn test_concurrent_cancellations() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     let concurrent_workers = 10;
@@ -475,7 +480,7 @@ async fn test_concurrent_cancellations() {
 
 #[tokio::test]
 async fn test_graceful_shutdown_with_abort() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     let success_count = Arc::new(AtomicU64::new(0));
@@ -567,7 +572,7 @@ async fn test_graceful_shutdown_with_abort() {
 
 #[tokio::test]
 async fn test_recovery_after_interruption() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     // Phase 1: Initial scan (successful)
@@ -690,7 +695,7 @@ async fn test_recovery_after_interruption() {
 #[tokio::test]
 #[cfg(not(tarpaulin))] // Exclude from coverage - uses 1-microsecond timeouts in stress loop incompatible with instrumentation overhead
 async fn test_database_integrity_after_stress() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     let stress_iterations = 50;
@@ -832,7 +837,7 @@ async fn test_database_integrity_after_stress() {
 #[tokio::test]
 #[cfg(not(tarpaulin))] // Exclude from coverage - uses 1-microsecond timeout incompatible with instrumentation overhead
 async fn test_wal_checkpoint_with_cancellation() {
-    let pool = create_test_pool().await;
+    let (pool, _tmp) = create_test_pool().await;
     create_test_run(&pool, "test-run-1").await;
 
     // Phase 1: Write enough data to trigger checkpoint
