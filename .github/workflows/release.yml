@@ -7,15 +7,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Run JS actions (e.g. Swatinem/rust-cache@v2) on Node 24; Node 20 is deprecated (June 2026)
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-release:
     name: Build Release Binaries
     runs-on: ${{ matrix.os }}
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -45,8 +41,6 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           workspaces: '.'
           cache-on-failure: true

@@ -8,7 +8,7 @@ When upgrading an action: update the SHA in the workflow(s) and in this table. P
 |--------|------------|---------|
 | `actions/checkout` | `34e114876b0b11c390a56381ad16ebd13914f8d5` | ci.yml, release.yml |
 | `dtolnay/rust-toolchain` | `efa25f7f19611383d5b0ccf2d1c8914531636bf9` | ci.yml, release.yml |
-| `Swatinem/rust-cache` | `v2` (tag; runs on Node 24 via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`) | ci.yml, release.yml |
+| `Swatinem/rust-cache` | `v2` | ci.yml, release.yml |
 | `actions/upload-artifact` | `ea165f8d65b6e75b540449e92b4886f43607fa02` | release.yml |
 | `actions/download-artifact` | `d3f86a106a0bac45b974a628896c90dbdf5c8093` | release.yml |
 | `softprops/action-gh-release` | `de2c0eb89ae2a093876385947365aca7b0e5f844` | release.yml |
