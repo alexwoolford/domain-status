@@ -522,7 +522,7 @@ Secret detection uses the [gitleaks](https://github.com/gitleaks/gitleaks) defau
 curl -sL -o config/gitleaks.toml https://raw.githubusercontent.com/gitleaks/gitleaks/master/config/gitleaks.toml
 ```
 
-Do not overwrite `config/gitleaks.overrides.toml` when refreshing; it is merged at load time and keeps web-specific allowlists.
+Do not overwrite `config/gitleaks.overrides.toml` when refreshing; it is merged at load time and keeps web-specific allowlists. The table can contain **false positives** (e.g. HubSpot form IDs, Cloudflare obfuscation, build IDs); see [Secret detection and false positives](docs/SECRET_DETECTION_AND_FALSE_POSITIVES.md) for known patterns and triage.
 
 ```sql
 SELECT us.initial_domain, es.secret_type, es.severity, es.location, es.matched_value
