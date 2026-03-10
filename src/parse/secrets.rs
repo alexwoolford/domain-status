@@ -362,6 +362,8 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
     match rule_id {
         // Critical: direct compromise or financial
         "private-key"
+        | "database-connection-uri"
+        | "jdbc-connection-string"
         | "slack-bot-token"
         | "slack-user-token"
         | "slack-legacy-token"
@@ -1052,6 +1054,71 @@ mod tests {
         assert!(
             !skips,
             "AND with has_paths must not skip (path never matches in single-blob)"
+        );
+    }
+
+    // === Database Connection URIs ===
+
+    #[test]
+    fn test_detect_mongodb_connection_uri() {
+        let body = r#"<script>var dbUrl = "mongodb+srv://admin:s3cretP4ss@cluster0.mongodb.net/mydb";</script>"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(db.is_some(), "should detect MongoDB URI; got {:?}", secrets);
+        let db = db.unwrap();
+        assert_eq!(db.matched_value, "s3cretP4ss");
+        assert_eq!(db.severity, SecretSeverity::Critical);
+    }
+
+    #[test]
+    fn test_detect_postgres_connection_uri() {
+        let body = r#"<!-- config: postgres://appuser:hunter2@db.example.com:5432/production -->"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(
+            db.is_some(),
+            "should detect PostgreSQL URI; got {:?}",
+            secrets
+        );
+        assert_eq!(db.unwrap().matched_value, "hunter2");
+    }
+
+    #[test]
+    fn test_detect_redis_connection_uri() {
+        let body = r#"REDIS_URL=redis://default:myP4ssword@cache.example.com:6379/0"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(db.is_some(), "should detect Redis URI; got {:?}", secrets);
+        assert_eq!(db.unwrap().matched_value, "myP4ssword");
+    }
+
+    #[test]
+    fn test_detect_mysql_connection_uri() {
+        let body = r#"mysql://root:Str0ngP@ss@mysql.internal:3306/appdb"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(db.is_some(), "should detect MySQL URI; got {:?}", secrets);
+    }
+
+    #[test]
+    fn test_no_detect_mongodb_without_credentials() {
+        let body = r#"mongodb://localhost/testdb"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(
+            db.is_none(),
+            "should NOT detect URI without credentials; got {:?}",
+            secrets
         );
     }
 }

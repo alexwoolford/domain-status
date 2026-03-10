@@ -212,9 +212,10 @@ struct AppendOverride {
 #[derive(Debug, Deserialize)]
 struct OverridesFile {
     append: Option<Vec<AppendOverride>>,
+    rules: Option<Vec<RuleRaw>>,
 }
 
-fn merge_overrides_into_rules(rules: &mut [CompiledRule], overlay_toml: &str) {
+fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str) {
     let file: OverridesFile = match toml::from_str(overlay_toml) {
         Ok(v) => v,
         Err(e) => {
@@ -222,26 +223,68 @@ fn merge_overrides_into_rules(rules: &mut [CompiledRule], overlay_toml: &str) {
             return;
         }
     };
-    let list = match file.append {
-        Some(a) => a,
-        None => return,
-    };
-    for append in list {
-        let allowlist_raw = RuleAllowlistRaw {
-            paths: append.paths,
-            regexes: append.regexes,
-            stopwords: append.stopwords,
-            regex_target: append.regex_target,
-            condition: append.condition,
-        };
-        let compiled = compile_rule_allowlist(&allowlist_raw);
-        if let Some(rule) = rules.iter_mut().find(|r| r.id == append.rule_id) {
-            rule.allowlists.push(compiled);
-        } else {
-            log::debug!(
-                "Overrides reference rule_id '{}' which is not in config; skipping",
-                append.rule_id
-            );
+
+    // Add entirely new rules from [[rules]] entries
+    if let Some(new_rules) = file.rules {
+        for r in new_rules {
+            let regex_str = match &r.regex {
+                Some(s) => s,
+                None => {
+                    log::debug!("Skipping override rule '{}': no regex", r.id);
+                    continue;
+                }
+            };
+            let regex = match Regex::new(regex_str) {
+                Ok(re) => re,
+                Err(e) => {
+                    log::warn!("Skipping override rule '{}': invalid regex: {}", r.id, e);
+                    continue;
+                }
+            };
+            let allowlists = r
+                .allowlists
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(compile_rule_allowlist)
+                .collect();
+            let keywords = r.keywords.as_ref().map(|kws| {
+                kws.iter()
+                    .map(|s| s.to_lowercase())
+                    .collect::<Vec<String>>()
+            });
+            log::debug!("Adding override rule: {}", r.id);
+            rules.push(CompiledRule {
+                id: r.id,
+                regex,
+                entropy: r.entropy,
+                keywords,
+                secret_group: r.secret_group,
+                allowlists,
+                path: r.path.clone(),
+            });
+        }
+    }
+
+    // Append allowlists to existing rules from [[append]] entries
+    if let Some(list) = file.append {
+        for append in list {
+            let allowlist_raw = RuleAllowlistRaw {
+                paths: append.paths,
+                regexes: append.regexes,
+                stopwords: append.stopwords,
+                regex_target: append.regex_target,
+                condition: append.condition,
+            };
+            let compiled = compile_rule_allowlist(&allowlist_raw);
+            if let Some(rule) = rules.iter_mut().find(|r| r.id == append.rule_id) {
+                rule.allowlists.push(compiled);
+            } else {
+                log::debug!(
+                    "Overrides reference rule_id '{}' which is not in config; skipping",
+                    append.rule_id
+                );
+            }
         }
     }
 }
