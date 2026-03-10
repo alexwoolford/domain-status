@@ -121,3 +121,105 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crates-io:
+    name: Publish to crates.io
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Publish domain_status_cli to crates.io
+        run: cargo publish -p domain_status_cli --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Publish domain_status to crates.io
+        run: cargo publish -p domain_status --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version from tag
+        id: tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Wait for release assets to be available
+        run: sleep 30
+
+      - name: Download release archives and compute SHA256
+        id: sha
+        run: |
+          VERSION="${{ steps.tag.outputs.VERSION }}"
+          BASE="https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}"
+
+          curl -sL "${BASE}/domain_status-macos-aarch64.tar.gz" -o macos-aarch64.tar.gz
+          curl -sL "${BASE}/domain_status-macos-x86_64.tar.gz" -o macos-x86_64.tar.gz
+          curl -sL "${BASE}/domain_status-linux-x86_64.tar.gz" -o linux-x86_64.tar.gz
+
+          echo "SHA_MACOS_ARM=$(sha256sum macos-aarch64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "SHA_MACOS_X86=$(sha256sum macos-x86_64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "SHA_LINUX_X86=$(sha256sum linux-x86_64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: alexwoolford/homebrew-domain-status
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          VERSION="${{ steps.tag.outputs.VERSION }}"
+          cat > homebrew-tap/Formula/domain_status.rb << FORMULA
+          class DomainStatus < Formula
+            desc "Concurrent URL status checker that captures comprehensive metadata in SQLite"
+            homepage "https://github.com/alexwoolford/domain_status"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}/domain_status-macos-aarch64.tar.gz"
+                sha256 "${{ steps.sha.outputs.SHA_MACOS_ARM }}"
+              else
+                url "https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}/domain_status-macos-x86_64.tar.gz"
+                sha256 "${{ steps.sha.outputs.SHA_MACOS_X86 }}"
+              end
+            end
+
+            on_linux do
+              url "https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}/domain_status-linux-x86_64.tar.gz"
+              sha256 "${{ steps.sha.outputs.SHA_LINUX_X86 }}"
+            end
+
+            def install
+              bin.install "domain_status"
+            end
+
+            test do
+              assert_match "domain_status", shell_output("\#{bin}/domain_status --version")
+            end
+          end
+          FORMULA
+
+      - name: Commit and push formula update
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/domain_status.rb
+          git commit -m "Update domain_status to v${{ steps.tag.outputs.VERSION }}"
+          git push
