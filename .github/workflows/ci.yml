@@ -33,16 +33,16 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -71,16 +71,16 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -101,15 +101,15 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -153,7 +153,7 @@ jobs:
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
           github.event_name != 'schedule' &&
           steps.check_coverage.outputs.exists == 'true'
-        uses: codecov/codecov-action@0561704f0f02c16a585d4c7555e57fa2e44cf909
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: alexwoolford/domain_status
@@ -171,12 +171,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Full history needed for secret scanning
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
 
@@ -196,7 +196,7 @@ jobs:
       - name: Scan for secrets
         # Skip secret scanning on scheduled runs (only needed for code changes)
         if: github.event_name != 'schedule'
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+        uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Note: gitleaks-action doesn't support 'with' inputs
@@ -217,15 +217,15 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: '.'
           cache-on-failure: true
