@@ -4,6 +4,10 @@
 //! - Simple substring matching
 //! - Regex pattern matching
 //! - Meta tag pattern matching with prefix support
+//!
+//! Note: Comments referencing wappalyzergo Go source line numbers (e.g.,
+//! `patterns.go:122`) are from the original port circa 2024 and may drift
+//! as the upstream project evolves.
 
 use moka::sync::Cache;
 use std::collections::HashMap;

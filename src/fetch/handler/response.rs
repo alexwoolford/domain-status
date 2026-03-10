@@ -30,8 +30,6 @@ use std::time::Instant;
 /// # Errors
 ///
 /// Returns an error if domain extraction, DNS resolution, or database insertion fails.
-// Large function handling response data extraction, parallel tech detection and DNS/TLS, and database insertion.
-// Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 pub async fn handle_response(
     response: reqwest::Response,

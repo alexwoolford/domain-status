@@ -160,7 +160,11 @@ pub struct Config {
     /// Maximum concurrent requests
     pub max_concurrency: usize,
 
-    /// Per-request timeout in seconds
+    /// Per-request HTTP timeout in seconds (default: 10).
+    ///
+    /// This is the timeout for each individual HTTP request. The overall
+    /// per-URL processing timeout (`URL_PROCESSING_TIMEOUT`, 35s) is separate
+    /// and encompasses all stages (DNS, TLS, HTTP, enrichment).
     pub timeout_seconds: u64,
 
     /// HTTP User-Agent header value
@@ -195,7 +199,7 @@ pub struct Config {
 
     /// Progress callback for external progress tracking.
     ///
-    /// Called with (completed, failed, total) after each URL is processed.
+    /// Called with (completed, failed, skipped, total) after each URL is processed.
     /// This allows external code (like CLI) to update progress bars.
     ///
     /// **Important**: The callback is invoked synchronously from async tasks.

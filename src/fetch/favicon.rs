@@ -63,6 +63,7 @@ async fn fetch_favicon_bytes(
     max_size: usize,
 ) -> Result<Option<Vec<u8>>, Error> {
     let mut current_url = url.to_string();
+    // Initial fetch + up to MAX_FAVICON_REDIRECTS redirect hops
     for _ in 0..=MAX_FAVICON_REDIRECTS {
         let response = match tokio::time::timeout(
             std::time::Duration::from_secs(FAVICON_FETCH_TIMEOUT_SECS),

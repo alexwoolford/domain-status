@@ -156,8 +156,6 @@ impl TimingStats {
     ///
     /// Optionally accepts flags to indicate whether `GeoIP` and WHOIS are enabled,
     /// which will be displayed in the output when these features are disabled.
-    // Large function handling comprehensive timing summary output with percentage calculations and formatting.
-    // Consider refactoring into smaller focused functions in Phase 4.
     #[allow(clippy::too_many_lines)]
     pub fn log_summary(&self, geoip_enabled: Option<bool>, whois_enabled: Option<bool>) {
         let count = self.count.load(Ordering::Relaxed);
