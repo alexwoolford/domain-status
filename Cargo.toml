@@ -68,12 +68,11 @@ path = "src/lib.rs"
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate", "stream"] }
-tokio = { version = "^1", features = ["full", "test-util"] }
+tokio = { version = "^1", features = ["full"] }
 tokio-util = "^0.7"
 tokio-retry = "^0.3"
 futures = "^0.3"
 rustls = "^0.23"
-webpki-roots = "^1.0"
 x509-parser = "^0.18"
 tokio-rustls = "^0.26"
 hickory-resolver = "^0.25"
@@ -142,6 +141,7 @@ clap_complete = "^4.5"
 clap_mangen = "^0.2"
 
 [dev-dependencies]
+tokio = { version = "^1", features = ["test-util"] }
 httptest = "^0.16"
 proptest = "^1.4"          # Property-based testing
 insta = { version = "^1.38", features = ["yaml"] }  # Snapshot/golden testing

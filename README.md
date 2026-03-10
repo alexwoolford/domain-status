@@ -1008,7 +1008,7 @@ The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, token
 
 4. **Best practices**:
    - Never commit `.env` files, `.db` files, or scan export files (CSV/JSONL/Parquet); these are in `.gitignore`
-   - Exposed secrets found on scanned sites are redacted before storage and export; only redacted forms exist in DB and exports
+   - Exposed secrets and all collected data (URLs, headers) are stored and logged in full by design (data collection tool; no redaction). Never commit DB or export files and protect them and config with restrictive permissions.
    - Use environment variables for all secrets
    - Use GitHub Secrets for CI/CD tokens
    - Review gitleaks output if CI fails

@@ -14,7 +14,7 @@ Prioritized security findings and actions from the Security Posture Report imple
 |------|---------|--------|
 | Transport trust | Page-fetch uses strict TLS; TLS capture is separate (AcceptAllVerifier only in `src/tls/`). | Documented; test added |
 | Untrusted input | WHOIS, TLS, GeoIP, HTML/body have size caps and fallible parsing; one constant expect in GeoIP. | Documented in threat model |
-| Secret retention | Redaction applied before DB insert and again at export; URLs/headers scrubbed before logging. | Audited; no gaps |
+| Secret retention | Exposed secrets and all collected data (URLs, headers) are stored and logged in full by design; this is a data collection tool. No redaction is used. | By design |
 | Supply chain | cargo audit + cargo deny in CI; action SHA pinning; deny.toml and audit ignores documented. | Documented |
 
 ---

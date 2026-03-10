@@ -4,7 +4,6 @@
 //! associated context and satellite data.
 
 use crate::domain::extract_domain;
-use crate::security::redaction::{scrub_headers, scrub_url};
 use crate::storage::insert::insert_url_failure;
 use crate::storage::models::UrlFailureRecord;
 use anyhow::Error;
@@ -66,26 +65,19 @@ pub struct FailureRecordParams<'a> {
 // Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 pub async fn record_url_failure(params: FailureRecordParams<'_>) {
-    let attempted_url = scrub_url(params.url);
+    let attempted_url = params.url.to_string();
 
     // Extract context from error chain if not provided directly
     // This allows us to get context even if it wasn't passed explicitly
     let extracted_context = super::context::extract_failure_context(params.error);
 
     // Use provided context if fields are populated, otherwise use extracted context
-    let final_url = params
-        .context
-        .final_url
-        .or(extracted_context.final_url)
-        .map(|url| scrub_url(&url));
+    let final_url = params.context.final_url.or(extracted_context.final_url);
     let redirect_chain: Vec<String> = if !params.context.redirect_chain.is_empty() {
         params.context.redirect_chain
     } else {
         extracted_context.redirect_chain
-    }
-    .into_iter()
-    .map(|url| scrub_url(&url))
-    .collect();
+    };
 
     // Extract domain information
     let domain = extract_domain(params.extractor, params.url).unwrap_or_else(|e| {
@@ -187,11 +179,11 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
     }
 
     // Truncate header values to prevent database bloat
-    let response_headers: Vec<(String, String)> = scrub_headers(response_headers)
+    let response_headers: Vec<(String, String)> = response_headers
         .into_iter()
         .map(|(name, value)| (name, truncate_header_value(value)))
         .collect();
-    let request_headers: Vec<(String, String)> = scrub_headers(request_headers)
+    let request_headers: Vec<(String, String)> = request_headers
         .into_iter()
         .map(|(name, value)| (name, truncate_header_value(value)))
         .collect();
@@ -214,10 +206,12 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
         request_headers,
     };
 
-    // Insert failure record; abort on write failure to avoid incomplete data
+    // Insert failure record; log on write failure instead of panicking
+    // (a transient SQLITE_BUSY or disk-full should not crash the entire scan)
     if let Err(e) = insert_url_failure(params.pool, &failure).await {
-        panic!(
-            "SQLite write failed while recording URL failure: {}. Aborting to avoid incomplete data. Check disk space and permissions.",
+        log::error!(
+            "SQLite write failed while recording URL failure for {}: {}. Check disk space and permissions.",
+            failure.url,
             e
         );
     }
