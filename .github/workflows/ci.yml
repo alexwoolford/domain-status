@@ -25,12 +25,14 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Run JS actions (e.g. Swatinem/rust-cache@v2) on Node 24; Node 20 is deprecated (June 2026)
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     permissions:
       contents: read
       pull-requests: read
@@ -45,6 +47,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -65,6 +69,8 @@ jobs:
   test:
     name: Test Suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +89,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -99,6 +107,8 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     permissions:
       contents: read
       pull-requests: read
@@ -112,6 +122,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           workspaces: '.'
           cache-on-failure: true
@@ -166,6 +178,8 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     # Security checks run on push/PR and weekly schedule
     # This job runs: cargo audit + cargo deny policy checks + gitleaks secret scanning
     if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'pull_request'
@@ -208,6 +222,8 @@ jobs:
   e2e:
     name: End-to-End Tests (Network Required)
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     # Run ignored tests that require network access
     # These are true end-to-end tests that verify the full pipeline:
     # - Full scan with real DNS/TLS/fingerprint fetching (tests/integration_test.rs)
@@ -228,6 +244,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           workspaces: '.'
           cache-on-failure: true
