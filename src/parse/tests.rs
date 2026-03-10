@@ -167,13 +167,10 @@ fn test_is_mobile_friendly_with_viewport() {
 
 #[test]
 fn test_is_mobile_friendly_case_insensitive() {
-    // Edge case: viewport in different case
-    // Current implementation uses contains() which is case-sensitive
-    // "Viewport" does not contain "viewport" (lowercase), so this should fail
+    // Viewport meta with different case should still be detected (meta[name="viewport" i])
     let html =
         r#"<html><head><meta name="Viewport" content="width=device-width"></head></html>"#;
-    // This documents a limitation: case-sensitive matching
-    assert!(!is_mobile_friendly(html));
+    assert!(is_mobile_friendly(html));
 }
 
 #[test]
@@ -184,11 +181,9 @@ fn test_is_mobile_friendly_without_viewport() {
 
 #[test]
 fn test_is_mobile_friendly_false_positive() {
-    // Potential gotcha: word "viewport" in content (not in meta tag)
+    // Word "viewport" in body text (not in meta tag) must not be detected
     let html = r#"<html><body><p>This page has a viewport</p></body></html>"#;
-    // Current implementation would return true (false positive)
-    // This test documents this behavior
-    assert!(is_mobile_friendly(html));
+    assert!(!is_mobile_friendly(html));
 }
 
 // Analytics ID extraction tests

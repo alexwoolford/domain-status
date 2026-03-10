@@ -8,6 +8,7 @@ use std::time::Duration;
 /// This extracts the Git commit hash that identifies the exact version of the
 /// ruleset being used. This is important for reproducibility - you can see
 /// exactly which version of the fingerprints was used for each detection.
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     // Extract repo and path from URL
     // e.g., https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
@@ -62,12 +63,22 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         reqwest::header::USER_AGENT,
         reqwest::header::HeaderValue::from_static("domain_status/0.1.0"),
     );
+    // Use GITHUB_TOKEN when set (increases rate limit from 60 to 5000 requests/hour)
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        if !token.is_empty() {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+            {
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                log::debug!("Using GITHUB_TOKEN for commit SHA request");
+            }
+        }
+    }
 
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .default_headers(headers)
         .build()
         .ok()?;

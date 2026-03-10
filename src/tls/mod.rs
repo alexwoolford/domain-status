@@ -20,7 +20,6 @@ use rustls::pki_types::{CertificateDer, ServerName};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::TlsConnector;
@@ -229,7 +228,7 @@ pub async fn get_ssl_certificate_info(
     };
 
     let connector = TlsConnector::from(Arc::new(config));
-    let mut tls_stream = match tokio::time::timeout(
+    let tls_stream = match tokio::time::timeout(
         std::time::Duration::from_secs(crate::config::TLS_HANDSHAKE_TIMEOUT_SECS),
         connector.connect(server_name, sock),
     )
@@ -275,19 +274,8 @@ pub async fn get_ssl_certificate_info(
         .negotiated_cipher_suite()
         .map(|cs| format!("{:?}", cs.suite()));
 
-    let request = format!(
-        "GET / HTTP/1.1\r\n\
-         Host: {domain}\r\n\
-         Connection: close\r\n\
-         Accept-Encoding: identity\r\n\
-         \r\n",
-    );
-
-    if let Err(e) = tls_stream.write_all(request.as_bytes()).await {
-        error!("Failed to write request to {domain}: {e}");
-        return Err(anyhow::anyhow!("Failed to write request to {}", domain));
-    }
-
+    // Certificates are available immediately after handshake; no HTTP request needed.
+    // (Removing the GET request also eliminates unbounded TCP write hang risk.)
     if let Some(certs) = tls_stream.get_ref().1.peer_certificates() {
         if let Some(cert) = certs.first() {
             let parsed = parse_certificate_info_from_der(cert.as_ref(), tls_version, cipher_suite)?;

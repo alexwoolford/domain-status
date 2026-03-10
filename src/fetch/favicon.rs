@@ -11,6 +11,7 @@ use futures::StreamExt;
 use std::sync::Arc;
 
 use crate::config::{FAVICON_FETCH_TIMEOUT_SECS, MAX_FAVICON_SIZE};
+use crate::security::validate_url_safe;
 
 /// Favicon data ready for database insertion.
 #[derive(Debug, Clone)]
@@ -48,7 +49,11 @@ pub(crate) fn compute_shodan_favicon_hash(raw_bytes: &[u8]) -> i32 {
     hash as i32
 }
 
+/// Max redirect hops for favicon (SSRF-validated per hop).
+const MAX_FAVICON_REDIRECTS: u8 = 5;
+
 /// Streams favicon bytes from a URL with a size limit.
+/// Follows up to `MAX_FAVICON_REDIRECTS` redirects, validating each hop with SSRF checks.
 ///
 /// Returns `None` if the response is non-success, exceeds the size cap,
 /// or the fetch times out.
@@ -57,59 +62,102 @@ async fn fetch_favicon_bytes(
     url: &str,
     max_size: usize,
 ) -> Result<Option<Vec<u8>>, Error> {
-    let response = match tokio::time::timeout(
-        std::time::Duration::from_secs(FAVICON_FETCH_TIMEOUT_SECS),
-        client.get(url).send(),
-    )
-    .await
-    {
-        Ok(Ok(resp)) => resp,
-        Ok(Err(e)) => {
-            log::debug!("Favicon fetch failed for {}: {}", url, e);
-            return Ok(None);
-        }
-        Err(_) => {
-            log::debug!("Favicon fetch timed out for {}", url);
-            return Ok(None);
-        }
-    };
-
-    if !response.status().is_success() {
-        log::debug!("Favicon fetch returned {} for {}", response.status(), url);
-        return Ok(None);
-    }
-
-    // Stream with size cap (same pattern as stream_body_with_limit)
-    let mut stream = response.bytes_stream();
-    let mut buf = Vec::with_capacity(max_size.min(16 * 1024));
-
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = match chunk_result {
-            Ok(c) => c,
-            Err(e) => {
-                log::debug!("Favicon stream error for {}: {}", url, e);
+    let mut current_url = url.to_string();
+    for _ in 0..=MAX_FAVICON_REDIRECTS {
+        let response = match tokio::time::timeout(
+            std::time::Duration::from_secs(FAVICON_FETCH_TIMEOUT_SECS),
+            client.get(&current_url).send(),
+        )
+        .await
+        {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => {
+                log::debug!("Favicon fetch failed for {}: {}", current_url, e);
+                return Ok(None);
+            }
+            Err(_) => {
+                log::debug!("Favicon fetch timed out for {}", current_url);
                 return Ok(None);
             }
         };
 
-        if buf.len() + chunk.len() > max_size {
-            log::debug!(
-                "Favicon exceeds {}KB limit for {} (aborting at {} bytes)",
-                max_size / 1024,
-                url,
-                buf.len() + chunk.len()
-            );
+        let status = response.status();
+        if status.is_redirection() {
+            if let Some(location) = response.headers().get(reqwest::header::LOCATION) {
+                let location_str = location.to_str().unwrap_or("").trim();
+                if location_str.is_empty() {
+                    log::debug!(
+                        "Favicon redirect missing or invalid Location for {}",
+                        current_url
+                    );
+                    return Ok(None);
+                }
+                let resolved = url::Url::parse(&current_url)
+                    .ok()
+                    .and_then(|base| base.join(location_str).ok())
+                    .map(|u| u.to_string());
+                let Some(next_url) = resolved else {
+                    log::debug!(
+                        "Favicon redirect invalid Location for {}: {}",
+                        current_url,
+                        location_str
+                    );
+                    return Ok(None);
+                };
+                if validate_url_safe(&next_url).is_err() {
+                    log::debug!("Favicon redirect SSRF-unsafe target rejected: {}", next_url);
+                    return Ok(None);
+                }
+                log::debug!("Favicon following redirect {} -> {}", current_url, next_url);
+                current_url = next_url;
+                continue;
+            }
+        }
+
+        if !status.is_success() {
+            log::debug!("Favicon fetch returned {} for {}", status, current_url);
             return Ok(None);
         }
 
-        buf.extend_from_slice(&chunk);
+        // Stream with size cap (same pattern as stream_body_with_limit)
+        let mut stream = response.bytes_stream();
+        let mut buf = Vec::with_capacity(max_size.min(16 * 1024));
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    log::debug!("Favicon stream error for {}: {}", current_url, e);
+                    return Ok(None);
+                }
+            };
+
+            if buf.len() + chunk.len() > max_size {
+                log::debug!(
+                    "Favicon exceeds {}KB limit for {} (aborting at {} bytes)",
+                    max_size / 1024,
+                    current_url,
+                    buf.len() + chunk.len()
+                );
+                return Ok(None);
+            }
+
+            buf.extend_from_slice(&chunk);
+        }
+
+        if buf.is_empty() {
+            return Ok(None);
+        }
+
+        return Ok(Some(buf));
     }
 
-    if buf.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(buf))
+    log::debug!(
+        "Favicon redirect loop limit ({}) exceeded for {}",
+        MAX_FAVICON_REDIRECTS,
+        url
+    );
+    Ok(None)
 }
 
 /// Resolves a potentially-relative favicon href against a base URL.

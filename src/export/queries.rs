@@ -102,7 +102,7 @@ pub(crate) async fn fetch_key_value_list(
     let items: Vec<String> = rows
         .iter()
         .map(|r| {
-            let key: String = r.get(key_field);
+            let key: String = r.get::<Option<String>, _>(key_field).unwrap_or_default();
             let value: String = r.get::<Option<String>, _>(value_field).unwrap_or_default();
             format!("{}:{}", key, value)
         })
