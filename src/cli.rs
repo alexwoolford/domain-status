@@ -202,10 +202,7 @@ pub fn load_environment() {
                 let env_path = exe_dir.join(".env");
                 if env_path.exists() {
                     if let Err(e) = dotenvy::from_path(&env_path) {
-                        let scrubbed_name = crate::security::redaction::scrub_path(&env_path);
-                        eprintln!(
-                            "Warning: Failed to load {scrubbed_name} near the executable: {e}"
-                        );
+                        eprintln!("Warning: Failed to load {}: {e}", env_path.display());
                     }
                 }
             }

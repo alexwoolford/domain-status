@@ -9,7 +9,6 @@
 //! Warnings are stored in the database for later analysis.
 
 mod analysis;
-pub(crate) mod redaction;
 pub(crate) mod safe_resolver;
 mod types;
 mod url_validation;

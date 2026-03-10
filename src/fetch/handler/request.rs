@@ -8,7 +8,6 @@ use crate::error_handling::update_error_stats;
 use crate::fetch::request::RequestHeaders;
 use crate::fetch::UrlProcessOutcome;
 use crate::fetch::{resolve_redirect_chain, ProcessingContext};
-use crate::security::redaction::{scrub_headers, scrub_url};
 
 /// Handles an HTTP request, resolving redirects and processing the response.
 ///
@@ -29,14 +28,10 @@ pub async fn handle_http_request(
     url: &str,
     start_time: std::time::Instant,
 ) -> Result<UrlProcessOutcome, Error> {
-    let scrubbed_url = scrub_url(url);
-    debug!("Resolving redirects for {scrubbed_url}");
+    debug!("Resolving redirects for {url}");
 
     let (final_url_string, redirect_chain, alt_svc_header) =
         resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.network.redirect_client).await?;
-    let scrubbed_final_url = scrub_url(&final_url_string);
-    let scrubbed_redirect_chain: Vec<String> =
-        redirect_chain.iter().map(|url| scrub_url(url)).collect();
 
     // Track redirect info metrics
     // redirect_chain includes the original URL, so:
@@ -73,13 +68,13 @@ pub async fn handle_http_request(
         }
     }
 
-    debug!("Sending request to final URL {scrubbed_final_url}");
+    debug!("Sending request to final URL {final_url_string}");
 
     // Add realistic browser headers to reduce bot detection
     // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
     // help with other detection methods (header analysis, behavioral patterns)
     // Capture actual request headers for failure tracking
-    let request_headers = scrub_headers(RequestHeaders::as_vec());
+    let request_headers = RequestHeaders::as_vec();
 
     // Build request with headers using the consolidated header builder
     let request_builder =
@@ -117,13 +112,12 @@ pub async fn handle_http_request(
                 .take(crate::config::MAX_HEADER_COUNT)
                 .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
                 .collect();
-            let response_headers = scrub_headers(response_headers);
 
             // Warn if response exceeded header count limit (potential header bomb attack)
             if header_count > crate::config::MAX_HEADER_COUNT {
                 log::warn!(
                     "Response from {} has {} headers (limit: {}), ignoring excess headers (potential header bomb attack)",
-                    scrubbed_url,
+                    url,
                     header_count,
                     crate::config::MAX_HEADER_COUNT
                 );
@@ -156,18 +150,18 @@ pub async fn handle_http_request(
                     }
 
                     log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
-                        scrubbed_url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+                        url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
                     // Attach structured failure context to error
                     let failure_context = crate::storage::failure::FailureContext {
-                        final_url: Some(scrubbed_final_url.clone()),
-                        redirect_chain: scrubbed_redirect_chain.clone(),
+                        final_url: Some(final_url_string.clone()),
+                        redirect_chain: redirect_chain.clone(),
                         response_headers: response_headers.clone(),
                         request_headers: request_headers.clone(),
                     };
                     let error = Error::from(e);
                     Err(crate::storage::failure::attach_failure_context(
-                        error.context(format!("HTTP request failed for {scrubbed_url}")),
+                        error.context(format!("HTTP request failed for {url}")),
                         failure_context,
                     ))
                 }
@@ -176,19 +170,19 @@ pub async fn handle_http_request(
         Err(e) => {
             update_error_stats(&ctx.config.error_stats, &e);
             log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
-                scrubbed_url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
+                url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
             // Attach structured failure context to error
             // For connection errors, there are no response headers
             let failure_context = crate::storage::failure::FailureContext {
-                final_url: Some(scrubbed_final_url),
-                redirect_chain: scrubbed_redirect_chain,
+                final_url: Some(final_url_string),
+                redirect_chain: redirect_chain.clone(),
                 response_headers: Vec::new(), // No response for connection errors
                 request_headers: request_headers.clone(),
             };
             let error = Error::from(e);
             Err(crate::storage::failure::attach_failure_context(
-                error.context(format!("HTTP request failed for {scrubbed_url}")),
+                error.context(format!("HTTP request failed for {url}")),
                 failure_context,
             ))
         }
