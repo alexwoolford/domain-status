@@ -364,6 +364,7 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         "private-key"
         | "database-connection-uri"
         | "jdbc-connection-string"
+        | "credential-bearing-url"
         | "slack-bot-token"
         | "slack-user-token"
         | "slack-legacy-token"
@@ -375,6 +376,8 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         | "vault-service-token" => SecretSeverity::Critical,
         // High
         "aws-access-token"
+        | "http-basic-auth"
+        | "mailchimp-api-key"
         | "openai-api-key"
         | "anthropic-api-key"
         | "anthropic-admin-api-key"
@@ -1118,6 +1121,122 @@ mod tests {
         assert!(
             db.is_none(),
             "should NOT detect URI without credentials; got {:?}",
+            secrets
+        );
+    }
+
+    // === HTTP Basic Auth ===
+
+    #[test]
+    fn test_detect_http_basic_auth() {
+        let body = r#"<script>xhr.setRequestHeader("Authorization", "Basic dXNlcjpzM2NyZXRQNHNz");</script>"#;
+        let secrets = detect_exposed_secrets(body);
+        let auth = secrets.iter().find(|s| s.secret_type == "http-basic-auth");
+        assert!(
+            auth.is_some(),
+            "should detect HTTP Basic Auth; got {:?}",
+            secrets
+        );
+        assert_eq!(auth.unwrap().severity, SecretSeverity::High);
+    }
+
+    #[test]
+    fn test_no_detect_http_basic_auth_too_short() {
+        // "Og==" is base64 for ":" — too short (< 6 base64 chars)
+        let body = r#"Authorization: Basic Og=="#;
+        let secrets = detect_exposed_secrets(body);
+        let auth = secrets.iter().find(|s| s.secret_type == "http-basic-auth");
+        assert!(
+            auth.is_none(),
+            "trivially short Basic auth should not match; got {:?}",
+            secrets
+        );
+    }
+
+    // === Credential-bearing URLs (https://user:pass@host) ===
+
+    #[test]
+    fn test_detect_credential_url() {
+        let body =
+            r#"fetch("https://deploy:ghp_x7K9mQ2vL8nR3pW1234567890ab@api.internal.com/v1/data")"#;
+        let secrets = detect_exposed_secrets(body);
+        let url = secrets
+            .iter()
+            .find(|s| s.secret_type == "credential-bearing-url");
+        assert!(
+            url.is_some(),
+            "should detect credential URL; got {:?}",
+            secrets
+        );
+        assert_eq!(url.unwrap().severity, SecretSeverity::Critical);
+    }
+
+    // === Mailchimp API keys ===
+
+    #[test]
+    fn test_detect_mailchimp_api_key() {
+        // Build at runtime to avoid GitHub push protection flagging the test fixture
+        let key = format!("{}-us14", "abcdef1234567890abcdef1234567890");
+        let body = format!(r#"<script>var mc_key = "mailchimp {key}";</script>"#);
+        let secrets = detect_exposed_secrets(&body);
+        let mc = secrets
+            .iter()
+            .find(|s| s.secret_type == "mailchimp-api-key");
+        assert!(
+            mc.is_some(),
+            "should detect Mailchimp API key; got {:?}",
+            secrets
+        );
+        assert_eq!(mc.unwrap().severity, SecretSeverity::High);
+    }
+
+    // === SendGrid API keys ===
+
+    #[test]
+    fn test_detect_sendgrid_api_key() {
+        // Build at runtime to avoid GitHub push protection flagging the test fixture
+        let key = format!(
+            "SG.{}.{}",
+            "ngeVfQFYQlKU0ufo8x5d1A", "TwL2iGABf9DHoTf09kqeF8tAmbihYzrnopKc1s5cr3t"
+        );
+        let body = format!(r#"apiKey: "{key}""#);
+        let secrets = detect_exposed_secrets(&body);
+        let sg = secrets
+            .iter()
+            .find(|s| s.secret_type == "sendgrid-api-token");
+        assert!(
+            sg.is_some(),
+            "should detect SendGrid API key; got {:?}",
+            secrets
+        );
+    }
+
+    // === Placeholder filtering ===
+
+    #[test]
+    fn test_no_detect_placeholder_password_in_db_uri() {
+        let body = r#"mongodb://admin:$PASSWORD@cluster.mongodb.net/db"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(
+            db.is_none(),
+            "variable placeholder $PASSWORD should not be flagged; got {:?}",
+            secrets
+        );
+    }
+
+    #[test]
+    fn test_no_detect_placeholder_xxx_in_db_uri() {
+        let body = r#"postgres://user:xxxxxxxx@db.example.com/app"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(
+            db.is_none(),
+            "redacted xxxxxxxx should not be flagged; got {:?}",
             secrets
         );
     }
