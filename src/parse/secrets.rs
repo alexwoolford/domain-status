@@ -565,6 +565,10 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     let body_lower = body.to_lowercase();
 
     for rule in &config.rules {
+        // Rules restricted to specific file paths (e.g. .tf, .hcl) are for repo scanning; skip when scanning a single blob (HTML) with no path.
+        if rule.path.is_some() {
+            continue;
+        }
         // Gitleaks prefilter: if rule has keywords, run regex only when at least one keyword appears in fragment (case-insensitive).
         if let Some(ref kws) = rule.keywords {
             if !kws.is_empty() && !kws.iter().any(|kw| body_lower.contains(kw)) {
@@ -894,6 +898,88 @@ mod tests {
             sg2.is_none(),
             "40-char hex in data-cfemail= should be allowlisted; got {:?}",
             secrets2
+        );
+    }
+
+    /// Per-rule allowlist: data-hubspot-form="uuid" is a form/embed ID, not an API key; must not be reported as hubspot-api-key.
+    #[test]
+    fn test_hubspot_allowlist_form_id_skipped() {
+        // Rule matches uppercase hex UUID; use uppercase so the rule fires, then allowlist skips.
+        let form_id = "AC4D982E-062E-4795-B5E5-718351F44BB9";
+        let body = format!(
+            r#"<div data-hubspot-form="{}" class="hs-form"></div>"#,
+            form_id
+        );
+        let secrets = detect_exposed_secrets(&body);
+        let hubspot = secrets.iter().find(|s| s.secret_type == "hubspot-api-key");
+        assert!(
+            hubspot.is_none(),
+            "data-hubspot-form= UUID should be allowlisted (form ID, not API key); got {:?}",
+            secrets
+        );
+    }
+
+    /// `HubSpot` API key in script context (no data-hubspot-form on line) must still be reported.
+    #[test]
+    fn test_hubspot_api_key_in_script_still_reported() {
+        let uuid = "AC4D982E-062E-4795-B5E5-718351F44BB9";
+        let body = format!(r#"<script>window.HUBSPOT_API_KEY="{}";</script>"#, uuid);
+        let secrets = detect_exposed_secrets(&body);
+        let hubspot = secrets.iter().find(|s| s.secret_type == "hubspot-api-key");
+        assert!(
+            hubspot.is_some(),
+            "hubspot UUID in script (no data-hubspot-form) should still be reported; got {:?}",
+            secrets
+        );
+        assert_eq!(hubspot.unwrap().matched_value, uuid);
+    }
+
+    /// `LinkedIn` client-id rule: line with extensionPointId / pageJsonFileName (block IDs) must be allowlisted.
+    #[test]
+    fn test_linkedin_client_id_allowlist_structure_skipped() {
+        let body = r#"{"blockId":"uselectrical.b2bstore@4.x:menu-item#footer-linkedin","extensionPointId":"menu-item#footer-linkedin"}"#;
+        let secrets = detect_exposed_secrets(body);
+        let linkedin = secrets
+            .iter()
+            .find(|s| s.secret_type == "linkedin-client-id");
+        assert!(
+            linkedin.is_none(),
+            "linkedin-client-id with extensionPointId/footer-linkedin should be allowlisted; got {:?}",
+            secrets
+        );
+    }
+
+    /// `Sumologic`: sumoSiteId in embed script is public site ID, not access token.
+    #[test]
+    fn test_sumologic_allowlist_site_id_skipped() {
+        let site_id = "38d92200f6b3d700b2eb2e0069250000108b3e00a638e0004c77b700ec8ea400";
+        let body = format!(
+            r#"j.dataset.sumoSiteId='{}';j.dataset.sumoPlatform='wordpress';"#,
+            site_id
+        );
+        let secrets = detect_exposed_secrets(&body);
+        let sumo = secrets
+            .iter()
+            .find(|s| s.secret_type == "sumologic-access-token");
+        assert!(
+            sumo.is_none(),
+            "sumologic sumoSiteId (public site ID) should be allowlisted; got {:?}",
+            secrets
+        );
+    }
+
+    /// Path-restricted rules (e.g. hashicorp-tf-password for .tf/.hcl) are skipped when scanning a single blob (HTML) with no file path.
+    #[test]
+    fn test_path_restricted_rule_skipped_on_html() {
+        let body = r#"<script>p_lt_ctl13_AFI_CustomRegistrationForm_plcUp_formUser_UserPassword_rfvConfirmPassword.validationGroup = "ConfirmRegForm";</script>"#;
+        let secrets = detect_exposed_secrets(body);
+        let tf_password = secrets
+            .iter()
+            .find(|s| s.secret_type == "hashicorp-tf-password");
+        assert!(
+            tf_password.is_none(),
+            "hashicorp-tf-password (path-restricted) must be skipped when scanning HTML; got {:?}",
+            secrets
         );
     }
 

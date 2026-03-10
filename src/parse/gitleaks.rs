@@ -97,6 +97,8 @@ pub struct CompiledRule {
     /// 1-based capture group index for secret extraction; None = first non-empty group.
     pub secret_group: Option<u32>,
     pub allowlists: Vec<CompiledRuleAllowlist>,
+    /// If Some, rule is restricted to file paths matching this pattern (e.g. \.tf$). When scanning a single blob (e.g. HTML) with no path, such rules are skipped.
+    pub path: Option<String>,
 }
 
 /// Full compiled config: global allowlist + rules.
@@ -306,6 +308,7 @@ fn load_compiled() -> GitleaksCompiled {
                 keywords,
                 secret_group: r.secret_group,
                 allowlists,
+                path: r.path.clone(),
             })
         })
         .collect();
