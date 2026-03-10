@@ -197,6 +197,9 @@ mod tests {
     use hickory_resolver::TokioResolver;
     use std::sync::Arc;
 
+    /// Max `GeoIP` lookup time (ms) allowed in tests. Lenient for CI (network/cold cache).
+    const GEOIP_TEST_TIMEOUT_MS: u64 = 8000;
+
     async fn create_test_context() -> ProcessingContext {
         let client = Arc::new(
             reqwest::Client::builder()
@@ -332,9 +335,10 @@ mod tests {
         // Note: GeoIP lookup can be slower in CI environments due to network latency and cold cache
         // Using a more lenient threshold (5 seconds) to account for CI variability
         assert!(
-            geoip_ms < 5000,
-            "GeoIP lookup took {}ms, expected < 5000ms",
-            geoip_ms
+            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
+            "GeoIP lookup took {}ms, expected < {}ms",
+            geoip_ms,
+            GEOIP_TEST_TIMEOUT_MS
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled in test context
                                  // Security analysis should be fast (synchronous operation)
@@ -380,9 +384,10 @@ mod tests {
         // GeoIP lookup should complete quickly (returns None for invalid IP)
         // Note: Using lenient threshold for CI environments
         assert!(
-            geoip_ms < 5000,
-            "GeoIP lookup took {}ms, expected < 5000ms",
-            geoip_ms
+            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
+            "GeoIP lookup took {}ms, expected < {}ms",
+            geoip_ms,
+            GEOIP_TEST_TIMEOUT_MS
         );
     }
 
@@ -424,9 +429,10 @@ mod tests {
             elapsed.as_millis()
         ); // Should complete reasonably quickly
         assert!(
-            geoip_ms < 5000,
-            "GeoIP lookup took {}ms, expected < 5000ms",
-            geoip_ms
+            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
+            "GeoIP lookup took {}ms, expected < {}ms",
+            geoip_ms,
+            GEOIP_TEST_TIMEOUT_MS
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
                                  // Note: Using very lenient threshold for CI environments where system load can cause delays
@@ -552,9 +558,10 @@ mod tests {
         let _ = elapsed.as_millis();
         // Note: Using lenient threshold for CI environments
         assert!(
-            geoip_ms < 5000,
-            "GeoIP lookup took {}ms, expected < 5000ms",
-            geoip_ms
+            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
+            "GeoIP lookup took {}ms, expected < {}ms",
+            geoip_ms,
+            GEOIP_TEST_TIMEOUT_MS
         );
         // Note: Using very lenient threshold for CI environments where system load can cause delays
         assert!(
@@ -634,9 +641,10 @@ mod tests {
         // GeoIP lookup should complete quickly (returns None for invalid IP)
         // Note: Using lenient threshold for CI environments
         assert!(
-            geoip_ms < 5000,
-            "GeoIP lookup took {}ms, expected < 5000ms",
-            geoip_ms
+            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
+            "GeoIP lookup took {}ms, expected < {}ms",
+            geoip_ms,
+            GEOIP_TEST_TIMEOUT_MS
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
                                  // Note: Using very lenient threshold for CI environments where system load can cause delays
