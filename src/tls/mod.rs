@@ -172,8 +172,6 @@ fn parse_certificate_info_from_der(
 /// - TCP connection fails
 /// - TLS handshake fails
 /// - Certificate parsing fails
-// Large function handling comprehensive TLS certificate extraction with connection setup and certificate parsing.
-// Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 pub async fn get_ssl_certificate_info(
     domain: String,

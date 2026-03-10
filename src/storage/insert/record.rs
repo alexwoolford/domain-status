@@ -581,8 +581,6 @@ mod tests {
         assert_eq!(row.get::<String, _>("title"), "Example Domain");
     }
 
-    // Large test function handling comprehensive batch record insertion with all enrichment data.
-    // Consider refactoring into smaller focused test functions in Phase 4.
     #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn test_insert_batch_record_with_enrichment() {

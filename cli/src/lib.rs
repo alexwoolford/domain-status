@@ -14,8 +14,8 @@ const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 #[command(
     name = "domain_status",
     about = "Domain intelligence scanner - scan URLs and export results.",
-    version = "0.0.0",
-    long_version = "0.0.0",
+    version = "0.0.0", // placeholder — overridden by clap_command() with DOMAIN_STATUS_VERSION
+    long_version = "0.0.0", // placeholder — overridden by clap_command() with DOMAIN_STATUS_VERSION
     subcommand_required = true,
     arg_required_else_help = true
 )]

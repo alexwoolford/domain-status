@@ -66,8 +66,6 @@ pub struct UrlRecordInsertParams<'a> {
 ///
 /// # Errors
 /// Returns `Err` when the transaction or any insert fails.
-// Large function handling comprehensive URL record insertion with transaction management and multiple satellite table inserts.
-// Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     with_sqlite_retry(|| insert_url_record_impl(&params)).await

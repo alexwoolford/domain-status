@@ -55,14 +55,12 @@ pub struct FailureRecordParams<'a> {
 /// This function extracts failure information from an error and inserts it
 /// into the database with all associated satellite data.
 ///
-/// On `SQLite` write failure this function panics to avoid producing incomplete data;
+/// On `SQLite` write failure this function logs an error and continues;
 /// repeated write failures indicate a disk or permissions problem.
 ///
 /// # Arguments
 ///
 /// * `params` - Parameters for failure recording
-// Large function handling comprehensive failure recording with context extraction and database insertion.
-// Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 pub async fn record_url_failure(params: FailureRecordParams<'_>) {
     let attempted_url = params.url.to_string();

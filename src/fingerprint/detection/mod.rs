@@ -2,6 +2,10 @@
 //!
 //! This module provides the main technology detection function that matches
 //! fingerprint rules against extracted HTML data, headers, cookies, and URL patterns.
+//!
+//! Note: Comments referencing wappalyzergo Go source line numbers (e.g.,
+//! `fingerprints.go:271`, `tech.go:263`) are from the original port circa 2024
+//! and may drift as the upstream project evolves.
 
 mod body;
 mod cookies;
@@ -52,8 +56,6 @@ pub struct DetectedTechnology {
     pub version: Option<String>,
 }
 
-// Large function handling comprehensive technology detection across multiple signal types.
-// Consider refactoring into smaller focused functions in Phase 4.
 #[allow(clippy::too_many_lines)]
 #[allow(dead_code)] // kept for public API and fingerprint tests; main path uses detect_technologies_blocking
 pub async fn detect_technologies(
