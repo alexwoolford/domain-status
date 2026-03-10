@@ -60,3 +60,24 @@ regexTarget = "line"
 regexes = [
     '''sumoSiteId''',
 ]
+
+# ── Additional rules: database connection URIs with embedded credentials ──
+
+# Detects database connection strings with embedded passwords in standard URI format.
+# Covers MongoDB, PostgreSQL, MySQL, Redis, RabbitMQ (AMQP), and Elasticsearch.
+# secretGroup = 2 extracts only the password portion (not the full URI).
+[[rules]]
+id = "database-connection-uri"
+description = "Database connection string with embedded credentials (password in URI)"
+regex = '''(?i)(mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis(?:s)?|amqps?|elasticsearch)://[^\s:@"'<>]+:([^\s@"'<>]{3,})@[^\s"'<>]+'''
+secretGroup = 2
+keywords = ["mongodb", "postgres", "postgresql", "mysql", "redis", "rediss", "amqp", "amqps", "elasticsearch"]
+
+# Detects JDBC connection strings with embedded credentials.
+# Format: jdbc:driver://host/db?user=X&password=Y or jdbc:driver://user:pass@host/db
+[[rules]]
+id = "jdbc-connection-string"
+description = "JDBC connection string with embedded credentials"
+regex = '''(?i)jdbc:(?:mysql|postgresql|oracle|sqlserver|mariadb|h2|sqlite):[^\s"'<>]*(?:password|passwd)=([^\s&;"'<>]{3,})'''
+secretGroup = 1
+keywords = ["jdbc"]
