@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-03-10
+
+### Changed
+- CI: remove unused `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var (no effect on Node 20 deprecation warnings).
+
 ## [0.1.16] - 2026-03-09
 
 ### Security
