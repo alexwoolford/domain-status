@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::parser::ValueSource;
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{FromArgMatches, Parser};
 use domain_status_cli::{
     ExportFormat as CliExportFormat, FailOn as CliFailOn, LogFormat as CliLogFormat,
     LogLevel as CliLogLevel,
@@ -405,7 +405,9 @@ where
         return Ok(0);
     }
 
-    let matches = match domain_status_cli::CliCommand::command().try_get_matches_from(&args) {
+    let matches = match domain_status_cli::clap_command(env!("DOMAIN_STATUS_VERSION"))
+        .try_get_matches_from(&args)
+    {
         Ok(m) => m,
         Err(e) => {
             let _ = e.print();
