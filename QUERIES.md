@@ -43,12 +43,13 @@ GROUP BY us.id
 ORDER BY redirect_count DESC;
 ```
 
-### 4. View redirect chains
+### 4. View redirect chains (with status codes per hop)
 
 ```sql
 SELECT
     us.initial_domain,
     urc.redirect_url,
+    urc.http_status,
     urc.sequence_order
 FROM url_status us
 JOIN url_redirect_chain urc ON us.id = urc.url_status_id
@@ -201,6 +202,64 @@ FROM url_status us
 JOIN url_txt_records utr ON us.id = utr.url_status_id
 WHERE utr.record_type = 'DMARC'
 ORDER BY us.final_domain;
+```
+
+### 14. Find CNAME records (CDN/hosting infrastructure)
+
+```sql
+SELECT us.final_domain, cr.cname_target
+FROM url_cname_records cr
+JOIN url_status us ON us.id = cr.url_status_id
+ORDER BY us.final_domain;
+```
+
+### 15. Find domains with IPv6 support
+
+```sql
+SELECT us.final_domain, ia.ipv6_address
+FROM url_ipv6_addresses ia
+JOIN url_status us ON us.id = ia.url_status_id
+ORDER BY us.final_domain;
+```
+
+### 16. Find CAA records (authorized certificate authorities)
+
+```sql
+SELECT us.final_domain, cr.flag, cr.tag, cr.value
+FROM url_caa_records cr
+JOIN url_status us ON us.id = cr.url_status_id
+ORDER BY us.final_domain, cr.tag;
+```
+
+## Content Fingerprinting
+
+### 17. Find domains with identical page content (same body hash)
+
+```sql
+SELECT body_sha256, COUNT(*) as cnt, GROUP_CONCAT(final_domain) as domains
+FROM url_status
+WHERE body_sha256 IS NOT NULL
+GROUP BY body_sha256
+HAVING cnt > 1;
+```
+
+### 18. Find domains sharing the same TLS certificate fingerprint
+
+```sql
+SELECT cert_fingerprint_sha256, COUNT(*) as cnt, GROUP_CONCAT(final_domain) as domains
+FROM url_status
+WHERE cert_fingerprint_sha256 IS NOT NULL
+GROUP BY cert_fingerprint_sha256
+HAVING cnt > 1;
+```
+
+### 19. HTTP version distribution
+
+```sql
+SELECT http_version, COUNT(*) as cnt
+FROM url_status
+GROUP BY http_version
+ORDER BY cnt DESC;
 ```
 
 ## GeoIP Analysis
