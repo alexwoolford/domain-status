@@ -128,6 +128,9 @@ pub enum ErrorType {
     DnsNsLookupError,
     DnsTxtLookupError,
     DnsMxLookupError,
+    DnsCnameLookupError,
+    DnsAaaaLookupError,
+    DnsCaaLookupError,
     // TLS errors
     TlsCertificateError,
     // Technology detection errors
@@ -194,6 +197,9 @@ impl ErrorType {
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
             ErrorType::DnsTxtLookupError => "DNS TXT lookup error",
             ErrorType::DnsMxLookupError => "DNS MX lookup error",
+            ErrorType::DnsCnameLookupError => "DNS CNAME lookup error",
+            ErrorType::DnsAaaaLookupError => "DNS AAAA lookup error",
+            ErrorType::DnsCaaLookupError => "DNS CAA lookup error",
             ErrorType::TlsCertificateError => "TLS certificate error",
             ErrorType::TechnologyDetectionError => "Technology detection error",
         }

@@ -102,6 +102,8 @@ pub async fn insert_batch_record(
         redirect_chain: &record.redirect_chain,
         technologies: &record.technologies,
         subject_alternative_names: &record.subject_alternative_names,
+        aaaa_records: &record.url_record.aaaa_records,
+        caa_records: &record.url_record.caa_records,
     })
     .await
     .map_err(|e| {
@@ -546,6 +548,9 @@ mod tests {
             content_type: None,
             canonical_url: None,
             cert_fingerprint_sha256: None,
+            cname_chain: None,
+            aaaa_records: None,
+            caa_records: None,
         }
     }
 
@@ -907,6 +912,8 @@ mod tests {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert URL record");

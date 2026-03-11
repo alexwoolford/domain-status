@@ -70,6 +70,9 @@ pub(crate) fn build_url_record(
         content_type: resp_data.content_type.clone(),
         canonical_url: html_data.canonical_url.clone(),
         cert_fingerprint_sha256: tls_dns_data.cert_fingerprint_sha256.clone(),
+        cname_chain: additional_dns.cname_chain.clone(),
+        aaaa_records: additional_dns.aaaa_records.clone(),
+        caa_records: additional_dns.caa_records.clone(),
     }
 }
 
@@ -267,6 +270,9 @@ mod tests {
             mx_records: Some("10 mail.example.com".to_string()),
             spf_record: Some("v=spf1 include:_spf.google.com ~all".to_string()),
             dmarc_record: Some("v=DMARC1; p=none".to_string()),
+            cname_chain: None,
+            aaaa_records: None,
+            caa_records: None,
         }
     }
 

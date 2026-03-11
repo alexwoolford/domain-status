@@ -124,6 +124,11 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "nameserver_count",
         "txt_record_count",
         "mx_record_count",
+        "cname_chain",
+        "ipv6_addresses",
+        "ipv6_count",
+        "caa_records",
+        "caa_count",
         "spf_record",
         "dmarc_record",
         "analytics_ids",
@@ -244,6 +249,16 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
             export_row.certificate_san_count.to_string(),
             export_row.oids_str.clone(),
             export_row.oid_count.to_string(),
+            export_row.main.cname_chain.clone().unwrap_or_default(),
+            export_row.ipv6_addresses.join(", "),
+            export_row.ipv6_count.to_string(),
+            export_row
+                .caa_records
+                .iter()
+                .map(|r| format!("{}:{}:{}", r.flag, r.tag, r.value))
+                .collect::<Vec<_>>()
+                .join(", "),
+            export_row.caa_count.to_string(),
             export_row.nameserver_count.to_string(),
             export_row.txt_count.to_string(),
             export_row.mx_count.to_string(),

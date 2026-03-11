@@ -187,6 +187,130 @@ pub async fn lookup_mx_records(
     }
 }
 
+/// Queries CNAME records for a domain.
+///
+/// Returns the CNAME target hostnames. Most domains have 0 or 1 CNAME,
+/// but chains are possible (A -> B -> C).
+pub async fn lookup_cname_records(
+    domain: &str,
+    resolver: &TokioResolver,
+) -> Result<Vec<String>, Error> {
+    match resolver.lookup(domain, RecordType::CNAME).await {
+        Ok(lookup) => {
+            let cnames: Vec<String> = lookup
+                .iter()
+                .filter_map(|rdata| {
+                    if let RData::CNAME(name) = rdata {
+                        Some(name.to_utf8())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(cnames)
+        }
+        Err(e) => {
+            if e.is_no_records_found() || e.is_nx_domain() {
+                Ok(Vec::new())
+            } else {
+                let is_timeout = e
+                    .proto()
+                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                if is_timeout {
+                    log::warn!("CNAME record lookup timed out for {domain}: {e}");
+                } else {
+                    log::warn!("Failed to lookup CNAME records for {domain}: {e}");
+                }
+                Err(e.into())
+            }
+        }
+    }
+}
+
+/// Queries AAAA (IPv6) records for a domain.
+///
+/// Returns IPv6 addresses as strings.
+pub async fn lookup_aaaa_records(
+    domain: &str,
+    resolver: &TokioResolver,
+) -> Result<Vec<String>, Error> {
+    match resolver.lookup(domain, RecordType::AAAA).await {
+        Ok(lookup) => {
+            let addresses: Vec<String> = lookup
+                .iter()
+                .filter_map(|rdata| {
+                    if let RData::AAAA(addr) = rdata {
+                        Some(addr.0.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(addresses)
+        }
+        Err(e) => {
+            if e.is_no_records_found() || e.is_nx_domain() {
+                Ok(Vec::new())
+            } else {
+                let is_timeout = e
+                    .proto()
+                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                if is_timeout {
+                    log::warn!("AAAA record lookup timed out for {domain}: {e}");
+                } else {
+                    log::warn!("Failed to lookup AAAA records for {domain}: {e}");
+                }
+                Err(e.into())
+            }
+        }
+    }
+}
+
+/// Queries CAA (Certificate Authority Authorization) records for a domain.
+///
+/// Returns a vector of (flag, tag, value) tuples where:
+/// - flag: 0 = non-critical, 128 = issuer-critical
+/// - tag: "issue", "issuewild", or "iodef"
+/// - value: CA domain or reporting URI
+pub async fn lookup_caa_records(
+    domain: &str,
+    resolver: &TokioResolver,
+) -> Result<Vec<(u8, String, String)>, Error> {
+    match resolver.lookup(domain, RecordType::CAA).await {
+        Ok(lookup) => {
+            let records: Vec<(u8, String, String)> = lookup
+                .iter()
+                .filter_map(|rdata| {
+                    if let RData::CAA(caa) = rdata {
+                        let flag = if caa.issuer_critical() { 128u8 } else { 0u8 };
+                        let tag = caa.tag().as_str().to_string();
+                        let value = String::from_utf8_lossy(caa.raw_value()).to_string();
+                        Some((flag, tag, value))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(records)
+        }
+        Err(e) => {
+            if e.is_no_records_found() || e.is_nx_domain() {
+                Ok(Vec::new())
+            } else {
+                let is_timeout = e
+                    .proto()
+                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                if is_timeout {
+                    log::warn!("CAA record lookup timed out for {domain}: {e}");
+                } else {
+                    log::warn!("Failed to lookup CAA records for {domain}: {e}");
+                }
+                Err(e.into())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::{MAX_TXT_RECORD_COUNT, MAX_TXT_RECORD_SIZE};

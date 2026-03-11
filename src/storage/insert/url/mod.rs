@@ -14,9 +14,9 @@ use super::retry::with_sqlite_retry;
 use super::utils::naive_datetime_to_millis;
 
 use satellite::{
-    insert_certificate_sans, insert_http_headers, insert_mx_records, insert_nameservers,
-    insert_oids, insert_redirect_chain, insert_security_headers, insert_technologies,
-    insert_txt_records,
+    insert_caa_records, insert_certificate_sans, insert_http_headers, insert_ipv6_addresses,
+    insert_mx_records, insert_nameservers, insert_oids, insert_redirect_chain,
+    insert_security_headers, insert_technologies, insert_txt_records,
 };
 
 /// Parameters for inserting a URL record.
@@ -41,6 +41,10 @@ pub struct UrlRecordInsertParams<'a> {
     pub technologies: &'a [crate::fingerprint::DetectedTechnology],
     /// Vector of DNS names from certificate SAN extension (will be inserted into `url_certificate_sans` table)
     pub subject_alternative_names: &'a [String],
+    /// AAAA (IPv6) records JSON (will be inserted into `url_ipv6_addresses` table)
+    pub aaaa_records: &'a Option<String>,
+    /// CAA records JSON (will be inserted into `url_caa_records` table)
+    pub caa_records: &'a Option<String>,
 }
 
 /// Inserts a `UrlRecord` into the database with retry logic for transient errors.
@@ -95,8 +99,8 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
             spf_record, dmarc_record, cipher_suite, key_algorithm, run_id,
             body_sha256, content_length, http_version, body_word_count, body_line_count,
-            content_type, canonical_url, cert_fingerprint_sha256
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            content_type, canonical_url, cert_fingerprint_sha256, cname_chain
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, final_domain) DO UPDATE SET
             initial_domain=excluded.initial_domain,
             ip_address=excluded.ip_address,
@@ -126,7 +130,8 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             body_line_count=excluded.body_line_count,
             content_type=excluded.content_type,
             canonical_url=excluded.canonical_url,
-            cert_fingerprint_sha256=excluded.cert_fingerprint_sha256
+            cert_fingerprint_sha256=excluded.cert_fingerprint_sha256,
+            cname_chain=excluded.cname_chain
         RETURNING id",
     )
     .bind(&params.record.initial_domain)
@@ -159,6 +164,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(&params.record.content_type)
     .bind(&params.record.canonical_url)
     .bind(&params.record.cert_fingerprint_sha256)
+    .bind(&params.record.cname_chain)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -211,6 +217,8 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     insert_oids(&mut tx, url_status_id, params.oids).await;
     insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await;
     insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await;
+    insert_ipv6_addresses(&mut tx, url_status_id, params.aaaa_records).await;
+    insert_caa_records(&mut tx, url_status_id, params.caa_records).await;
 
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.
@@ -301,6 +309,9 @@ mod tests {
             content_type: None,
             canonical_url: None,
             cert_fingerprint_sha256: None,
+            cname_chain: None,
+            aaaa_records: None,
+            caa_records: None,
         }
     }
 
@@ -325,6 +336,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await;
 
@@ -377,6 +390,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");
@@ -422,6 +437,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");
@@ -472,6 +489,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");
@@ -524,6 +543,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");
@@ -540,6 +561,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to upsert record");
@@ -594,6 +617,8 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await;
 

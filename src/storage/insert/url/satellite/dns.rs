@@ -112,6 +112,85 @@ pub(crate) async fn insert_mx_records(
     }
 }
 
+/// Inserts IPv6 addresses into `url_ipv6_addresses` table using batch insert.
+pub(crate) async fn insert_ipv6_addresses(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    aaaa_records_json: &Option<String>,
+) {
+    if let Some(addrs) = parse_json_array(aaaa_records_json) {
+        if addrs.is_empty() {
+            return;
+        }
+
+        if let Err(e) = insert_single_column_batch(
+            tx,
+            "url_ipv6_addresses",
+            "url_status_id",
+            "ipv6_address",
+            url_status_id,
+            &addrs,
+            Some("ON CONFLICT(url_status_id, ipv6_address) DO NOTHING"),
+        )
+        .await
+        {
+            log::warn!(
+                "Failed to batch insert {} IPv6 addresses for url_status_id {}: {}",
+                addrs.len(),
+                url_status_id,
+                e
+            );
+        }
+    }
+}
+
+/// Inserts CAA records into `url_caa_records` table using batch insert.
+pub(crate) async fn insert_caa_records(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    caa_records_json: &Option<String>,
+) {
+    if let Some(ref json_str) = caa_records_json {
+        let parsed: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if parsed.is_empty() {
+            return;
+        }
+
+        let query = super::super::super::utils::build_batch_insert_query(
+            "url_caa_records",
+            &["url_status_id", "flag", "tag", "value"],
+            parsed.len(),
+            Some("ON CONFLICT(url_status_id, tag, value) DO UPDATE SET flag=excluded.flag"),
+        );
+
+        let mut query_builder = sqlx::query(&query);
+        for record in &parsed {
+            let flag = record["flag"].as_u64().unwrap_or(0);
+            let tag = record["tag"].as_str().unwrap_or("");
+            let value = record["value"].as_str().unwrap_or("");
+            #[allow(clippy::cast_possible_truncation)]
+            let flag_i32 = flag as i32;
+            query_builder = query_builder
+                .bind(url_status_id)
+                .bind(flag_i32)
+                .bind(tag)
+                .bind(value);
+        }
+
+        if let Err(e) = query_builder.execute(&mut **tx).await {
+            log::warn!(
+                "Failed to batch insert {} CAA records for url_status_id {}: {}",
+                parsed.len(),
+                url_status_id,
+                e
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

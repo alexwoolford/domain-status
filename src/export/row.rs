@@ -115,6 +115,7 @@ pub struct MainRowData {
     pub content_type: Option<String>,
     pub canonical_url: Option<String>,
     pub cert_fingerprint_sha256: Option<String>,
+    pub cname_chain: Option<String>,
 }
 
 /// A single redirect entry.
@@ -145,6 +146,14 @@ pub struct WhoisData {
     pub creation_date_ms: Option<i64>,
     pub expiration_date_ms: Option<i64>,
     pub registrant_country: Option<String>,
+}
+
+/// CAA record for export.
+#[derive(Debug)]
+pub struct CaaRecord {
+    pub flag: i64,
+    pub tag: String,
+    pub value: String,
 }
 
 /// All data for a single export row.
@@ -239,6 +248,14 @@ pub struct ExportRow {
     /// Exposed secrets detected in HTML
     pub exposed_secrets: Vec<ExposedSecretRecord>,
     pub exposed_secret_count: usize,
+
+    /// IPv6 addresses
+    pub ipv6_addresses: Vec<String>,
+    pub ipv6_count: usize,
+
+    /// CAA records
+    pub caa_records: Vec<CaaRecord>,
+    pub caa_count: usize,
 }
 
 /// Key HTTP headers to include in exports.
@@ -295,6 +312,7 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         content_type: row.get("content_type"),
         canonical_url: row.get("canonical_url"),
         cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),
+        cname_chain: row.get("cname_chain"),
     }
 }
 
@@ -509,6 +527,36 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     let txt_count = txt_records.len() as i64;
     let mx_count = mx_records.len() as i64;
 
+    // Fetch IPv6 addresses
+    let ipv6_addresses: Vec<String> = sqlx::query(
+        "SELECT ipv6_address FROM url_ipv6_addresses WHERE url_status_id = ? ORDER BY ipv6_address LIMIT ?",
+    )
+    .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| r.get::<String, _>("ipv6_address"))
+    .collect();
+    let ipv6_count = ipv6_addresses.len();
+
+    // Fetch CAA records
+    let caa_records: Vec<CaaRecord> = sqlx::query(
+        "SELECT flag, tag, value FROM url_caa_records WHERE url_status_id = ? ORDER BY tag, value LIMIT ?",
+    )
+    .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| CaaRecord {
+        flag: r.get("flag"),
+        tag: r.get("tag"),
+        value: r.get("value"),
+    })
+    .collect();
+    let caa_count = caa_records.len();
+
     // Fetch analytics IDs
     let (analytics_ids_str, analytics_count) = fetch_key_value_list(
         pool,
@@ -716,6 +764,10 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         contact_link_count,
         exposed_secrets,
         exposed_secret_count,
+        ipv6_addresses,
+        ipv6_count,
+        caa_records,
+        caa_count,
     })
 }
 

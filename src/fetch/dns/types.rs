@@ -26,7 +26,7 @@ pub struct TlsDnsResult {
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>, // (error_type, error_message)
 }
 
-/// Additional DNS records (NS, TXT, MX).
+/// Additional DNS records (NS, TXT, MX, CNAME, AAAA, CAA).
 #[derive(Debug)]
 pub(crate) struct AdditionalDnsData {
     pub(crate) nameservers: Option<String>,
@@ -34,6 +34,9 @@ pub(crate) struct AdditionalDnsData {
     pub(crate) mx_records: Option<String>,
     pub(crate) spf_record: Option<String>,
     pub(crate) dmarc_record: Option<String>,
+    pub(crate) cname_chain: Option<String>,
+    pub(crate) aaaa_records: Option<String>,
+    pub(crate) caa_records: Option<String>,
 }
 
 /// Result of fetching additional DNS records, including any partial failures.
