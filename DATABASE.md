@@ -2,7 +2,7 @@
 
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
-The schema is created by `migrations/0001_initial_schema.sql` and follows a simple pattern:
+The schema is created by migrations (`migrations/0001_initial_schema.sql` through `migrations/0006_osint_signals.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
@@ -35,6 +35,9 @@ erDiagram
     url_status ||--o{ url_contact_links : has
     url_status ||--o{ url_exposed_secrets : has
     url_status ||--o{ url_partial_failures : has
+    url_status ||--o{ url_cname_records : has
+    url_status ||--o{ url_ipv6_addresses : has
+    url_status ||--o{ url_caa_records : has
 
     url_failures ||--o{ url_failure_redirect_chain : has
     url_failures ||--o{ url_failure_response_headers : has
@@ -96,6 +99,14 @@ Important characteristics:
 | `ssl_cert_valid_to_ms` | `INTEGER` | Epoch milliseconds |
 | `spf_record` | `TEXT` | Convenience extraction from TXT records |
 | `dmarc_record` | `TEXT` | Convenience extraction from TXT records |
+| `body_sha256` | `TEXT` | SHA-256 hash of the response body (content fingerprinting) |
+| `content_length` | `INTEGER` | Response body length in bytes |
+| `http_version` | `TEXT` | HTTP protocol version (`HTTP/1.1`, `HTTP/2`, etc.) |
+| `body_word_count` | `INTEGER` | Word count of the response body |
+| `body_line_count` | `INTEGER` | Line count of the response body |
+| `content_type` | `TEXT` | Content-Type header value |
+| `canonical_url` | `TEXT` | URL from `<link rel="canonical">` |
+| `cert_fingerprint_sha256` | `TEXT` | SHA-256 hash of the leaf TLS certificate DER |
 | `observed_at_ms` | `INTEGER NOT NULL` | Observation timestamp |
 | `run_id` | `TEXT` | FK to `runs.run_id` |
 
@@ -142,10 +153,13 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 
 | Table | Purpose | Key columns |
 |------|---------|-------------|
-| `url_redirect_chain` | Ordered redirect history | `sequence_order`, `redirect_url` |
+| `url_redirect_chain` | Ordered redirect history | `sequence_order`, `redirect_url`, `http_status` |
 | `url_nameservers` | Expanded nameserver rows | `nameserver` |
 | `url_txt_records` | Expanded TXT record rows | `record_type`, `record_value` |
 | `url_mx_records` | Expanded MX rows | `priority`, `mail_exchange` |
+| `url_cname_records` | CNAME targets (CDN/hosting infrastructure) | `cname_target` |
+| `url_ipv6_addresses` | AAAA records (IPv6 dual-stack detection) | `ipv6_address` |
+| `url_caa_records` | Certificate Authority Authorization | `flag`, `tag`, `value` |
 
 ### HTTP and TLS satellites
 
