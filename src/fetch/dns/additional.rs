@@ -6,8 +6,8 @@
 use log::debug;
 
 use crate::dns::{
-    extract_dmarc_record, extract_spf_record, lookup_mx_records, lookup_ns_records,
-    lookup_txt_records,
+    extract_dmarc_record, extract_spf_record, lookup_aaaa_records, lookup_caa_records,
+    lookup_cname_records, lookup_mx_records, lookup_ns_records, lookup_txt_records,
 };
 use crate::fetch::utils::serialize_json_with_default;
 
@@ -24,16 +24,21 @@ use super::types::{AdditionalDnsData, AdditionalDnsResult};
 /// # Returns
 ///
 /// Returns DNS data and any partial failures (errors that didn't prevent processing).
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 pub(crate) async fn fetch_additional_dns_records(
     final_domain: &str,
     resolver: &hickory_resolver::TokioResolver,
     error_stats: &crate::error_handling::ProcessingStats,
 ) -> AdditionalDnsResult {
-    // Query additional DNS records (NS, TXT, MX) in parallel
-    let (ns_result, txt_result, mx_result) = tokio::join!(
+    // Query additional DNS records (NS, TXT, MX, CNAME, AAAA, CAA) in parallel
+    let (ns_result, txt_result, mx_result, cname_result, aaaa_result, caa_result) = tokio::join!(
         lookup_ns_records(final_domain, resolver),
         lookup_txt_records(final_domain, resolver),
-        lookup_mx_records(final_domain, resolver)
+        lookup_mx_records(final_domain, resolver),
+        lookup_cname_records(final_domain, resolver),
+        lookup_aaaa_records(final_domain, resolver),
+        lookup_caa_records(final_domain, resolver)
     );
 
     let mut partial_failures = Vec::new();
@@ -133,6 +138,79 @@ pub(crate) async fn fetch_additional_dns_records(
         }
     };
 
+    // Process CNAME results
+    let cname_chain = match cname_result {
+        Ok(cnames) if !cnames.is_empty() => {
+            debug!("Found {} CNAME records for {}", cnames.len(), final_domain);
+            Some(serialize_json_with_default(&cnames, "[]"))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("Failed to lookup CNAME records for {final_domain}: {e}");
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsCnameLookupError);
+            let error_msg = format!("Failed to lookup CNAME records for {final_domain}: {e}");
+            let truncated_msg =
+                crate::utils::sanitize::sanitize_and_truncate_error_message(&error_msg);
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsCnameLookupError,
+                truncated_msg,
+            ));
+            None
+        }
+    };
+
+    // Process AAAA (IPv6) results
+    let aaaa_records = match aaaa_result {
+        Ok(addrs) if !addrs.is_empty() => {
+            debug!("Found {} AAAA records for {}", addrs.len(), final_domain);
+            Some(serialize_json_with_default(&addrs, "[]"))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("Failed to lookup AAAA records for {final_domain}: {e}");
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsAaaaLookupError);
+            let error_msg = format!("Failed to lookup AAAA records for {final_domain}: {e}");
+            let truncated_msg =
+                crate::utils::sanitize::sanitize_and_truncate_error_message(&error_msg);
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsAaaaLookupError,
+                truncated_msg,
+            ));
+            None
+        }
+    };
+
+    // Process CAA results
+    let caa_records = match caa_result {
+        Ok(caas) if !caas.is_empty() => {
+            debug!("Found {} CAA records for {}", caas.len(), final_domain);
+            let caa_json: Vec<serde_json::Value> = caas
+                .into_iter()
+                .map(|(flag, tag, value)| {
+                    serde_json::json!({
+                        "flag": flag,
+                        "tag": tag,
+                        "value": value
+                    })
+                })
+                .collect();
+            Some(serialize_json_with_default(&caa_json, "[]"))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("Failed to lookup CAA records for {final_domain}: {e}");
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsCaaLookupError);
+            let error_msg = format!("Failed to lookup CAA records for {final_domain}: {e}");
+            let truncated_msg =
+                crate::utils::sanitize::sanitize_and_truncate_error_message(&error_msg);
+            partial_failures.push((
+                crate::error_handling::ErrorType::DnsCaaLookupError,
+                truncated_msg,
+            ));
+            None
+        }
+    };
+
     AdditionalDnsResult {
         data: AdditionalDnsData {
             nameservers,
@@ -140,6 +218,9 @@ pub(crate) async fn fetch_additional_dns_records(
             mx_records,
             spf_record,
             dmarc_record,
+            cname_chain,
+            aaaa_records,
+            caa_records,
         },
         partial_failures,
     }

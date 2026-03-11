@@ -88,6 +88,9 @@ fn create_test_record(domain: &str, run_id: &str) -> UrlRecord {
         content_type: None,
         canonical_url: None,
         cert_fingerprint_sha256: None,
+        cname_chain: None,
+        aaaa_records: None,
+        caa_records: None,
     }
 }
 
@@ -142,6 +145,8 @@ async fn test_database_growth_moderate() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");
@@ -284,6 +289,8 @@ async fn test_database_performance_degradation() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");
@@ -384,6 +391,8 @@ async fn test_wal_growth_without_checkpointing() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            aaaa_records: &None,
+            caa_records: &None,
         })
         .await
         .expect("Failed to insert record");

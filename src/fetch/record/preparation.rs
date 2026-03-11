@@ -308,6 +308,9 @@ mod tests {
             mx_records: None,
             spf_record: None,
             dmarc_record: None,
+            cname_chain: None,
+            aaaa_records: None,
+            caa_records: None,
         }
     }
 

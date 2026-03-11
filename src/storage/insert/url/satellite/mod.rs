@@ -21,7 +21,10 @@ mod tests;
 
 // Re-export all public functions
 pub(crate) use certificates::{insert_certificate_sans, insert_oids};
-pub(crate) use dns::{insert_mx_records, insert_nameservers, insert_txt_records};
+pub(crate) use dns::{
+    insert_caa_records, insert_ipv6_addresses, insert_mx_records, insert_nameservers,
+    insert_txt_records,
+};
 pub(crate) use headers::{insert_http_headers, insert_security_headers};
 pub(crate) use redirects::insert_redirect_chain;
 pub(crate) use technologies::insert_technologies;

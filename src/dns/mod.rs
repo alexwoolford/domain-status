@@ -19,7 +19,10 @@ mod resolution;
 
 // Re-export public API
 pub use extract::{extract_dmarc_record, extract_spf_record};
-pub use records::{lookup_mx_records, lookup_ns_records, lookup_txt_records};
+pub use records::{
+    lookup_aaaa_records, lookup_caa_records, lookup_cname_records, lookup_mx_records,
+    lookup_ns_records, lookup_txt_records,
+};
 pub use resolution::{resolve_host_to_ip, reverse_dns_lookup};
 
 #[cfg(test)]

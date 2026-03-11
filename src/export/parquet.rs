@@ -106,6 +106,28 @@ fn build_schema() -> Schema {
             false,
         ),
         // DNS
+        Field::new("cname_chain", DataType::Utf8, true),
+        Field::new(
+            "ipv6_addresses",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
+        Field::new(
+            "caa_records",
+            DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Struct(
+                    vec![
+                        Field::new("flag", DataType::Int64, false),
+                        Field::new("tag", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, false),
+                    ]
+                    .into(),
+                ),
+                true,
+            ))),
+            false,
+        ),
         Field::new("spf_record", DataType::Utf8, true),
         Field::new("dmarc_record", DataType::Utf8, true),
         Field::new(
@@ -411,6 +433,16 @@ fn write_batch(
     let mut cipher_suite_b = StringBuilder::new();
     let mut key_algorithm_b = StringBuilder::new();
     let mut cert_fingerprint_sha256_b = StringBuilder::new();
+    let mut cname_chain_b = StringBuilder::new();
+    let mut ipv6_addresses_b = ListBuilder::new(StringBuilder::new());
+    let mut caa_records_b = ListBuilder::new(StructBuilder::from_fields(
+        vec![
+            Field::new("flag", DataType::Int64, false),
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, false),
+        ],
+        0,
+    ));
     let mut spf_record_b = StringBuilder::new();
     let mut dmarc_record_b = StringBuilder::new();
     let mut geoip_cc_b = StringBuilder::new();
@@ -621,6 +653,34 @@ fn write_batch(
             cert_oids_b.values().append_value(&oid);
         }
         cert_oids_b.append(true);
+
+        // DNS - Tier 2 additions
+        append_opt_str(&mut cname_chain_b, &row.main.cname_chain);
+
+        for addr in &row.ipv6_addresses {
+            ipv6_addresses_b.values().append_value(addr);
+        }
+        ipv6_addresses_b.append(true);
+
+        for caa in &row.caa_records {
+            caa_records_b
+                .values()
+                .field_builder::<Int64Builder>(0)
+                .unwrap()
+                .append_value(caa.flag);
+            caa_records_b
+                .values()
+                .field_builder::<StringBuilder>(1)
+                .unwrap()
+                .append_value(&caa.tag);
+            caa_records_b
+                .values()
+                .field_builder::<StringBuilder>(2)
+                .unwrap()
+                .append_value(&caa.value);
+            caa_records_b.values().append(true);
+        }
+        caa_records_b.append(true);
 
         // DNS
         append_opt_str(&mut spf_record_b, &row.main.spf_record);
@@ -892,6 +952,9 @@ fn write_batch(
         Arc::new(cert_fingerprint_sha256_b.finish()),
         Arc::new(cert_sans_b.finish()),
         Arc::new(cert_oids_b.finish()),
+        Arc::new(cname_chain_b.finish()),
+        Arc::new(ipv6_addresses_b.finish()),
+        Arc::new(caa_records_b.finish()),
         Arc::new(spf_record_b.finish()),
         Arc::new(dmarc_record_b.finish()),
         Arc::new(nameservers_b.finish()),
@@ -1256,8 +1319,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(
             batch.num_columns(),
-            65,
-            "Should have 65 columns matching schema"
+            68,
+            "Should have 68 columns matching schema"
         );
 
         // Verify the 'url' column
