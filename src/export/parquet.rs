@@ -106,7 +106,11 @@ fn build_schema() -> Schema {
             false,
         ),
         // DNS
-        Field::new("cname_chain", DataType::Utf8, true),
+        Field::new(
+            "cname_records",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            false,
+        ),
         Field::new(
             "ipv6_addresses",
             DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
@@ -433,7 +437,7 @@ fn write_batch(
     let mut cipher_suite_b = StringBuilder::new();
     let mut key_algorithm_b = StringBuilder::new();
     let mut cert_fingerprint_sha256_b = StringBuilder::new();
-    let mut cname_chain_b = StringBuilder::new();
+    let mut cname_records_b = ListBuilder::new(StringBuilder::new());
     let mut ipv6_addresses_b = ListBuilder::new(StringBuilder::new());
     let mut caa_records_b = ListBuilder::new(StructBuilder::from_fields(
         vec![
@@ -655,7 +659,10 @@ fn write_batch(
         cert_oids_b.append(true);
 
         // DNS - Tier 2 additions
-        append_opt_str(&mut cname_chain_b, &row.main.cname_chain);
+        for cname in &row.cname_records {
+            cname_records_b.values().append_value(cname);
+        }
+        cname_records_b.append(true);
 
         for addr in &row.ipv6_addresses {
             ipv6_addresses_b.values().append_value(addr);
@@ -952,7 +959,7 @@ fn write_batch(
         Arc::new(cert_fingerprint_sha256_b.finish()),
         Arc::new(cert_sans_b.finish()),
         Arc::new(cert_oids_b.finish()),
-        Arc::new(cname_chain_b.finish()),
+        Arc::new(cname_records_b.finish()),
         Arc::new(ipv6_addresses_b.finish()),
         Arc::new(caa_records_b.finish()),
         Arc::new(spf_record_b.finish()),

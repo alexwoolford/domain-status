@@ -40,4 +40,7 @@ pub struct BatchRecord {
     pub whois: Option<WhoisResult>,
     pub partial_failures: Vec<UrlPartialFailureRecord>, // DNS/TLS errors that didn't prevent processing
     pub favicon: Option<crate::fetch::favicon::FaviconData>, // Favicon hash + base64 for Shodan-compatible threat intel
+    pub cname_records: Option<String>,                       // CNAME records JSON (satellite table)
+    pub aaaa_records: Option<String>, // IPv6 addresses JSON (satellite table)
+    pub caa_records: Option<String>,  // CAA records JSON (satellite table)
 }

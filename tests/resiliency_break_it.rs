@@ -82,9 +82,6 @@ fn create_test_record(domain: &str) -> UrlRecord {
         content_type: None,
         canonical_url: None,
         cert_fingerprint_sha256: None,
-        cname_chain: None,
-        aaaa_records: None,
-        caa_records: None,
     }
 }
 
@@ -134,6 +131,7 @@ async fn test_connection_pool_exhaustion_during_cancellation() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),
@@ -209,6 +207,7 @@ async fn test_checkpoint_during_active_transactions() {
                 redirect_chain: &[],
                 technologies: &[],
                 subject_alternative_names: &[],
+                cname_records: &None,
                 aaaa_records: &None,
                 caa_records: &None,
             })
@@ -287,6 +286,7 @@ async fn test_cascade_cancellation_timing_attack() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),
@@ -372,6 +372,7 @@ async fn test_connection_leak_from_cancellations() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),
@@ -399,6 +400,7 @@ async fn test_connection_leak_from_cancellations() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         }),
@@ -447,6 +449,7 @@ async fn test_read_consistency_during_rollback() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),

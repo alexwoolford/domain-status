@@ -115,7 +115,6 @@ pub struct MainRowData {
     pub content_type: Option<String>,
     pub canonical_url: Option<String>,
     pub cert_fingerprint_sha256: Option<String>,
-    pub cname_chain: Option<String>,
 }
 
 /// A single redirect entry.
@@ -249,6 +248,10 @@ pub struct ExportRow {
     pub exposed_secrets: Vec<ExposedSecretRecord>,
     pub exposed_secret_count: usize,
 
+    /// CNAME records
+    pub cname_records: Vec<String>,
+    pub cname_count: usize,
+
     /// IPv6 addresses
     pub ipv6_addresses: Vec<String>,
     pub ipv6_count: usize,
@@ -312,7 +315,6 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         content_type: row.get("content_type"),
         canonical_url: row.get("canonical_url"),
         cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),
-        cname_chain: row.get("cname_chain"),
     }
 }
 
@@ -467,6 +469,7 @@ async fn fetch_social_and_structured(
 }
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<ExportRow> {
     let url_status_id = main.id;
 
@@ -526,6 +529,19 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     let nameserver_count = nameservers.len() as i64;
     let txt_count = txt_records.len() as i64;
     let mx_count = mx_records.len() as i64;
+
+    // Fetch CNAME records
+    let cname_records: Vec<String> = sqlx::query(
+        "SELECT cname_target FROM url_cname_records WHERE url_status_id = ? ORDER BY cname_target LIMIT ?",
+    )
+    .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| r.get::<String, _>("cname_target"))
+    .collect();
+    let cname_count = cname_records.len();
 
     // Fetch IPv6 addresses
     let ipv6_addresses: Vec<String> = sqlx::query(
@@ -764,6 +780,8 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         contact_link_count,
         exposed_secrets,
         exposed_secret_count,
+        cname_records,
+        cname_count,
         ipv6_addresses,
         ipv6_count,
         caa_records,

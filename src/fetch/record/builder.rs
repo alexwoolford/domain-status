@@ -70,9 +70,6 @@ pub(crate) fn build_url_record(
         content_type: resp_data.content_type.clone(),
         canonical_url: html_data.canonical_url.clone(),
         cert_fingerprint_sha256: tls_dns_data.cert_fingerprint_sha256.clone(),
-        cname_chain: additional_dns.cname_chain.clone(),
-        aaaa_records: additional_dns.aaaa_records.clone(),
-        caa_records: additional_dns.caa_records.clone(),
     }
 }
 
@@ -108,6 +105,8 @@ pub struct BatchRecordParams {
     pub run_id: Option<String>,
     /// Favicon data (hash + base64)
     pub favicon: Option<crate::fetch::favicon::FaviconData>,
+    /// Additional DNS data (CNAME, AAAA, CAA) for satellite table insertion
+    pub additional_dns: crate::fetch::dns::AdditionalDnsData,
 }
 
 /// Builds a `BatchRecord` from all extracted data.
@@ -178,6 +177,9 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         whois: params.whois_data,
         partial_failures: partial_failure_records,
         favicon: params.favicon,
+        cname_records: params.additional_dns.cname_chain,
+        aaaa_records: params.additional_dns.aaaa_records,
+        caa_records: params.additional_dns.caa_records,
     }
 }
 
@@ -410,6 +412,7 @@ mod tests {
             timestamp: 1234567890,
             run_id,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         assert_eq!(batch_record.url_record.final_domain, "example.com");
@@ -454,6 +457,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         assert!(batch_record.oids.is_empty());
@@ -491,6 +495,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         assert!(batch_record.subject_alternative_names.is_empty());
@@ -535,6 +540,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         assert_eq!(batch_record.partial_failures.len(), 2);
@@ -612,6 +618,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         // Duplicate OIDs should be deduplicated by HashSet
@@ -657,6 +664,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         // SANs are Vec, so duplicates are preserved (this is intentional - matches cert data)
@@ -702,6 +710,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         // Large redirect chain should be preserved
@@ -751,6 +760,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: run_id.clone(),
             favicon: None,
+            additional_dns: create_test_additional_dns_data(),
         });
 
         // Run ID should be propagated to partial failure records

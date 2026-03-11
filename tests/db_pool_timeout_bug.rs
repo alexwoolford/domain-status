@@ -61,9 +61,6 @@ fn create_test_record(domain: &str) -> UrlRecord {
         content_type: None,
         canonical_url: None,
         cert_fingerprint_sha256: None,
-        cname_chain: None,
-        aaaa_records: None,
-        caa_records: None,
     }
 }
 
@@ -118,6 +115,7 @@ async fn test_db_pool_default_acquire_timeout_blocks() {
                 redirect_chain: &[],
                 technologies: &[],
                 subject_alternative_names: &[],
+                cname_records: &None,
                 aaaa_records: &None,
                 caa_records: &None,
             })
@@ -235,6 +233,7 @@ async fn test_db_pool_with_explicit_acquire_timeout() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),

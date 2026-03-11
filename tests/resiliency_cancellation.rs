@@ -110,9 +110,6 @@ fn create_test_record(domain: &str) -> UrlRecord {
         content_type: None,
         canonical_url: None,
         cert_fingerprint_sha256: None,
-        cname_chain: None,
-        aaaa_records: None,
-        caa_records: None,
     }
 }
 
@@ -262,6 +259,7 @@ async fn test_cancellation_during_simple_insert() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         }),
@@ -337,6 +335,7 @@ async fn test_cancellation_during_satellite_writes() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         }),
@@ -419,6 +418,7 @@ async fn test_concurrent_cancellations() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),
@@ -526,6 +526,7 @@ async fn test_graceful_shutdown_with_abort() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         })
@@ -609,6 +610,7 @@ async fn test_recovery_after_interruption() {
         redirect_chain: &[],
         technologies: &[],
         subject_alternative_names: &[],
+        cname_records: &None,
         aaaa_records: &None,
         caa_records: &None,
     })
@@ -639,6 +641,7 @@ async fn test_recovery_after_interruption() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         })
@@ -673,6 +676,7 @@ async fn test_recovery_after_interruption() {
         redirect_chain: &[],
         technologies: &[],
         subject_alternative_names: &[],
+        cname_records: &None,
         aaaa_records: &None,
         caa_records: &None,
     })
@@ -758,6 +762,7 @@ async fn test_database_integrity_after_stress() {
                         redirect_chain: &[],
                         technologies: &[],
                         subject_alternative_names: &[],
+                        cname_records: &None,
                         aaaa_records: &None,
                         caa_records: &None,
                     }),
@@ -885,6 +890,7 @@ async fn test_wal_checkpoint_with_cancellation() {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         })
@@ -926,6 +932,7 @@ async fn test_wal_checkpoint_with_cancellation() {
                     redirect_chain: &[],
                     technologies: &[],
                     subject_alternative_names: &[],
+                    cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
                 }),
