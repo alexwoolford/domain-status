@@ -1187,7 +1187,7 @@ checksum = "780955b8b195a21ab8e4ac6b60dd1dbdcec1dc6c51c0617964b08c81785e12c9"
 
 [[package]]
 name = "domain_status"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "domain_status_cli"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "clap",
  "clap-verbosity-flag",
