@@ -177,6 +177,7 @@ pub async fn prepare_record_for_insertion(
         timestamp: params.timestamp,
         run_id: params.ctx.config.run_id.clone(),
         favicon: params.favicon,
+        additional_dns: params.additional_dns,
     });
 
     (

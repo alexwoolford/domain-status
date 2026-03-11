@@ -112,6 +112,38 @@ pub(crate) async fn insert_mx_records(
     }
 }
 
+/// Inserts CNAME records into `url_cname_records` table using batch insert.
+pub(crate) async fn insert_cname_records(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    cname_records_json: &Option<String>,
+) {
+    if let Some(cnames) = parse_json_array(cname_records_json) {
+        if cnames.is_empty() {
+            return;
+        }
+
+        if let Err(e) = insert_single_column_batch(
+            tx,
+            "url_cname_records",
+            "url_status_id",
+            "cname_target",
+            url_status_id,
+            &cnames,
+            Some("ON CONFLICT(url_status_id, cname_target) DO NOTHING"),
+        )
+        .await
+        {
+            log::warn!(
+                "Failed to batch insert {} CNAME records for url_status_id {}: {}",
+                cnames.len(),
+                url_status_id,
+                e
+            );
+        }
+    }
+}
+
 /// Inserts IPv6 addresses into `url_ipv6_addresses` table using batch insert.
 pub(crate) async fn insert_ipv6_addresses(
     tx: &mut Transaction<'_, Sqlite>,

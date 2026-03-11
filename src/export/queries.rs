@@ -180,8 +180,7 @@ pub(crate) fn build_export_query<'a>(
                 us.ssl_cert_issuer, us.ssl_cert_valid_to_ms, us.cipher_suite, us.key_algorithm,
                 us.spf_record, us.dmarc_record, us.observed_at_ms, us.run_id,
                 us.body_sha256, us.content_length, us.http_version, us.body_word_count,
-                us.body_line_count, us.content_type, us.canonical_url, us.cert_fingerprint_sha256,
-                us.cname_chain
+                us.body_line_count, us.content_type, us.canonical_url, us.cert_fingerprint_sha256
          FROM url_status us",
     );
     build_where_clause(&mut qb, run_id, domain, status, since);

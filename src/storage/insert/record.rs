@@ -102,8 +102,9 @@ pub async fn insert_batch_record(
         redirect_chain: &record.redirect_chain,
         technologies: &record.technologies,
         subject_alternative_names: &record.subject_alternative_names,
-        aaaa_records: &record.url_record.aaaa_records,
-        caa_records: &record.url_record.caa_records,
+        cname_records: &record.cname_records,
+        aaaa_records: &record.aaaa_records,
+        caa_records: &record.caa_records,
     })
     .await
     .map_err(|e| {
@@ -548,9 +549,6 @@ mod tests {
             content_type: None,
             canonical_url: None,
             cert_fingerprint_sha256: None,
-            cname_chain: None,
-            aaaa_records: None,
-            caa_records: None,
         }
     }
 
@@ -577,6 +575,9 @@ mod tests {
             whois: None,
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -648,6 +649,9 @@ mod tests {
             whois: None,
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -724,6 +728,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_insert_batch_record_with_all_enrichment() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-123").await;
@@ -781,6 +786,9 @@ mod tests {
             }),
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -864,6 +872,9 @@ mod tests {
             whois: None,
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -912,6 +923,7 @@ mod tests {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
+            cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
         })
@@ -938,6 +950,9 @@ mod tests {
             whois: None,
             partial_failures: vec![], // Empty for this test
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         // Should succeed even if some enrichment fails
@@ -986,6 +1001,9 @@ mod tests {
             whois: None,
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         // Should succeed - main record and technologies should be inserted
@@ -1034,6 +1052,9 @@ mod tests {
             whois: None,
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         // Should succeed even with no enrichment data
@@ -1069,6 +1090,9 @@ mod tests {
             whois: None,
             partial_failures: vec![],
             favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
         };
 
         // Should fail - main record insertion failure propagates

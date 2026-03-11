@@ -88,12 +88,6 @@ pub struct UrlRecord {
     pub canonical_url: Option<String>,
     /// SHA-256 fingerprint of the leaf TLS certificate DER
     pub cert_fingerprint_sha256: Option<String>,
-    /// CNAME chain as JSON array
-    pub cname_chain: Option<String>,
-    /// AAAA (IPv6) records as JSON array
-    pub aaaa_records: Option<String>,
-    /// CAA records as JSON array
-    pub caa_records: Option<String>,
 }
 
 /// Represents a failed URL processing attempt for database insertion.
