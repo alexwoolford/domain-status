@@ -98,7 +98,7 @@ pub enum FingerprintError {
 ///
 /// This enum categorizes actual error conditions - failures that prevent successful
 /// processing or indicate system/network problems.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro, enum_map::Enum)]
 pub enum ErrorType {
     // HTTP/Network errors
     HttpRequestBuilderError,
@@ -138,7 +138,7 @@ pub enum ErrorType {
 ///
 /// Warnings indicate missing optional data that doesn't prevent successful
 /// processing but is worth tracking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro, enum_map::Enum)]
 #[allow(clippy::enum_variant_names)] // All variants start with "Missing" by design
 pub enum WarningType {
     // Missing optional metadata
@@ -151,7 +151,7 @@ pub enum WarningType {
 ///
 /// Info metrics track useful data points that aren't errors or warnings,
 /// such as redirects, bot detection, or other notable events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIterMacro, enum_map::Enum)]
 pub enum InfoType {
     // HTTP redirects
     HttpRedirect,  // HTTP redirect occurred (301, 302, etc.)
