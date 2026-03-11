@@ -24,8 +24,8 @@ pub struct RecordPreparationParams<'a> {
     pub technologies_vec: Vec<crate::fingerprint::DetectedTechnology>,
     /// Partial failures (DNS/TLS errors that didn't prevent processing)
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
-    /// Redirect chain URLs
-    pub redirect_chain: Vec<String>,
+    /// Redirect chain (URL, HTTP status code) per hop
+    pub redirect_chain: Vec<(String, u16)>,
     /// Elapsed time for the request (in seconds)
     pub elapsed: f64,
     /// Timestamp for the record
@@ -254,6 +254,12 @@ mod tests {
             security_headers: std::collections::HashMap::new(),
             http_headers: std::collections::HashMap::new(),
             body: "<html><body>Test</body></html>".to_string(),
+            body_sha256: None,
+            content_length: None,
+            http_version: None,
+            body_word_count: None,
+            body_line_count: None,
+            content_type: None,
         }
     }
 
@@ -274,6 +280,7 @@ mod tests {
             script_tag_ids: std::collections::HashSet::new(),
             html_text: "Test".to_string(),
             favicon_url: None,
+            canonical_url: None,
         }
     }
 
@@ -290,6 +297,7 @@ mod tests {
             key_algorithm: None,
             subject_alternative_names: None,
             reverse_dns_name: None,
+            cert_fingerprint_sha256: None,
         }
     }
 

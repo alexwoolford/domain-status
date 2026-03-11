@@ -27,7 +27,7 @@ pub struct BatchRecord {
     pub security_headers: HashMap<String, String>,
     pub http_headers: HashMap<String, String>,
     pub oids: HashSet<String>,
-    pub redirect_chain: Vec<String>,
+    pub redirect_chain: Vec<(String, u16)>, // (url, http_status) per redirect hop
     pub technologies: Vec<crate::fingerprint::DetectedTechnology>,
     pub subject_alternative_names: Vec<String>, // Certificate SANs (for linking domains sharing certificates)
     pub analytics_ids: Vec<AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)

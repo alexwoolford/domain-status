@@ -80,6 +80,14 @@ fn create_test_record(domain: &str, run_id: &str) -> UrlRecord {
         cipher_suite: Some("TLS_AES_128_GCM_SHA256".to_string()),
         key_algorithm: Some(domain_status::KeyAlgorithm::RSA),
         run_id: Some(run_id.to_string()),
+        body_sha256: None,
+        content_length: None,
+        http_version: None,
+        body_word_count: None,
+        body_line_count: None,
+        content_type: None,
+        canonical_url: None,
+        cert_fingerprint_sha256: None,
     }
 }
 

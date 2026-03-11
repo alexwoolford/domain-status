@@ -80,7 +80,7 @@ pub async fn resolve_redirect_chain(
 ) -> Result<
     (
         String,
-        Vec<String>,
+        Vec<(String, u16)>,
         Option<String>,
         Option<reqwest::Response>,
     ),
@@ -101,7 +101,8 @@ pub async fn resolve_redirect_chain(
     }
 
     // Pre-allocate chain with capacity to avoid reallocations
-    let mut chain: Vec<String> = Vec::with_capacity(max_hops + 1);
+    // Each entry is (url, http_status) where http_status is the status received for that URL
+    let mut chain: Vec<(String, u16)> = Vec::with_capacity(max_hops + 1);
     let mut current = start_url.to_string();
     let mut last_fetched_url = start_url.to_string(); // Track the last URL we actually fetched
     let mut alt_svc_header: Option<String> = None; // Capture alt-svc from any response in redirect chain (for HTTP/3 detection)
@@ -110,8 +111,6 @@ pub async fn resolve_redirect_chain(
     let mut final_response: Option<reqwest::Response> = None; // Non-redirect response to return to caller (avoids double fetch)
 
     for hop_num in 0..max_hops {
-        // Clone current URL into chain (necessary since we'll modify current)
-        chain.push(current.clone());
         last_fetched_url = current.clone(); // This is the URL we're about to fetch
 
         // Add realistic browser headers to reduce bot detection during redirect resolution
@@ -140,6 +139,9 @@ pub async fn resolve_redirect_chain(
         // Only follow redirects if the status code indicates a redirect AND there's a Location header
         let status = resp.status();
         let status_code = status.as_u16();
+
+        // Record this URL and its status code in the chain
+        chain.push((current.clone(), status_code));
         // Check if status is a redirect (301, 302, 303, 307, 308)
         if is_redirect_status(status_code) {
             if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
@@ -226,11 +228,12 @@ pub async fn resolve_redirect_chain(
 
     // Use last_fetched_url as the final URL (the last URL we actually fetched)
     // This ensures we never return a URL that wasn't actually fetched
-    // Ensure final URL is included in chain (in case we broke out of loop early).
-    // last_fetched_url is always the URL we just fetched; it's either already the last element
-    // of chain or we broke before appending it, so avoid O(n) contains scan.
-    if chain.last() != Some(&last_fetched_url) {
-        chain.push(last_fetched_url.clone());
+    // The chain now always includes (url, status_code) after each fetch,
+    // so last_fetched_url should already be the last entry's URL.
+    // Guard against edge cases where the loop didn't push (e.g., max_hops=0 which is rejected above).
+    if chain.last().map(|(url, _)| url) != Some(&last_fetched_url) {
+        // Status 0 means we didn't get a response for this URL (shouldn't happen in practice)
+        chain.push((last_fetched_url.clone(), 0));
     }
     let final_url = last_fetched_url; // Move instead of clone (optimization)
 
@@ -261,7 +264,7 @@ mod tests {
 
         assert_eq!(final_url, url);
         assert_eq!(chain.len(), 1);
-        assert_eq!(chain[0], url);
+        assert_eq!(chain[0].0, url);
     }
 
     #[tokio::test]
@@ -293,8 +296,8 @@ mod tests {
 
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
-        assert_eq!(chain[0], start_url);
-        assert_eq!(chain[1], final_url);
+        assert_eq!(chain[0].0, start_url);
+        assert_eq!(chain[1].0, final_url);
     }
 
     #[tokio::test]
@@ -334,8 +337,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(chain.len(), 2);
-        assert_eq!(chain[0], start_url);
-        assert_eq!(chain[1], url1);
+        assert_eq!(chain[0].0, start_url);
+        assert_eq!(chain[1].0, url1);
         // Final URL should be url1 (last URL we actually fetched), not url2 (which we never fetched)
         assert_eq!(result_final, url1);
     }
@@ -384,8 +387,8 @@ mod tests {
 
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
-        assert_eq!(chain[0], start_url);
-        assert_eq!(chain[1], final_url);
+        assert_eq!(chain[0].0, start_url);
+        assert_eq!(chain[1].0, final_url);
     }
 
     #[tokio::test]
@@ -410,7 +413,7 @@ mod tests {
 
         // Should include the start URL in chain, but not follow redirect
         assert_eq!(chain.len(), 1);
-        assert_eq!(chain[0], start_url);
+        assert_eq!(chain[0].0, start_url);
         assert_eq!(result_final, start_url);
     }
 
@@ -621,7 +624,7 @@ mod tests {
         // Should stop at the start URL, not follow redirect to private IP
         assert_eq!(result_final, start_url);
         assert_eq!(chain.len(), 1);
-        assert_eq!(chain[0], start_url);
+        assert_eq!(chain[0].0, start_url);
     }
 
     #[tokio::test]
@@ -786,7 +789,7 @@ mod tests {
         assert_eq!(chain.len(), 1);
         assert_eq!(result_final, start_url);
         // Should NOT include redirect_url in chain
-        assert!(!chain.contains(&redirect_url));
+        assert!(!chain.iter().any(|(url, _)| url == &redirect_url));
     }
 
     #[tokio::test]

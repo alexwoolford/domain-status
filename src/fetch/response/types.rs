@@ -15,6 +15,12 @@ pub(crate) struct ResponseData {
     pub(crate) security_headers: HashMap<String, String>,
     pub(crate) http_headers: HashMap<String, String>,
     pub(crate) body: String,
+    pub(crate) body_sha256: Option<String>,
+    pub(crate) content_length: Option<i64>,
+    pub(crate) http_version: Option<String>,
+    pub(crate) body_word_count: Option<i64>,
+    pub(crate) body_line_count: Option<i64>,
+    pub(crate) content_type: Option<String>,
 }
 
 /// Extracted HTML data from parsed document.
@@ -37,4 +43,5 @@ pub(crate) struct HtmlData {
     // Kept for potential future use, but currently using html_body in detection
     pub(crate) html_text: String,
     pub(crate) favicon_url: Option<String>, // Favicon URL extracted from <link rel="icon"> tags
+    pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
 }

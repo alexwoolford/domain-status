@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! `domain_status` library: core URL scanning functionality
 //!
 //! This library provides high-level APIs for scanning URLs and capturing comprehensive

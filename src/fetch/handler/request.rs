@@ -155,7 +155,7 @@ pub async fn handle_http_request(
                     // Attach structured failure context to error
                     let failure_context = crate::storage::failure::FailureContext {
                         final_url: Some(final_url_string.clone()),
-                        redirect_chain: redirect_chain.clone(),
+                        redirect_chain: redirect_chain.iter().map(|(url, _)| url.clone()).collect(),
                         response_headers: response_headers.clone(),
                         request_headers: request_headers.clone(),
                     };
@@ -176,7 +176,7 @@ pub async fn handle_http_request(
             // For connection errors, there are no response headers
             let failure_context = crate::storage::failure::FailureContext {
                 final_url: Some(final_url_string),
-                redirect_chain: redirect_chain.clone(),
+                redirect_chain: redirect_chain.iter().map(|(url, _)| url.clone()).collect(),
                 response_headers: Vec::new(), // No response for connection errors
                 request_headers: request_headers.clone(),
             };

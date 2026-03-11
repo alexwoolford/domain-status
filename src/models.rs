@@ -138,6 +138,7 @@ impl fmt::Display for TlsVersion {
 /// * `cipher_suite` - Negotiated cipher suite (e.g., "`TLS13_AES_256_GCM_SHA384`")
 /// * `key_algorithm` - Public key algorithm
 /// * `subject_alternative_names` - DNS names from the Subject Alternative Name extension (for linking domains sharing certificates)
+/// * `fingerprint_sha256` - SHA-256 hash of the leaf certificate DER (for infrastructure correlation)
 #[derive(Debug)]
 pub struct CertificateInfo {
     pub tls_version: Option<TlsVersion>,
@@ -149,6 +150,7 @@ pub struct CertificateInfo {
     pub cipher_suite: Option<String>,
     pub key_algorithm: Option<KeyAlgorithm>,
     pub subject_alternative_names: Option<Vec<String>>,
+    pub fingerprint_sha256: Option<String>,
 }
 
 #[cfg(test)]

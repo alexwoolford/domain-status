@@ -99,6 +99,13 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "keywords",
         "description",
         "is_mobile_friendly",
+        "body_sha256",
+        "content_length",
+        "http_version",
+        "body_word_count",
+        "body_line_count",
+        "content_type",
+        "canonical_url",
         "redirect_count",
         "final_redirect_url",
         "technologies",
@@ -109,6 +116,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "ssl_cert_valid_to",
         "cipher_suite",
         "key_algorithm",
+        "cert_fingerprint_sha256",
         "certificate_sans",
         "certificate_san_count",
         "oids",
@@ -201,6 +209,22 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
                 "false"
             }
             .to_string(),
+            export_row.main.body_sha256.clone().unwrap_or_default(),
+            export_row
+                .main
+                .content_length
+                .map_or(String::new(), |v| v.to_string()),
+            export_row.main.http_version.clone().unwrap_or_default(),
+            export_row
+                .main
+                .body_word_count
+                .map_or(String::new(), |v| v.to_string()),
+            export_row
+                .main
+                .body_line_count
+                .map_or(String::new(), |v| v.to_string()),
+            export_row.main.content_type.clone().unwrap_or_default(),
+            export_row.main.canonical_url.clone().unwrap_or_default(),
             export_row.redirect_count.to_string(),
             final_redirect_url,
             export_row.technologies_str.clone(),
@@ -211,6 +235,11 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
             format_date(export_row.main.ssl_cert_valid_to_ms),
             export_row.main.cipher_suite.clone().unwrap_or_default(),
             export_row.main.key_algorithm.clone().unwrap_or_default(),
+            export_row
+                .main
+                .cert_fingerprint_sha256
+                .clone()
+                .unwrap_or_default(),
             export_row.certificate_sans_str.clone(),
             export_row.certificate_san_count.to_string(),
             export_row.oids_str.clone(),

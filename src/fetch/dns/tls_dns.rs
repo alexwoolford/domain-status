@@ -57,6 +57,7 @@ pub(crate) async fn fetch_tls_and_dns(
                     cipher_suite: None,
                     key_algorithm: None,
                     subject_alternative_names: None,
+                    fingerprint_sha256: None,
                 })
             }
         },
@@ -102,6 +103,7 @@ pub(crate) async fn fetch_tls_and_dns(
         cipher_suite,
         key_algorithm,
         subject_alternative_names,
+        cert_fingerprint_sha256,
     ) = match tls_result {
         Ok(cert_info) => (
             cert_info.tls_version,
@@ -113,6 +115,7 @@ pub(crate) async fn fetch_tls_and_dns(
             cert_info.cipher_suite,
             cert_info.key_algorithm,
             cert_info.subject_alternative_names,
+            cert_info.fingerprint_sha256,
         ),
         Err(e) => {
             log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
@@ -126,7 +129,7 @@ pub(crate) async fn fetch_tls_and_dns(
                 crate::error_handling::ErrorType::TlsCertificateError,
                 truncated_msg,
             ));
-            (None, None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None, None)
         }
     };
 
@@ -174,6 +177,7 @@ pub(crate) async fn fetch_tls_and_dns(
                 subject_alternative_names,
                 ip_address,
                 reverse_dns_name,
+                cert_fingerprint_sha256,
             },
             partial_failures,
         },

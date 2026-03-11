@@ -1070,8 +1070,8 @@ async fn test_export_csv_redirect_chain_edge_cases() {
             || initial_domain.contains("start.com")
             || final_domain.contains("start.com")
         {
-            // redirect_count is at index 12 (after url, initial_domain, final_domain, etc.)
-            let redirect_count = record.get(12).expect("Should have redirect_count field");
+            // redirect_count is at index 19 (after url, initial_domain, ..., canonical_url)
+            let redirect_count = record.get(19).expect("Should have redirect_count field");
             assert_eq!(
                 redirect_count, "3",
                 "CSV should show redirect count of 3 for start.com"

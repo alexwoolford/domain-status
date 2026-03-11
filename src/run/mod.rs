@@ -341,10 +341,24 @@ pub async fn run_scan(
             }
             Ok(None) => break,
             Err(_) => {
-                log::info!(
-                    "Drain timeout ({}s) reached, finalizing with remaining tasks aborted",
-                    DRAIN_TIMEOUT.as_secs()
-                );
+                let abandoned = tasks.len();
+                if abandoned > 0 {
+                    log::warn!(
+                        "Drain timeout ({}s) reached, {} in-flight task(s) aborted and counted as failed",
+                        DRAIN_TIMEOUT.as_secs(),
+                        abandoned
+                    );
+                    #[allow(clippy::cast_possible_truncation)]
+                    resources
+                        .failed_urls
+                        .fetch_add(abandoned, Ordering::Relaxed);
+                } else {
+                    log::info!(
+                        "Drain timeout ({}s) reached, no remaining tasks",
+                        DRAIN_TIMEOUT.as_secs()
+                    );
+                }
+                tasks.abort_all();
                 cancel.cancel();
                 break;
             }

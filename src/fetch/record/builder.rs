@@ -62,6 +62,14 @@ pub(crate) fn build_url_record(
         cipher_suite: tls_dns_data.cipher_suite.clone(),
         key_algorithm: tls_dns_data.key_algorithm.clone(),
         run_id: run_id.clone(),
+        body_sha256: resp_data.body_sha256.clone(),
+        content_length: resp_data.content_length,
+        http_version: resp_data.http_version.clone(),
+        body_word_count: resp_data.body_word_count,
+        body_line_count: resp_data.body_line_count,
+        content_type: resp_data.content_type.clone(),
+        canonical_url: html_data.canonical_url.clone(),
+        cert_fingerprint_sha256: tls_dns_data.cert_fingerprint_sha256.clone(),
     }
 }
 
@@ -81,8 +89,8 @@ pub struct BatchRecordParams {
     pub tls_dns_data: TlsDnsData,
     /// Detected technologies
     pub technologies_vec: Vec<crate::fingerprint::DetectedTechnology>,
-    /// Redirect chain URLs
-    pub redirect_chain: Vec<String>,
+    /// Redirect chain (URL, HTTP status code) per hop
+    pub redirect_chain: Vec<(String, u16)>,
     /// Partial failures (DNS/TLS errors that didn't prevent processing)
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
     /// `GeoIP` lookup result (IP address and data)
@@ -201,6 +209,12 @@ mod tests {
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
             body: "<html><head><title>Test</title></head></html>".to_string(),
+            body_sha256: None,
+            content_length: None,
+            http_version: Some("HTTP/2".to_string()),
+            body_word_count: None,
+            body_line_count: None,
+            content_type: Some("text/html".to_string()),
         }
     }
 
@@ -221,6 +235,7 @@ mod tests {
             script_tag_ids: HashSet::new(),
             html_text: "Test content".to_string(),
             favicon_url: None,
+            canonical_url: None,
         }
     }
 
@@ -241,6 +256,7 @@ mod tests {
             subject_alternative_names: Some(vec!["example.com".to_string()]),
             ip_address: Some("192.0.2.1".to_string()),
             reverse_dns_name: Some("example.com".to_string()),
+            cert_fingerprint_sha256: None,
         }
     }
 
@@ -358,7 +374,7 @@ mod tests {
                 version: None,
             },
         ];
-        let redirect_chain = vec!["https://example.com".to_string()];
+        let redirect_chain = vec![("https://example.com".to_string(), 200)];
         let partial_failures = vec![(ErrorType::DnsNsLookupError, "DNS lookup failed".to_string())];
         let geoip_data = Some((
             "192.0.2.1".to_string(),
@@ -662,8 +678,8 @@ mod tests {
         );
 
         // Create a large redirect chain (100 URLs)
-        let redirect_chain: Vec<String> = (0..100)
-            .map(|i| format!("https://example.com/redirect{}", i))
+        let redirect_chain: Vec<(String, u16)> = (0..100)
+            .map(|i| (format!("https://example.com/redirect{}", i), 302))
             .collect();
 
         let batch_record = build_batch_record(BatchRecordParams {
@@ -685,11 +701,11 @@ mod tests {
         // Large redirect chain should be preserved
         assert_eq!(batch_record.redirect_chain.len(), 100);
         assert_eq!(
-            batch_record.redirect_chain[0],
+            batch_record.redirect_chain[0].0,
             "https://example.com/redirect0"
         );
         assert_eq!(
-            batch_record.redirect_chain[99],
+            batch_record.redirect_chain[99].0,
             "https://example.com/redirect99"
         );
     }

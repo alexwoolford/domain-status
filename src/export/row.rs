@@ -107,6 +107,14 @@ pub struct MainRowData {
     pub dmarc_record: Option<String>,
     pub timestamp: i64,
     pub run_id: Option<String>,
+    pub body_sha256: Option<String>,
+    pub content_length: Option<i64>,
+    pub http_version: Option<String>,
+    pub body_word_count: Option<i64>,
+    pub body_line_count: Option<i64>,
+    pub content_type: Option<String>,
+    pub canonical_url: Option<String>,
+    pub cert_fingerprint_sha256: Option<String>,
 }
 
 /// A single redirect entry.
@@ -114,6 +122,7 @@ pub struct MainRowData {
 pub struct RedirectEntry {
     pub redirect_url: String,
     pub sequence_order: i64,
+    pub http_status: Option<i64>,
 }
 
 /// `GeoIP` data for an export row.
@@ -278,6 +287,14 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         dmarc_record: row.get("dmarc_record"),
         timestamp: row.get("observed_at_ms"),
         run_id: row.get("run_id"),
+        body_sha256: row.get("body_sha256"),
+        content_length: row.get("content_length"),
+        http_version: row.get("http_version"),
+        body_word_count: row.get("body_word_count"),
+        body_line_count: row.get("body_line_count"),
+        content_type: row.get("content_type"),
+        canonical_url: row.get("canonical_url"),
+        cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),
     }
 }
 
@@ -437,7 +454,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
 
     // Fetch redirect chain
     let redirect_rows = sqlx::query(
-        "SELECT redirect_url, sequence_order FROM url_redirect_chain
+        "SELECT redirect_url, sequence_order, http_status FROM url_redirect_chain
          WHERE url_status_id = ? ORDER BY sequence_order LIMIT ?",
     )
     .bind(url_status_id)
@@ -450,6 +467,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         .map(|r| RedirectEntry {
             redirect_url: r.get("redirect_url"),
             sequence_order: r.get("sequence_order"),
+            http_status: r.get("http_status"),
         })
         .collect();
 

@@ -26,7 +26,7 @@ async fn test_insert_empty_collections() {
     insert_security_headers(&mut tx, url_status_id, &HashMap::new()).await;
     insert_http_headers(&mut tx, url_status_id, &HashMap::new()).await;
     insert_oids(&mut tx, url_status_id, &HashSet::new()).await;
-    insert_redirect_chain(&mut tx, url_status_id, &[]).await;
+    insert_redirect_chain(&mut tx, url_status_id, &[] as &[(String, u16)]).await;
     insert_certificate_sans(&mut tx, url_status_id, &[]).await;
 
     tx.commit().await.expect("Failed to commit transaction");

@@ -3,8 +3,42 @@
 use anyhow::{Error, Result};
 use futures::StreamExt;
 use log::debug;
+use sha2::{Digest, Sha256};
 
 use super::types::ResponseData;
+
+/// Computes SHA-256 hash of the body, returning hex-encoded string.
+fn compute_body_sha256(body: &str) -> Option<String> {
+    if body.is_empty() {
+        return None;
+    }
+    let hash = Sha256::digest(body.as_bytes());
+    Some(format!("{hash:x}"))
+}
+
+/// Formats HTTP version from reqwest's Version enum.
+fn format_http_version(version: reqwest::Version) -> String {
+    match version {
+        reqwest::Version::HTTP_09 => "HTTP/0.9".to_string(),
+        reqwest::Version::HTTP_10 => "HTTP/1.0".to_string(),
+        reqwest::Version::HTTP_11 => "HTTP/1.1".to_string(),
+        reqwest::Version::HTTP_2 => "HTTP/2".to_string(),
+        reqwest::Version::HTTP_3 => "HTTP/3".to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Computes body content metrics (word count and line count).
+fn compute_body_metrics(body: &str) -> (Option<i64>, Option<i64>) {
+    if body.is_empty() {
+        return (None, None);
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let word_count = body.split_whitespace().count() as i64;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let line_count = body.lines().count() as i64;
+    (Some(word_count), Some(line_count))
+}
 use crate::domain::extract_domain;
 use crate::fetch::request::{extract_http_headers, extract_security_headers};
 
@@ -96,11 +130,15 @@ pub(crate) async fn extract_response_data(
         .unwrap_or("Unknown Status Code")
         .to_string();
 
-    // Extract headers before consuming response
+    // Extract headers and version before consuming response
     let headers = response.headers().clone();
+    let http_version = Some(format_http_version(response.version()));
 
-    // Trace-level logging for HTTP protocol debugging (only visible with --log-level trace)
-    log::trace!("Response version: {:?}", response.version());
+    // Extract Content-Type as standalone field
+    let content_type = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let security_headers = extract_security_headers(&headers);
     let http_headers = extract_http_headers(&headers);
@@ -154,6 +192,12 @@ pub(crate) async fn extract_response_data(
                 security_headers,
                 http_headers,
                 body: String::new(),
+                body_sha256: None,
+                content_length: None,
+                http_version: http_version.clone(),
+                body_word_count: None,
+                body_line_count: None,
+                content_type: content_type.clone(),
             }));
         }
         Err(e) => {
@@ -179,6 +223,12 @@ pub(crate) async fn extract_response_data(
             security_headers,
             http_headers,
             body: String::new(),
+            body_sha256: None,
+            content_length: None,
+            http_version: http_version.clone(),
+            body_word_count: None,
+            body_line_count: None,
+            content_type: content_type.clone(),
         }));
     }
 
@@ -191,6 +241,11 @@ pub(crate) async fn extract_response_data(
         log::warn!("No title tag found in raw HTML for {final_domain}");
     }
 
+    let body_sha256 = compute_body_sha256(&body);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let content_length = Some(body.len() as i64);
+    let (body_word_count, body_line_count) = compute_body_metrics(&body);
+
     Ok(Some(ResponseData {
         final_url,
         initial_domain,
@@ -202,6 +257,12 @@ pub(crate) async fn extract_response_data(
         security_headers,
         http_headers,
         body,
+        body_sha256,
+        content_length,
+        http_version,
+        body_word_count,
+        body_line_count,
+        content_type,
     }))
 }
 

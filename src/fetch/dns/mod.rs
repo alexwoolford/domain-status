@@ -99,6 +99,12 @@ mod tests {
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
             body: "<html><body>Test</body></html>".to_string(),
+            body_sha256: None,
+            content_length: None,
+            http_version: None,
+            body_word_count: None,
+            body_line_count: None,
+            content_type: None,
         }
     }
 
