@@ -15,6 +15,16 @@ use crate::utils::ProcessUrlResult;
 use super::invoke_progress_callback;
 use super::resources::{ProgressCallback, UrlTaskParams};
 
+/// Bundles progress counters and callback for task handlers (avoids `too_many_arguments`).
+struct TaskProgress<'a> {
+    completed_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
+    successful_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
+    skipped_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
+    failed_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
+    total_urls_for_callback: usize,
+    progress_callback: &'a ProgressCallback,
+}
+
 /// Process a single URL task.
 ///
 /// This function is spawned as a Tokio task for each URL. It handles:
@@ -66,23 +76,20 @@ pub async fn process_url_task(params: UrlTaskParams) {
     )
     .await;
 
+    let progress = TaskProgress {
+        completed_urls: &completed_urls,
+        successful_urls: &successful_urls,
+        skipped_urls: &skipped_urls,
+        failed_urls: &failed_urls,
+        total_urls_for_callback,
+        progress_callback: &progress_callback,
+    };
+
     match result {
         Ok(ProcessUrlResult {
             result: Ok(outcome),
             ..
-        }) => {
-            handle_success(
-                &url_for_logging,
-                outcome,
-                &completed_urls,
-                &successful_urls,
-                &skipped_urls,
-                &failed_urls,
-                total_urls_for_callback,
-                &progress_callback,
-            )
-            .await;
-        }
+        }) => handle_success(&url_for_logging, outcome, &progress).await,
         Ok(ProcessUrlResult {
             result: Err(e),
             retry_count,
@@ -93,82 +100,51 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 retry_count,
                 process_start,
                 &ctx,
-                &completed_urls,
-                &failed_urls,
-                &skipped_urls,
-                total_urls_for_callback,
-                &progress_callback,
+                &progress,
             )
-            .await;
+            .await
         }
-        Err(_) => {
-            handle_timeout(
-                &url_for_logging,
-                process_start,
-                &ctx,
-                &completed_urls,
-                &failed_urls,
-                &skipped_urls,
-                total_urls_for_callback,
-                &progress_callback,
-            )
-            .await;
-        }
+        Err(_) => handle_timeout(&url_for_logging, process_start, &ctx, &progress).await,
     }
 }
 
 /// Handle successful URL processing.
-#[allow(clippy::too_many_arguments)]
-async fn handle_success(
-    _url: &Arc<str>,
-    outcome: UrlProcessOutcome,
-    completed_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    successful_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    skipped_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    total_urls_for_callback: usize,
-    progress_callback: &ProgressCallback,
-) {
-    completed_urls.fetch_add(1, Ordering::SeqCst);
+async fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskProgress<'_>) {
+    progress.completed_urls.fetch_add(1, Ordering::Relaxed);
     match outcome {
         UrlProcessOutcome::Inserted => {
-            successful_urls.fetch_add(1, Ordering::SeqCst);
+            progress.successful_urls.fetch_add(1, Ordering::Relaxed);
         }
         UrlProcessOutcome::Skipped => {
-            skipped_urls.fetch_add(1, Ordering::SeqCst);
+            progress.skipped_urls.fetch_add(1, Ordering::Relaxed);
         }
     }
     invoke_progress_callback(
-        progress_callback,
-        completed_urls,
-        failed_urls,
-        skipped_urls,
-        total_urls_for_callback,
+        progress.progress_callback,
+        progress.completed_urls,
+        progress.failed_urls,
+        progress.skipped_urls,
+        progress.total_urls_for_callback,
     );
 }
 
 /// Handle failed URL processing.
-#[allow(clippy::too_many_arguments)]
 async fn handle_failure(
     url: &Arc<str>,
     error: anyhow::Error,
     retry_count: u32,
     process_start: std::time::Instant,
     ctx: &Arc<crate::fetch::ProcessingContext>,
-    completed_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    skipped_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    total_urls_for_callback: usize,
-    progress_callback: &ProgressCallback,
+    progress: &TaskProgress<'_>,
 ) {
-    failed_urls.fetch_add(1, Ordering::SeqCst);
+    progress.failed_urls.fetch_add(1, Ordering::Relaxed);
     let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
-        progress_callback,
-        completed_urls,
-        failed_urls,
-        skipped_urls,
-        total_urls_for_callback,
+        progress.progress_callback,
+        progress.completed_urls,
+        progress.failed_urls,
+        progress.skipped_urls,
+        progress.total_urls_for_callback,
     );
     log::warn!("Failed to process URL {}: {error}", url.as_ref());
 
@@ -188,25 +164,20 @@ async fn handle_failure(
 }
 
 /// Handle URL processing timeout.
-#[allow(clippy::too_many_arguments)]
 async fn handle_timeout(
     url: &Arc<str>,
     process_start: std::time::Instant,
     ctx: &Arc<crate::fetch::ProcessingContext>,
-    completed_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    failed_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    skipped_urls: &Arc<std::sync::atomic::AtomicUsize>,
-    total_urls_for_callback: usize,
-    progress_callback: &ProgressCallback,
+    progress: &TaskProgress<'_>,
 ) {
-    failed_urls.fetch_add(1, Ordering::SeqCst);
+    progress.failed_urls.fetch_add(1, Ordering::Relaxed);
     let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
-        progress_callback,
-        completed_urls,
-        failed_urls,
-        skipped_urls,
-        total_urls_for_callback,
+        progress.progress_callback,
+        progress.completed_urls,
+        progress.failed_urls,
+        progress.skipped_urls,
+        progress.total_urls_for_callback,
     );
     log::warn!(
         "Failed to process URL {} (timeout after {}s)",
@@ -350,18 +321,16 @@ mod tests {
         let successful_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &successful_urls,
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &None,
+        };
 
-        handle_success(
-            &url,
-            UrlProcessOutcome::Inserted,
-            &completed_urls,
-            &successful_urls,
-            &skipped_urls,
-            &failed_urls,
-            1,
-            &None,
-        )
-        .await;
+        handle_success(&url, UrlProcessOutcome::Inserted, &progress).await;
 
         assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 1);
@@ -375,18 +344,16 @@ mod tests {
         let successful_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &successful_urls,
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &None,
+        };
 
-        handle_success(
-            &url,
-            UrlProcessOutcome::Skipped,
-            &completed_urls,
-            &successful_urls,
-            &skipped_urls,
-            &failed_urls,
-            1,
-            &None,
-        )
-        .await;
+        handle_success(&url, UrlProcessOutcome::Skipped, &progress).await;
 
         assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
@@ -408,20 +375,16 @@ mod tests {
             }
         }));
 
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &Arc::new(AtomicUsize::new(0)),
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &callback,
+        };
         let err = anyhow::anyhow!("simulated failure");
-        handle_failure(
-            &url,
-            err,
-            0,
-            std::time::Instant::now(),
-            &ctx,
-            &completed_urls,
-            &failed_urls,
-            &skipped_urls,
-            1,
-            &callback,
-        )
-        .await;
+        handle_failure(&url, err, 0, std::time::Instant::now(), &ctx, &progress).await;
 
         assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
@@ -444,6 +407,14 @@ mod tests {
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &Arc::new(AtomicUsize::new(0)),
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &None,
+        };
 
         handle_failure(
             &url,
@@ -451,11 +422,7 @@ mod tests {
             1,
             std::time::Instant::now(),
             &ctx,
-            &completed_urls,
-            &failed_urls,
-            &skipped_urls,
-            1,
-            &None,
+            &progress,
         )
         .await;
 
@@ -479,6 +446,14 @@ mod tests {
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &Arc::new(AtomicUsize::new(0)),
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &None,
+        };
 
         handle_failure(
             &url,
@@ -486,11 +461,7 @@ mod tests {
             0,
             std::time::Instant::now(),
             &ctx,
-            &completed_urls,
-            &failed_urls,
-            &skipped_urls,
-            1,
-            &None,
+            &progress,
         )
         .await;
 
@@ -512,17 +483,15 @@ mod tests {
             }
         }));
 
-        handle_timeout(
-            &url,
-            std::time::Instant::now(),
-            &ctx,
-            &completed_urls,
-            &failed_urls,
-            &skipped_urls,
-            1,
-            &callback,
-        )
-        .await;
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &Arc::new(AtomicUsize::new(0)),
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &callback,
+        };
+        handle_timeout(&url, std::time::Instant::now(), &ctx, &progress).await;
 
         assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
@@ -549,20 +518,16 @@ mod tests {
             }
         }));
 
+        let progress = TaskProgress {
+            completed_urls: &completed_urls,
+            successful_urls: &Arc::new(AtomicUsize::new(0)),
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 1,
+            progress_callback: &callback,
+        };
         let err = anyhow::anyhow!("simulated failure");
-        handle_failure(
-            &url,
-            err,
-            0,
-            std::time::Instant::now(),
-            &ctx,
-            &completed_urls,
-            &failed_urls,
-            &skipped_urls,
-            1,
-            &callback,
-        )
-        .await;
+        handle_failure(&url, err, 0, std::time::Instant::now(), &ctx, &progress).await;
 
         assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(progress_calls.load(Ordering::SeqCst), 1);

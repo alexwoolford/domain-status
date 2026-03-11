@@ -93,24 +93,13 @@ pub(crate) fn is_retriable_error(error: &Error) -> bool {
             return false;
         }
 
-        // Check for DNS errors (retriable - network issue)
-        // Note: hickory_resolver errors are wrapped in anyhow, so we check the message
-        let msg = cause.to_string().to_lowercase();
-        if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
+        // Check for DNS resolution errors (retriable) via structured type, not string matching.
+        // String matching (e.g. msg.contains("dns")) is fragile and can misclassify.
+        if cause
+            .downcast_ref::<hickory_resolver::ResolveError>()
+            .is_some()
+        {
             return true;
-        }
-
-        // Check error message for specific patterns (fallback for non-reqwest errors)
-        // This handles cases where we have an error but not a reqwest::Error with status code
-        // (e.g., errors from other libraries that don't expose HTTP status directly)
-        if msg.contains("404") || msg.contains("not found") {
-            return false;
-        }
-        if msg.contains("403") || msg.contains("forbidden") {
-            return false;
-        }
-        if msg.contains("401") || msg.contains("unauthorized") {
-            return false;
         }
     }
 
@@ -174,15 +163,24 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retriable_error_dns() {
-        let err = anyhow::anyhow!("DNS lookup failed");
+    fn test_is_retriable_error_dns_typed() {
+        // Only ResolveError (structured) is retriable; plain strings are not
+        let resolve_err = hickory_resolver::ResolveError::from("lookup failed");
+        let err: anyhow::Error = resolve_err.into();
         assert!(is_retriable_error(&err));
     }
 
     #[test]
-    fn test_is_retriable_error_resolve() {
+    fn test_is_retriable_error_dns_string_not_retriable() {
+        // Plain string "DNS lookup failed" is not retriable (no type downcast)
+        let err = anyhow::anyhow!("DNS lookup failed");
+        assert!(!is_retriable_error(&err));
+    }
+
+    #[test]
+    fn test_is_retriable_error_resolve_string_not_retriable() {
         let err = anyhow::anyhow!("Failed to resolve hostname");
-        assert!(is_retriable_error(&err));
+        assert!(!is_retriable_error(&err));
     }
 
     #[test]
@@ -297,26 +295,23 @@ mod tests {
 
     #[test]
     fn test_is_retriable_error_partial_message_match() {
-        // String patterns: "404"/"not found" → non-retriable; "dns" → retriable; others → not retried
+        // No string-based 4xx/DNS matching; only typed detection
         let err1 = anyhow::anyhow!("Error: 404 page not found");
         let err2 = anyhow::anyhow!("HTTP 500 internal server error occurred");
         let err3 = anyhow::anyhow!("DNS resolution failed for domain");
 
-        assert!(!is_retriable_error(&err1)); // matches "404" + "not found"
-        assert!(!is_retriable_error(&err2)); // "500" string doesn't trigger reqwest downcast → unknown → false
-        assert!(is_retriable_error(&err3)); // matches "dns"
+        assert!(!is_retriable_error(&err1)); // unknown → false
+        assert!(!is_retriable_error(&err2)); // unknown → false
+        assert!(!is_retriable_error(&err3)); // no ResolveError type → false
     }
 
     #[test]
-    fn test_is_retriable_error_nested_context() {
-        // Test error with nested context (multiple .context() calls)
-        let base_err = anyhow::anyhow!("Base error");
-        let err = base_err
-            .context("First context")
-            .context("Second context")
-            .context("DNS lookup failed");
+    fn test_is_retriable_error_nested_context_resolve_error() {
+        // ResolveError in chain (even with context) is retriable
+        let resolve_err = hickory_resolver::ResolveError::from("lookup failed");
+        let err: anyhow::Error = resolve_err.into();
+        let err = err.context("First context").context("Second context");
 
-        // Should detect DNS in the chain
         assert!(is_retriable_error(&err));
     }
 
@@ -472,17 +467,15 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retriable_error_message_pattern_matching() {
-        // Test that error message pattern matching works correctly
-        // This is critical - fallback message matching handles non-reqwest errors
+    fn test_is_retriable_error_message_no_string_matching() {
+        // Plain strings are not retriable; only typed ResolveError is
         let dns_error = anyhow::anyhow!("DNS resolution failed");
         let resolve_error = anyhow::anyhow!("Failed to resolve hostname");
         let lookup_error = anyhow::anyhow!("DNS lookup failed");
 
-        // All should be retriable (line 96)
-        assert!(is_retriable_error(&dns_error));
-        assert!(is_retriable_error(&resolve_error));
-        assert!(is_retriable_error(&lookup_error));
+        assert!(!is_retriable_error(&dns_error));
+        assert!(!is_retriable_error(&resolve_error));
+        assert!(!is_retriable_error(&lookup_error));
     }
 
     #[test]

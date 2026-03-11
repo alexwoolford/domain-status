@@ -426,20 +426,20 @@ mod tests {
     async fn test_get_ssl_certificate_info_tcp_timeout() {
         init_crypto_for_test();
         let resolver = test_resolver();
-        // Test with a domain that will timeout (using a non-routable IP)
-        // 192.0.2.0/24 is reserved for documentation (TEST-NET-1)
-        // It should timeout rather than fail immediately
+        // 192.0.2.0/24 is documentation (TEST-NET-1). We block it for SSRF before any connection,
+        // so we get "Unsafe URL: private IPv4 address" rather than a TCP timeout.
         let result = get_ssl_certificate_info("192.0.2.1".to_string(), resolver.as_ref()).await;
-        // Should fail with timeout or connection error
         match result {
-            Ok(_) => panic!("Expected error for timeout scenario"),
+            Ok(_) => panic!("Expected error for 192.0.2.1 (blocked or timeout)"),
             Err(e) => {
                 let error_msg = e.to_string();
                 assert!(
                     error_msg.contains("timeout")
                         || error_msg.contains("Failed to connect")
-                        || error_msg.contains("connection"),
-                    "Expected timeout or connection error, got: {}",
+                        || error_msg.contains("connection")
+                        || error_msg.contains("private IPv4 address")
+                        || error_msg.contains("not allowed"),
+                    "Expected SSRF rejection or timeout/connection error, got: {}",
                     error_msg
                 );
             }

@@ -5,9 +5,10 @@
 //! Connections to private, loopback, or link-local addresses are rejected *before*
 //! reqwest opens a TCP socket, closing the TOCTOU / DNS-rebinding gap.
 
+use super::url_validation;
 use hickory_resolver::TokioResolver;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 /// A DNS resolver that rejects private/loopback/link-local IPs.
@@ -61,133 +62,68 @@ impl Resolve for SafeResolver {
     }
 }
 
+/// Public iff not private; uses shared logic from `url_validation` (single source of truth).
 pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_public_ipv4(v4),
-        IpAddr::V6(v6) => is_public_ipv6(v6),
-    }
-}
-
-pub(crate) fn is_public_ipv4(ip: Ipv4Addr) -> bool {
-    let o = ip.octets();
-    // Loopback 127.0.0.0/8
-    if o[0] == 127 {
-        return false;
-    }
-    // Private 10.0.0.0/8
-    if o[0] == 10 {
-        return false;
-    }
-    // Private 172.16.0.0/12
-    if o[0] == 172 && (16..=31).contains(&o[1]) {
-        return false;
-    }
-    // Private 192.168.0.0/16
-    if o[0] == 192 && o[1] == 168 {
-        return false;
-    }
-    // Link-local 169.254.0.0/16
-    if o[0] == 169 && o[1] == 254 {
-        return false;
-    }
-    // This-network 0.0.0.0/8
-    if o[0] == 0 {
-        return false;
-    }
-    // Multicast 224.0.0.0/4
-    if (224..=239).contains(&o[0]) {
-        return false;
-    }
-    // Reserved 240.0.0.0/4
-    if o[0] >= 240 {
-        return false;
-    }
-    true
-}
-
-pub(crate) fn is_public_ipv6(ip: Ipv6Addr) -> bool {
-    // IPv4-mapped addresses (::ffff:x.x.x.x) — delegate to IPv4 check
-    if let Some(ipv4) = ip.to_ipv4_mapped() {
-        return is_public_ipv4(ipv4);
-    }
-    let s = ip.segments();
-    // ::1 loopback
-    if s == [0, 0, 0, 0, 0, 0, 0, 1] {
-        return false;
-    }
-    // fc00::/7 unique-local
-    if (s[0] & 0xfe00) == 0xfc00 {
-        return false;
-    }
-    // fe80::/10 link-local
-    if (s[0] & 0xffc0) == 0xfe80 {
-        return false;
-    }
-    // ff00::/8 multicast
-    if s[0] & 0xff00 == 0xff00 {
-        return false;
-    }
-    // :: unspecified
-    if s == [0; 8] {
-        return false;
-    }
-    true
+    !url_validation::is_private_ip(ip)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn test_public_ipv4() {
-        assert!(is_public_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
-        assert!(is_public_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
-        assert!(is_public_ipv4(Ipv4Addr::new(93, 184, 216, 34)));
+        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))));
     }
 
     #[test]
     fn test_private_ipv4() {
-        assert!(!is_public_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(172, 16, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(172, 31, 255, 255)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(169, 254, 1, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1))));
+        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))));
     }
 
     #[test]
     fn test_public_ipv6() {
-        assert!(is_public_ipv6(Ipv6Addr::new(
+        assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
-        )));
-        assert!(is_public_ipv6(Ipv6Addr::new(
+        ))));
+        assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e
-        )));
+        ))));
     }
 
     #[test]
     fn test_private_ipv6() {
-        assert!(!is_public_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)));
-        assert!(!is_public_ipv6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1)));
-        assert!(!is_public_ipv6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
-        assert!(!is_public_ipv6(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 1)));
-        assert!(!is_public_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfc00, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfe80, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0, 0
+        ))));
     }
 
     #[test]
     fn test_ipv4_mapped_ipv6_blocked() {
-        // ::ffff:127.0.0.1 (IPv4-mapped loopback) must be rejected
         let mapped_loopback = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001);
-        assert!(!is_public_ipv6(mapped_loopback));
-        // ::ffff:10.0.0.1 (IPv4-mapped private)
+        assert!(!is_public_ip(IpAddr::V6(mapped_loopback)));
         let mapped_private = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001);
-        assert!(!is_public_ipv6(mapped_private));
-        // ::ffff:8.8.8.8 (IPv4-mapped public) should be allowed
+        assert!(!is_public_ip(IpAddr::V6(mapped_private)));
         let mapped_public = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808);
-        assert!(is_public_ipv6(mapped_public));
+        assert!(is_public_ip(IpAddr::V6(mapped_public)));
     }
 
     #[tokio::test]

@@ -64,9 +64,9 @@ fn invoke_progress_callback(
 ) {
     if let Some(ref cb) = callback {
         cb(
-            completed.load(Ordering::SeqCst),
-            failed.load(Ordering::SeqCst),
-            skipped.load(Ordering::SeqCst),
+            completed.load(Ordering::Relaxed),
+            failed.load(Ordering::Relaxed),
+            skipped.load(Ordering::Relaxed),
             total,
         );
     }
@@ -201,7 +201,7 @@ pub async fn run_scan(
             tokio::time::timeout(std::time::Duration::ZERO, tasks.join_next()).await
         {
             if let Err(join_error) = task_result {
-                resources.failed_urls.fetch_add(1, Ordering::SeqCst);
+                resources.failed_urls.fetch_add(1, Ordering::Relaxed);
                 log::warn!("Failed to join task (panicked): {:?}", join_error);
             }
         }
@@ -245,8 +245,8 @@ pub async fn run_scan(
                 let Some(url) = validate_and_normalize_url(trimmed) else {
                     resources
                         .total_urls_attempted
-                        .fetch_add(1, Ordering::SeqCst);
-                    resources.skipped_urls.fetch_add(1, Ordering::SeqCst);
+                        .fetch_add(1, Ordering::Relaxed);
+                    resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
                     invoke_progress_callback(
                         &progress_callback,
                         &resources.completed_urls,
@@ -265,8 +265,8 @@ pub async fn run_scan(
                         warn!("Skipping SSRF-unsafe URL: {e}");
                         resources
                             .total_urls_attempted
-                            .fetch_add(1, Ordering::SeqCst);
-                        resources.skipped_urls.fetch_add(1, Ordering::SeqCst);
+                            .fetch_add(1, Ordering::Relaxed);
+                        resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
                         invoke_progress_callback(
                             &progress_callback,
                             &resources.completed_urls,
@@ -289,7 +289,7 @@ pub async fn run_scan(
                                 warn!("Semaphore closed, skipping URL: {url}");
                                 resources
                                     .total_urls_attempted
-                                    .fetch_add(1, Ordering::SeqCst);
+                                    .fetch_add(1, Ordering::Relaxed);
                                 continue;
                             }
                         }
@@ -302,7 +302,7 @@ pub async fn run_scan(
 
                 resources
                     .total_urls_attempted
-                    .fetch_add(1, Ordering::SeqCst);
+                    .fetch_add(1, Ordering::Relaxed);
 
                 let task_params = UrlTaskParams {
                     url: Arc::from(url.as_str()),
@@ -335,7 +335,7 @@ pub async fn run_scan(
         match tokio::time::timeout(DRAIN_TIMEOUT, tasks.join_next()).await {
             Ok(Some(task_result)) => {
                 if let Err(join_error) = task_result {
-                    resources.failed_urls.fetch_add(1, Ordering::SeqCst);
+                    resources.failed_urls.fetch_add(1, Ordering::Relaxed);
                     log::warn!("Failed to join task (panicked): {:?}", join_error);
                 }
             }

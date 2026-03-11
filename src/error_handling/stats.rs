@@ -3,9 +3,10 @@
 //! This module provides thread-safe statistics tracking for errors, warnings,
 //! and informational metrics during URL processing.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use strum::IntoEnumIterator;
+
+use enum_map::EnumMap;
 
 use super::types::{ErrorType, InfoType, WarningType};
 
@@ -13,7 +14,8 @@ use super::types::{ErrorType, InfoType, WarningType};
 ///
 /// Tracks errors, warnings, and informational metrics using atomic counters,
 /// allowing concurrent access from multiple tasks. All types are initialized
-/// to zero on creation.
+/// to zero on creation. Uses `EnumMap` for fixed-size, array-backed storage
+/// indexed by enum discriminant (no panics on missing keys).
 ///
 /// # Categories
 ///
@@ -25,102 +27,54 @@ use super::types::{ErrorType, InfoType, WarningType};
 ///
 /// This struct is thread-safe and can be shared across multiple tasks using `Arc`.
 pub struct ProcessingStats {
-    errors: HashMap<ErrorType, AtomicUsize>,
-    warnings: HashMap<WarningType, AtomicUsize>,
-    info: HashMap<InfoType, AtomicUsize>,
+    errors: EnumMap<ErrorType, AtomicUsize>,
+    warnings: EnumMap<WarningType, AtomicUsize>,
+    info: EnumMap<InfoType, AtomicUsize>,
+}
+
+impl Default for ProcessingStats {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProcessingStats {
     pub fn new() -> Self {
-        let mut errors = HashMap::new();
-        for error in ErrorType::iter() {
-            errors.insert(error, AtomicUsize::new(0));
-        }
-
-        let mut warnings = HashMap::new();
-        for warning in WarningType::iter() {
-            warnings.insert(warning, AtomicUsize::new(0));
-        }
-
-        let mut info = HashMap::new();
-        for info_type in InfoType::iter() {
-            info.insert(info_type, AtomicUsize::new(0));
-        }
-
         ProcessingStats {
-            errors,
-            warnings,
-            info,
+            errors: EnumMap::default(),
+            warnings: EnumMap::default(),
+            info: EnumMap::default(),
         }
     }
 
     /// Increment an error counter.
-    ///
-    /// Panics if `error` is not in the map (i.e. a new `ErrorType` variant was added
-    /// but not added to `new()`). All variants are initialized in `new()`.
     pub fn increment_error(&self, error: ErrorType) {
-        let counter = self
-            .errors
-            .get(&error)
-            .expect("ErrorType missing from ProcessingStats::new()");
-        counter.fetch_add(1, Ordering::Relaxed);
+        self.errors[error].fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment a warning counter.
-    ///
-    /// Panics if `warning` is not in the map (i.e. a new `WarningType` variant was added
-    /// but not added to `new()`). All variants are initialized in `new()`.
     pub fn increment_warning(&self, warning: WarningType) {
-        let counter = self
-            .warnings
-            .get(&warning)
-            .expect("WarningType missing from ProcessingStats::new()");
-        counter.fetch_add(1, Ordering::Relaxed);
+        self.warnings[warning].fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment an info counter.
-    ///
-    /// Panics if `info_type` is not in the map (i.e. a new `InfoType` variant was added
-    /// but not added to `new()`). All variants are initialized in `new()`.
     pub fn increment_info(&self, info_type: InfoType) {
-        let counter = self
-            .info
-            .get(&info_type)
-            .expect("InfoType missing from ProcessingStats::new()");
-        counter.fetch_add(1, Ordering::Relaxed);
+        self.info[info_type].fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get the count for an error type.
-    ///
-    /// Returns 0 if the error type is not in the map (should never happen; all variants
-    /// are initialized in `new()`).
     pub fn get_error_count(&self, error: ErrorType) -> usize {
-        self.errors
-            .get(&error)
-            .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        self.errors[error].load(Ordering::Relaxed)
     }
 
     /// Get the count for a warning type.
-    ///
-    /// Returns 0 if the warning type is not in the map (should never happen; all variants
-    /// are initialized in `new()`).
     pub fn get_warning_count(&self, warning: WarningType) -> usize {
-        self.warnings
-            .get(&warning)
-            .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        self.warnings[warning].load(Ordering::Relaxed)
     }
 
     /// Get the count for an info type.
-    ///
-    /// Returns 0 if the info type is not in the map (should never happen; all variants
-    /// are initialized in `new()`).
     pub fn get_info_count(&self, info_type: InfoType) -> usize {
-        self.info
-            .get(&info_type)
-            .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        self.info[info_type].load(Ordering::Relaxed)
     }
 
     /// Get total error count across all error types.

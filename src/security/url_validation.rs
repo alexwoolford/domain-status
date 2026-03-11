@@ -11,7 +11,7 @@
 //! redirecting requests to internal services or downloading malicious content.
 
 use anyhow::{Context, Result};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use url::Url;
 
 /// Validates that a URL is safe to fetch (SSRF protection).
@@ -99,18 +99,16 @@ pub fn validate_url_safe(url_str: &str) -> Result<()> {
     Ok(())
 }
 
-/// Checks if an IPv4 address is private/internal (RFC 1918).
+/// Single source of truth for private/reserved IPv4 ranges (SSRF protection).
 ///
-/// Private ranges:
-/// - 10.0.0.0/8
-/// - 172.16.0.0/12
-/// - 192.168.0.0/16
-/// - 127.0.0.0/8 (loopback)
-/// - 169.254.0.0/16 (link-local)
-/// - 0.0.0.0/8 (this network)
-/// - 224.0.0.0/4 (multicast)
-/// - 240.0.0.0/4 (reserved)
-fn is_private_ipv4(ip: Ipv4Addr) -> bool {
+/// Used by both URL validation and the safe DNS resolver. Includes:
+/// - RFC 1918 (10/8, 172.16/12, 192.168/16), loopback (127/8), link-local (169.254/16)
+/// - This network (0/8), multicast (224/4), reserved (240/4)
+/// - 100.64.0.0/10 (Carrier-Grade NAT, RFC 6598)
+/// - 198.18.0.0/15 (Benchmarking, RFC 2544)
+/// - 192.0.0.0/24 (IETF Protocol Assignments, RFC 6890)
+/// - 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (documentation, RFC 5737)
+pub(crate) fn is_private_ipv4(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
 
     // 127.0.0.0/8 (loopback)
@@ -130,6 +128,36 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
 
     // 192.168.0.0/16
     if octets[0] == 192 && octets[1] == 168 {
+        return true;
+    }
+
+    // 100.64.0.0/10 (Carrier-Grade NAT, RFC 6598)
+    if octets[0] == 100 && (octets[1] >= 64 && octets[1] <= 127) {
+        return true;
+    }
+
+    // 198.18.0.0/15 (Benchmarking, RFC 2544)
+    if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+        return true;
+    }
+
+    // 192.0.0.0/24 (IETF Protocol Assignments, RFC 6890)
+    if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+        return true;
+    }
+
+    // 192.0.2.0/24 (TEST-NET-1, RFC 5737)
+    if octets[0] == 192 && octets[1] == 0 && octets[2] == 2 {
+        return true;
+    }
+
+    // 198.51.100.0/24 (TEST-NET-2, RFC 5737)
+    if octets[0] == 198 && octets[1] == 51 && octets[2] == 100 {
+        return true;
+    }
+
+    // 203.0.113.0/24 (TEST-NET-3, RFC 5737)
+    if octets[0] == 203 && octets[1] == 0 && octets[2] == 113 {
         return true;
     }
 
@@ -156,6 +184,15 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
     false
 }
 
+/// Returns true if the IP is private/reserved (SSRF-unsafe). Single source of truth for both
+/// URL validation and the safe DNS resolver.
+pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_private_ipv4(v4),
+        IpAddr::V6(v6) => is_private_ipv6(v6),
+    }
+}
+
 /// Checks if an IPv6 address is private/internal (RFC 4193, RFC 4291).
 ///
 /// Private ranges:
@@ -163,7 +200,7 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
 /// - `fc00::/7` (unique local addresses)
 /// - `fe80::/10` (link-local)
 /// - `ff00::/8` (multicast)
-fn is_private_ipv6(ip: Ipv6Addr) -> bool {
+pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     // IPv4-mapped addresses (::ffff:x.x.x.x) — delegate to IPv4 check
     if let Some(ipv4) = ip.to_ipv4_mapped() {
         return is_private_ipv4(ipv4);
@@ -239,12 +276,18 @@ mod tests {
 
     #[test]
     fn test_validate_url_safe_public_ips() {
-        // Public IPs should be safe (RFC 5737 test addresses)
-        assert!(validate_url_safe("http://192.0.2.1").is_ok());
-        assert!(validate_url_safe("http://198.51.100.1").is_ok());
-        assert!(validate_url_safe("http://203.0.113.1").is_ok());
+        // Only routable public IPs are allowed (documentation/test ranges are blocked for SSRF)
         assert!(validate_url_safe("http://8.8.8.8").is_ok()); // Google DNS
         assert!(validate_url_safe("http://1.1.1.1").is_ok()); // Cloudflare DNS
+        assert!(validate_url_safe("http://93.184.216.34").is_ok()); // example.com
+    }
+
+    #[test]
+    fn test_validate_url_safe_documentation_ranges_blocked() {
+        // RFC 5737 documentation ranges are blocked (attacker with DNS control could point here)
+        assert!(validate_url_safe("http://192.0.2.1").is_err());
+        assert!(validate_url_safe("http://198.51.100.1").is_err());
+        assert!(validate_url_safe("http://203.0.113.1").is_err());
     }
 
     #[test]
@@ -261,6 +304,9 @@ mod tests {
         assert!(validate_url_safe("http://0.0.0.0").is_err());
         assert!(validate_url_safe("http://224.0.0.1").is_err()); // Multicast
         assert!(validate_url_safe("http://255.255.255.255").is_err()); // Reserved
+        assert!(validate_url_safe("http://100.64.0.1").is_err()); // CGNAT (RFC 6598)
+        assert!(validate_url_safe("http://198.18.0.1").is_err()); // Benchmarking (RFC 2544)
+        assert!(validate_url_safe("http://192.0.0.1").is_err()); // IETF assignments (RFC 6890)
     }
 
     #[test]
@@ -316,11 +362,18 @@ mod tests {
         assert!(is_private_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
         assert!(is_private_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
 
-        // Public IPs
+        // Public IPs (routable only; doc/test ranges are private)
         assert!(!is_private_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
         assert!(!is_private_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
-        assert!(!is_private_ipv4(Ipv4Addr::new(192, 0, 2, 1)));
-        assert!(!is_private_ipv4(Ipv4Addr::new(203, 0, 113, 1)));
+        assert!(!is_private_ipv4(Ipv4Addr::new(93, 184, 216, 34)));
+
+        // Documentation/test ranges are private (SSRF)
+        assert!(is_private_ipv4(Ipv4Addr::new(192, 0, 2, 1)));
+        assert!(is_private_ipv4(Ipv4Addr::new(198, 51, 100, 1)));
+        assert!(is_private_ipv4(Ipv4Addr::new(203, 0, 113, 1)));
+        assert!(is_private_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(is_private_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
+        assert!(is_private_ipv4(Ipv4Addr::new(192, 0, 0, 1)));
     }
 
     #[test]
