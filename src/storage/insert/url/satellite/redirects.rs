@@ -9,7 +9,7 @@ use super::super::super::utils::build_batch_insert_query;
 pub(crate) async fn insert_redirect_chain(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    redirect_chain: &[String],
+    redirect_chain: &[(String, u16)],
 ) {
     if redirect_chain.is_empty() {
         return;
@@ -19,25 +19,22 @@ pub(crate) async fn insert_redirect_chain(
     // Preserve sequence order (redirects happen in order, 1-based)
     let query = build_batch_insert_query(
         "url_redirect_chain",
-        &["url_status_id", "sequence_order", "redirect_url"],
+        &["url_status_id", "sequence_order", "redirect_url", "http_status"],
         redirect_chain.len(),
-        Some("ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET redirect_url=excluded.redirect_url"),
+        Some("ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET redirect_url=excluded.redirect_url, http_status=excluded.http_status"),
     );
 
     let mut query_builder = sqlx::query(&query);
-    for (index, url) in redirect_chain.iter().enumerate() {
-        // SAFETY: Cast usize to i32 for redirect chain sequence number
-        // - Redirect chains are typically 1-10 URLs (browsers limit to ~20)
-        // - Max value is redirect_chain.len() which is constrained by memory (~usize::MAX)
-        // - SQLite INTEGER can hold ±2^63, but we use i32 which can hold ±2^31 (2.1 billion)
-        // - In practice, redirect chains > 100 are extremely rare
-        // - If chain exceeds i32::MAX (2.1B URLs), cast will wrap, but this is impossible in practice
+    for (index, (url, status)) in redirect_chain.iter().enumerate() {
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let sequence_order = (index + 1) as i32; // 1-based ordering
+        #[allow(clippy::cast_lossless)]
+        let status_i32 = *status as i32;
         query_builder = query_builder
             .bind(url_status_id)
             .bind(sequence_order)
-            .bind(url);
+            .bind(url)
+            .bind(status_i32);
     }
 
     if let Err(e) = query_builder.execute(&mut **tx).await {
@@ -63,10 +60,10 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let mut tx = pool.begin().await.expect("Failed to start transaction");
-        let redirect_chain = vec![
-            "http://example.com".to_string(),
-            "https://example.com".to_string(),
-            "https://www.example.com".to_string(),
+        let redirect_chain: Vec<(String, u16)> = vec![
+            ("http://example.com".to_string(), 301),
+            ("https://example.com".to_string(), 302),
+            ("https://www.example.com".to_string(), 200),
         ];
 
         insert_redirect_chain(&mut tx, url_status_id, &redirect_chain).await;

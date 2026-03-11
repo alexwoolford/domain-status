@@ -218,6 +218,19 @@ pub(crate) fn parse_html_content(
         );
     }
 
+    // Extract canonical URL from <link rel="canonical">
+    let canonical_selector = crate::utils::parse_selector_with_fallback(
+        r#"link[rel="canonical"]"#,
+        "canonical link extraction",
+    );
+    let canonical_url = document.select(&canonical_selector).find_map(|el| {
+        el.value()
+            .attr("href")
+            .filter(|href| !href.is_empty())
+            .map(|href| href.to_string())
+    });
+    debug!("Extracted canonical URL for {final_domain}: {canonical_url:?}");
+
     // Extract favicon URL from <link rel="icon"> or <link rel="shortcut icon">
     let favicon_selector = crate::utils::parse_selector_with_fallback(
         r#"link[rel~="icon"], link[rel="shortcut icon"]"#,
@@ -260,6 +273,7 @@ pub(crate) fn parse_html_content(
         script_tag_ids,
         html_text,
         favicon_url,
+        canonical_url,
     }
 }
 

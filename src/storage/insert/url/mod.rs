@@ -35,8 +35,8 @@ pub struct UrlRecordInsertParams<'a> {
     pub http_headers: &'a std::collections::HashMap<String, String>,
     /// Vector of OID strings (will be inserted into `url_oids` table)
     pub oids: &'a std::collections::HashSet<String>,
-    /// Vector of redirect URLs (will be inserted into `url_redirect_chain` table)
-    pub redirect_chain: &'a [String],
+    /// Redirect chain (URL, HTTP status) per hop (will be inserted into `url_redirect_chain` table)
+    pub redirect_chain: &'a [(String, u16)],
     /// Vector of detected technologies (will be inserted into `url_technologies` table)
     pub technologies: &'a [crate::fingerprint::DetectedTechnology],
     /// Vector of DNS names from certificate SAN extension (will be inserted into `url_certificate_sans` table)
@@ -93,8 +93,10 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             initial_domain, final_domain, ip_address, reverse_dns_name, http_status, http_status_text,
             response_time_seconds, title, keywords, description, tls_version, ssl_cert_subject,
             ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
-            spf_record, dmarc_record, cipher_suite, key_algorithm, run_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            spf_record, dmarc_record, cipher_suite, key_algorithm, run_id,
+            body_sha256, content_length, http_version, body_word_count, body_line_count,
+            content_type, canonical_url, cert_fingerprint_sha256
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, final_domain) DO UPDATE SET
             initial_domain=excluded.initial_domain,
             ip_address=excluded.ip_address,
@@ -116,7 +118,15 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             dmarc_record=excluded.dmarc_record,
             cipher_suite=excluded.cipher_suite,
             key_algorithm=excluded.key_algorithm,
-            run_id=excluded.run_id
+            run_id=excluded.run_id,
+            body_sha256=excluded.body_sha256,
+            content_length=excluded.content_length,
+            http_version=excluded.http_version,
+            body_word_count=excluded.body_word_count,
+            body_line_count=excluded.body_line_count,
+            content_type=excluded.content_type,
+            canonical_url=excluded.canonical_url,
+            cert_fingerprint_sha256=excluded.cert_fingerprint_sha256
         RETURNING id",
     )
     .bind(&params.record.initial_domain)
@@ -141,6 +151,14 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(&params.record.cipher_suite)
     .bind(params.record.key_algorithm.as_ref().map(|k| k.as_str()))
     .bind(&params.record.run_id)
+    .bind(&params.record.body_sha256)
+    .bind(params.record.content_length)
+    .bind(&params.record.http_version)
+    .bind(params.record.body_word_count)
+    .bind(params.record.body_line_count)
+    .bind(&params.record.content_type)
+    .bind(&params.record.canonical_url)
+    .bind(&params.record.cert_fingerprint_sha256)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -275,6 +293,14 @@ mod tests {
             cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
             key_algorithm: Some(crate::models::KeyAlgorithm::ECDSA),
             run_id: Some("test-run-1".to_string()),
+            body_sha256: None,
+            content_length: None,
+            http_version: None,
+            body_word_count: None,
+            body_line_count: None,
+            content_type: None,
+            canonical_url: None,
+            cert_fingerprint_sha256: None,
         }
     }
 
@@ -381,8 +407,8 @@ mod tests {
         let http_headers = HashMap::new();
         let oids = HashSet::new();
         let redirect_chain = vec![
-            "http://example.com".to_string(),
-            "https://example.com".to_string(),
+            ("http://example.com".to_string(), 301u16),
+            ("https://example.com".to_string(), 200u16),
         ];
         let technologies = Vec::new();
         let sans = Vec::new();

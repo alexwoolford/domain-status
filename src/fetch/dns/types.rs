@@ -17,6 +17,7 @@ pub(crate) struct TlsDnsData {
     pub(crate) subject_alternative_names: Option<Vec<String>>,
     pub(crate) ip_address: Option<String>,
     pub(crate) reverse_dns_name: Option<String>,
+    pub(crate) cert_fingerprint_sha256: Option<String>,
 }
 
 /// Result of fetching TLS and DNS data, including any partial failures.

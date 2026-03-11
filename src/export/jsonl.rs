@@ -105,6 +105,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
                 json!({
                     "redirect_url": r.redirect_url,
                     "sequence_order": r.sequence_order,
+                    "http_status": r.http_status,
                 })
             })
             .collect();
@@ -203,6 +204,13 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "keywords": export_row.main.keywords,
             "description": export_row.main.description,
             "is_mobile_friendly": export_row.main.is_mobile_friendly,
+            "body_sha256": export_row.main.body_sha256,
+            "content_length": export_row.main.content_length,
+            "http_version": export_row.main.http_version,
+            "body_word_count": export_row.main.body_word_count,
+            "body_line_count": export_row.main.body_line_count,
+            "content_type": export_row.main.content_type,
+            "canonical_url": export_row.main.canonical_url,
             "redirect_chain": redirect_chain,
             "redirect_count": export_row.redirect_count,
             "final_redirect_url": export_row.final_redirect_url,
@@ -220,6 +228,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
                 },
                 "cipher_suite": export_row.main.cipher_suite,
                 "key_algorithm": export_row.main.key_algorithm,
+                "cert_fingerprint_sha256": export_row.main.cert_fingerprint_sha256,
             },
             "dns": {
                 "nameserver_count": export_row.nameserver_count,

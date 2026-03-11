@@ -114,6 +114,12 @@ mod tests {
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
             body: "<html><head><title>Test</title></head></html>".to_string(),
+            body_sha256: None,
+            content_length: None,
+            http_version: None,
+            body_word_count: None,
+            body_line_count: None,
+            content_type: None,
         }
     }
 
@@ -134,6 +140,7 @@ mod tests {
             script_tag_ids: HashSet::new(),
             html_text: "".to_string(),
             favicon_url: None,
+            canonical_url: None,
         }
     }
 

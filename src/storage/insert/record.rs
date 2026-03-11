@@ -538,6 +538,14 @@ mod tests {
             cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
             key_algorithm: Some(crate::models::KeyAlgorithm::RSA),
             run_id: Some("test-run-123".to_string()),
+            body_sha256: None,
+            content_length: None,
+            http_version: None,
+            body_word_count: None,
+            body_line_count: None,
+            content_type: None,
+            canonical_url: None,
+            cert_fingerprint_sha256: None,
         }
     }
 
@@ -605,8 +613,8 @@ mod tests {
             http_headers: http_headers.clone(),
             oids: oids.clone(),
             redirect_chain: vec![
-                "http://example.com".to_string(),
-                "https://example.com".to_string(),
+                ("http://example.com".to_string(), 301),
+                ("https://example.com".to_string(), 200),
             ],
             technologies: vec![
                 crate::fingerprint::DetectedTechnology {

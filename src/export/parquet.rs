@@ -44,6 +44,14 @@ fn build_schema() -> Schema {
         Field::new("keywords", DataType::Utf8, true),
         Field::new("description", DataType::Utf8, true),
         Field::new("is_mobile_friendly", DataType::Boolean, false),
+        // Content metrics
+        Field::new("body_sha256", DataType::Utf8, true),
+        Field::new("content_length", DataType::Int64, true),
+        Field::new("http_version", DataType::Utf8, true),
+        Field::new("body_word_count", DataType::Int64, true),
+        Field::new("body_line_count", DataType::Int64, true),
+        Field::new("content_type", DataType::Utf8, true),
+        Field::new("canonical_url", DataType::Utf8, true),
         // Redirects
         Field::new("redirect_count", DataType::Int32, false),
         Field::new("final_redirect_url", DataType::Utf8, false),
@@ -86,6 +94,7 @@ fn build_schema() -> Schema {
         Field::new("ssl_cert_valid_to_ms", DataType::Int64, true),
         Field::new("cipher_suite", DataType::Utf8, true),
         Field::new("key_algorithm", DataType::Utf8, true),
+        Field::new("cert_fingerprint_sha256", DataType::Utf8, true),
         Field::new(
             "certificate_sans",
             DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
@@ -385,6 +394,13 @@ fn write_batch(
     let mut keywords_b = StringBuilder::new();
     let mut description_b = StringBuilder::new();
     let mut is_mobile_friendly_b = BooleanBuilder::new();
+    let mut body_sha256_b = StringBuilder::new();
+    let mut content_length_b = Int64Builder::new();
+    let mut http_version_b = StringBuilder::new();
+    let mut body_word_count_b = Int64Builder::new();
+    let mut body_line_count_b = Int64Builder::new();
+    let mut content_type_b = StringBuilder::new();
+    let mut canonical_url_b = StringBuilder::new();
     let mut redirect_count_b = Int32Builder::new();
     let mut final_redirect_url_b = StringBuilder::new();
     let mut technology_count_b = Int32Builder::new();
@@ -394,6 +410,7 @@ fn write_batch(
     let mut ssl_cert_valid_to_b = Int64Builder::new();
     let mut cipher_suite_b = StringBuilder::new();
     let mut key_algorithm_b = StringBuilder::new();
+    let mut cert_fingerprint_sha256_b = StringBuilder::new();
     let mut spf_record_b = StringBuilder::new();
     let mut dmarc_record_b = StringBuilder::new();
     let mut geoip_cc_b = StringBuilder::new();
@@ -531,6 +548,13 @@ fn write_batch(
         append_opt_str(&mut keywords_b, &row.main.keywords);
         append_opt_str(&mut description_b, &row.main.description);
         is_mobile_friendly_b.append_value(row.main.is_mobile_friendly);
+        append_opt_str(&mut body_sha256_b, &row.main.body_sha256);
+        append_opt_i64(&mut content_length_b, row.main.content_length);
+        append_opt_str(&mut http_version_b, &row.main.http_version);
+        append_opt_i64(&mut body_word_count_b, row.main.body_word_count);
+        append_opt_i64(&mut body_line_count_b, row.main.body_line_count);
+        append_opt_str(&mut content_type_b, &row.main.content_type);
+        append_opt_str(&mut canonical_url_b, &row.main.canonical_url);
 
         // SAFETY: redirect_count is a small Vec length that fits in i32
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
@@ -581,6 +605,10 @@ fn write_batch(
         append_opt_i64(&mut ssl_cert_valid_to_b, row.main.ssl_cert_valid_to_ms);
         append_opt_str(&mut cipher_suite_b, &row.main.cipher_suite);
         append_opt_str(&mut key_algorithm_b, &row.main.key_algorithm);
+        append_opt_str(
+            &mut cert_fingerprint_sha256_b,
+            &row.main.cert_fingerprint_sha256,
+        );
 
         // Certificate SANs
         for san in super::row::parse_string_list(&row.certificate_sans_str) {
@@ -843,6 +871,13 @@ fn write_batch(
         Arc::new(keywords_b.finish()),
         Arc::new(description_b.finish()),
         Arc::new(is_mobile_friendly_b.finish()),
+        Arc::new(body_sha256_b.finish()),
+        Arc::new(content_length_b.finish()),
+        Arc::new(http_version_b.finish()),
+        Arc::new(body_word_count_b.finish()),
+        Arc::new(body_line_count_b.finish()),
+        Arc::new(content_type_b.finish()),
+        Arc::new(canonical_url_b.finish()),
         Arc::new(redirect_count_b.finish()),
         Arc::new(final_redirect_url_b.finish()),
         Arc::new(redirect_chain_b.finish()),
@@ -854,6 +889,7 @@ fn write_batch(
         Arc::new(ssl_cert_valid_to_b.finish()),
         Arc::new(cipher_suite_b.finish()),
         Arc::new(key_algorithm_b.finish()),
+        Arc::new(cert_fingerprint_sha256_b.finish()),
         Arc::new(cert_sans_b.finish()),
         Arc::new(cert_oids_b.finish()),
         Arc::new(spf_record_b.finish()),
@@ -1220,8 +1256,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(
             batch.num_columns(),
-            57,
-            "Should have 57 columns matching schema"
+            65,
+            "Should have 65 columns matching schema"
         );
 
         // Verify the 'url' column

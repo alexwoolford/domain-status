@@ -37,7 +37,7 @@ pub async fn handle_response(
     final_url_str: &str,
     ctx: &ProcessingContext,
     elapsed: f64,
-    redirect_chain: Option<Vec<String>>,
+    redirect_chain: Option<Vec<(String, u16)>>,
     start_time: std::time::Instant,
 ) -> Result<UrlProcessOutcome, Error> {
     // Use start_time for total_us calculation to ensure accurate percentages
@@ -510,10 +510,10 @@ mod tests {
         let server = Server::run();
         let server_url = server.url("/redirected").to_string();
         let original_url = "https://example.com/original";
-        let redirect_chain = Some(vec![
-            "https://example.com/original".to_string(),
-            "https://example.com/intermediate".to_string(),
-            server_url.clone(),
+        let redirect_chain: Option<Vec<(String, u16)>> = Some(vec![
+            ("https://example.com/original".to_string(), 301),
+            ("https://example.com/intermediate".to_string(), 302),
+            (server_url.clone(), 200),
         ]);
 
         // Return valid HTML
@@ -1001,10 +1001,10 @@ mod tests {
         let server = Server::run();
         let server_url = server.url("/redirected-full").to_string();
         let original_url = "https://example.com/original";
-        let redirect_chain = Some(vec![
-            "https://example.com/original".to_string(),
-            "https://example.com/intermediate".to_string(),
-            server_url.clone(),
+        let redirect_chain: Option<Vec<(String, u16)>> = Some(vec![
+            ("https://example.com/original".to_string(), 301),
+            ("https://example.com/intermediate".to_string(), 302),
+            (server_url.clone(), 200),
         ]);
 
         server.expect(

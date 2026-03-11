@@ -72,6 +72,22 @@ pub struct UrlRecord {
     pub key_algorithm: Option<crate::models::KeyAlgorithm>,
     /// ID of the scan run this record belongs to
     pub run_id: Option<String>,
+    /// SHA-256 hash of the response body
+    pub body_sha256: Option<String>,
+    /// Response body length in bytes
+    pub content_length: Option<i64>,
+    /// HTTP protocol version (e.g., "HTTP/1.1", "HTTP/2")
+    pub http_version: Option<String>,
+    /// Number of words in the response body
+    pub body_word_count: Option<i64>,
+    /// Number of lines in the response body
+    pub body_line_count: Option<i64>,
+    /// Content-Type header value
+    pub content_type: Option<String>,
+    /// Canonical URL from `<link rel="canonical">`
+    pub canonical_url: Option<String>,
+    /// SHA-256 fingerprint of the leaf TLS certificate DER
+    pub cert_fingerprint_sha256: Option<String>,
 }
 
 /// Represents a failed URL processing attempt for database insertion.
