@@ -28,7 +28,7 @@ pub async fn handle_http_request(
 ) -> Result<UrlProcessOutcome, Error> {
     debug!("Resolving redirects for {url}");
 
-    let (final_url_string, redirect_chain, alt_svc_header) =
+    let (final_url_string, redirect_chain, alt_svc_header, reused_response) =
         resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.network.redirect_client).await?;
 
     // Track redirect info metrics
@@ -66,19 +66,21 @@ pub async fn handle_http_request(
         }
     }
 
-    debug!("Sending request to final URL {final_url_string}");
-
-    // Add realistic browser headers to reduce bot detection
-    // Note: JA3 TLS fingerprinting will still identify rustls, but these headers
-    // help with other detection methods (header analysis, behavioral patterns)
     // Capture actual request headers for failure tracking
     let request_headers = RequestHeaders::as_vec();
 
-    // Build request with headers using the consolidated header builder
-    let request_builder =
-        RequestHeaders::apply_to_request_builder(ctx.network.client.get(&final_url_string));
-
-    let res = request_builder.send().await;
+    // Reuse the response from redirect resolution when available (avoids a redundant second fetch).
+    // resolve_redirect_chain already applied RequestHeaders, so the response has the same headers.
+    // When reused_response is None (max-hops, SSRF block, etc.), fall back to a fresh request.
+    let res = if let Some(response) = reused_response {
+        debug!("Reusing response from redirect resolution for {final_url_string}");
+        Ok(response)
+    } else {
+        debug!("Sending request to final URL {final_url_string}");
+        RequestHeaders::apply_to_request_builder(ctx.network.client.get(&final_url_string))
+            .send()
+            .await
+    };
 
     match res {
         Ok(mut response) => {
@@ -244,10 +246,10 @@ mod tests {
         let server = Server::run();
         let url = server.url("/success").to_string();
 
-        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        // resolve_redirect_chain fetches the URL and returns the response;
+        // handle_http_request reuses it (no second fetch).
         server.expect(
             Expectation::matching(request::method_path("GET", "/success"))
-                .times(2)
                 .respond_with(status_code(200).body("<html><title>Success</title></html>")),
         );
 
@@ -277,10 +279,9 @@ mod tests {
         let server = Server::run();
         let url = server.url("/forbidden").to_string();
 
-        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        // Response is reused from resolve_redirect_chain (single fetch).
         server.expect(
             Expectation::matching(request::method_path("GET", "/forbidden"))
-                .times(2)
                 .respond_with(status_code(403).body("Forbidden")),
         );
 
@@ -341,10 +342,9 @@ mod tests {
         let server = Server::run();
         let url = server.url("/notfound").to_string();
 
-        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        // Response is reused from resolve_redirect_chain (single fetch).
         server.expect(
             Expectation::matching(request::method_path("GET", "/notfound"))
-                .times(2)
                 .respond_with(status_code(404).body("Not Found")),
         );
 
@@ -399,10 +399,9 @@ mod tests {
         let server = Server::run();
         let url = server.url("/error").to_string();
 
-        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        // Response is reused from resolve_redirect_chain (single fetch).
         server.expect(
             Expectation::matching(request::method_path("GET", "/error"))
-                .times(2)
                 .respond_with(status_code(500).body("Internal Server Error")),
         );
 
@@ -527,7 +526,6 @@ mod tests {
         );
         server.expect(
             Expectation::matching(request::method_path("GET", "/final"))
-                .times(2) // Once for redirect resolution, once for main request
                 .respond_with(status_code(200).body("<html><title>Final</title></html>")),
         );
 
@@ -555,7 +553,6 @@ mod tests {
         // by checking that the redirect chain is tracked correctly
         server.expect(
             Expectation::matching(request::method_path("GET", "/secure"))
-                .times(2) // resolve_redirect_chain + main request
                 .respond_with(status_code(200).body("<html><title>Secure</title></html>")),
         );
 
@@ -587,7 +584,6 @@ mod tests {
         );
         server.expect(
             Expectation::matching(request::method_path("GET", "/final"))
-                .times(2) // redirect resolution + main request
                 .respond_with(status_code(404).body("Not Found")),
         );
 
@@ -611,15 +607,13 @@ mod tests {
         let server = Server::run();
         let url = server.url("/forbidden").to_string();
 
-        // resolve_redirect_chain makes one request, then handle_http_request makes another
+        // Response is reused from resolve_redirect_chain (single fetch).
         server.expect(
-            Expectation::matching(request::method_path("GET", "/forbidden"))
-                .times(2)
-                .respond_with(
-                    status_code(403)
-                        .insert_header("X-Custom-Header", "test-value")
-                        .body("Forbidden"),
-                ),
+            Expectation::matching(request::method_path("GET", "/forbidden")).respond_with(
+                status_code(403)
+                    .insert_header("X-Custom-Header", "test-value")
+                    .body("Forbidden"),
+            ),
         );
 
         let ctx = create_test_context(&server).await;
@@ -684,7 +678,7 @@ mod tests {
         );
         server.expect(
             Expectation::matching(request::method_path("GET", "/final"))
-                .times(2) // Once for redirect resolution, once for main request
+                // Response reused from redirect resolution (single fetch)
                 .respond_with(status_code(200).body("<html><title>Final</title></html>")),
         );
 
@@ -723,7 +717,7 @@ mod tests {
         // Use a simpler matcher that checks for the accept header
         server.expect(
             Expectation::matching(request::method_path("GET", "/headers"))
-                .times(2) // resolve_redirect_chain + main request
+                // Response reused from redirect resolution (single fetch)
                 .respond_with(status_code(200).body("<html><title>Test</title></html>")),
         );
 
@@ -747,10 +741,9 @@ mod tests {
         let server = Server::run();
         let url = server.url("/error").to_string();
 
-        // Return 500 error
+        // Return 500 error (response reused from redirect resolution)
         server.expect(
             Expectation::matching(request::method_path("GET", "/error"))
-                .times(2)
                 .respond_with(status_code(500).body("Internal Server Error")),
         );
 
@@ -798,7 +791,7 @@ mod tests {
         );
         server.expect(
             Expectation::matching(request::method_path("GET", "/final"))
-                .times(2) // Once for redirect resolution, once for main request
+                // Response reused from redirect resolution (single fetch)
                 .respond_with(status_code(200).body("<html><title>Final</title></html>")),
         );
 
@@ -823,7 +816,7 @@ mod tests {
         // Return response with alt-svc header already present
         server.expect(
             Expectation::matching(request::method_path("GET", "/test"))
-                .times(2) // resolve_redirect_chain + main request
+                // Response reused from redirect resolution (single fetch)
                 .respond_with(
                     status_code(200)
                         .insert_header("Alt-Svc", "h3=\":443\"; ma=86400")

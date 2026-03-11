@@ -71,6 +71,9 @@ pub async fn init_client(
         .timeout(Duration::from_secs(config.timeout_seconds))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .user_agent(config.user_agent.clone())
+        .pool_idle_timeout(Duration::from_secs(30)) // Faster cleanup for scanning workload (default 90s)
+        .pool_max_idle_per_host(10) // Prevent FD exhaustion when scanning many URLs on the same host
+        .tcp_nodelay(true) // Reduce latency for small request/response pairs
         .build()?;
     Ok(Arc::new(client))
 }
@@ -126,6 +129,9 @@ pub async fn init_redirect_client(
         .timeout(Duration::from_secs(config.timeout_seconds))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .user_agent(config.user_agent.clone())
+        .pool_idle_timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .tcp_nodelay(true)
         .build()?;
     Ok(Arc::new(client))
 }

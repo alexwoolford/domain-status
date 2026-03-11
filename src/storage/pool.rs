@@ -114,6 +114,18 @@ pub async fn init_db_pool_with_path(
             DatabaseError::SqlError(e)
         })?;
 
+    // In WAL mode, synchronous=NORMAL is safe and reduces fsync calls.
+    // The WAL journal provides crash safety; NORMAL only risks losing the last
+    // few transactions on OS crash (not application crash). This is the
+    // SQLite-recommended setting for WAL mode.
+    sqlx::query("PRAGMA synchronous=NORMAL")
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to set synchronous mode: {e}");
+            DatabaseError::SqlError(e)
+        })?;
+
     // Configure WAL autocheckpoint (P1 operational fix)
     // Checkpoint every 1000 pages (~4MB with 4KB pages)
     // This prevents unbounded WAL growth during bulk operations
