@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-03-11
+
+### Changed
+- SSRF: consolidate private IP checks into `url_validation`; add missing ranges (CGNAT 100.64.0.0/10, benchmarking 198.18.0.0/15, IETF 192.0.0.0/24, documentation 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24). `safe_resolver` now uses shared `is_private_ip`.
+- Retry logic: replace fragile string matching in `is_retriable_error` with typed `hickory_resolver::ResolveError` downcast for DNS; rely on `reqwest::Error::status()` for HTTP.
+- ProcessingStats: use `enum_map::EnumMap` instead of `HashMap<ErrorType, AtomicUsize>`; consistent `Ordering::Relaxed` for stats.
+- Hot path: use `Ordering::Relaxed` for independent atomic counters in run/task.
+- Task handlers: reduce argument count via `TaskProgress` struct; remove `clippy::too_many_arguments` suppressions.
+- Redirect chain: O(1) check `chain.last() != Some(&last_fetched_url)` instead of `chain.contains()`.
+- HTTP client: tune pool_idle_timeout, pool_max_idle_per_host, tcp_nodelay for scanning.
+- SQLite: set `PRAGMA synchronous=NORMAL` with WAL mode.
+
 ## [0.1.17] - 2026-03-10
 
 ### Changed
