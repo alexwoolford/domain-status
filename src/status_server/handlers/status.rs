@@ -24,8 +24,10 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
     let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
-    let skipped = state.skipped_urls.load(Ordering::SeqCst);
-    let processed = completed + failed + skipped;
+    let _skipped = state.skipped_urls.load(Ordering::SeqCst);
+    // completed already includes skipped (both incremented in handle_success),
+    // so don't add skipped again or it gets double-counted.
+    let processed = completed + failed;
     let active_urls = attempted.saturating_sub(processed);
     // Progress is based on lines dealt with (attempted or skipped), so the bar reaches 100% when done
     #[allow(clippy::cast_precision_loss)]

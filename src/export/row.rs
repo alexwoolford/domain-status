@@ -856,10 +856,34 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         ipv6_count,
         caa_records,
         caa_count,
-        csp_domain_count: 0,    // TODO: fetch from url_csp_domains
-        cookie_count: 0,        // TODO: fetch from url_cookies
-        resource_hint_count: 0, // TODO: fetch from url_resource_hints
-        body_domain_count: 0,   // TODO: fetch from url_body_domains
+        csp_domain_count: sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM url_csp_domains WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_one(pool.as_ref())
+        .await
+        .unwrap_or(0) as usize,
+        cookie_count: sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM url_cookies WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_one(pool.as_ref())
+        .await
+        .unwrap_or(0) as usize,
+        resource_hint_count: sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM url_resource_hints WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_one(pool.as_ref())
+        .await
+        .unwrap_or(0) as usize,
+        body_domain_count: sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM url_body_domains WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_one(pool.as_ref())
+        .await
+        .unwrap_or(0) as usize,
     })
 }
 

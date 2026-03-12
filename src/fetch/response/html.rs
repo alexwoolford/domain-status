@@ -299,17 +299,22 @@ pub(crate) fn parse_html_content(
     debug!("Extracted favicon URL for {final_domain}: {favicon_url:?}");
 
     // Extract text content (limited for performance)
-    // Note: Iterator::take() limits the number of items (text nodes), not characters
-    // We need to collect and truncate manually to limit by character count
-    let html_text_full: String = document.root_element().text().collect();
-    let html_text = if html_text_full.len() > crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS {
-        html_text_full
-            .chars()
-            .take(crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS)
-            .collect()
-    } else {
-        html_text_full
-    };
+    // Collect text with early termination to avoid allocating a full ~1.5MB string
+    // just to immediately truncate it. Stops appending once the limit is reached.
+    let limit = crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS;
+    let mut html_text = String::with_capacity(limit.min(64 * 1024));
+    for text_node in document.root_element().text() {
+        if html_text.len() >= limit {
+            break;
+        }
+        let remaining = limit - html_text.len();
+        if text_node.len() <= remaining {
+            html_text.push_str(text_node);
+        } else {
+            html_text.extend(text_node.chars().take(remaining));
+            break;
+        }
+    }
 
     // Extract body domains from href/src/action attributes (reuses existing DOM parse)
     let body_domain_selector = crate::utils::parse_selector_with_fallback(

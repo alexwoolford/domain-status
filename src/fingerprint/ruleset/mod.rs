@@ -197,23 +197,22 @@ async fn fetch_ruleset_from_multiple_sources(
         for (tech_name, mut tech) in technologies {
             // Normalize header keys and patterns to lowercase (matching Go: strings.ToLower(header), strings.ToLower(pattern))
             let mut normalized_headers = HashMap::new();
+            // Normalize header/cookie KEYS to lowercase for case-insensitive lookup.
+            // PATTERNS must NOT be lowercased — they're regexes where \S != \s, \D != \d.
             for (header_name, pattern) in tech.headers {
-                normalized_headers.insert(header_name.to_lowercase(), pattern.to_lowercase());
+                normalized_headers.insert(header_name.to_lowercase(), pattern);
             }
             tech.headers = normalized_headers;
 
-            // Normalize cookie keys and patterns to lowercase (matching Go: strings.ToLower(cookie), strings.ToLower(value))
             let mut normalized_cookies = HashMap::new();
             for (cookie_name, pattern) in tech.cookies {
-                normalized_cookies.insert(cookie_name.to_lowercase(), pattern.to_lowercase());
+                normalized_cookies.insert(cookie_name.to_lowercase(), pattern);
             }
             tech.cookies = normalized_cookies;
 
-            // Normalize script patterns to lowercase for consistent matching
-            tech.script = tech.script.iter().map(|s| s.to_lowercase()).collect();
-
-            // Normalize HTML patterns to lowercase for consistent matching
-            tech.html = tech.html.iter().map(|s| s.to_lowercase()).collect();
+            // Script and HTML patterns are NOT lowercased — they contain regexes
+            // where case matters (\S vs \s, \D vs \d). The matching engine handles
+            // case-insensitive comparison via regex flags ((?i)) where needed.
 
             // Note: URL patterns are not normalized to preserve case-sensitive matching
             // URL patterns are matched against the actual URL which may have case-sensitive paths
