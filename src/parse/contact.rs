@@ -8,6 +8,34 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::LazyLock;
 
+/// Decodes percent-encoded characters in a URI component (e.g., `%20` -> ` `).
+fn percent_decode(s: &str) -> String {
+    let mut result = Vec::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                result.push(hi << 4 | lo);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).to_string()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 const ANCHOR_SELECTOR_STR: &str = "a[href]";
 
 static ANCHOR_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
@@ -66,7 +94,9 @@ pub fn extract_contact_links(document: &Html) -> Vec<ContactLink> {
 
             if href_lower.starts_with("mailto:") {
                 let rest = &href["mailto:".len()..];
-                let value = rest.split('?').next().unwrap_or(rest).trim().to_string();
+                let raw_value = rest.split('?').next().unwrap_or(rest).trim();
+                // URL-decode percent-encoded characters (e.g., %20 -> space)
+                let value = percent_decode(raw_value);
                 if value.is_empty() {
                     continue;
                 }
@@ -79,7 +109,8 @@ pub fn extract_contact_links(document: &Html) -> Vec<ContactLink> {
                     });
                 }
             } else if href_lower.starts_with("tel:") {
-                let value = href["tel:".len()..].trim().to_string();
+                let raw_value = href["tel:".len()..].trim();
+                let value = percent_decode(raw_value);
                 if value.is_empty() {
                     continue;
                 }
