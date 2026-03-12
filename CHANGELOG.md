@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-03-12
+
+### Added
+- **OSINT Tier 1**: body SHA-256 hash, content-length, HTTP version, word/line count, content-type, canonical URL, certificate fingerprint SHA-256, redirect chain status codes per hop.
+- **OSINT Tier 2**: CNAME records, AAAA (IPv6) addresses, CAA (Certificate Authority Authorization) records. All stored in normalized satellite tables.
+- **OSINT Tier 3**: CSP domain extraction, cookie security analysis (Secure/HttpOnly/SameSite), meta refresh detection, preconnect/dns-prefetch resource hints, body FQDN extraction (using scraper HTML parser, not regex), certificate intelligence (serial number, self-signed/wildcard/mismatched detection).
+- New satellite tables: `url_cname_records`, `url_ipv6_addresses`, `url_caa_records`, `url_csp_domains`, `url_cookies`, `url_resource_hints`, `url_body_domains`.
+- Structured `TechnologyRecord` and `AnalyticsIdRecord` in JSONL export (avoids comma/colon delimiter corruption).
+- Reference repos: cloned `cdncheck` and `dnsx` for future CDN detection work.
+
+### Fixed
+- **4xx responses now processed as successes**: 403 Forbidden (WAF/bot detection) pages are fully scanned instead of discarded. Only 429 and 5xx trigger the failure/retry path.
+- **Drain timeout accounting**: in-flight tasks aborted during shutdown are now counted as failed instead of silently dropped (91+9=100, not 89+7=96).
+- **Stale satellite data on UPSERT**: all 26 satellite/enrichment tables are now cleaned before re-inserting, preventing corrupted merges when the same domain is rescanned.
+- **Regex ternary `\10` corruption**: `replace_placeholders` now iterates in reverse (high to low), matching `extract_version_from_template`.
+- **Regex pattern destruction**: `.to_lowercase()` was applied to Wappalyzer regex patterns, converting `\S` to `\s` and `\D` to `\d`. Now only header/cookie keys are lowercased.
+- **CSV column misalignment**: data array order now matches header order for all 84 columns.
+- **TXT record truncation panic**: byte-index slicing replaced with `.chars().take(N)` to respect UTF-8 boundaries.
+- **WHOIS cache quota bypass**: counter now seeded from actual directory size on restart.
+- **Certificate mismatch false positives**: comparison used already-drained SAN list (always empty). Now uses the correct `sans_vec`.
+- **NULL registrable_domain**: bare PSL suffixes (e.g., `akamaihd.net`) now fall back to the FQDN itself.
+- **Percent-encoded contact values**: `tel:` and `mailto:` hrefs are now URL-decoded.
+- **Resource hints stored raw URLs**: now stores clean hostnames only.
+- **Double/triple DOM parse**: body domain extraction and mobile-friendliness check now reuse the existing DOM tree.
+- **JSON-LD regex recompilation**: two complex regexes now compiled once via `static LazyLock`.
+- **Unbounded text allocation**: `.collect()` on full page text replaced with iterator early termination.
+- **Status server double-counted skipped URLs**: `processed = completed + failed` (completed already includes skipped).
+- **Ctrl-C cancellation**: active HTTP requests now aborted immediately via `tokio::select!` instead of waiting for drain timeout.
+- **Export data trapped**: Tier 3 satellite counts (CSP, cookies, hints, body domains) now fetched from DB instead of hardcoded 0.
+
+### Removed
+- `url-list.txt` and `url-list.txt` removed from git tracking (user-specific data).
+
 ## [0.1.18] - 2026-03-11
 
 ### Changed
