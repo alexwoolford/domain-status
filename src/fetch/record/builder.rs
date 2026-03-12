@@ -9,6 +9,20 @@ use regex::Regex;
 use std::collections::HashSet;
 
 use crate::database::UrlRecord;
+
+/// Returns the PSL registrable domain (eTLD+1) for a given FQDN.
+///
+/// Uses the well-tested `psl::domain_str()` which correctly implements
+/// the Public Suffix List algorithm. For most domains this gives the expected
+/// organizational domain (e.g., `www.facebook.com` -> `facebook.com`).
+///
+/// For wildcard PSL entries like `*.cloudfront.net`, the registrable domain
+/// equals the full FQDN (e.g., `d123.cloudfront.net`) because each subdomain
+/// under a wildcard suffix is independently registered. This is correct per PSL
+/// rules — the same behavior as Go's `publicsuffix.EffectiveTLDPlusOne()`.
+fn root_domain(fqdn: &str) -> Option<String> {
+    psl::domain_str(fqdn).map(|d| d.to_string())
+}
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::response::{HtmlData, ResponseData};
 use crate::storage::{BatchRecord, CookieInfo};
@@ -38,7 +52,7 @@ fn extract_csp_domains(csp: &str) -> Vec<(String, String, Option<String>)> {
                 }
                 let key = (directive.clone(), fqdn.clone());
                 if seen.insert(key) {
-                    let reg = psl::domain_str(&fqdn).map(|d| d.to_string());
+                    let reg = root_domain(&fqdn);
                     results.push((directive.clone(), fqdn, reg));
                 }
             }
@@ -151,8 +165,8 @@ fn extract_body_domains(body: &str) -> Vec<(String, Option<String>)> {
                     continue;
                 }
                 // Validate against PSL -- only accept real registrable domains
-                let reg = match psl::domain_str(&fqdn) {
-                    Some(d) => d.to_string(),
+                let reg = match root_domain(&fqdn) {
+                    Some(d) => d,
                     None => continue,
                 };
                 if seen.insert(fqdn.clone()) {
