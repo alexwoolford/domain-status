@@ -344,32 +344,22 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
     // Extract body FQDNs from HTML body
     let body_domains = extract_body_domains(&params.resp_data.body);
 
-    // Compute cert_is_mismatched: check if host matches any SAN or CN
-    if let Some(ref host) = params.resp_data.host.is_empty().then_some(()).or(Some(())) {
-        let _ = host; // use host field
-        let domain = &params.resp_data.host;
-        if !domain.is_empty() {
-            let sans = params
-                .tls_dns_data
-                .subject_alternative_names
-                .as_deref()
-                .unwrap_or(&[]);
-            let cn = params.tls_dns_data.subject.as_deref().unwrap_or("");
-            let matches_san = sans.iter().any(|san| {
-                if let Some(wildcard_base) = san.strip_prefix("*.") {
-                    domain == san
-                        || domain.ends_with(&format!(".{wildcard_base}"))
-                        || domain == wildcard_base
-                } else {
-                    domain == san
-                }
-            });
-            let matches_cn = cn.contains(domain);
-            // Only set mismatched if we actually have TLS data
-            if params.tls_dns_data.tls_version.is_some() {
-                params.record.cert_is_mismatched = Some(!matches_san && !matches_cn);
+    // Compute cert_is_mismatched: check if host matches any SAN or CN.
+    // Uses sans_vec (not tls_dns_data.subject_alternative_names which was already .take()'d).
+    let domain = &params.resp_data.host;
+    if !domain.is_empty() && params.tls_dns_data.tls_version.is_some() {
+        let cn = params.tls_dns_data.subject.as_deref().unwrap_or("");
+        let matches_san = sans_vec.iter().any(|san| {
+            if let Some(wildcard_base) = san.strip_prefix("*.") {
+                domain == san
+                    || domain.ends_with(&format!(".{wildcard_base}"))
+                    || domain == wildcard_base
+            } else {
+                domain == san
             }
-        }
+        });
+        let matches_cn = cn.contains(domain);
+        params.record.cert_is_mismatched = Some(!matches_san && !matches_cn);
     }
 
     BatchRecord {
