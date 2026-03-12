@@ -234,7 +234,10 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     // case where the same (run_id, final_domain) is scanned twice: the main url_status row
     // is updated, but old satellite rows (e.g., redirect hops from a previous scan) would
     // remain orphaned without this cleanup.
+    // All satellite AND enrichment tables that hang off url_status.id.
+    // Both are cleaned before re-inserting to prevent stale data on UPSERT.
     static SATELLITE_TABLES: &[&str] = &[
+        // Core satellites (inserted inside this transaction)
         "url_technologies",
         "url_nameservers",
         "url_txt_records",
@@ -251,6 +254,17 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
         "url_cookies",
         "url_resource_hints",
         "url_body_domains",
+        // Enrichment tables (inserted after this transaction, but cleaned here)
+        "url_analytics_ids",
+        "url_structured_data",
+        "url_social_media_links",
+        "url_security_warnings",
+        "url_contact_links",
+        "url_exposed_secrets",
+        "url_partial_failures",
+        "url_favicons",
+        "url_geoip",
+        "url_whois",
     ];
     for table in SATELLITE_TABLES {
         let sql = format!("DELETE FROM {table} WHERE url_status_id = ?");

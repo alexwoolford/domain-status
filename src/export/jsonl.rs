@@ -13,10 +13,7 @@ use crate::storage::init_db_pool_with_path;
 use crate::utils::IoErrorContext;
 
 use super::queries::{build_export_query, IgnoreBrokenPipe};
-use super::row::{
-    build_export_row, build_url, extract_main_row_data, parse_key_value_pairs, parse_string_list,
-    parse_technologies,
-};
+use super::row::{build_export_row, build_url, extract_main_row_data, parse_string_list};
 
 /// Exports data to JSONL format (JSON Lines).
 ///
@@ -110,13 +107,14 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             })
             .collect();
 
-        // Parse technologies into JSON array
-        let technologies: Vec<Value> = parse_technologies(&export_row.technologies_str)
-            .into_iter()
-            .map(|(name, version)| {
+        // Build technologies from structured data (avoids comma/colon delimiter corruption)
+        let technologies: Vec<Value> = export_row
+            .technologies
+            .iter()
+            .map(|t| {
                 json!({
-                    "name": name,
-                    "version": version.map(Value::String).unwrap_or(Value::Null)
+                    "name": t.name,
+                    "version": t.version.clone().map(Value::String).unwrap_or(Value::Null)
                 })
             })
             .collect();
@@ -127,13 +125,14 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
         // Parse OIDs
         let oids = parse_string_list(&export_row.oids_str);
 
-        // Parse analytics IDs into JSON array
-        let analytics_ids: Vec<Value> = parse_key_value_pairs(&export_row.analytics_ids_str)
-            .into_iter()
-            .map(|(provider, tracking_id)| {
+        // Build analytics IDs from structured data (avoids comma/colon delimiter corruption)
+        let analytics_ids: Vec<Value> = export_row
+            .analytics_ids
+            .iter()
+            .map(|a| {
                 json!({
-                    "provider": provider,
-                    "tracking_id": tracking_id
+                    "provider": a.provider,
+                    "tracking_id": a.tracking_id
                 })
             })
             .collect();
