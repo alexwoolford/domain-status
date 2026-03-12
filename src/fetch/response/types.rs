@@ -46,4 +46,5 @@ pub(crate) struct HtmlData {
     pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
     pub(crate) meta_refresh_url: Option<String>, // Meta refresh redirect URL
     pub(crate) resource_hints: Vec<(String, String)>, // (hint_type, href) for preconnect/dns-prefetch
+    pub(crate) body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain) from href/src attrs
 }

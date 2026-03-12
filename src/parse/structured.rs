@@ -79,25 +79,21 @@ pub fn extract_structured_data(document: &Html, html: &str) -> StructuredData {
 ///
 /// Searches for `<script type="application/ld+json">` tags and parses their content.
 fn extract_json_ld(html: &str) -> Vec<serde_json::Value> {
+    use std::sync::LazyLock;
+
+    // Compile regexes once (static), not per URL call
+    static RE_DOUBLE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new("(?is)<script[^>]*type\\s*=\\s*\"application/ld\\+json\"[^>]*>(.*?)</script>")
+            .expect("JSON-LD double-quote regex")
+    });
+    static RE_SINGLE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new("(?is)<script[^>]*type\\s*=\\s*'application/ld\\+json'[^>]*>(.*?)</script>")
+            .expect("JSON-LD single-quote regex")
+    });
+
     let mut json_ld_scripts = Vec::new();
-
-    // Pattern to match JSON-LD script tags
-    // Matches: <script type="application/ld+json">...</script>
-    // Handles both single and double quotes, and case-insensitive type attribute
-    // Use two patterns: one for double quotes, one for single quotes
-    let re_double = match Regex::new(
-        "(?is)<script[^>]*type\\s*=\\s*\"application/ld\\+json\"[^>]*>(.*?)</script>",
-    ) {
-        Ok(r) => r,
-        Err(_) => return json_ld_scripts,
-    };
-
-    let re_single = match Regex::new(
-        "(?is)<script[^>]*type\\s*=\\s*'application/ld\\+json'[^>]*>(.*?)</script>",
-    ) {
-        Ok(r) => r,
-        Err(_) => return json_ld_scripts,
-    };
+    let re_double = &*RE_DOUBLE;
+    let re_single = &*RE_SINGLE;
 
     // Try double quotes first
     for cap in re_double.captures_iter(html) {

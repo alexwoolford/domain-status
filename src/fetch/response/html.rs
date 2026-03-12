@@ -311,6 +311,51 @@ pub(crate) fn parse_html_content(
         html_text_full
     };
 
+    // Extract body domains from href/src/action attributes (reuses existing DOM parse)
+    let body_domain_selector = crate::utils::parse_selector_with_fallback(
+        "[href], [src], [action]",
+        "body domain extraction",
+    );
+    let mut body_domain_seen = std::collections::HashSet::new();
+    let mut body_domains = Vec::new();
+    for element in document.select(&body_domain_selector) {
+        if body_domains.len() >= 200 {
+            break;
+        }
+        let url_str = element
+            .value()
+            .attr("href")
+            .or_else(|| element.value().attr("src"))
+            .or_else(|| element.value().attr("action"));
+        if let Some(url_str) = url_str {
+            let host = if url_str.starts_with("//") {
+                url::Url::parse(&format!("https:{url_str}"))
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            } else if url_str.starts_with("http://") || url_str.starts_with("https://") {
+                url::Url::parse(url_str)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            } else {
+                None
+            };
+            if let Some(fqdn) = host {
+                if fqdn.len() >= 4 && body_domain_seen.insert(fqdn.clone()) {
+                    let reg = psl::domain_str(&fqdn)
+                        .map(|d| d.to_string())
+                        .or_else(|| psl::suffix_str(&fqdn).map(|_| fqdn.clone()));
+                    if reg.is_some() {
+                        body_domains.push((fqdn, reg));
+                    }
+                }
+            }
+        }
+    }
+    debug!(
+        "Extracted {} body domains for {final_domain}",
+        body_domains.len()
+    );
+
     HtmlData {
         title,
         keywords_str,
@@ -330,6 +375,7 @@ pub(crate) fn parse_html_content(
         canonical_url,
         meta_refresh_url,
         resource_hints,
+        body_domains,
     }
 }
 

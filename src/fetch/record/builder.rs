@@ -124,68 +124,8 @@ fn extract_cookies(headers: &reqwest::header::HeaderMap) -> Vec<CookieInfo> {
         .collect()
 }
 
-/// Extracts FQDNs from HTML body by parsing `href` and `src` attributes from actual
-/// HTML elements using the `scraper` crate (Rust's equivalent of Python's `BeautifulSoup`).
-/// This avoids false positives from CSS selectors and JavaScript dot notation that
-/// naive regex approaches would match.
-/// Validates against PSL to ensure real TLDs. Capped at 200 unique domains.
-fn extract_body_domains(body: &str) -> Vec<(String, Option<String>)> {
-    if body.is_empty() {
-        return Vec::new();
-    }
-
-    let document = scraper::Html::parse_document(body);
-    let selector = scraper::Selector::parse("[href], [src], [action]").unwrap_or_else(|_| {
-        // Fallback: if selector parse fails, return empty
-        scraper::Selector::parse("a").expect("fallback selector")
-    });
-
-    let mut seen = HashSet::new();
-    let mut results = Vec::new();
-
-    for element in document.select(&selector) {
-        if results.len() >= 200 {
-            break;
-        }
-        // Extract URL from href, src, or action attribute
-        let url_str = element
-            .value()
-            .attr("href")
-            .or_else(|| element.value().attr("src"))
-            .or_else(|| element.value().attr("action"));
-
-        if let Some(url_str) = url_str {
-            // Parse the URL to extract the host
-            let host = if url_str.starts_with("//") {
-                // Protocol-relative URL
-                url::Url::parse(&format!("https:{url_str}"))
-                    .ok()
-                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
-            } else if url_str.starts_with("http://") || url_str.starts_with("https://") {
-                url::Url::parse(url_str)
-                    .ok()
-                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
-            } else {
-                None // Skip relative URLs, mailto:, tel:, javascript:, etc.
-            };
-
-            if let Some(fqdn) = host {
-                if fqdn.len() < 4 {
-                    continue;
-                }
-                // Validate against PSL -- only accept real registrable domains
-                let reg = match root_domain(&fqdn) {
-                    Some(d) => d,
-                    None => continue,
-                };
-                if seen.insert(fqdn.clone()) {
-                    results.push((fqdn, Some(reg)));
-                }
-            }
-        }
-    }
-    results
-}
+// Body domain extraction now happens in parse_html_content (html.rs) to avoid
+// parsing the DOM twice. Results flow through HtmlData.body_domains.
 
 /// Builds a `UrlRecord` from extracted response data.
 ///
@@ -350,8 +290,8 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
     // Extract cookie security info from Set-Cookie headers
     let cookies = extract_cookies(&params.resp_data.headers);
 
-    // Extract body FQDNs from HTML body
-    let body_domains = extract_body_domains(&params.resp_data.body);
+    // Body domains already extracted during HTML parsing (avoids re-parsing the DOM)
+    let body_domains = std::mem::take(&mut params.html_data.body_domains);
 
     // Compute cert_is_mismatched: check if host matches any SAN or CN.
     // Uses sans_vec (not tls_dns_data.subject_alternative_names which was already .take()'d).
@@ -459,6 +399,7 @@ mod tests {
             canonical_url: None,
             meta_refresh_url: None,
             resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         }
     }
 
