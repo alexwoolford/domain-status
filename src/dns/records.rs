@@ -107,7 +107,12 @@ pub async fn lookup_txt_records(
                                 original_len,
                                 crate::config::MAX_TXT_RECORD_SIZE
                             );
-                            concatenated[..crate::config::MAX_TXT_RECORD_SIZE].to_string()
+                            // Truncate by character count (not byte index) to avoid
+                            // panicking on multi-byte UTF-8 boundaries
+                            concatenated
+                                .chars()
+                                .take(crate::config::MAX_TXT_RECORD_SIZE)
+                                .collect::<String>()
                         } else {
                             concatenated
                         };

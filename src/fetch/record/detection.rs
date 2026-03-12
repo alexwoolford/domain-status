@@ -143,6 +143,7 @@ mod tests {
             canonical_url: None,
             meta_refresh_url: None,
             resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         }
     }
 
