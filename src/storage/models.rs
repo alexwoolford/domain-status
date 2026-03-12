@@ -88,6 +88,16 @@ pub struct UrlRecord {
     pub canonical_url: Option<String>,
     /// SHA-256 fingerprint of the leaf TLS certificate DER
     pub cert_fingerprint_sha256: Option<String>,
+    /// Certificate serial number
+    pub cert_serial_number: Option<String>,
+    /// Whether the certificate is self-signed (issuer == subject)
+    pub cert_is_self_signed: Option<bool>,
+    /// Whether the certificate is a wildcard cert (`*.example.com`)
+    pub cert_is_wildcard: Option<bool>,
+    /// Whether the cert doesn't match the requested domain
+    pub cert_is_mismatched: Option<bool>,
+    /// Meta refresh redirect URL from `<meta http-equiv="refresh">`
+    pub meta_refresh_url: Option<String>,
 }
 
 /// Represents a failed URL processing attempt for database insertion.

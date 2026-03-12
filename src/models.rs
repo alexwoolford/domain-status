@@ -151,6 +151,9 @@ pub struct CertificateInfo {
     pub key_algorithm: Option<KeyAlgorithm>,
     pub subject_alternative_names: Option<Vec<String>>,
     pub fingerprint_sha256: Option<String>,
+    pub serial_number: Option<String>,
+    pub is_self_signed: Option<bool>,
+    pub is_wildcard: Option<bool>,
 }
 
 #[cfg(test)]

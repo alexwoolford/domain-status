@@ -2,7 +2,7 @@
 
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
-The schema is created by migrations (`migrations/0001_initial_schema.sql` through `migrations/0006_osint_signals.sql`) and follows a simple pattern:
+The schema is created by migrations (`migrations/0001_initial_schema.sql` through `migrations/0007_osint_tier3.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
@@ -38,6 +38,10 @@ erDiagram
     url_status ||--o{ url_cname_records : has
     url_status ||--o{ url_ipv6_addresses : has
     url_status ||--o{ url_caa_records : has
+    url_status ||--o{ url_csp_domains : has
+    url_status ||--o{ url_cookies : has
+    url_status ||--o{ url_resource_hints : has
+    url_status ||--o{ url_body_domains : has
 
     url_failures ||--o{ url_failure_redirect_chain : has
     url_failures ||--o{ url_failure_response_headers : has
@@ -107,6 +111,11 @@ Important characteristics:
 | `content_type` | `TEXT` | Content-Type header value |
 | `canonical_url` | `TEXT` | URL from `<link rel="canonical">` |
 | `cert_fingerprint_sha256` | `TEXT` | SHA-256 hash of the leaf TLS certificate DER |
+| `cert_serial_number` | `TEXT` | Certificate serial number |
+| `cert_is_self_signed` | `BOOLEAN` | Whether issuer == subject |
+| `cert_is_wildcard` | `BOOLEAN` | Whether any SAN starts with `*.` |
+| `cert_is_mismatched` | `BOOLEAN` | Whether cert doesn't match requested domain |
+| `meta_refresh_url` | `TEXT` | Client-side redirect from `<meta http-equiv="refresh">` |
 | `observed_at_ms` | `INTEGER NOT NULL` | Observation timestamp |
 | `run_id` | `TEXT` | FK to `runs.run_id` |
 
@@ -160,6 +169,10 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_cname_records` | CNAME targets (CDN/hosting infrastructure) | `cname_target` |
 | `url_ipv6_addresses` | AAAA records (IPv6 dual-stack detection) | `ipv6_address` |
 | `url_caa_records` | Certificate Authority Authorization | `flag`, `tag`, `value` |
+| `url_csp_domains` | Domains from Content-Security-Policy | `directive`, `fqdn`, `registrable_domain` |
+| `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
+| `url_resource_hints` | Preconnect/dns-prefetch hints | `hint_type`, `href` |
+| `url_body_domains` | FQDNs referenced in HTML body | `fqdn`, `registrable_domain` |
 
 ### HTTP and TLS satellites
 

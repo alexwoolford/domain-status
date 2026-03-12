@@ -231,6 +231,44 @@ pub(crate) fn parse_html_content(
     });
     debug!("Extracted canonical URL for {final_domain}: {canonical_url:?}");
 
+    // Extract meta refresh redirect URL from <meta http-equiv="refresh" content="0;url=...">
+    let meta_refresh_url = meta_tags
+        .get("http-equiv:refresh")
+        .and_then(|values| values.first())
+        .and_then(|content| {
+            // Parse content like "0;url=https://example.com" or "5; URL=https://example.com"
+            let lower = content.to_lowercase();
+            if let Some(pos) = lower.find("url=") {
+                let url_part = content[pos + 4..].trim().to_string();
+                if !url_part.is_empty() {
+                    Some(url_part)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+    debug!("Extracted meta refresh URL for {final_domain}: {meta_refresh_url:?}");
+
+    // Extract resource hints (preconnect, dns-prefetch)
+    let hint_selector = crate::utils::parse_selector_with_fallback(
+        r#"link[rel="preconnect"], link[rel="dns-prefetch"]"#,
+        "resource hint extraction",
+    );
+    let resource_hints: Vec<(String, String)> = document
+        .select(&hint_selector)
+        .filter_map(|el| {
+            let rel = el.value().attr("rel")?;
+            let href = el.value().attr("href").filter(|h| !h.is_empty())?;
+            Some((rel.to_string(), href.to_string()))
+        })
+        .collect();
+    debug!(
+        "Extracted {} resource hints for {final_domain}",
+        resource_hints.len()
+    );
+
     // Extract favicon URL from <link rel="icon"> or <link rel="shortcut icon">
     let favicon_selector = crate::utils::parse_selector_with_fallback(
         r#"link[rel~="icon"], link[rel="shortcut icon"]"#,
@@ -274,6 +312,8 @@ pub(crate) fn parse_html_content(
         html_text,
         favicon_url,
         canonical_url,
+        meta_refresh_url,
+        resource_hints,
     }
 }
 

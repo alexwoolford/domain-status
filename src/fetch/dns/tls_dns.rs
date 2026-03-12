@@ -58,6 +58,9 @@ pub(crate) async fn fetch_tls_and_dns(
                     key_algorithm: None,
                     subject_alternative_names: None,
                     fingerprint_sha256: None,
+                    serial_number: None,
+                    is_self_signed: None,
+                    is_wildcard: None,
                 })
             }
         },
@@ -104,6 +107,9 @@ pub(crate) async fn fetch_tls_and_dns(
         key_algorithm,
         subject_alternative_names,
         cert_fingerprint_sha256,
+        cert_serial_number,
+        cert_is_self_signed,
+        cert_is_wildcard,
     ) = match tls_result {
         Ok(cert_info) => (
             cert_info.tls_version,
@@ -116,12 +122,13 @@ pub(crate) async fn fetch_tls_and_dns(
             cert_info.key_algorithm,
             cert_info.subject_alternative_names,
             cert_info.fingerprint_sha256,
+            cert_info.serial_number,
+            cert_info.is_self_signed,
+            cert_info.is_wildcard,
         ),
         Err(e) => {
             log::error!("Failed to get SSL certificate info for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::TlsCertificateError);
-            // Record as partial failure using ErrorType enum
-            // Sanitize and truncate error message to prevent database bloat
             let error_msg = format!("Failed to get SSL certificate info for {final_domain}: {e}");
             let truncated_msg =
                 crate::utils::sanitize::sanitize_and_truncate_error_message(&error_msg);
@@ -129,7 +136,9 @@ pub(crate) async fn fetch_tls_and_dns(
                 crate::error_handling::ErrorType::TlsCertificateError,
                 truncated_msg,
             ));
-            (None, None, None, None, None, None, None, None, None, None)
+            (
+                None, None, None, None, None, None, None, None, None, None, None, None, None,
+            )
         }
     };
 
@@ -178,6 +187,9 @@ pub(crate) async fn fetch_tls_and_dns(
                 ip_address,
                 reverse_dns_name,
                 cert_fingerprint_sha256,
+                cert_serial_number,
+                cert_is_self_signed,
+                cert_is_wildcard,
             },
             partial_failures,
         },

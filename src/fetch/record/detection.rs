@@ -141,6 +141,8 @@ mod tests {
             html_text: "".to_string(),
             favicon_url: None,
             canonical_url: None,
+            meta_refresh_url: None,
+            resource_hints: Vec::new(),
         }
     }
 

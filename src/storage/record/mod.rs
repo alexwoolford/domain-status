@@ -7,4 +7,4 @@
 
 mod types;
 
-pub use types::BatchRecord;
+pub use types::{BatchRecord, CookieInfo};

@@ -44,4 +44,6 @@ pub(crate) struct HtmlData {
     pub(crate) html_text: String,
     pub(crate) favicon_url: Option<String>, // Favicon URL extracted from <link rel="icon"> tags
     pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
+    pub(crate) meta_refresh_url: Option<String>, // Meta refresh redirect URL
+    pub(crate) resource_hints: Vec<(String, String)>, // (hint_type, href) for preconnect/dns-prefetch
 }

@@ -282,6 +282,8 @@ mod tests {
             html_text: "Test".to_string(),
             favicon_url: None,
             canonical_url: None,
+            meta_refresh_url: None,
+            resource_hints: Vec::new(),
         }
     }
 
@@ -299,6 +301,9 @@ mod tests {
             subject_alternative_names: None,
             reverse_dns_name: None,
             cert_fingerprint_sha256: None,
+            cert_serial_number: None,
+            cert_is_self_signed: None,
+            cert_is_wildcard: None,
         }
     }
 

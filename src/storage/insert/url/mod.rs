@@ -47,6 +47,14 @@ pub struct UrlRecordInsertParams<'a> {
     pub aaaa_records: &'a Option<String>,
     /// CAA records JSON (will be inserted into `url_caa_records` table)
     pub caa_records: &'a Option<String>,
+    /// CSP domains (directive, fqdn, `registrable_domain`)
+    pub csp_domains: &'a [(String, String, Option<String>)],
+    /// Cookie security info
+    pub cookies: &'a [crate::storage::CookieInfo],
+    /// Resource hints (`hint_type`, href)
+    pub resource_hints: &'a [(String, String)],
+    /// Body domains (fqdn, `registrable_domain`)
+    pub body_domains: &'a [(String, Option<String>)],
 }
 
 /// Inserts a `UrlRecord` into the database with retry logic for transient errors.
@@ -101,8 +109,10 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
             spf_record, dmarc_record, cipher_suite, key_algorithm, run_id,
             body_sha256, content_length, http_version, body_word_count, body_line_count,
-            content_type, canonical_url, cert_fingerprint_sha256
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            content_type, canonical_url, cert_fingerprint_sha256,
+            cert_serial_number, cert_is_self_signed, cert_is_wildcard, cert_is_mismatched,
+            meta_refresh_url
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, final_domain) DO UPDATE SET
             initial_domain=excluded.initial_domain,
             ip_address=excluded.ip_address,
@@ -132,7 +142,12 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             body_line_count=excluded.body_line_count,
             content_type=excluded.content_type,
             canonical_url=excluded.canonical_url,
-            cert_fingerprint_sha256=excluded.cert_fingerprint_sha256
+            cert_fingerprint_sha256=excluded.cert_fingerprint_sha256,
+            cert_serial_number=excluded.cert_serial_number,
+            cert_is_self_signed=excluded.cert_is_self_signed,
+            cert_is_wildcard=excluded.cert_is_wildcard,
+            cert_is_mismatched=excluded.cert_is_mismatched,
+            meta_refresh_url=excluded.meta_refresh_url
         RETURNING id",
     )
     .bind(&params.record.initial_domain)
@@ -165,6 +180,11 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(&params.record.content_type)
     .bind(&params.record.canonical_url)
     .bind(&params.record.cert_fingerprint_sha256)
+    .bind(&params.record.cert_serial_number)
+    .bind(params.record.cert_is_self_signed)
+    .bind(params.record.cert_is_wildcard)
+    .bind(params.record.cert_is_mismatched)
+    .bind(&params.record.meta_refresh_url)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -220,6 +240,10 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     insert_cname_records(&mut tx, url_status_id, params.cname_records).await;
     insert_ipv6_addresses(&mut tx, url_status_id, params.aaaa_records).await;
     insert_caa_records(&mut tx, url_status_id, params.caa_records).await;
+    insert_csp_domains(&mut tx, url_status_id, params.csp_domains).await;
+    insert_cookies(&mut tx, url_status_id, params.cookies).await;
+    insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await;
+    insert_body_domains(&mut tx, url_status_id, params.body_domains).await;
 
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.
@@ -235,6 +259,121 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     })?;
 
     Ok(url_status_id)
+}
+
+/// Inserts CSP domains into `url_csp_domains` table.
+async fn insert_csp_domains(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    domains: &[(String, String, Option<String>)],
+) {
+    if domains.is_empty() {
+        return;
+    }
+    let query = super::utils::build_batch_insert_query(
+        "url_csp_domains",
+        &["url_status_id", "directive", "fqdn", "registrable_domain"],
+        domains.len(),
+        Some("ON CONFLICT(url_status_id, directive, fqdn) DO NOTHING"),
+    );
+    let mut qb = sqlx::query(&query);
+    for (directive, fqdn, reg_domain) in domains {
+        qb = qb
+            .bind(url_status_id)
+            .bind(directive)
+            .bind(fqdn)
+            .bind(reg_domain);
+    }
+    if let Err(e) = qb.execute(&mut **tx).await {
+        log::warn!("Failed to insert CSP domains for {url_status_id}: {e}");
+    }
+}
+
+/// Inserts cookie security info into `url_cookies` table.
+async fn insert_cookies(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    cookies: &[crate::storage::CookieInfo],
+) {
+    if cookies.is_empty() {
+        return;
+    }
+    let query = super::utils::build_batch_insert_query(
+        "url_cookies",
+        &[
+            "url_status_id",
+            "cookie_name",
+            "secure",
+            "http_only",
+            "same_site",
+            "domain",
+            "path",
+        ],
+        cookies.len(),
+        Some("ON CONFLICT(url_status_id, cookie_name) DO UPDATE SET secure=excluded.secure, http_only=excluded.http_only, same_site=excluded.same_site"),
+    );
+    let mut qb = sqlx::query(&query);
+    for c in cookies {
+        qb = qb
+            .bind(url_status_id)
+            .bind(&c.name)
+            .bind(c.secure)
+            .bind(c.http_only)
+            .bind(&c.same_site)
+            .bind(&c.domain)
+            .bind(&c.path);
+    }
+    if let Err(e) = qb.execute(&mut **tx).await {
+        log::warn!("Failed to insert cookies for {url_status_id}: {e}");
+    }
+}
+
+/// Inserts resource hints into `url_resource_hints` table.
+async fn insert_resource_hints(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    hints: &[(String, String)],
+) {
+    if hints.is_empty() {
+        return;
+    }
+    let query = super::utils::build_batch_insert_query(
+        "url_resource_hints",
+        &["url_status_id", "hint_type", "href"],
+        hints.len(),
+        Some("ON CONFLICT(url_status_id, hint_type, href) DO NOTHING"),
+    );
+    let mut qb = sqlx::query(&query);
+    for (hint_type, href) in hints {
+        qb = qb.bind(url_status_id).bind(hint_type).bind(href);
+    }
+    if let Err(e) = qb.execute(&mut **tx).await {
+        log::warn!("Failed to insert resource hints for {url_status_id}: {e}");
+    }
+}
+
+/// Inserts body domains into `url_body_domains` table.
+async fn insert_body_domains(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    domains: &[(String, Option<String>)],
+) {
+    if domains.is_empty() {
+        return;
+    }
+    let query = super::utils::build_batch_insert_query(
+        "url_body_domains",
+        &["url_status_id", "fqdn", "registrable_domain"],
+        domains.len(),
+        Some("ON CONFLICT(url_status_id, fqdn) DO NOTHING"),
+    );
+    let mut qb = sqlx::query(&query);
+    for (fqdn, reg_domain) in domains {
+        qb = qb.bind(url_status_id).bind(fqdn).bind(reg_domain);
+    }
+    if let Err(e) = qb.execute(&mut **tx).await {
+        log::warn!("Failed to insert body domains for {url_status_id}: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -310,6 +449,11 @@ mod tests {
             content_type: None,
             canonical_url: None,
             cert_fingerprint_sha256: None,
+            cert_serial_number: None,
+            cert_is_self_signed: None,
+            cert_is_wildcard: None,
+            cert_is_mismatched: None,
+            meta_refresh_url: None,
         }
     }
 
@@ -337,6 +481,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await;
 
@@ -392,6 +540,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -440,6 +592,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -493,6 +649,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -548,6 +708,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -567,6 +731,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Failed to upsert record");
@@ -624,6 +792,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await;
 

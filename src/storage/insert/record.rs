@@ -105,6 +105,10 @@ pub async fn insert_batch_record(
         cname_records: &record.cname_records,
         aaaa_records: &record.aaaa_records,
         caa_records: &record.caa_records,
+        csp_domains: &record.csp_domains,
+        cookies: &record.cookies,
+        resource_hints: &record.resource_hints,
+        body_domains: &record.body_domains,
     })
     .await
     .map_err(|e| {
@@ -549,6 +553,11 @@ mod tests {
             content_type: None,
             canonical_url: None,
             cert_fingerprint_sha256: None,
+            cert_serial_number: None,
+            cert_is_self_signed: None,
+            cert_is_wildcard: None,
+            cert_is_mismatched: None,
+            meta_refresh_url: None,
         }
     }
 
@@ -578,6 +587,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -652,6 +665,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -789,6 +806,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -875,6 +896,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -926,6 +951,10 @@ mod tests {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Failed to insert URL record");
@@ -953,6 +982,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         // Should succeed even if some enrichment fails
@@ -1004,6 +1037,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         // Should succeed - main record and technologies should be inserted
@@ -1055,6 +1092,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         // Should succeed even with no enrichment data
@@ -1093,6 +1134,10 @@ mod tests {
             cname_records: None,
             aaaa_records: None,
             caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            body_domains: Vec::new(),
         };
 
         // Should fail - main record insertion failure propagates

@@ -16,16 +16,16 @@ Analyzed 8 reference projects (httpx, tlsx, katana, webanalyze, lychee, feroxbus
 | **Response header hash** | HTTP headers | `header_sha256`, `header_md5`, `header_mmh3`, `header_simhash` | **Missing** | Low |
 | **Content-Length** | HTTP header | `content_length` | **Done** (`content_length` on `url_status`) | Trivial |
 | **Word/line count** | HTTP body | `words`, `lines` | **Done** (`body_word_count`, `body_line_count` on `url_status`) | Trivial |
-| **CSP domain extraction** | CSP header + meta tags | FQDNs and registrable domains from CSP directives | **Missing** | Medium — httpx has ~80 lines for this |
+| **CSP domain extraction** | CSP header + meta tags | FQDNs and registrable domains from CSP directives | **Done** (`url_csp_domains` satellite table) | Medium — httpx has ~80 lines for this |
 | **CNAME chain** | DNS | `cname` records | **Done** (`url_cname_records` satellite table) | Low — hickory already supports CNAME lookup |
 | **AAAA records** (IPv6) | DNS | `aaaa` addresses | **Done** (`url_ipv6_addresses` satellite table) | Low — hickory supports AAAA lookup |
 | **CDN detection** | IP ranges + headers | `cdn`, `cdn_name`, `cdn_type` | **Missing** | Medium — needs IP range database |
 | **HTTP version** | Response | `http2` boolean | **Done** (`http_version` on `url_status`) | Trivial — `response.version()` |
 | **Content-Type** | HTTP header | `content_type` | **Done** (`content_type` on `url_status`) | Trivial |
-| **Body FQDNs/domains** | HTML body | Domains extracted from body text | **Missing** | Medium |
+| **Body FQDNs/domains** | HTML body | Domains extracted from body text | **Done** (`url_body_domains` satellite table, scraper-based) | Medium |
 | **Redirect chain status codes** | Redirects | `chain_status_codes` per hop | **Done** (`http_status` on `url_redirect_chain`) | Low |
 | **Canonical URL** | HTML `<link rel="canonical">` | Not in httpx but valuable for SEO/dedup | **Done** (`canonical_url` on `url_status`) | Trivial — already parsing HTML |
-| **Meta refresh redirect** | HTML `<meta http-equiv="refresh">` | Client-side redirect detection | **Missing** | Low |
+| **Meta refresh redirect** | HTML `<meta http-equiv="refresh">` | Client-side redirect detection | **Done** (`meta_refresh_url` on `url_status`) | Low |
 
 ### High Value, From TLS Probe (already making this connection)
 
@@ -39,10 +39,10 @@ Analyzed 8 reference projects (httpx, tlsx, katana, webanalyze, lychee, feroxbus
 
 | Signal | Source | What it reveals | domain_status status | Effort |
 |--------|--------|-----------------|---------------------|--------|
-| **Cookie analysis** | `Set-Cookie` headers | Security attributes (Secure, HttpOnly, SameSite), third-party domains | **Missing** | Medium |
+| **Cookie analysis** | `Set-Cookie` headers | Security attributes (Secure, HttpOnly, SameSite), third-party domains | **Done** (`url_cookies` satellite table) | Medium |
 | **DNS CAA records** | DNS | Which CAs are authorized for the domain | **Done** (`url_caa_records` satellite table) | Low — hickory supports CAA |
 | **SRI hashes** | HTML `<script integrity>` | Subresource Integrity hashes for JS/CSS | **Missing** | Low |
-| **Preconnect/prefetch hints** | HTML `<link rel="preconnect/dns-prefetch">` | Infrastructure dependencies | **Missing** | Low |
+| **Preconnect/prefetch hints** | HTML `<link rel="preconnect/dns-prefetch">` | Infrastructure dependencies | **Done** (`url_resource_hints` satellite table) | Low |
 | **Web manifest** | HTML `<link rel="manifest">` | PWA configuration | **Missing** | Low |
 | **`robots.txt` directives** | Would need extra fetch | Crawl rules, sitemap URLs | Not applicable (extra connection) | — |
 
@@ -78,12 +78,17 @@ Analyzed 8 reference projects (httpx, tlsx, katana, webanalyze, lychee, feroxbus
 10. ~~**AAAA records**~~ (IPv6 addresses) -- `url_ipv6_addresses` satellite table (`ipv6_address`)
 11. ~~**DNS CAA records**~~ -- `url_caa_records` satellite table (`flag`, `tag`, `value`)
 
-### Tier 3: Medium-effort extractions (50-150 lines each)
+### Tier 3: Medium-effort extractions -- DONE
 
-12. **CSP domain extraction** — Parse CSP header directives, extract FQDNs and registrable domains. Reveals third-party dependencies, CDN usage, analytics providers.
-13. **Cookie security analysis** — Parse `Set-Cookie` headers for Secure/HttpOnly/SameSite attributes. Security posture signal.
-14. **Meta refresh detection** — `<meta http-equiv="refresh">` reveals client-side redirects not captured in the redirect chain.
-15. **Preconnect/DNS-prefetch hints** — Extract `<link rel="preconnect">` and `<link rel="dns-prefetch">` domains. Reveals infrastructure dependencies.
+12. ~~**CSP domain extraction**~~ -- `url_csp_domains` satellite table (directive, fqdn, registrable\_domain)
+13. ~~**Cookie security analysis**~~ -- `url_cookies` satellite table (name, secure, http\_only, same\_site, domain, path)
+14. ~~**Meta refresh detection**~~ -- `meta_refresh_url` on `url_status`
+15. ~~**Preconnect/DNS-prefetch hints**~~ -- `url_resource_hints` satellite table (hint\_type, href)
+
+Additional Tier 3 items (not in original gap analysis):
+16. ~~**Certificate serial number**~~ -- `cert_serial_number` on `url_status`
+17. ~~**Self-signed/wildcard/mismatched cert detection**~~ -- `cert_is_self_signed`, `cert_is_wildcard`, `cert_is_mismatched` on `url_status`
+18. ~~**Body FQDN extraction**~~ -- `url_body_domains` satellite table (fqdn, registrable\_domain) using scraper HTML parser
 
 ---
 

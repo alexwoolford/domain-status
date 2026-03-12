@@ -5,10 +5,164 @@
 //! - `build_batch_record` takes ownership and **moves** large collections (`HashMaps`, Vecs)
 //!   instead of cloning them, saving ~5-10KB of allocations per URL
 
+use regex::Regex;
+use std::collections::HashSet;
+
 use crate::database::UrlRecord;
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::response::{HtmlData, ResponseData};
-use crate::storage::BatchRecord;
+use crate::storage::{BatchRecord, CookieInfo};
+
+/// Extracts FQDNs and registrable domains from a Content-Security-Policy header value.
+/// Parses directives like `default-src 'self' *.cdn.example.com; script-src https://analytics.com`
+fn extract_csp_domains(csp: &str) -> Vec<(String, String, Option<String>)> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    // Domain-like pattern: optional scheme, then hostname
+    let domain_re = Regex::new(
+        r"(?:https?://)?(\*\.)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)",
+    )
+    .expect("CSP domain regex");
+
+    for directive_part in csp.split(';') {
+        let parts: Vec<&str> = directive_part.trim().splitn(2, ' ').collect();
+        let directive = parts.first().unwrap_or(&"").to_string();
+        let values = parts.get(1).unwrap_or(&"");
+
+        for cap in domain_re.captures_iter(values) {
+            if let Some(fqdn_match) = cap.get(2) {
+                let fqdn = fqdn_match.as_str().to_lowercase();
+                // Skip keywords that look like domains
+                if fqdn == "self" || fqdn == "none" || fqdn == "unsafe-inline" {
+                    continue;
+                }
+                let key = (directive.clone(), fqdn.clone());
+                if seen.insert(key) {
+                    let reg = psl::domain_str(&fqdn).map(|d| d.to_string());
+                    results.push((directive.clone(), fqdn, reg));
+                }
+            }
+        }
+    }
+    results
+}
+
+/// Parses `Set-Cookie` headers into `CookieInfo` structs.
+fn extract_cookies(headers: &reqwest::header::HeaderMap) -> Vec<CookieInfo> {
+    headers
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|val| {
+            let s = val.to_str().ok()?;
+            let parts: Vec<&str> = s.split(';').collect();
+            let name_value = parts.first()?;
+            let name = name_value.split('=').next()?.trim().to_string();
+            if name.is_empty() {
+                return None;
+            }
+
+            let lower = s.to_lowercase();
+            let secure = lower.contains("secure");
+            let http_only = lower.contains("httponly");
+            let same_site = parts.iter().find_map(|p| {
+                let p = p.trim().to_lowercase();
+                if p.starts_with("samesite=") {
+                    Some(p.trim_start_matches("samesite=").trim().to_string())
+                } else {
+                    None
+                }
+            });
+            let domain = parts.iter().find_map(|p| {
+                let p = p.trim();
+                if p.to_lowercase().starts_with("domain=") {
+                    Some(p[7..].trim().to_string())
+                } else {
+                    None
+                }
+            });
+            let path = parts.iter().find_map(|p| {
+                let p = p.trim();
+                if p.to_lowercase().starts_with("path=") {
+                    Some(p[5..].trim().to_string())
+                } else {
+                    None
+                }
+            });
+
+            Some(CookieInfo {
+                name,
+                secure,
+                http_only,
+                same_site,
+                domain,
+                path,
+            })
+        })
+        .collect()
+}
+
+/// Extracts FQDNs from HTML body by parsing `href` and `src` attributes from actual
+/// HTML elements using the `scraper` crate (Rust's equivalent of Python's `BeautifulSoup`).
+/// This avoids false positives from CSS selectors and JavaScript dot notation that
+/// naive regex approaches would match.
+/// Validates against PSL to ensure real TLDs. Capped at 200 unique domains.
+fn extract_body_domains(body: &str) -> Vec<(String, Option<String>)> {
+    if body.is_empty() {
+        return Vec::new();
+    }
+
+    let document = scraper::Html::parse_document(body);
+    let selector = scraper::Selector::parse("[href], [src], [action]").unwrap_or_else(|_| {
+        // Fallback: if selector parse fails, return empty
+        scraper::Selector::parse("a").expect("fallback selector")
+    });
+
+    let mut seen = HashSet::new();
+    let mut results = Vec::new();
+
+    for element in document.select(&selector) {
+        if results.len() >= 200 {
+            break;
+        }
+        // Extract URL from href, src, or action attribute
+        let url_str = element
+            .value()
+            .attr("href")
+            .or_else(|| element.value().attr("src"))
+            .or_else(|| element.value().attr("action"));
+
+        if let Some(url_str) = url_str {
+            // Parse the URL to extract the host
+            let host = if url_str.starts_with("//") {
+                // Protocol-relative URL
+                url::Url::parse(&format!("https:{url_str}"))
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            } else if url_str.starts_with("http://") || url_str.starts_with("https://") {
+                url::Url::parse(url_str)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            } else {
+                None // Skip relative URLs, mailto:, tel:, javascript:, etc.
+            };
+
+            if let Some(fqdn) = host {
+                if fqdn.len() < 4 {
+                    continue;
+                }
+                // Validate against PSL -- only accept real registrable domains
+                let reg = match psl::domain_str(&fqdn) {
+                    Some(d) => d.to_string(),
+                    None => continue,
+                };
+                if seen.insert(fqdn.clone()) {
+                    results.push((fqdn, Some(reg)));
+                }
+            }
+        }
+    }
+    results
+}
 
 /// Builds a `UrlRecord` from extracted response data.
 ///
@@ -70,6 +224,11 @@ pub(crate) fn build_url_record(
         content_type: resp_data.content_type.clone(),
         canonical_url: html_data.canonical_url.clone(),
         cert_fingerprint_sha256: tls_dns_data.cert_fingerprint_sha256.clone(),
+        cert_serial_number: tls_dns_data.cert_serial_number.clone(),
+        cert_is_self_signed: tls_dns_data.cert_is_self_signed,
+        cert_is_wildcard: tls_dns_data.cert_is_wildcard,
+        cert_is_mismatched: None, // Computed later when host is available
+        meta_refresh_url: html_data.meta_refresh_url.clone(),
     }
 }
 
@@ -159,6 +318,46 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
     let security_headers = std::mem::take(&mut params.resp_data.security_headers);
     let http_headers = std::mem::take(&mut params.resp_data.http_headers);
 
+    // Extract CSP domains from Content-Security-Policy header
+    let csp_domains = security_headers
+        .get("Content-Security-Policy")
+        .map(|csp| extract_csp_domains(csp))
+        .unwrap_or_default();
+
+    // Extract cookie security info from Set-Cookie headers
+    let cookies = extract_cookies(&params.resp_data.headers);
+
+    // Extract body FQDNs from HTML body
+    let body_domains = extract_body_domains(&params.resp_data.body);
+
+    // Compute cert_is_mismatched: check if host matches any SAN or CN
+    if let Some(ref host) = params.resp_data.host.is_empty().then_some(()).or(Some(())) {
+        let _ = host; // use host field
+        let domain = &params.resp_data.host;
+        if !domain.is_empty() {
+            let sans = params
+                .tls_dns_data
+                .subject_alternative_names
+                .as_deref()
+                .unwrap_or(&[]);
+            let cn = params.tls_dns_data.subject.as_deref().unwrap_or("");
+            let matches_san = sans.iter().any(|san| {
+                if let Some(wildcard_base) = san.strip_prefix("*.") {
+                    domain == san
+                        || domain.ends_with(&format!(".{wildcard_base}"))
+                        || domain == wildcard_base
+                } else {
+                    domain == san
+                }
+            });
+            let matches_cn = cn.contains(domain);
+            // Only set mismatched if we actually have TLS data
+            if params.tls_dns_data.tls_version.is_some() {
+                params.record.cert_is_mismatched = Some(!matches_san && !matches_cn);
+            }
+        }
+    }
+
     BatchRecord {
         url_record: params.record,
         security_headers,
@@ -180,6 +379,10 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         cname_records: params.additional_dns.cname_chain,
         aaaa_records: params.additional_dns.aaaa_records,
         caa_records: params.additional_dns.caa_records,
+        csp_domains,
+        cookies,
+        resource_hints: std::mem::take(&mut params.html_data.resource_hints),
+        body_domains,
     }
 }
 
@@ -241,6 +444,8 @@ mod tests {
             html_text: "Test content".to_string(),
             favicon_url: None,
             canonical_url: None,
+            meta_refresh_url: None,
+            resource_hints: Vec::new(),
         }
     }
 
@@ -262,6 +467,9 @@ mod tests {
             ip_address: Some("192.0.2.1".to_string()),
             reverse_dns_name: Some("example.com".to_string()),
             cert_fingerprint_sha256: None,
+            cert_serial_number: None,
+            cert_is_self_signed: None,
+            cert_is_wildcard: None,
         }
     }
 
