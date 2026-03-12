@@ -84,6 +84,7 @@ pub struct HttpHeader {
 
 /// Main row data from the `url_status` table.
 #[derive(Debug)]
+#[allow(dead_code)] // Fields available to export formatters; not all used yet
 pub struct MainRowData {
     pub id: i64,
     pub initial_domain: String,
@@ -115,6 +116,11 @@ pub struct MainRowData {
     pub content_type: Option<String>,
     pub canonical_url: Option<String>,
     pub cert_fingerprint_sha256: Option<String>,
+    pub cert_serial_number: Option<String>,
+    pub cert_is_self_signed: Option<bool>,
+    pub cert_is_wildcard: Option<bool>,
+    pub cert_is_mismatched: Option<bool>,
+    pub meta_refresh_url: Option<String>,
 }
 
 /// A single redirect entry.
@@ -160,6 +166,7 @@ pub struct CaaRecord {
 /// This struct consolidates all satellite data fetched from various tables
 /// for a single URL record, providing a unified view for exporters.
 #[derive(Debug)]
+#[allow(dead_code)] // Fields available to export formatters; not all used yet
 pub struct ExportRow {
     /// Main row data from `url_status` table
     pub main: MainRowData,
@@ -259,6 +266,18 @@ pub struct ExportRow {
     /// CAA records
     pub caa_records: Vec<CaaRecord>,
     pub caa_count: usize,
+
+    /// CSP domains
+    pub csp_domain_count: usize,
+
+    /// Cookies
+    pub cookie_count: usize,
+
+    /// Resource hints
+    pub resource_hint_count: usize,
+
+    /// Body domains
+    pub body_domain_count: usize,
 }
 
 /// Key HTTP headers to include in exports.
@@ -315,6 +334,11 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         content_type: row.get("content_type"),
         canonical_url: row.get("canonical_url"),
         cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),
+        cert_serial_number: row.get("cert_serial_number"),
+        cert_is_self_signed: row.get("cert_is_self_signed"),
+        cert_is_wildcard: row.get("cert_is_wildcard"),
+        cert_is_mismatched: row.get("cert_is_mismatched"),
+        meta_refresh_url: row.get("meta_refresh_url"),
     }
 }
 
@@ -786,6 +810,10 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         ipv6_count,
         caa_records,
         caa_count,
+        csp_domain_count: 0,    // TODO: fetch from url_csp_domains
+        cookie_count: 0,        // TODO: fetch from url_cookies
+        resource_hint_count: 0, // TODO: fetch from url_resource_hints
+        body_domain_count: 0,   // TODO: fetch from url_body_domains
     })
 }
 

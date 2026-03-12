@@ -18,6 +18,9 @@ pub(crate) struct TlsDnsData {
     pub(crate) ip_address: Option<String>,
     pub(crate) reverse_dns_name: Option<String>,
     pub(crate) cert_fingerprint_sha256: Option<String>,
+    pub(crate) cert_serial_number: Option<String>,
+    pub(crate) cert_is_self_signed: Option<bool>,
+    pub(crate) cert_is_wildcard: Option<bool>,
 }
 
 /// Result of fetching TLS and DNS data, including any partial failures.

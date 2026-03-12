@@ -121,6 +121,11 @@ fn parse_certificate_info_from_der(
     let unique_oids: HashSet<String> = extract_certificate_oids(&cert).into_iter().collect();
     let sans = extract_certificate_sans(&cert);
 
+    // Cert intelligence: serial, self-signed, wildcard
+    let serial_number = Some(tbs_cert.raw_serial_as_string());
+    let is_self_signed = Some(subject == issuer);
+    let is_wildcard = Some(sans.iter().any(|san| san.starts_with("*.")));
+
     let valid_from_str = tbs_cert
         .validity
         .not_before
@@ -148,6 +153,9 @@ fn parse_certificate_info_from_der(
         key_algorithm: Some(key_algorithm),
         subject_alternative_names: if sans.is_empty() { None } else { Some(sans) },
         fingerprint_sha256,
+        serial_number,
+        is_self_signed,
+        is_wildcard,
     })
 }
 

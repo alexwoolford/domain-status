@@ -43,4 +43,19 @@ pub struct BatchRecord {
     pub cname_records: Option<String>,                       // CNAME records JSON (satellite table)
     pub aaaa_records: Option<String>, // IPv6 addresses JSON (satellite table)
     pub caa_records: Option<String>,  // CAA records JSON (satellite table)
+    pub csp_domains: Vec<(String, String, Option<String>)>, // (directive, fqdn, registrable_domain)
+    pub cookies: Vec<CookieInfo>,
+    pub resource_hints: Vec<(String, String)>, // (hint_type, href)
+    pub body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain)
+}
+
+/// Parsed cookie security attributes.
+#[derive(Debug)]
+pub struct CookieInfo {
+    pub name: String,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: Option<String>,
+    pub domain: Option<String>,
+    pub path: Option<String>,
 }

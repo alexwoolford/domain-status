@@ -110,6 +110,11 @@ fn create_test_record(domain: &str) -> UrlRecord {
         content_type: None,
         canonical_url: None,
         cert_fingerprint_sha256: None,
+        cert_serial_number: None,
+        cert_is_self_signed: None,
+        cert_is_wildcard: None,
+        cert_is_mismatched: None,
+        meta_refresh_url: None,
     }
 }
 
@@ -262,6 +267,10 @@ async fn test_cancellation_during_simple_insert() {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         }),
     )
     .await;
@@ -338,6 +347,10 @@ async fn test_cancellation_during_satellite_writes() {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         }),
     )
     .await;
@@ -421,6 +434,10 @@ async fn test_concurrent_cancellations() {
                     cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
+                    csp_domains: &[],
+                    cookies: &[],
+                    resource_hints: &[],
+                    body_domains: &[],
                 }),
             )
             .await
@@ -529,6 +546,10 @@ async fn test_graceful_shutdown_with_abort() {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         {
@@ -613,6 +634,10 @@ async fn test_recovery_after_interruption() {
         cname_records: &None,
         aaaa_records: &None,
         caa_records: &None,
+        csp_domains: &[],
+        cookies: &[],
+        resource_hints: &[],
+        body_domains: &[],
     })
     .await
     .expect("First insert should succeed");
@@ -644,6 +669,10 @@ async fn test_recovery_after_interruption() {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
     });
@@ -679,6 +708,10 @@ async fn test_recovery_after_interruption() {
         cname_records: &None,
         aaaa_records: &None,
         caa_records: &None,
+        csp_domains: &[],
+        cookies: &[],
+        resource_hints: &[],
+        body_domains: &[],
     })
     .await
     .expect("Recovery insert should succeed");
@@ -765,6 +798,10 @@ async fn test_database_integrity_after_stress() {
                         cname_records: &None,
                         aaaa_records: &None,
                         caa_records: &None,
+                        csp_domains: &[],
+                        cookies: &[],
+                        resource_hints: &[],
+                        body_domains: &[],
                     }),
                 )
                 .await
@@ -893,6 +930,10 @@ async fn test_wal_checkpoint_with_cancellation() {
             cname_records: &None,
             aaaa_records: &None,
             caa_records: &None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
         })
         .await
         .expect("Initial writes should succeed");
@@ -935,6 +976,10 @@ async fn test_wal_checkpoint_with_cancellation() {
                     cname_records: &None,
                     aaaa_records: &None,
                     caa_records: &None,
+                    csp_domains: &[],
+                    cookies: &[],
+                    resource_hints: &[],
+                    body_domains: &[],
                 }),
             )
             .await
