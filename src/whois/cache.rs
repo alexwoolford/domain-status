@@ -119,7 +119,19 @@ impl<C: Clock> WhoisCacheStore<C> {
             .await
             .context("Failed to write cache file")?;
 
-        let count = WHOIS_SAVE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut count = WHOIS_SAVE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        // On first save, seed the counter with the actual number of existing cache files
+        // so the quota isn't bypassed after a restart with a pre-populated cache directory.
+        if count == 1 {
+            let existing = std::fs::read_dir(cache_path)
+                .map(|rd| rd.filter(|e| e.is_ok()).count())
+                .unwrap_or(0);
+            if existing > 1 {
+                // Set the counter to existing count (atomic, so other threads see it too)
+                WHOIS_SAVE_COUNT.store(existing, Ordering::Relaxed);
+                count = existing;
+            }
+        }
         let over_limit = count >= self.max_entries;
         let first_time_over = over_limit && count.saturating_sub(self.max_entries) <= 1;
         let interval_hit = over_limit

@@ -503,7 +503,7 @@ pub(crate) fn extract_version_from_template(
 /// The template with placeholders replaced by capture group values
 fn replace_placeholders(template: &str, captures: &regex::Captures) -> String {
     let mut result = template.to_string();
-    for i in 1..captures.len() {
+    for i in (1..captures.len()).rev() {
         if let Some(cap_value) = captures.get(i) {
             let placeholder_double = format!("\\\\{}", i);
             let placeholder_single = format!("\\{}", i);
