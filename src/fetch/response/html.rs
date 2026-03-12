@@ -261,7 +261,23 @@ pub(crate) fn parse_html_content(
         .filter_map(|el| {
             let rel = el.value().attr("rel")?;
             let href = el.value().attr("href").filter(|h| !h.is_empty())?;
-            Some((rel.to_string(), href.to_string()))
+            // Extract hostname from href (handles https://host, //host, and bare host)
+            let hostname = if href.starts_with("//") {
+                url::Url::parse(&format!("https:{href}"))
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            } else if href.starts_with("http://") || href.starts_with("https://") {
+                url::Url::parse(href)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            } else {
+                // Bare hostname like "fonts.googleapis.com"
+                Some(href.trim_end_matches('/').to_lowercase())
+            }?;
+            if hostname.is_empty() || !hostname.contains('.') {
+                return None;
+            }
+            Some((rel.to_string(), hostname))
         })
         .collect();
     debug!(
