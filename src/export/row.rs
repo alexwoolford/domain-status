@@ -153,6 +153,20 @@ pub struct WhoisData {
     pub registrant_country: Option<String>,
 }
 
+/// Technology record for export (avoids comma/colon delimiter corruption).
+#[derive(Debug)]
+pub struct TechnologyRecord {
+    pub name: String,
+    pub version: Option<String>,
+}
+
+/// Analytics ID record for export (avoids comma/colon delimiter corruption).
+#[derive(Debug)]
+pub struct AnalyticsIdRecord {
+    pub provider: String,
+    pub tracking_id: String,
+}
+
 /// CAA record for export.
 #[derive(Debug)]
 pub struct CaaRecord {
@@ -176,9 +190,11 @@ pub struct ExportRow {
     pub redirect_count: usize,
     pub final_redirect_url: String,
 
-    /// Technologies (as "name:version" strings)
+    /// Technologies (as "name:version" strings — legacy, use `technologies` for structured access)
     pub technologies_str: String,
     pub technology_count: usize,
+    /// Technologies as structured data (safe from delimiter corruption)
+    pub technologies: Vec<TechnologyRecord>,
 
     /// Certificate SANs
     pub certificate_sans_str: String,
@@ -198,9 +214,11 @@ pub struct ExportRow {
     pub txt_records: Vec<TxtRecord>,
     pub mx_records: Vec<MxRecord>,
 
-    /// Analytics IDs (as "`provider:tracking_id`" strings)
+    /// Analytics IDs (as "`provider:tracking_id`" strings — legacy, use `analytics_ids` for structured)
     pub analytics_ids_str: String,
     pub analytics_count: usize,
+    /// Analytics IDs as structured data (safe from delimiter corruption)
+    pub analytics_ids: Vec<AnalyticsIdRecord>,
 
     /// Social media links (as "platform:url" strings)
     pub social_media_links_str: String,
@@ -522,7 +540,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         .map(|r| r.redirect_url.clone())
         .unwrap_or_default();
 
-    // Fetch technologies
+    // Fetch technologies (both string format for CSV backward compat and structured for JSONL)
     let (technologies_str, technology_count) = fetch_key_value_list(
         pool,
         "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
@@ -531,6 +549,19 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         url_status_id,
     )
     .await?;
+    let technologies: Vec<TechnologyRecord> = sqlx::query(
+        "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name LIMIT ?",
+    )
+    .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| TechnologyRecord {
+        name: r.get("technology_name"),
+        version: r.get("technology_version"),
+    })
+    .collect();
 
     // Fetch certificate SANs
     let (certificate_sans_str, certificate_san_count) = fetch_string_list(
@@ -606,6 +637,19 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         url_status_id,
     )
     .await?;
+    let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
+        "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id LIMIT ?",
+    )
+    .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| AnalyticsIdRecord {
+        provider: r.get("provider"),
+        tracking_id: r.get("tracking_id"),
+    })
+    .collect();
 
     // Fetch social media links (string format for backward compat)
     let (social_media_links_str, social_media_count) = fetch_key_value_list(
@@ -769,6 +813,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         final_redirect_url,
         technologies_str,
         technology_count,
+        technologies,
         certificate_sans_str,
         certificate_san_count,
         oids_str,
@@ -781,6 +826,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         mx_records,
         analytics_ids_str,
         analytics_count,
+        analytics_ids,
         social_media_links_str,
         social_media_count,
         social_media_links,

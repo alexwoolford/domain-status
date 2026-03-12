@@ -69,12 +69,16 @@ pub async fn process_url_task(params: UrlTaskParams) {
     let process_start = std::time::Instant::now();
     let url_for_logging = Arc::clone(&url);
 
-    // Process URL with timeout
-    let result = tokio::time::timeout(
-        URL_PROCESSING_TIMEOUT,
-        crate::utils::process_url(url, ctx.clone()),
-    )
-    .await;
+    // Process URL with timeout AND cancellation support.
+    // Uses select! so Ctrl-C immediately aborts in-flight HTTP requests instead of
+    // waiting for the full DRAIN_TIMEOUT.
+    let result = tokio::select! {
+        r = tokio::time::timeout(
+            URL_PROCESSING_TIMEOUT,
+            crate::utils::process_url(url, ctx.clone()),
+        ) => r,
+        _ = cancel.cancelled() => return,
+    };
 
     let progress = TaskProgress {
         completed_urls: &completed_urls,
