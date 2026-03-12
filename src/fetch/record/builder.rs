@@ -21,7 +21,16 @@ use crate::database::UrlRecord;
 /// under a wildcard suffix is independently registered. This is correct per PSL
 /// rules — the same behavior as Go's `publicsuffix.EffectiveTLDPlusOne()`.
 fn root_domain(fqdn: &str) -> Option<String> {
-    psl::domain_str(fqdn).map(|d| d.to_string())
+    // psl::domain_str returns None for bare PSL suffixes like "akamaihd.net" or
+    // "googleapis.com" (they're public suffixes, not registrable domains).
+    // Fall back to the FQDN itself — it's still meaningful as an organizational identity.
+    psl::domain_str(fqdn).map(|d| d.to_string()).or_else(|| {
+        if psl::suffix_str(fqdn).is_some() {
+            Some(fqdn.to_string())
+        } else {
+            None
+        }
+    })
 }
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::response::{HtmlData, ResponseData};
