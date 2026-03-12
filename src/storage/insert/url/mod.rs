@@ -87,6 +87,7 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
 
 /// Internal implementation of `insert_url_record` (without retry logic).
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_to.as_ref());
@@ -228,6 +229,42 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     // is saved together, or none of it is (transaction rollback).
     //
     // If any satellite insert panics, the transaction will be rolled back by Drop.
+    //
+    // Clean up stale satellite data before inserting fresh rows. This handles the UPSERT
+    // case where the same (run_id, final_domain) is scanned twice: the main url_status row
+    // is updated, but old satellite rows (e.g., redirect hops from a previous scan) would
+    // remain orphaned without this cleanup.
+    static SATELLITE_TABLES: &[&str] = &[
+        "url_technologies",
+        "url_nameservers",
+        "url_txt_records",
+        "url_mx_records",
+        "url_security_headers",
+        "url_http_headers",
+        "url_certificate_oids",
+        "url_redirect_chain",
+        "url_certificate_sans",
+        "url_cname_records",
+        "url_ipv6_addresses",
+        "url_caa_records",
+        "url_csp_domains",
+        "url_cookies",
+        "url_resource_hints",
+        "url_body_domains",
+    ];
+    for table in SATELLITE_TABLES {
+        let sql = format!("DELETE FROM {table} WHERE url_status_id = ?");
+        if let Err(e) = sqlx::query(&sql)
+            .bind(url_status_id)
+            .execute(&mut *tx)
+            .await
+        {
+            log::warn!(
+                "Failed to clean stale rows from {table} for url_status_id {url_status_id}: {e}"
+            );
+        }
+    }
+
     insert_technologies(&mut tx, url_status_id, params.technologies).await;
     insert_nameservers(&mut tx, url_status_id, &params.record.nameservers).await;
     insert_txt_records(&mut tx, url_status_id, &params.record.txt_records).await;
