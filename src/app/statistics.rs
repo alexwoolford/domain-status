@@ -1,97 +1,11 @@
 //! Statistics printing and database updates.
 
-use anyhow::{Context, Result};
 use log::info;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 
-use crate::database;
 use crate::error_handling::{ErrorType, InfoType, ProcessingStats, WarningType};
 use crate::utils::TimingStats;
-
-/// Prints final statistics and updates the database with run statistics.
-///
-/// This function is used internally by the library and in tests.
-#[allow(dead_code)] // Used in tests
-#[allow(clippy::too_many_arguments)]
-pub async fn print_and_save_final_statistics(
-    pool: &sqlx::SqlitePool,
-    run_id: &str,
-    total_urls_attempted: &Arc<AtomicUsize>,
-    completed_urls: &Arc<AtomicUsize>,
-    failed_urls: &Arc<AtomicUsize>,
-    skipped_urls: &Arc<AtomicUsize>,
-    error_stats: &Arc<ProcessingStats>,
-    elapsed_seconds: f64,
-) -> Result<()> {
-    // Calculate run statistics
-    // All tasks have completed at this point, so counters should be final
-    // completed = successful + skipped; successful = completed - skipped
-    // Safe casts: URL counts should be reasonable (< i32::MAX ~2B) for SQLite storage
-    #[allow(clippy::cast_possible_truncation)]
-    let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
-    let completed = completed_urls.load(Ordering::SeqCst);
-    let skipped = skipped_urls.load(Ordering::SeqCst);
-    #[allow(clippy::cast_possible_truncation)]
-    let successful_urls = (completed.saturating_sub(skipped)) as i32;
-    #[allow(clippy::cast_possible_truncation)]
-    let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
-    #[allow(clippy::cast_possible_truncation)]
-    let skipped_urls_count = skipped as i32;
-
-    info!(
-        "Run statistics: total={}, successful={}, failed={}, skipped={}",
-        total_urls, successful_urls, failed_urls_count, skipped_urls_count
-    );
-
-    // Update run statistics in database
-    let stats = database::RunStats {
-        run_id,
-        total_urls,
-        successful_urls,
-        failed_urls: failed_urls_count,
-        skipped_urls: skipped_urls_count,
-        elapsed_seconds,
-    };
-    database::update_run_stats(pool, &stats)
-        .await
-        .context("Failed to update run statistics")?;
-
-    // Print processing statistics
-    print_error_statistics(error_stats);
-
-    // Print simple one-line summary at the end
-    print_simple_summary(
-        total_urls,
-        successful_urls,
-        failed_urls_count,
-        elapsed_seconds,
-    );
-
-    Ok(())
-}
-
-/// Prints a simple one-line summary of the run.
-///
-/// This provides immediate feedback to the user in a concise format.
-/// Works with both plain and JSON log formats (`log::info`! handles formatting).
-#[allow(dead_code)] // Used internally by print_and_save_final_statistics
-fn print_simple_summary(
-    total_urls: i32,
-    successful_urls: i32,
-    failed_urls: i32,
-    elapsed_seconds: f64,
-) {
-    info!(
-        "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
-        total_urls,
-        if total_urls == 1 { "" } else { "s" },
-        successful_urls,
-        failed_urls,
-        elapsed_seconds
-    );
-}
 
 /// Prints timing statistics if enabled.
 ///
@@ -114,7 +28,7 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
     let total_info = error_stats.total_info();
 
     if total_errors > 0 {
-        info!("Error Counts ({} total):", total_errors);
+        info!("Error Counts ({total_errors} total):");
         for error_type in ErrorType::iter() {
             let count = error_stats.get_error_count(error_type);
             if count > 0 {
@@ -124,7 +38,7 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
     }
 
     if total_warnings > 0 {
-        info!("Warning Counts ({} total):", total_warnings);
+        info!("Warning Counts ({total_warnings} total):");
         for warning_type in WarningType::iter() {
             let count = error_stats.get_warning_count(warning_type);
             if count > 0 {
@@ -134,7 +48,7 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
     }
 
     if total_info > 0 {
-        info!("Info Counts ({} total):", total_info);
+        info!("Info Counts ({total_info} total):");
         for info_type in InfoType::iter() {
             let count = error_stats.get_info_count(info_type);
             if count > 0 {
@@ -147,10 +61,64 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database;
     use crate::error_handling::ProcessingStats;
     use crate::utils::TimingStats;
-    use std::sync::atomic::AtomicUsize;
+    use anyhow::{Context, Result};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn print_and_save_final_statistics(
+        pool: &sqlx::SqlitePool,
+        run_id: &str,
+        total_urls_attempted: &Arc<AtomicUsize>,
+        completed_urls: &Arc<AtomicUsize>,
+        failed_urls: &Arc<AtomicUsize>,
+        skipped_urls: &Arc<AtomicUsize>,
+        error_stats: &Arc<ProcessingStats>,
+        elapsed_seconds: f64,
+    ) -> Result<()> {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
+        let completed = completed_urls.load(Ordering::SeqCst);
+        let skipped = skipped_urls.load(Ordering::SeqCst);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let successful_urls = (completed.saturating_sub(skipped)) as i32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let skipped_urls_count = skipped as i32;
+
+        info!(
+            "Run statistics: total={total_urls}, successful={successful_urls}, failed={failed_urls_count}, skipped={skipped_urls_count}"
+        );
+
+        let stats = database::RunStats {
+            run_id,
+            total_urls,
+            successful_urls,
+            failed_urls: failed_urls_count,
+            skipped_urls: skipped_urls_count,
+            elapsed_seconds,
+        };
+        database::update_run_stats(pool, &stats)
+            .await
+            .context("Failed to update run statistics")?;
+
+        print_error_statistics(error_stats);
+
+        info!(
+            "Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+            total_urls,
+            if total_urls == 1 { "" } else { "s" },
+            successful_urls,
+            failed_urls_count,
+            elapsed_seconds
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn test_print_error_statistics_no_errors() {

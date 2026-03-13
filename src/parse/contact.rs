@@ -52,7 +52,7 @@ pub enum ContactType {
 
 impl ContactType {
     /// Returns the contact type as a lowercase string slice for DB storage.
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             ContactType::Email => "email",
             ContactType::Phone => "phone",

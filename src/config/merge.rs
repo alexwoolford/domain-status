@@ -48,6 +48,7 @@ fn parse_bool(s: &str) -> Option<bool> {
 
 /// Applies key-value config (from file + env) onto `Config`.
 /// Only known keys are applied; invalid values are skipped.
+#[allow(clippy::implicit_hasher)] // Internal function; always called with std HashMap, no need for generic hasher
 pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, String>) {
     for (key, value) in map {
         let key_lower = key.to_lowercase();
@@ -75,7 +76,7 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
                     config.timeout_seconds = n;
                 }
             }
-            "user_agent" => config.user_agent = value.clone(),
+            "user_agent" => config.user_agent.clone_from(value),
             "rate_limit_rps" => {
                 if let Ok(n) = value.parse::<u32>() {
                     config.rate_limit_rps = n;
@@ -116,6 +117,7 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
 /// Call this from the CLI layer after loading the file+env map and converting
 /// the scan command to `Config` via `config_from_scan_command(scan_cmd)`.
 #[must_use]
+#[allow(clippy::implicit_hasher)] // Internal function; always called with std HashMap, no need for generic hasher
 pub fn merge_file_env_and_cli(
     file_env_map: Option<&HashMap<String, String>>,
     cli_config: Config,

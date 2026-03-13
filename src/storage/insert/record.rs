@@ -16,6 +16,7 @@ use crate::storage::insert;
 /// This allows callers to monitor enrichment data insertion health
 /// without blocking the main record insertion.
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::struct_excessive_bools)] // Each bool tracks success/failure of a distinct enrichment type; not flags
 pub struct EnrichmentInsertSummary {
     /// Number of partial failures successfully inserted
     pub partial_failures_inserted: usize,
@@ -63,15 +64,15 @@ impl EnrichmentInsertSummary {
     /// Returns the total number of enrichment operations that failed.
     pub fn total_failures(&self) -> usize {
         self.partial_failures_failed
-            + if self.geoip_failed { 1 } else { 0 }
-            + if self.structured_data_failed { 1 } else { 0 }
-            + if self.social_media_failed { 1 } else { 0 }
-            + if self.security_warnings_failed { 1 } else { 0 }
-            + if self.whois_failed { 1 } else { 0 }
-            + if self.analytics_ids_failed { 1 } else { 0 }
-            + if self.favicon_failed { 1 } else { 0 }
-            + if self.contact_links_failed { 1 } else { 0 }
-            + if self.exposed_secrets_failed { 1 } else { 0 }
+            + usize::from(self.geoip_failed)
+            + usize::from(self.structured_data_failed)
+            + usize::from(self.social_media_failed)
+            + usize::from(self.security_warnings_failed)
+            + usize::from(self.whois_failed)
+            + usize::from(self.analytics_ids_failed)
+            + usize::from(self.favicon_failed)
+            + usize::from(self.contact_links_failed)
+            + usize::from(self.exposed_secrets_failed)
     }
 
     /// Returns true if any enrichment operations failed.
@@ -102,9 +103,9 @@ pub async fn insert_batch_record(
         redirect_chain: &record.redirect_chain,
         technologies: &record.technologies,
         subject_alternative_names: &record.subject_alternative_names,
-        cname_records: &record.cname_records,
-        aaaa_records: &record.aaaa_records,
-        caa_records: &record.caa_records,
+        cname_records: record.cname_records.as_ref(),
+        aaaa_records: record.aaaa_records.as_ref(),
+        caa_records: record.caa_records.as_ref(),
         csp_domains: &record.csp_domains,
         cookies: &record.cookies,
         resource_hints: &record.resource_hints,
@@ -113,9 +114,7 @@ pub async fn insert_batch_record(
     .await
     .map_err(|e| {
         log::error!(
-            "Failed to insert URL record for domain '{}': {} (SQL: INSERT INTO url_status ...)",
-            domain,
-            e
+            "Failed to insert URL record for domain '{domain}': {e} (SQL: INSERT INTO url_status ...)"
         );
         e
     })?;
@@ -177,9 +176,7 @@ async fn insert_partial_failures(
             Err(e) => {
                 summary.partial_failures_failed += 1;
                 log::warn!(
-                    "Failed to insert partial failure for url_status_id {}: {}",
-                    url_status_id,
-                    e
+                    "Failed to insert partial failure for url_status_id {url_status_id}: {e}"
                 );
             }
         }
@@ -197,19 +194,16 @@ async fn insert_partial_failures(
 async fn insert_geoip_enrichment(
     pool: &SqlitePool,
     url_status_id: i64,
-    geoip: &Option<(String, crate::geoip::GeoIpResult)>,
+    geoip: Option<&(String, crate::geoip::GeoIpResult)>,
     summary: &mut EnrichmentInsertSummary,
 ) {
     if let Some((ip_address, geoip_result)) = geoip {
         match insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result).await {
-            Ok(_) => summary.geoip_inserted = true,
+            Ok(()) => summary.geoip_inserted = true,
             Err(e) => {
                 summary.geoip_failed = true;
                 log::warn!(
-                    "Failed to insert GeoIP data for IP '{}' (url_status_id {}): {}",
-                    ip_address,
-                    url_status_id,
-                    e
+                    "Failed to insert GeoIP data for IP '{ip_address}' (url_status_id {url_status_id}): {e}"
                 );
             }
         }
@@ -227,18 +221,16 @@ async fn insert_geoip_enrichment(
 async fn insert_structured_data_enrichment(
     pool: &SqlitePool,
     url_status_id: i64,
-    structured_data: &Option<crate::parse::StructuredData>,
+    structured_data: Option<&crate::parse::StructuredData>,
     summary: &mut EnrichmentInsertSummary,
 ) {
     if let Some(structured_data) = structured_data {
         match insert::insert_structured_data(pool, url_status_id, structured_data).await {
-            Ok(_) => summary.structured_data_inserted = true,
+            Ok(()) => summary.structured_data_inserted = true,
             Err(e) => {
                 summary.structured_data_failed = true;
                 log::warn!(
-                    "Failed to insert structured data for url_status_id {}: {}",
-                    url_status_id,
-                    e
+                    "Failed to insert structured data for url_status_id {url_status_id}: {e}"
                 );
             }
         }
@@ -261,13 +253,11 @@ async fn insert_social_media_enrichment(
 ) {
     if !social_media_links.is_empty() {
         match insert::insert_social_media_links(pool, url_status_id, social_media_links).await {
-            Ok(_) => summary.social_media_inserted = true,
+            Ok(()) => summary.social_media_inserted = true,
             Err(e) => {
                 summary.social_media_failed = true;
                 log::warn!(
-                    "Failed to insert social media links for url_status_id {}: {}",
-                    url_status_id,
-                    e
+                    "Failed to insert social media links for url_status_id {url_status_id}: {e}"
                 );
             }
         }
@@ -290,13 +280,11 @@ async fn insert_security_warnings_enrichment(
 ) {
     if !security_warnings.is_empty() {
         match insert::insert_security_warnings(pool, url_status_id, security_warnings).await {
-            Ok(_) => summary.security_warnings_inserted = true,
+            Ok(()) => summary.security_warnings_inserted = true,
             Err(e) => {
                 summary.security_warnings_failed = true;
                 log::warn!(
-                    "Failed to insert security warnings for url_status_id {}: {}",
-                    url_status_id,
-                    e
+                    "Failed to insert security warnings for url_status_id {url_status_id}: {e}"
                 );
             }
         }
@@ -314,19 +302,15 @@ async fn insert_security_warnings_enrichment(
 async fn insert_whois_enrichment(
     pool: &SqlitePool,
     url_status_id: i64,
-    whois: &Option<crate::whois::WhoisResult>,
+    whois: Option<&crate::whois::WhoisResult>,
     summary: &mut EnrichmentInsertSummary,
 ) {
-    if let Some(ref whois_result) = whois {
+    if let Some(whois_result) = whois {
         match insert::insert_whois_data(pool, url_status_id, whois_result).await {
-            Ok(_) => summary.whois_inserted = true,
+            Ok(()) => summary.whois_inserted = true,
             Err(e) => {
                 summary.whois_failed = true;
-                log::warn!(
-                    "Failed to insert WHOIS data for url_status_id {}: {}",
-                    url_status_id,
-                    e
-                );
+                log::warn!("Failed to insert WHOIS data for url_status_id {url_status_id}: {e}");
             }
         }
     }
@@ -348,14 +332,10 @@ async fn insert_analytics_ids_enrichment(
 ) {
     if !analytics_ids.is_empty() {
         match insert::insert_analytics_ids(pool, url_status_id, analytics_ids).await {
-            Ok(_) => summary.analytics_ids_inserted = true,
+            Ok(()) => summary.analytics_ids_inserted = true,
             Err(e) => {
                 summary.analytics_ids_failed = true;
-                log::warn!(
-                    "Failed to insert analytics IDs for url_status_id {}: {}",
-                    url_status_id,
-                    e
-                );
+                log::warn!("Failed to insert analytics IDs for url_status_id {url_status_id}: {e}");
             }
         }
     }
@@ -372,19 +352,15 @@ async fn insert_analytics_ids_enrichment(
 async fn insert_favicon_enrichment(
     pool: &SqlitePool,
     url_status_id: i64,
-    favicon: &Option<crate::fetch::favicon::FaviconData>,
+    favicon: Option<&crate::fetch::favicon::FaviconData>,
     summary: &mut EnrichmentInsertSummary,
 ) {
-    if let Some(ref favicon_data) = favicon {
+    if let Some(favicon_data) = favicon {
         match insert::insert_favicon_data(pool, url_status_id, favicon_data).await {
-            Ok(_) => summary.favicon_inserted = true,
+            Ok(()) => summary.favicon_inserted = true,
             Err(e) => {
                 summary.favicon_failed = true;
-                log::warn!(
-                    "Failed to insert favicon data for url_status_id {}: {}",
-                    url_status_id,
-                    e
-                );
+                log::warn!("Failed to insert favicon data for url_status_id {url_status_id}: {e}");
             }
         }
     }
@@ -399,14 +375,10 @@ async fn insert_contact_links_enrichment(
 ) {
     if !contact_links.is_empty() {
         match insert::insert_contact_links(pool, url_status_id, contact_links).await {
-            Ok(_) => summary.contact_links_inserted = true,
+            Ok(()) => summary.contact_links_inserted = true,
             Err(e) => {
                 summary.contact_links_failed = true;
-                log::warn!(
-                    "Failed to insert contact links for url_status_id {}: {}",
-                    url_status_id,
-                    e
-                );
+                log::warn!("Failed to insert contact links for url_status_id {url_status_id}: {e}");
             }
         }
     }
@@ -421,13 +393,11 @@ async fn insert_exposed_secrets_enrichment(
 ) {
     if !exposed_secrets.is_empty() {
         match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
-            Ok(_) => summary.exposed_secrets_inserted = true,
+            Ok(()) => summary.exposed_secrets_inserted = true,
             Err(e) => {
                 summary.exposed_secrets_failed = true;
                 log::warn!(
-                    "Failed to insert exposed secrets for url_status_id {}: {}",
-                    url_status_id,
-                    e
+                    "Failed to insert exposed secrets for url_status_id {url_status_id}: {e}"
                 );
             }
         }
@@ -459,9 +429,14 @@ async fn insert_enrichment_data(
 
     // Insert each type of enrichment data
     insert_partial_failures(pool, url_status_id, record.partial_failures, &mut summary).await;
-    insert_geoip_enrichment(pool, url_status_id, &record.geoip, &mut summary).await;
-    insert_structured_data_enrichment(pool, url_status_id, &record.structured_data, &mut summary)
-        .await;
+    insert_geoip_enrichment(pool, url_status_id, record.geoip.as_ref(), &mut summary).await;
+    insert_structured_data_enrichment(
+        pool,
+        url_status_id,
+        record.structured_data.as_ref(),
+        &mut summary,
+    )
+    .await;
     insert_social_media_enrichment(
         pool,
         url_status_id,
@@ -476,12 +451,12 @@ async fn insert_enrichment_data(
         &mut summary,
     )
     .await;
-    insert_whois_enrichment(pool, url_status_id, &record.whois, &mut summary).await;
+    insert_whois_enrichment(pool, url_status_id, record.whois.as_ref(), &mut summary).await;
     insert_contact_links_enrichment(pool, url_status_id, &record.contact_links, &mut summary).await;
     insert_exposed_secrets_enrichment(pool, url_status_id, &record.exposed_secrets, &mut summary)
         .await;
     insert_analytics_ids_enrichment(pool, url_status_id, &record.analytics_ids, &mut summary).await;
-    insert_favicon_enrichment(pool, url_status_id, &record.favicon, &mut summary).await;
+    insert_favicon_enrichment(pool, url_status_id, record.favicon.as_ref(), &mut summary).await;
 
     summary
 }
@@ -948,9 +923,9 @@ mod tests {
             redirect_chain: &[],
             technologies: &[],
             subject_alternative_names: &[],
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],

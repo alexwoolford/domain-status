@@ -28,7 +28,7 @@ use super::types::{TlsDnsData, TlsDnsResult};
 ///
 /// Returns TLS/DNS data and any partial failures (errors that didn't prevent processing).
 /// DNS/TLS failures are recorded as partial failures, not as errors that stop processing.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Orchestrates parallel TLS + DNS fetches and merges results; splitting would obscure the join logic
 pub(crate) async fn fetch_tls_and_dns(
     final_url: &str,
     host: &str,
@@ -37,13 +37,13 @@ pub(crate) async fn fetch_tls_and_dns(
     error_stats: &crate::error_handling::ProcessingStats,
     _run_id: Option<&str>, // Reserved for future use (partial failure tracking)
 ) -> Result<(TlsDnsResult, (u64, u64, u64)), Error> {
-    // Run TLS and DNS operations in parallel (they're independent)
-    let tls_start = Instant::now();
-
-    let (tls_result, dns_result) = tokio::join!(
+    // Run TLS and DNS operations in parallel (they're independent).
+    // Each branch measures its own timing so metrics are accurate.
+    let ((tls_result, tls_handshake_us), dns_result) = tokio::join!(
         // TLS certificate extraction (only for HTTPS)
         async {
-            if final_url.starts_with("https://") {
+            let tls_start = Instant::now();
+            let result = if final_url.starts_with("https://") {
                 get_ssl_certificate_info(host.to_string(), resolver).await
             } else {
                 use crate::models::CertificateInfo;
@@ -62,7 +62,8 @@ pub(crate) async fn fetch_tls_and_dns(
                     is_self_signed: None,
                     is_wildcard: None,
                 })
-            }
+            };
+            (result, duration_to_us(tls_start.elapsed()))
         },
         // DNS resolution (IP address and reverse DNS)
         async {
@@ -85,8 +86,6 @@ pub(crate) async fn fetch_tls_and_dns(
             result
         }
     );
-
-    let tls_handshake_us = duration_to_us(tls_start.elapsed());
     let (dns_result, dns_forward_us, dns_reverse_us) = match dns_result {
         Ok((ip, reverse_dns, forward_us, reverse_us)) => {
             (Ok((ip, reverse_dns)), forward_us, reverse_us)
@@ -155,14 +154,14 @@ pub(crate) async fn fetch_tls_and_dns(
             log::warn!(
                 "Failed to resolve DNS for {final_domain}: {e} - continuing without IP address"
             );
-            error_stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
+            error_stats.increment_error(crate::error_handling::ErrorType::DnsForwardLookupError);
             // Record as partial failure using ErrorType enum
             // Sanitize and truncate error message to prevent database bloat
             let error_msg = format!("Failed to resolve DNS for {final_domain}: {e}");
             let truncated_msg =
                 crate::utils::sanitize::sanitize_and_truncate_error_message(&error_msg);
             partial_failures.push((
-                crate::error_handling::ErrorType::DnsNsLookupError,
+                crate::error_handling::ErrorType::DnsForwardLookupError,
                 truncated_msg,
             ));
             (None, None)

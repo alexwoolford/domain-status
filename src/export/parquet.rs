@@ -27,7 +27,7 @@ use super::row::{build_export_row, extract_main_row_data};
 const BATCH_SIZE: usize = 10_000;
 
 /// Build the Arrow schema for the Parquet file.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Schema definition: one Field per export column (~80 columns)
 fn build_schema() -> Schema {
     Schema::new(vec![
         // Core identity
@@ -369,7 +369,7 @@ fn new_three_string_list_builder(f1: &str, f2: &str, f3: &str) -> ListBuilder<St
 use super::row::ExportRow;
 
 /// Append an optional string to a `StringBuilder`.
-fn append_opt_str(builder: &mut StringBuilder, value: &Option<String>) {
+fn append_opt_str(builder: &mut StringBuilder, value: Option<&String>) {
     match value {
         Some(v) => builder.append_value(v),
         None => builder.append_null(),
@@ -401,7 +401,7 @@ fn append_opt_i32(builder: &mut Int32Builder, value: Option<i32>) {
 }
 
 /// Write a batch of `ExportRows` as a `RecordBatch` to the Parquet writer.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Populates ~80 Arrow column builders sequentially; one block per column
 fn write_batch(
     writer: &mut ArrowWriter<File>,
     schema: &Arc<Schema>,
@@ -573,26 +573,26 @@ fn write_batch(
         initial_domain_b.append_value(&row.main.initial_domain);
         final_domain_b.append_value(&row.main.final_domain);
         ip_address_b.append_value(&row.main.ip_address);
-        append_opt_str(&mut reverse_dns_b, &row.main.reverse_dns);
+        append_opt_str(&mut reverse_dns_b, row.main.reverse_dns.as_ref());
 
-        // SAFETY: HTTP status codes fit in i32 (max 599)
+        // HTTP status codes are u16 (max 599), always fits in i32
         #[allow(clippy::cast_possible_wrap)]
         http_status_b.append_value(i32::from(row.main.status));
         http_status_text_b.append_value(&row.main.status_desc);
         response_time_b.append_value(row.main.response_time);
         title_b.append_value(&row.main.title);
-        append_opt_str(&mut keywords_b, &row.main.keywords);
-        append_opt_str(&mut description_b, &row.main.description);
+        append_opt_str(&mut keywords_b, row.main.keywords.as_ref());
+        append_opt_str(&mut description_b, row.main.description.as_ref());
         is_mobile_friendly_b.append_value(row.main.is_mobile_friendly);
-        append_opt_str(&mut body_sha256_b, &row.main.body_sha256);
+        append_opt_str(&mut body_sha256_b, row.main.body_sha256.as_ref());
         append_opt_i64(&mut content_length_b, row.main.content_length);
-        append_opt_str(&mut http_version_b, &row.main.http_version);
+        append_opt_str(&mut http_version_b, row.main.http_version.as_ref());
         append_opt_i64(&mut body_word_count_b, row.main.body_word_count);
         append_opt_i64(&mut body_line_count_b, row.main.body_line_count);
-        append_opt_str(&mut content_type_b, &row.main.content_type);
-        append_opt_str(&mut canonical_url_b, &row.main.canonical_url);
+        append_opt_str(&mut content_type_b, row.main.content_type.as_ref());
+        append_opt_str(&mut canonical_url_b, row.main.canonical_url.as_ref());
 
-        // SAFETY: redirect_count is a small Vec length that fits in i32
+        // redirect_count is a small Vec length (bounded by HTTP redirect limit), fits in i32
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         redirect_count_b.append_value(row.redirect_count as i32);
         final_redirect_url_b.append_value(&row.final_redirect_url);
@@ -613,37 +613,36 @@ fn write_batch(
         }
         redirect_chain_b.append(true);
 
-        // Technologies
+        // Technology count is bounded by ruleset size (typically <1000), fits in i32
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         technology_count_b.append_value(row.technology_count as i32);
-        let techs = super::row::parse_technologies(&row.technologies_str);
-        for (name, version) in &techs {
+        for tech in &row.technologies {
             technologies_b
                 .values()
                 .field_builder::<StringBuilder>(0)
                 .unwrap()
-                .append_value(name);
+                .append_value(&tech.name);
             append_opt_str(
                 technologies_b
                     .values()
                     .field_builder::<StringBuilder>(1)
                     .unwrap(),
-                &version.clone(),
+                tech.version.as_ref(),
             );
             technologies_b.values().append(true);
         }
         technologies_b.append(true);
 
         // TLS
-        append_opt_str(&mut tls_version_b, &row.main.tls_version);
-        append_opt_str(&mut ssl_cert_subject_b, &row.main.ssl_cert_subject);
-        append_opt_str(&mut ssl_cert_issuer_b, &row.main.ssl_cert_issuer);
+        append_opt_str(&mut tls_version_b, row.main.tls_version.as_ref());
+        append_opt_str(&mut ssl_cert_subject_b, row.main.ssl_cert_subject.as_ref());
+        append_opt_str(&mut ssl_cert_issuer_b, row.main.ssl_cert_issuer.as_ref());
         append_opt_i64(&mut ssl_cert_valid_to_b, row.main.ssl_cert_valid_to_ms);
-        append_opt_str(&mut cipher_suite_b, &row.main.cipher_suite);
-        append_opt_str(&mut key_algorithm_b, &row.main.key_algorithm);
+        append_opt_str(&mut cipher_suite_b, row.main.cipher_suite.as_ref());
+        append_opt_str(&mut key_algorithm_b, row.main.key_algorithm.as_ref());
         append_opt_str(
             &mut cert_fingerprint_sha256_b,
-            &row.main.cert_fingerprint_sha256,
+            row.main.cert_fingerprint_sha256.as_ref(),
         );
 
         // Certificate SANs
@@ -690,8 +689,8 @@ fn write_batch(
         caa_records_b.append(true);
 
         // DNS
-        append_opt_str(&mut spf_record_b, &row.main.spf_record);
-        append_opt_str(&mut dmarc_record_b, &row.main.dmarc_record);
+        append_opt_str(&mut spf_record_b, row.main.spf_record.as_ref());
+        append_opt_str(&mut dmarc_record_b, row.main.dmarc_record.as_ref());
 
         // Nameservers
         for ns in &row.nameservers {
@@ -732,18 +731,17 @@ fn write_batch(
         mx_records_b.append(true);
 
         // Analytics IDs
-        let analytics = super::row::parse_key_value_pairs(&row.analytics_ids_str);
-        for (provider, tracking_id) in &analytics {
+        for aid in &row.analytics_ids {
             analytics_ids_b
                 .values()
                 .field_builder::<StringBuilder>(0)
                 .unwrap()
-                .append_value(provider);
+                .append_value(&aid.provider);
             analytics_ids_b
                 .values()
                 .field_builder::<StringBuilder>(1)
                 .unwrap()
-                .append_value(tracking_id);
+                .append_value(&aid.tracking_id);
             analytics_ids_b.values().append(true);
         }
         analytics_ids_b.append(true);
@@ -765,7 +763,7 @@ fn write_batch(
                     .values()
                     .field_builder::<StringBuilder>(2)
                     .unwrap(),
-                &link.identifier,
+                link.identifier.as_ref(),
             );
             social_media_b.values().append(true);
         }
@@ -847,27 +845,27 @@ fn write_batch(
         partial_failures_b.append(true);
 
         // GeoIP
-        append_opt_str(&mut geoip_cc_b, &row.geoip.country_code);
-        append_opt_str(&mut geoip_cn_b, &row.geoip.country_name);
-        append_opt_str(&mut geoip_region_b, &row.geoip.region);
-        append_opt_str(&mut geoip_city_b, &row.geoip.city);
+        append_opt_str(&mut geoip_cc_b, row.geoip.country_code.as_ref());
+        append_opt_str(&mut geoip_cn_b, row.geoip.country_name.as_ref());
+        append_opt_str(&mut geoip_region_b, row.geoip.region.as_ref());
+        append_opt_str(&mut geoip_city_b, row.geoip.city.as_ref());
         append_opt_f64(&mut geoip_lat_b, row.geoip.latitude);
         append_opt_f64(&mut geoip_lon_b, row.geoip.longitude);
         append_opt_i64(&mut geoip_asn_b, row.geoip.asn);
-        append_opt_str(&mut geoip_asn_org_b, &row.geoip.asn_org);
+        append_opt_str(&mut geoip_asn_org_b, row.geoip.asn_org.as_ref());
 
         // WHOIS
-        append_opt_str(&mut whois_registrar_b, &row.whois.registrar);
+        append_opt_str(&mut whois_registrar_b, row.whois.registrar.as_ref());
         append_opt_i64(&mut whois_creation_b, row.whois.creation_date_ms);
         append_opt_i64(&mut whois_expiration_b, row.whois.expiration_date_ms);
-        append_opt_str(&mut whois_country_b, &row.whois.registrant_country);
+        append_opt_str(&mut whois_country_b, row.whois.registrant_country.as_ref());
 
         // Favicon
         append_opt_i32(&mut favicon_hash_b, row.favicon_hash);
-        append_opt_str(&mut favicon_url_b, &row.favicon_url);
+        append_opt_str(&mut favicon_url_b, row.favicon_url.as_ref());
 
-        // Contact links
-        #[allow(clippy::cast_possible_truncation)]
+        // Contact link count from a single page is small, fits in i32
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         contact_link_count_b.append_value(row.contact_link_count as i32);
         for c in &row.contact_links {
             contact_links_b
@@ -884,8 +882,8 @@ fn write_batch(
         }
         contact_links_b.append(true);
 
-        // Exposed secrets
-        #[allow(clippy::cast_possible_truncation)]
+        // Exposed secret count from a single page is small, fits in i32
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         exposed_secret_count_b.append_value(row.exposed_secret_count as i32);
         for s in &row.exposed_secrets {
             exposed_secrets_b
@@ -913,7 +911,7 @@ fn write_batch(
                     .values()
                     .field_builder::<StringBuilder>(4)
                     .unwrap(),
-                &s.context,
+                s.context.as_ref(),
             );
             exposed_secrets_b.values().append(true);
         }
@@ -921,7 +919,7 @@ fn write_batch(
 
         // Metadata
         observed_at_b.append_value(row.main.timestamp);
-        append_opt_str(&mut run_id_b, &row.main.run_id);
+        append_opt_str(&mut run_id_b, row.main.run_id.as_ref());
     }
 
     // Build arrays in schema order

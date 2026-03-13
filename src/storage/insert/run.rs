@@ -80,7 +80,15 @@ pub async fn update_run_stats(
     .bind(stats.run_id)
     .execute(pool)
     .await
-    .map_err(DatabaseError::SqlError)?;
+    .map_err(DatabaseError::SqlError)
+    .map(|result| {
+        if result.rows_affected() == 0 {
+            log::warn!(
+                "update_run_stats: run_id '{}' not found (0 rows updated) — stats not persisted",
+                stats.run_id
+            );
+        }
+    })?;
 
     Ok(())
 }
@@ -120,8 +128,7 @@ pub async fn query_run_history(
              FROM runs
              WHERE end_time_ms IS NOT NULL
              ORDER BY start_time_ms DESC
-             LIMIT {}",
-            limit
+             LIMIT {limit}"
         )
     } else {
         "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, failed_urls, skipped_urls, elapsed_seconds

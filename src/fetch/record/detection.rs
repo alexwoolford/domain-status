@@ -12,15 +12,12 @@ pub(crate) async fn detect_technologies_safely(
     error_stats: &crate::error_handling::ProcessingStats,
 ) -> Vec<crate::fingerprint::DetectedTechnology> {
     // Fetch ruleset on async runtime (fast; in-memory).
-    let ruleset = match crate::fingerprint::get_ruleset().await {
-        Some(r) => r,
-        None => {
-            log::warn!(
-                "Technology detection skipped for {}: ruleset not initialized",
-                resp_data.final_domain
-            );
-            return Vec::new();
-        }
+    let Some(ruleset) = crate::fingerprint::get_ruleset().await else {
+        log::warn!(
+            "Technology detection skipped for {}: ruleset not initialized",
+            resp_data.final_domain
+        );
+        return Vec::new();
     };
 
     // wappalyzergo normalizes body to lowercase: normalizedBody := bytes.ToLower(body)
@@ -50,24 +47,23 @@ pub(crate) async fn detect_technologies_safely(
     .await
     .map_err(|e| {
         crate::error_handling::FingerprintError::DetectionFailed(anyhow::anyhow!(
-            "Technology detection task panicked: {}",
-            e
+            "Technology detection task panicked: {e}"
         ))
     })
     .and_then(|r| r);
 
     match result {
         Ok(techs) => {
-            if !techs.is_empty() {
+            if techs.is_empty() {
+                log::debug!("No technologies detected for {}", resp_data.final_domain);
+                Vec::new()
+            } else {
                 log::debug!(
                     "Detected {} technologies for {}",
                     techs.len(),
                     resp_data.final_domain
                 );
                 techs
-            } else {
-                log::debug!("No technologies detected for {}", resp_data.final_domain);
-                Vec::new()
             }
         }
         Err(e) => {
@@ -138,7 +134,6 @@ mod tests {
             script_sources: vec![],
             script_content: String::new(),
             script_tag_ids: HashSet::new(),
-            html_text: "".to_string(),
             favicon_url: None,
             canonical_url: None,
             meta_refresh_url: None,
@@ -183,7 +178,6 @@ mod tests {
         // Empty HTML data should result in empty technologies
         html_data.meta_tags = HashMap::new();
         html_data.script_sources = vec![];
-        html_data.html_text = String::new();
 
         let error_stats = Arc::new(ProcessingStats::new());
         let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;

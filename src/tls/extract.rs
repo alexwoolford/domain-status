@@ -111,7 +111,7 @@ pub(crate) fn extract_certificate_sans(
                 // Other types (IPAddress, RFC822Name, etc.) are ignored
                 if let GeneralName::DNSName(dns_name) = general_name {
                     // DNSName is already a &str in x509-parser
-                    sans.push(dns_name.to_string());
+                    sans.push((*dns_name).to_string());
                 }
             }
         }

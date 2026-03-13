@@ -60,7 +60,7 @@ pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Opti
         async move {
             let client = WhoisClient::new()
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {e}"))?;
             client.lookup(&domain).await.map_err(anyhow::Error::from)
         }
     })
@@ -76,47 +76,45 @@ where
     F: FnOnce(&str) -> Fut,
     Fut: std::future::Future<Output = Result<whois_service::WhoisResponse>>,
 {
-    let cache_path = cache_dir
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
+    let cache_path = cache_dir.map_or_else(
+        || PathBuf::from(DEFAULT_CACHE_DIR),
+        std::path::Path::to_path_buf,
+    );
     let cache = WhoisCacheStore::default();
 
     if let Some(cached) = cache.load(&cache_path, domain).await? {
-        log::debug!("WHOIS cache hit for {}", domain);
+        log::debug!("WHOIS cache hit for {domain}");
         let result = enrich_result_from_raw_text(WhoisResult::from(cached.result));
         return Ok(Some(result));
     }
 
-    log::info!("Starting WHOIS lookup for domain: {}", domain);
-    match tokio::time::timeout(
+    log::info!("Starting WHOIS lookup for domain: {domain}");
+    if let Ok(response) = tokio::time::timeout(
         Duration::from_secs(crate::config::WHOIS_TIMEOUT_SECS),
         lookup(domain),
     )
     .await
     {
-        Ok(response) => {
-            let response = match response {
-                Ok(response) => response,
-                Err(e) => {
-                    log::warn!("WHOIS lookup failed for {}: {}", domain, e);
-                    return Ok(None);
-                }
-            };
-            log::debug!("WHOIS lookup successful for {}", domain);
-            let result = convert_parsed_data(&response);
+        let response = match response {
+            Ok(response) => response,
+            Err(e) => {
+                log::warn!("WHOIS lookup failed for {domain}: {e}");
+                return Ok(None);
+            }
+        };
+        log::debug!("WHOIS lookup successful for {domain}");
+        let result = convert_parsed_data(&response);
 
-            cache.save(&cache_path, domain, &result).await?;
+        cache.save(&cache_path, domain, &result).await?;
 
-            Ok(Some(result))
-        }
-        Err(_) => {
-            log::warn!(
-                "WHOIS lookup timed out for {} after {}s",
-                domain,
-                crate::config::WHOIS_TIMEOUT_SECS
-            );
-            Ok(None)
-        }
+        Ok(Some(result))
+    } else {
+        log::warn!(
+            "WHOIS lookup timed out for {} after {}s",
+            domain,
+            crate::config::WHOIS_TIMEOUT_SECS
+        );
+        Ok(None)
     }
 }
 

@@ -87,7 +87,7 @@ pub(crate) fn check_meta_patterns(
                     has_match = true;
                     // Take the first version found (matching wappalyzergo behavior)
                     if matched_version.is_none() && result.version.is_some() {
-                        matched_version = result.version.clone();
+                        matched_version.clone_from(&result.version);
                     }
                     // If we found a version, we can stop checking patterns for this meta value
                     if matched_version.is_some() {
@@ -119,7 +119,7 @@ pub(crate) fn check_meta_patterns(
         let key_without_prefix = meta_key_lower
             .strip_prefix("property:")
             .unwrap_or(&meta_key_lower);
-        if let Some(meta_value) = meta_tags.get(&format!("property:{}", key_without_prefix)) {
+        if let Some(meta_value) = meta_tags.get(&format!("property:{key_without_prefix}")) {
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
@@ -129,7 +129,7 @@ pub(crate) fn check_meta_patterns(
         let key_without_prefix = meta_key_lower
             .strip_prefix("http-equiv:")
             .unwrap_or(&meta_key_lower);
-        if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", key_without_prefix)) {
+        if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{key_without_prefix}")) {
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
@@ -140,21 +140,21 @@ pub(crate) fn check_meta_patterns(
         // wappalyzergo matches against raw HTML name (case-sensitive), but fingerprint key is lowercase
         // Since we normalize HTML names to lowercase, we can match directly
         // Try name: prefix (most common)
-        if let Some(meta_value) = meta_tags.get(&format!("name:{}", meta_key_lower)) {
+        if let Some(meta_value) = meta_tags.get(&format!("name:{meta_key_lower}")) {
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
             }
         }
         // Try property: prefix (Open Graph, etc.)
-        if let Some(meta_value) = meta_tags.get(&format!("property:{}", meta_key_lower)) {
+        if let Some(meta_value) = meta_tags.get(&format!("property:{meta_key_lower}")) {
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
             }
         }
         // Try http-equiv: prefix
-        if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{}", meta_key_lower)) {
+        if let Some(meta_value) = meta_tags.get(&format!("http-equiv:{meta_key_lower}")) {
             let result = check_patterns(meta_value);
             if result.matched {
                 return result;
@@ -206,18 +206,11 @@ fn parse_pattern(pattern: &str) -> ParsedPattern {
             let key = &part[..colon_pos];
             let value = &part[colon_pos + 1..];
 
-            match key {
-                "version" => {
-                    version_template = Some(value.to_string());
-                    break; // wappalyzergo processes parts in order, first "version:" wins
-                }
-                "confidence" => {
-                    // Ignore confidence - we don't use it
-                }
-                _ => {
-                    // Unknown key, ignore
-                }
+            if key == "version" {
+                version_template = Some(value.to_string());
+                break; // wappalyzergo processes parts in order, first "version:" wins
             }
+            // Ignore confidence and unknown keys - we don't use them
         }
     }
 
@@ -262,9 +255,9 @@ fn is_regex_pattern(pattern: &str) -> bool {
 /// # Returns
 ///
 /// `Some(Regex)` if compilation succeeds, `None` if it fails
-fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> {
+pub(crate) fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> {
     // wappalyzergo uses case-insensitive matching: regexp.Compile("(?i)" + regexPattern)
-    let case_insensitive_pattern = format!("(?i){}", pattern);
+    let case_insensitive_pattern = format!("(?i){pattern}");
 
     // Try to get from cache first (lock-free read)
     if let Some(cached) = REGEX_CACHE.get(cache_key) {
@@ -299,7 +292,9 @@ fn get_or_compile_regex(pattern: &str, cache_key: &str) -> Option<regex::Regex> 
 fn handle_empty_pattern(version_template: Option<&str>) -> PatternMatchResult {
     let version = if let Some(template) = version_template {
         let template = template.trim();
-        if !template.is_empty() {
+        if template.is_empty() {
+            None
+        } else {
             // Check if it's a literal (no capture groups like \1, \2)
             if !template.contains('\\') || !template.chars().any(|c| c.is_ascii_digit()) {
                 // It's a literal version string (e.g., "ga4", "ua")
@@ -309,8 +304,6 @@ fn handle_empty_pattern(version_template: Option<&str>) -> PatternMatchResult {
                 // This shouldn't happen for empty patterns, but handle it gracefully
                 None
             }
-        } else {
-            None
         }
     } else {
         None
@@ -344,18 +337,15 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
         // Try to compile as regex (with caching)
         let cache_key = parsed.pattern_for_match.clone();
 
-        let re = match get_or_compile_regex(&parsed.pattern_for_match, &cache_key) {
-            Some(re) => re,
-            None => {
-                // If regex compilation fails, fall back to substring
-                // This handles cases where the pattern looks like regex but isn't valid
-                return PatternMatchResult {
-                    matched: text
-                        .to_lowercase()
-                        .contains(&parsed.pattern_for_match.to_lowercase()),
-                    version: None,
-                };
-            }
+        let Some(re) = get_or_compile_regex(&parsed.pattern_for_match, &cache_key) else {
+            // If regex compilation fails, fall back to substring
+            // This handles cases where the pattern looks like regex but isn't valid
+            return PatternMatchResult {
+                matched: text
+                    .to_lowercase()
+                    .contains(&parsed.pattern_for_match.to_lowercase()),
+                version: None,
+            };
         };
 
         // Match and extract version
@@ -363,7 +353,7 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
             let version = if let Some(template) = &parsed.version_template {
                 // template is already the value after "version:" (e.g., "\1" or "\1?next:")
                 // extract_version_from_template expects "version:..." format
-                extract_version_from_template(&format!("version:{}", template), &captures)
+                extract_version_from_template(&format!("version:{template}"), &captures)
             } else {
                 None
             };
@@ -384,17 +374,14 @@ pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
         let escaped_pattern = regex::escape(&parsed.pattern_for_match);
         let cache_key = parsed.pattern_for_match.clone();
 
-        let re = match get_or_compile_regex(&escaped_pattern, &cache_key) {
-            Some(re) => re,
-            None => {
-                // If regex compilation fails, fall back to substring match
-                let pattern_lower = parsed.pattern_for_match.to_lowercase();
-                let text_lower = text.to_lowercase();
-                return PatternMatchResult {
-                    matched: text_lower.contains(&pattern_lower),
-                    version: None,
-                };
-            }
+        let Some(re) = get_or_compile_regex(&escaped_pattern, &cache_key) else {
+            // If regex compilation fails, fall back to substring match
+            let pattern_lower = parsed.pattern_for_match.to_lowercase();
+            let text_lower = text.to_lowercase();
+            return PatternMatchResult {
+                matched: text_lower.contains(&pattern_lower),
+                version: None,
+            };
         };
 
         // Match using regex (like wappalyzergo does)
@@ -421,16 +408,20 @@ pub(crate) fn extract_version_from_template(
         return None;
     }
 
-    // Which placeholders exist in the template (for semicolon sanity check later)
+    // Which placeholders exist in the template (for semicolon sanity check later).
+    // Check up to \99 — Wappalyzer regexes can have 10+ capture groups.
     let mut placeholders_in_template = std::collections::HashSet::new();
-    for i in 1..=9 {
-        let placeholder_double = format!("\\\\{}", i);
-        let placeholder_single = format!("\\{}", i);
+    for i in 1..=99 {
+        let placeholder_double = format!("\\\\{i}");
+        let placeholder_single = format!("\\{i}");
         if version_expr.contains(&placeholder_double) || version_expr.contains(&placeholder_single)
         {
             placeholders_in_template.insert(i);
         }
     }
+
+    static RE_PLACEHOLDER: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\\\d+").expect("placeholder regex"));
 
     // Ternary must be evaluated on the raw template (with \1, \2 placeholders) BEFORE
     // substituting capture values. Otherwise a captured value containing '?' or ':'
@@ -449,8 +440,8 @@ pub(crate) fn extract_version_from_template(
         for i in (1..captures.len()).rev() {
             if placeholders_in_template.contains(&i) {
                 if let Some(cap_value) = captures.get(i) {
-                    let placeholder_double = format!("\\\\{}", i);
-                    let placeholder_single = format!("\\{}", i);
+                    let placeholder_double = format!("\\\\{i}");
+                    let placeholder_single = format!("\\{i}");
                     res = res.replace(&placeholder_double, cap_value.as_str());
                     res = res.replace(&placeholder_single, cap_value.as_str());
                 }
@@ -458,13 +449,11 @@ pub(crate) fn extract_version_from_template(
         }
 
         // Remove any remaining placeholders (unmatched groups)
-        let re_placeholder = regex::Regex::new(r"\\\d+").ok()?;
-        re_placeholder.replace_all(&res, "").to_string()
+        RE_PLACEHOLDER.replace_all(&res, "").to_string()
     };
 
     // Remove any remaining placeholders (e.g. ternary chose branch with \3 but only \1,\2 matched)
-    let re_placeholder = regex::Regex::new(r"\\\d+").ok()?;
-    result = re_placeholder.replace_all(&result, "").to_string();
+    result = RE_PLACEHOLDER.replace_all(&result, "").to_string();
 
     if result.is_empty() {
         None
@@ -505,8 +494,8 @@ fn replace_placeholders(template: &str, captures: &regex::Captures) -> String {
     let mut result = template.to_string();
     for i in (1..captures.len()).rev() {
         if let Some(cap_value) = captures.get(i) {
-            let placeholder_double = format!("\\\\{}", i);
-            let placeholder_single = format!("\\{}", i);
+            let placeholder_double = format!("\\\\{i}");
+            let placeholder_single = format!("\\{i}");
             result = result.replace(&placeholder_double, cap_value.as_str());
             result = result.replace(&placeholder_single, cap_value.as_str());
         }
@@ -548,9 +537,8 @@ fn parse_ternary_expression(expression: &str) -> Option<(&str, &str)> {
 /// So `len(submatches) == 0` means no capture groups matched.
 fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> String {
     // If not a ternary expression, return as-is
-    let (true_part, false_part) = match parse_ternary_expression(expression) {
-        Some(parts) => parts,
-        None => return expression.to_string(),
+    let Some((true_part, false_part)) = parse_ternary_expression(expression) else {
+        return expression.to_string();
     };
 
     // In wappalyzergo, submatches is the capture groups (excluding full match)
@@ -572,22 +560,24 @@ fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> Str
     // }
     // return trueFalseParts[1], nil
 
-    if !true_part.is_empty() {
-        // true_part is non-empty
-        if !has_capture_groups {
-            // No capture groups, use false_part (replace placeholders)
-            replace_placeholders(false_part, captures)
-        } else {
-            // We have capture groups, use true_part (replace placeholders)
-            replace_placeholders(true_part, captures)
-        }
-    } else {
-        // true_part is empty
+    if true_part.is_empty() {
+        // true_part is empty — wappalyzergo (patterns.go:141-147):
+        // if trueFalseParts[1] == "" { check submatches; return trueFalseParts[0] }
+        // return trueFalseParts[1]   // unconditionally when false_part is non-empty
         if false_part.is_empty() {
             // Both parts empty - return empty regardless of capture groups
             String::new()
         } else {
             // false_part is non-empty, use it (replace placeholders)
+            replace_placeholders(false_part, captures)
+        }
+    } else {
+        // true_part is non-empty
+        if has_capture_groups {
+            // We have capture groups, use true_part (replace placeholders)
+            replace_placeholders(true_part, captures)
+        } else {
+            // No capture groups, use false_part (replace placeholders)
             replace_placeholders(false_part, captures)
         }
     }

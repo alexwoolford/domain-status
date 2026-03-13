@@ -40,9 +40,10 @@ pub async fn init_geoip(
     geoip_path: Option<&str>,
     cache_dir: Option<&Path>,
 ) -> Result<Option<GeoIpMetadata>> {
-    let cache_path = cache_dir
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from(geoip::DEFAULT_CACHE_DIR));
+    let cache_path = cache_dir.map_or_else(
+        || std::path::PathBuf::from(geoip::DEFAULT_CACHE_DIR),
+        std::path::Path::to_path_buf,
+    );
 
     // Determine the source path
     let path = match geoip_path {
@@ -50,7 +51,11 @@ pub async fn init_geoip(
         None => {
             // Try automatic download if license key is available
             if let Ok(license_key) = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV) {
-                if !license_key.is_empty() {
+                if license_key.is_empty() {
+                    log::info!("GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY is empty)");
+                    return Ok(None);
+                }
+                {
                     // Check cache first
                     let (cache_file, metadata_file) =
                         geoip_cache_paths(&cache_path, "GeoLite2-City");
@@ -85,9 +90,6 @@ pub async fn init_geoip(
                         log::info!("Using cached GeoIP database");
                         cache_file.to_string_lossy().to_string()
                     }
-                } else {
-                    log::info!("GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY is empty)");
-                    return Ok(None);
                 }
             } else {
                 log::info!("GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY not set)");
@@ -100,11 +102,11 @@ pub async fn init_geoip(
     let should_load = {
         let reader = GEOIP_CITY_READER
             .read()
-            .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {e}"))?;
         if let Some((_, ref metadata)) = *reader {
             // Check if source matches
             if metadata.source == path {
-                log::info!("GeoIP City database already loaded: {}", path);
+                log::info!("GeoIP City database already loaded: {path}");
                 false // Don't reload, but still try ASN
             } else {
                 true // Different source, reload
@@ -125,7 +127,7 @@ pub async fn init_geoip(
         let reader_arc = Arc::new(reader);
         *GEOIP_CITY_READER
             .write()
-            .map_err(|e| anyhow::anyhow!("GeoIP City writer lock poisoned: {}", e))? =
+            .map_err(|e| anyhow::anyhow!("GeoIP City writer lock poisoned: {e}"))? =
             Some((reader_arc, metadata.clone()));
         log::info!("GeoIP City database loaded successfully");
 
@@ -133,7 +135,7 @@ pub async fn init_geoip(
         let cache_path_clone = cache_path.clone();
         tokio::spawn(async move {
             if let Err(e) = asn::init_asn_database(&cache_path_clone).await {
-                log::warn!("Failed to initialize ASN database: {}", e);
+                log::warn!("Failed to initialize ASN database: {e}");
             }
         });
 
@@ -142,7 +144,7 @@ pub async fn init_geoip(
         // Already loaded, just return metadata
         let reader = GEOIP_CITY_READER
             .read()
-            .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {e}"))?;
         Ok(reader.as_ref().map(|(_, metadata)| metadata.clone()))
     }
 }

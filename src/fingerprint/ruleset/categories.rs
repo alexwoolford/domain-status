@@ -22,7 +22,11 @@ pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, 
     // Convert technologies URL to categories URL
     // e.g., https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
     // -> https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/categories.json
-    let categories_url = if url.contains("raw.githubusercontent.com") && !url.ends_with(".json") {
+    let categories_url = if url.contains("raw.githubusercontent.com")
+        && !std::path::Path::new(url)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
         // It's a directory - construct categories.json URL in parent directory
         // e.g., .../src/technologies -> .../src/categories.json
         let trimmed = url.trim_end_matches('/');
@@ -31,9 +35,12 @@ pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, 
             let base = &trimmed[..trimmed.len() - 12];
             format!("{}/categories.json", base.trim_end_matches('/'))
         } else {
-            format!("{}/../categories.json", trimmed)
+            format!("{trimmed}/../categories.json")
         }
-    } else if url.ends_with(".json") {
+    } else if std::path::Path::new(url)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
         // Single file - replace with categories.json in same directory
         let mut parts: Vec<&str> = url.split('/').collect();
         if let Some(last) = parts.last_mut() {
@@ -45,7 +52,7 @@ pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, 
         format!("{}/../categories.json", url.trim_end_matches('/'))
     };
 
-    log::debug!("Fetching categories from: {}", categories_url);
+    log::debug!("Fetching categories from: {categories_url}");
     let response = client.get(&categories_url).send().await?;
     if !response.status().is_success() {
         return Err(anyhow::anyhow!(
@@ -100,8 +107,8 @@ pub(crate) async fn load_categories_from_path(path: &Path) -> Result<HashMap<u32
 
     if !categories_path.exists() {
         return Err(anyhow::anyhow!(
-            "categories.json not found at {:?}",
-            categories_path
+            "categories.json not found at {}",
+            categories_path.display()
         ));
     }
 
@@ -118,9 +125,9 @@ pub(crate) async fn load_categories_from_path(path: &Path) -> Result<HashMap<u32
     }
 
     log::info!(
-        "Loaded {} categories from {:?}",
+        "Loaded {} categories from {}",
         result.len(),
-        categories_path
+        categories_path.display()
     );
     Ok(result)
 }

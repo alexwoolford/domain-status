@@ -14,7 +14,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::config::{Config, DEFAULT_USER_AGENT};
 use crate::error_handling::ProcessingStats;
 use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
-use crate::initialization::*;
+use crate::initialization::{
+    init_client, init_extractor, init_rate_limiter, init_redirect_client, init_resolver,
+    init_semaphore,
+};
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::{init_db_pool_with_path, insert_run_metadata, RunMetadata};
 use crate::utils::TimingStats;
@@ -52,14 +55,15 @@ pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize, usize) + Send
 /// # Errors
 ///
 /// Returns an error if any initialization step fails.
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)] // Initializes ~12 resources (DB, HTTP, DNS, TLS, rate limiter, etc.) in dependency order
+#[allow(clippy::cognitive_complexity)] // Each resource has distinct setup and error-handling logic
 pub async fn init_scan_resources(
     mut config: Config,
 ) -> Result<(ScanResources, UrlSource, usize, ProgressCallback)> {
     // Validate configuration before starting
     config
         .validate()
-        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {e}"))?;
 
     // Update user agent if using default
     if config.user_agent == DEFAULT_USER_AGENT {
@@ -85,7 +89,7 @@ pub async fn init_scan_resources(
                 count += 1;
             }
         }
-        info!("Total URLs in file: {}", count);
+        info!("Total URLs in file: {count}");
         (count, false)
     };
 
@@ -115,6 +119,7 @@ pub async fn init_scan_resources(
         };
 
     // Initialize database -- size the pool to match concurrency so workers don't starve
+    // max_concurrency is validated to be <= 10_000, fits in u32
     #[allow(clippy::cast_possible_truncation)]
     let pool_size = (config.max_concurrency as u32).max(1);
     let pool = init_db_pool_with_path(&config.db_path, pool_size)
@@ -165,10 +170,7 @@ pub async fn init_scan_resources(
     let geoip_metadata = match crate::geoip::init_geoip(config.geoip.as_deref(), None).await {
         Ok(metadata) => metadata,
         Err(e) => {
-            warn!(
-                "Failed to initialize GeoIP database: {}. Continuing without GeoIP lookup.",
-                e
-            );
+            warn!("Failed to initialize GeoIP database: {e}. Continuing without GeoIP lookup.");
             warn!("To enable GeoIP, ensure MAXMIND_LICENSE_KEY in .env is valid and your MaxMind account has GeoLite2 access.");
             None
         }
@@ -176,8 +178,8 @@ pub async fn init_scan_resources(
 
     // Create run metadata
     let start_time_epoch = Utc::now().timestamp_millis();
-    let run_id = format!("run_{}", start_time_epoch);
-    info!("Starting run: {}", run_id);
+    let run_id = format!("run_{start_time_epoch}");
+    info!("Starting run: {run_id}");
 
     let meta = RunMetadata {
         run_id: &run_id,
@@ -244,8 +246,8 @@ pub async fn init_scan_resources(
         run_id,
         start_time_epoch,
         start_time,
-        ruleset,
-        geoip_metadata,
+        _ruleset: ruleset,
+        _geoip_metadata: geoip_metadata,
         config,
     };
 

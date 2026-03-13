@@ -131,7 +131,7 @@ where
                     serde_json::Value::String(s) => vec![s],
                     serde_json::Value::Array(arr) => arr
                         .into_iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                         .collect(),
                     _ => {
                         return Err(de::Error::invalid_type(

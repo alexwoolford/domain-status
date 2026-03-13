@@ -17,27 +17,27 @@ use crate::security::{ssrf_safe_redirect_policy, validate_url_safe};
 
 /// Loads `GeoIP` database from a local file path
 pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
-    log::info!("Loading GeoIP database from: {}", path);
+    log::info!("Loading GeoIP database from: {path}");
 
     let db_bytes = tokio::fs::read(path)
         .await
-        .with_context(|| format!("Failed to read GeoIP database from {}", path))?;
+        .with_context(|| format!("Failed to read GeoIP database from {path}"))?;
 
     tokio::task::spawn_blocking({
         let path = path.to_string();
         move || {
             let reader = Reader::from_source(db_bytes)
-                .with_context(|| format!("Failed to parse GeoIP database from {}", path))?;
+                .with_context(|| format!("Failed to parse GeoIP database from {path}"))?;
             let metadata = extract_metadata(&reader, &path);
             Ok((reader, metadata))
         }
     })
     .await
-    .map_err(|error| anyhow::anyhow!("GeoIP file parse task failed: {}", error))?
+    .map_err(|error| anyhow::anyhow!("GeoIP file parse task failed: {error}"))?
 }
 
 pub(super) fn geoip_cache_paths(cache_dir: &Path, db_name: &str) -> (PathBuf, PathBuf) {
-    let cache_file = cache_dir.join(format!("{}.mmdb", db_name));
+    let cache_file = cache_dir.join(format!("{db_name}.mmdb"));
     let metadata_file = cache_dir.join(format!("{}_metadata.json", db_name.to_lowercase()));
     (cache_file, metadata_file)
 }
@@ -62,15 +62,13 @@ async fn try_load_from_cache(
     metadata_file: &Path,
 ) -> Result<Option<(Reader<Vec<u8>>, GeoIpMetadata)>> {
     // Check if metadata exists
-    let metadata = match load_metadata(metadata_file).await {
-        Ok(m) => m,
-        Err(_) => return Ok(None), // No metadata, cache doesn't exist
+    let Ok(metadata) = load_metadata(metadata_file).await else {
+        return Ok(None); // No metadata, cache doesn't exist
     };
 
     // Check if cache is fresh
-    let age = match metadata.last_updated.elapsed() {
-        Ok(a) => a,
-        Err(_) => return Ok(None), // Can't determine age, treat as expired
+    let Ok(age) = metadata.last_updated.elapsed() else {
+        return Ok(None); // Can't determine age, treat as expired
     };
 
     if age.as_secs() >= geoip::CACHE_TTL_SECS {
@@ -82,18 +80,18 @@ async fn try_load_from_cache(
         return Ok(None); // Cache file doesn't exist
     }
 
-    let cache_path = match cache_file.to_str() {
-        Some(p) => p,
-        None => {
-            log::warn!("Cache file path contains invalid UTF-8: {:?}", cache_file);
-            return Ok(None);
-        }
+    let Some(cache_path) = cache_file.to_str() else {
+        log::warn!(
+            "Cache file path contains invalid UTF-8: {}",
+            cache_file.display()
+        );
+        return Ok(None);
     };
 
     // Try to load from cache file
     match load_from_file(cache_path).await {
         Ok((reader, _)) => {
-            log::info!("Loaded GeoIP database from cache: {:?}", cache_file);
+            log::info!("Loaded GeoIP database from cache: {}", cache_file.display());
             Ok(Some((reader, metadata)))
         }
         Err(_) => {
@@ -120,7 +118,7 @@ pub(crate) async fn load_from_url(
     // Create cache directory if it doesn't exist
     tokio::fs::create_dir_all(cache_dir)
         .await
-        .with_context(|| format!("Failed to create cache directory: {:?}", cache_dir))?;
+        .with_context(|| format!("Failed to create cache directory: {}", cache_dir.display()))?;
 
     let (cache_file, metadata_file) = geoip_cache_paths(cache_dir, db_name);
 
@@ -130,10 +128,10 @@ pub(crate) async fn load_from_url(
     }
 
     // SSRF protection: validate URL before downloading
-    validate_url_safe(url).with_context(|| format!("Unsafe GeoIP URL rejected: {}", url))?;
+    validate_url_safe(url).with_context(|| format!("Unsafe GeoIP URL rejected: {url}"))?;
 
     // Download database with retries and size limits
-    log::info!("Downloading GeoIP database from: {}", url);
+    log::info!("Downloading GeoIP database from: {url}");
 
     let mut last_error = None;
     for attempt in 1..=MAX_NETWORK_DOWNLOAD_RETRIES {
@@ -153,10 +151,7 @@ pub(crate) async fn load_from_url(
                 last_error = Some(e);
                 if attempt < MAX_NETWORK_DOWNLOAD_RETRIES {
                     log::warn!(
-                        "Failed to download GeoIP database from {} (attempt {}/{}), retrying...",
-                        url,
-                        attempt,
-                        MAX_NETWORK_DOWNLOAD_RETRIES
+                        "Failed to download GeoIP database from {url} (attempt {attempt}/{MAX_NETWORK_DOWNLOAD_RETRIES}), retrying..."
                     );
                     // Exponential backoff: 2s, 4s, 8s (longer for large files)
                     tokio::time::sleep(Duration::from_secs(2 << (attempt - 1))).await;
@@ -167,9 +162,7 @@ pub(crate) async fn load_from_url(
 
     Err(last_error.unwrap_or_else(|| {
         anyhow::anyhow!(
-            "Failed to download GeoIP database from {} after {} attempts",
-            url,
-            MAX_NETWORK_DOWNLOAD_RETRIES
+            "Failed to download GeoIP database from {url} after {MAX_NETWORK_DOWNLOAD_RETRIES} attempts"
         )
     }))
 }
@@ -203,14 +196,12 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
         if error_body.contains("Invalid license key")
             || (error_body.trim_start().starts_with("<!") && error_body.contains("<html"))
         {
-            log::warn!("MaxMind API error response: {}", error_body);
+            log::warn!("MaxMind API error response: {error_body}");
         } else {
-            log::error!("MaxMind API error response: {}", error_body);
+            log::error!("MaxMind API error response: {error_body}");
         }
         return Err(anyhow::anyhow!(
-            "Failed to download GeoIP database: {} - {}",
-            status,
-            error_body
+            "Failed to download GeoIP database: {status} - {error_body}"
         ));
     }
 
@@ -218,9 +209,7 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
     if let Some(content_length) = response.content_length() {
         if content_length > MAX_GEOIP_DOWNLOAD_SIZE as u64 {
             return Err(anyhow::anyhow!(
-                "GeoIP database too large: {} bytes (max: {} bytes)",
-                content_length,
-                MAX_GEOIP_DOWNLOAD_SIZE
+                "GeoIP database too large: {content_length} bytes (max: {MAX_GEOIP_DOWNLOAD_SIZE} bytes)"
             ));
         }
     }
@@ -232,9 +221,7 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
         let new_len = downloaded_bytes.len().saturating_add(chunk.len());
         if new_len > MAX_GEOIP_DOWNLOAD_SIZE {
             return Err(anyhow::anyhow!(
-                "GeoIP database too large: {} bytes (max: {} bytes)",
-                new_len,
-                MAX_GEOIP_DOWNLOAD_SIZE
+                "GeoIP database too large: {new_len} bytes (max: {MAX_GEOIP_DOWNLOAD_SIZE} bytes)"
             ));
         }
         downloaded_bytes.extend_from_slice(&chunk);
@@ -257,9 +244,13 @@ async fn process_downloaded_geoip(
         let url = url.to_string();
         let db_name = db_name.to_string();
         move || -> Result<(Vec<u8>, GeoIpMetadata, Reader<Vec<u8>>)> {
+            let url_path = std::path::Path::new(&url);
             let db_bytes = if url.ends_with(".tar.gz") || url.contains("suffix=tar.gz") {
                 extract_mmdb_from_tar_gz(&downloaded_bytes, &db_name)?
-            } else if url.ends_with(".mmdb") {
+            } else if url_path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mmdb"))
+            {
                 downloaded_bytes
             } else if downloaded_bytes.len() > 2
                 && downloaded_bytes[0] == 0x1f
@@ -278,11 +269,11 @@ async fn process_downloaded_geoip(
         }
     })
     .await
-    .map_err(|error| anyhow::anyhow!("GeoIP archive parse task failed: {}", error))??;
+    .map_err(|error| anyhow::anyhow!("GeoIP archive parse task failed: {error}"))??;
 
     write_atomic(cache_file, &db_bytes)
         .await
-        .with_context(|| format!("Failed to write cache file: {:?}", cache_file))?;
+        .with_context(|| format!("Failed to write cache file: {}", cache_file.display()))?;
     save_metadata(&metadata, metadata_file).await?;
 
     Ok((reader, metadata))

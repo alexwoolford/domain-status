@@ -95,8 +95,7 @@ pub async fn lookup_txt_records(
                         let concatenated: String = txt
                             .iter()
                             .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                            .collect::<Vec<String>>()
-                            .join("");
+                            .collect::<String>();
 
                         // Truncate to MAX_TXT_RECORD_SIZE to prevent memory exhaustion from DNS tunneling
                         let original_len = concatenated.len();

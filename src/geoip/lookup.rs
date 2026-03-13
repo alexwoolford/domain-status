@@ -46,8 +46,7 @@ impl GeoIpService {
             Err(e) => {
                 log::error!(
                     "GeoIP database access failed due to lock poisoning (fatal error). \
-                    Please restart the application. Details: {}",
-                    e
+                    Please restart the application. Details: {e}"
                 );
                 return None;
             }
@@ -57,15 +56,14 @@ impl GeoIpService {
         let ip_addr: std::net::IpAddr = match ip.parse() {
             Ok(addr) => addr,
             Err(e) => {
-                log::debug!("Failed to parse IP address '{}': {}", ip, e);
+                log::debug!("Failed to parse IP address '{ip}': {e}");
                 return None;
             }
         };
 
         let mut geo_result = GeoIpResult::default();
-        let city_lookup = match city_reader.lookup(ip_addr) {
-            Ok(result) => result,
-            Err(_) => return None,
+        let Ok(city_lookup) = city_reader.lookup(ip_addr) else {
+            return None;
         };
         if !city_lookup.has_data() {
             return None;
@@ -73,28 +71,46 @@ impl GeoIpService {
 
         let city_result: maxminddb::geoip2::City = match city_lookup.decode() {
             Ok(Some(city)) => city,
-            Ok(None) => return None,
-            Err(_) => return None,
+            Ok(None) | Err(_) => return None,
         };
 
-        geo_result.country_code = city_result.country.iso_code.map(|s| s.to_string());
-        geo_result.country_name = city_result.country.names.english.map(|s| s.to_string());
+        geo_result.country_code = city_result
+            .country
+            .iso_code
+            .map(std::string::ToString::to_string);
+        geo_result.country_name = city_result
+            .country
+            .names
+            .english
+            .map(std::string::ToString::to_string);
         if let Some(subdivision) = city_result.subdivisions.first() {
-            geo_result.region = subdivision.names.english.map(|s| s.to_string());
+            geo_result.region = subdivision
+                .names
+                .english
+                .map(std::string::ToString::to_string);
         }
-        geo_result.city = city_result.city.names.english.map(|s| s.to_string());
+        geo_result.city = city_result
+            .city
+            .names
+            .english
+            .map(std::string::ToString::to_string);
         geo_result.latitude = city_result.location.latitude;
         geo_result.longitude = city_result.location.longitude;
-        geo_result.timezone = city_result.location.time_zone.map(|s| s.to_string());
-        geo_result.postal_code = city_result.postal.code.map(|s| s.to_string());
+        geo_result.timezone = city_result
+            .location
+            .time_zone
+            .map(std::string::ToString::to_string);
+        geo_result.postal_code = city_result
+            .postal
+            .code
+            .map(std::string::ToString::to_string);
 
         let asn_reader = match self.asn_reader.read() {
             Ok(reader) => reader,
             Err(e) => {
                 log::error!(
                     "GeoIP database access failed due to lock poisoning (fatal error). \
-                    Please restart the application. Details: {}",
-                    e
+                    Please restart the application. Details: {e}"
                 );
                 return None;
             }
@@ -106,7 +122,7 @@ impl GeoIpService {
                         geo_result.asn = asn_result.autonomous_system_number;
                         geo_result.asn_org = asn_result
                             .autonomous_system_organization
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                     }
                 }
             }
@@ -136,12 +152,6 @@ impl GeoIpService {
 /// Looks up an IP address using the default `GeoIP` service.
 pub fn lookup_ip(ip: &str) -> Option<GeoIpResult> {
     GeoIpService::default().lookup_ip(ip)
-}
-
-/// Gets the current `GeoIP` City metadata if initialized.
-#[allow(dead_code)]
-pub fn get_metadata() -> Option<GeoIpMetadata> {
-    GeoIpService::default().get_metadata()
 }
 
 /// Checks if `GeoIP` is enabled (database is loaded).
@@ -213,6 +223,6 @@ mod tests {
     fn test_default_wrapper_delegates_without_panicking() {
         let _ = lookup_ip("8.8.8.8");
         let _ = is_enabled();
-        let _ = get_metadata();
+        let _ = GeoIpService::default().get_metadata();
     }
 }

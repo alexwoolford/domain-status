@@ -49,34 +49,31 @@ pub fn extract_title(document: &Html, error_stats: &ProcessingStats) -> String {
     let elements: Vec<_> = document.select(&TITLE_SELECTOR).collect();
     log::debug!("Found {} title elements", elements.len());
 
-    match elements.first() {
-        Some(element) => {
-            // Use text() to get text content, which handles HTML entities and nested tags correctly
-            let title: String = element.text().collect::<String>().trim().to_string();
-            log::debug!(
-                "Extracted title text: '{}' (length: {})",
-                title,
-                title.len()
-            );
-            if title.is_empty() {
-                // Try inner_html as fallback in case text() doesn't work
-                let inner = element.inner_html().trim().to_string();
-                log::debug!("Title inner_html: '{}' (length: {})", inner, inner.len());
-                if inner.is_empty() {
-                    error_stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
-                    String::from("")
-                } else {
-                    inner
-                }
+    if let Some(element) = elements.first() {
+        // Use text() to get text content, which handles HTML entities and nested tags correctly
+        let title: String = element.text().collect::<String>().trim().to_string();
+        log::debug!(
+            "Extracted title text: '{}' (length: {})",
+            title,
+            title.len()
+        );
+        if title.is_empty() {
+            // Try inner_html as fallback in case text() doesn't work
+            let inner = element.inner_html().trim().to_string();
+            log::debug!("Title inner_html: '{}' (length: {})", inner, inner.len());
+            if inner.is_empty() {
+                error_stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
+                String::new()
             } else {
-                title
+                inner
             }
+        } else {
+            title
         }
-        None => {
-            log::debug!("No title element found in document");
-            error_stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
-            String::from("")
-        }
+    } else {
+        log::debug!("No title element found in document");
+        error_stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
+        String::new()
     }
 }
 
@@ -102,28 +99,24 @@ pub fn extract_meta_keywords(
         .next()
         .and_then(|element| element.value().attr("content"));
 
-    match meta_keywords {
-        Some(content) => {
-            let keywords: Vec<String> = content
-                .split(',')
-                .map(|keyword| keyword.trim().to_lowercase())
-                .filter(|keyword| !keyword.is_empty())
-                .collect();
+    if let Some(content) = meta_keywords {
+        let keywords: Vec<String> = content
+            .split(',')
+            .map(|keyword| keyword.trim().to_lowercase())
+            .filter(|keyword| !keyword.is_empty())
+            .collect();
 
-            if keywords.is_empty() {
-                // Empty keywords - track as warning
-                error_stats
-                    .increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
-                None
-            } else {
-                Some(keywords)
-            }
-        }
-        None => {
-            // Missing keywords meta tag - track as warning
+        if keywords.is_empty() {
+            // Empty keywords - track as warning
             error_stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
             None
+        } else {
+            Some(keywords)
         }
+    } else {
+        // Missing keywords meta tag - track as warning
+        error_stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
+        None
     }
 }
 
@@ -170,9 +163,15 @@ pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Opt
 ///
 /// `true` if a viewport meta tag is present, `false` otherwise.
 pub fn is_mobile_friendly(html: &str) -> bool {
-    // Use a simple case-insensitive string check instead of re-parsing the DOM.
+    // Use a case-insensitive byte search instead of re-parsing the DOM.
     // The caller (parse_html_content) already parsed the DOM — this avoids a
     // redundant ~1.5MB DOM allocation per URL.
-    let lower = html.to_lowercase();
-    lower.contains("name=\"viewport\"") || lower.contains("name='viewport'")
+    // Also avoids allocating a full lowercase copy of the HTML on the heap.
+    fn contains_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|w| w.eq_ignore_ascii_case(needle))
+    }
+    contains_ignore_case(html.as_bytes(), b"name=\"viewport\"")
+        || contains_ignore_case(html.as_bytes(), b"name='viewport'")
 }

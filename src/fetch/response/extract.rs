@@ -33,6 +33,7 @@ fn compute_body_metrics(body: &str) -> (Option<i64>, Option<i64>) {
     if body.is_empty() {
         return (None, None);
     }
+    // Body is size-limited during streaming (typically < 10MB), word/line counts fit in i64
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let word_count = body.split_whitespace().count() as i64;
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
@@ -104,7 +105,7 @@ async fn stream_body_with_limit(
 /// Returns `Ok(None)` if content-type is not HTML or body is empty.
 /// When body exceeds the size limit, returns `Ok(Some(ResponseData))` with metadata
 /// (status, headers, TLS-relevant URL/domain) and empty body so the record is still stored.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Extracts headers, body, domain, and security data from HTTP response in sequence
 pub(crate) async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
@@ -138,7 +139,7 @@ pub(crate) async fn extract_response_data(
     let content_type = headers
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let security_headers = extract_security_headers(&headers);
     let http_headers = extract_http_headers(&headers);
@@ -148,20 +149,17 @@ pub(crate) async fn extract_response_data(
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
         let ct = ct.to_str().unwrap_or("").to_lowercase();
         if !ct.starts_with("text/html") {
-            log::info!("Skipping {} - non-HTML content-type: {}", final_domain, ct);
+            log::info!("Skipping {final_domain} - non-HTML content-type: {ct}");
             return Ok(None);
         }
     } else {
         // No Content-Type header - log at debug level but continue processing
-        debug!(
-            "No Content-Type header for {}, continuing anyway",
-            final_domain
-        );
+        debug!("No Content-Type header for {final_domain}, continuing anyway");
     }
 
     // Check Content-Encoding header for debugging
     if let Some(encoding) = headers.get(reqwest::header::CONTENT_ENCODING) {
-        debug!("Content-Encoding for {final_domain}: {:?}", encoding);
+        debug!("Content-Encoding for {final_domain}: {encoding:?}");
     }
 
     // SECURITY: Stream body with running size check to prevent OOM attacks.
@@ -208,10 +206,7 @@ pub(crate) async fn extract_response_data(
 
     if body.is_empty() {
         // Preserve metadata (status, headers, TLS, DNS) like the 2MB-exceeded path.
-        log::info!(
-            "Empty response body for {}, recording metadata only",
-            final_domain
-        );
+        log::info!("Empty response body for {final_domain}, recording metadata only");
         return Ok(Some(ResponseData {
             final_url,
             initial_domain,
@@ -242,6 +237,7 @@ pub(crate) async fn extract_response_data(
     }
 
     let body_sha256 = compute_body_sha256(&body);
+    // Body is size-limited during streaming (typically < 10MB), length fits in i64
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let content_length = Some(body.len() as i64);
     let (body_word_count, body_line_count) = compute_body_metrics(&body);

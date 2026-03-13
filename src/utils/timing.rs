@@ -143,12 +143,11 @@ impl TimingStats {
         if avg_ms == 0 && sum_micros > 0 {
             // Average rounds to 0ms but total is non-zero - show in microseconds
             format!(
-                "  {:20} {:>6} ms ({:.1}%) (< 1ms avg, {}μs total)",
-                name, avg_ms, percentage, sum_micros
+                "  {name:20} {avg_ms:>6} ms ({percentage:.1}%) (< 1ms avg, {sum_micros}μs total)"
             )
         } else {
             // Normal display in milliseconds
-            format!("  {:20} {:>6} ms ({:.1}%)", name, avg_ms, percentage)
+            format!("  {name:20} {avg_ms:>6} ms ({percentage:.1}%)")
         }
     }
 
@@ -156,7 +155,7 @@ impl TimingStats {
     ///
     /// Optionally accepts flags to indicate whether `GeoIP` and WHOIS are enabled,
     /// which will be displayed in the output when these features are disabled.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)] // Logs one line per timing metric (~12 metrics); splitting would fragment the summary
     pub fn log_summary(&self, geoip_enabled: Option<bool>, whois_enabled: Option<bool>) {
         let count = self.count.load(Ordering::Relaxed);
         if count == 0 {
@@ -183,7 +182,7 @@ impl TimingStats {
         };
         let total_sum_ms = Self::micros_to_ms(total_sum_micros);
 
-        log::info!("=== Timing Metrics Summary ({} URLs) ===", count);
+        log::info!("=== Timing Metrics Summary ({count} URLs) ===");
         log::info!("Average times per URL:");
         // Safe percentage calculation: explicitly handles division by zero
         // Returns 0.0 when total is 0 to prevent panic

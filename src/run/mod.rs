@@ -54,15 +54,15 @@ pub struct ScanReport {
 /// Helper function to invoke the progress callback if provided.
 ///
 /// This reduces code duplication by centralizing the callback invocation logic.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity)] // Matches the progress_callback type from Config; alias would add indirection
 fn invoke_progress_callback(
-    callback: &Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
+    callback: Option<&Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
     completed: &Arc<std::sync::atomic::AtomicUsize>,
     failed: &Arc<std::sync::atomic::AtomicUsize>,
     skipped: &Arc<std::sync::atomic::AtomicUsize>,
     total: usize,
 ) {
-    if let Some(ref cb) = callback {
+    if let Some(cb) = callback {
         cb(
             completed.load(Ordering::Relaxed),
             failed.load(Ordering::Relaxed),
@@ -109,7 +109,8 @@ fn invoke_progress_callback(
 /// # Ok(())
 /// # }
 /// ```
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)] // Multi-phase scan: init, status server, logging, URL loop, drain, finalize
+#[allow(clippy::too_many_lines)] // 6 sequential phases that share state; already factored into init/finalize modules
 pub async fn run_scan(
     config: crate::config::Config,
 ) -> Result<ScanReport, crate::error_handling::RunScanError> {
@@ -134,6 +135,7 @@ pub async fn run_scan(
             run_id: Some(resources.run_id.clone()),
             run_start_time_unix_secs: Some({
                 #[allow(clippy::cast_precision_loss)]
+                // Epoch millis fits in f64 mantissa until year 2255
                 {
                     (resources.start_time_epoch as f64) / 1000.0
                 }
@@ -177,7 +179,7 @@ pub async fn run_scan(
                 _ = interval.tick() => {
                     log_progress(start_time, &completed_urls_for_logging, &failed_urls_for_logging, Some(&total_urls_for_logging));
                 }
-                _ = cancel_logging.cancelled() => {
+                () = cancel_logging.cancelled() => {
                     break;
                 }
             }
@@ -202,7 +204,7 @@ pub async fn run_scan(
         {
             if let Err(join_error) = task_result {
                 resources.failed_urls.fetch_add(1, Ordering::Relaxed);
-                log::warn!("Failed to join task (panicked): {:?}", join_error);
+                log::warn!("Failed to join task (panicked): {join_error:?}");
             }
         }
 
@@ -226,9 +228,7 @@ pub async fn run_scan(
                             .await;
                             return Err(crate::error_handling::RunScanError::Runtime(
                                 anyhow::anyhow!(
-                                    "Too many consecutive read errors ({}): {}",
-                                    consecutive_errors,
-                                    e
+                                    "Too many consecutive read errors ({consecutive_errors}): {e}"
                                 ),
                             ));
                         }
@@ -248,7 +248,7 @@ pub async fn run_scan(
                         .fetch_add(1, Ordering::Relaxed);
                     resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
                     invoke_progress_callback(
-                        &progress_callback,
+                        progress_callback.as_ref(),
                         &resources.completed_urls,
                         &resources.failed_urls,
                         &resources.skipped_urls,
@@ -268,7 +268,7 @@ pub async fn run_scan(
                             .fetch_add(1, Ordering::Relaxed);
                         resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
                         invoke_progress_callback(
-                            &progress_callback,
+                            progress_callback.as_ref(),
                             &resources.completed_urls,
                             &resources.failed_urls,
                             &resources.skipped_urls,
@@ -283,18 +283,18 @@ pub async fn run_scan(
                 // worker permits are in use).
                 let permit = tokio::select! {
                     result = Arc::clone(&resources.semaphore).acquire_owned() => {
-                        match result {
-                            Ok(p) => p,
-                            Err(_) => {
-                                warn!("Semaphore closed, skipping URL: {url}");
-                                resources
-                                    .total_urls_attempted
-                                    .fetch_add(1, Ordering::Relaxed);
-                                continue;
-                            }
+                        if let Ok(p) = result { p } else {
+                            warn!("Semaphore closed, skipping URL: {url}");
+                            resources
+                                .total_urls_attempted
+                                .fetch_add(1, Ordering::Relaxed);
+                            resources
+                                .failed_urls
+                                .fetch_add(1, Ordering::Relaxed);
+                            continue;
                         }
                     }
-                    _ = cancel.cancelled() => {
+                    () = cancel.cancelled() => {
                         log::info!("Received interrupt (Ctrl-C), finishing current work and finalizing...");
                         break;
                     }
@@ -322,46 +322,53 @@ pub async fn run_scan(
                 // but manages the JoinHandle internally without accumulating them all in memory
                 tasks.spawn(task::process_url_task(task_params));
             }
-            _ = cancel.cancelled() => {
+            () = cancel.cancelled() => {
                 log::info!("Received interrupt (Ctrl-C), finishing current work and finalizing...");
                 break;
             }
         }
     }
 
-    // Phase 5: Drain remaining tasks with timeout so Ctrl-C doesn't hang indefinitely
+    // Phase 5: Drain remaining tasks with timeout so Ctrl-C doesn't hang indefinitely.
+    // Use a single wall-clock deadline for the entire drain, not per-task timeouts,
+    // so N slow tasks can't extend the shutdown to N * timeout.
     const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let drain_deadline = tokio::time::Instant::now() + DRAIN_TIMEOUT;
     loop {
-        match tokio::time::timeout(DRAIN_TIMEOUT, tasks.join_next()).await {
+        let remaining = drain_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            let abandoned = tasks.len();
+            if abandoned > 0 {
+                log::warn!(
+                    "Drain timeout ({}s) reached, {} in-flight task(s) aborted and counted as failed",
+                    DRAIN_TIMEOUT.as_secs(),
+                    abandoned
+                );
+                // abandoned is JoinSet::len() which is bounded by max_concurrency (usize)
+                resources
+                    .failed_urls
+                    .fetch_add(abandoned, Ordering::Relaxed);
+            } else {
+                log::info!(
+                    "Drain timeout ({}s) reached, no remaining tasks",
+                    DRAIN_TIMEOUT.as_secs()
+                );
+            }
+            tasks.abort_all();
+            cancel.cancel();
+            break;
+        }
+        match tokio::time::timeout(remaining, tasks.join_next()).await {
             Ok(Some(task_result)) => {
                 if let Err(join_error) = task_result {
                     resources.failed_urls.fetch_add(1, Ordering::Relaxed);
-                    log::warn!("Failed to join task (panicked): {:?}", join_error);
+                    log::warn!("Failed to join task (panicked): {join_error:?}");
                 }
             }
             Ok(None) => break,
-            Err(_) => {
-                let abandoned = tasks.len();
-                if abandoned > 0 {
-                    log::warn!(
-                        "Drain timeout ({}s) reached, {} in-flight task(s) aborted and counted as failed",
-                        DRAIN_TIMEOUT.as_secs(),
-                        abandoned
-                    );
-                    #[allow(clippy::cast_possible_truncation)]
-                    resources
-                        .failed_urls
-                        .fetch_add(abandoned, Ordering::Relaxed);
-                } else {
-                    log::info!(
-                        "Drain timeout ({}s) reached, no remaining tasks",
-                        DRAIN_TIMEOUT.as_secs()
-                    );
-                }
-                tasks.abort_all();
-                cancel.cancel();
-                break;
-            }
+            #[allow(clippy::needless_continue)]
+            // Explicit continue clarifies intent: retry after timeout
+            Err(_) => continue, // Deadline check at top of loop handles the abort
         }
     }
 

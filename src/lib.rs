@@ -1,4 +1,15 @@
 #![recursion_limit = "256"]
+// Pedantic clippy: only allow genuinely noise-level lints.
+// items_after_statements: function-scoped `static LazyLock` is idiomatic Rust.
+// struct_field_names: _us/_ms suffixes on timing fields are intentional clarity.
+// similar_names: geoip_cc_b/geoip_cn_b etc are clear in context.
+// needless_continue: used intentionally for clarity in drain loop.
+#![allow(
+    clippy::items_after_statements,
+    clippy::struct_field_names,
+    clippy::similar_names,
+    clippy::needless_continue
+)]
 //! `domain_status` library: core URL scanning functionality
 //!
 //! This library provides high-level APIs for scanning URLs and capturing comprehensive

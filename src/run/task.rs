@@ -51,18 +51,23 @@ pub async fn process_url_task(params: UrlTaskParams) {
     } = params;
 
     if cancel.is_cancelled() {
+        failed_urls.fetch_add(1, Ordering::Relaxed);
         return;
     }
 
     // Apply rate limiting if configured
     if let Some(ref limiter) = request_limiter {
         tokio::select! {
-            _ = limiter.acquire() => {}
-            _ = cancel.cancelled() => return,
+            () = limiter.acquire() => {}
+            () = cancel.cancelled() => {
+                failed_urls.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
         }
     }
 
     if cancel.is_cancelled() {
+        failed_urls.fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -77,7 +82,10 @@ pub async fn process_url_task(params: UrlTaskParams) {
             URL_PROCESSING_TIMEOUT,
             crate::utils::process_url(url, ctx.clone()),
         ) => r,
-        _ = cancel.cancelled() => return,
+        () = cancel.cancelled() => {
+            failed_urls.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
     };
 
     let progress = TaskProgress {
@@ -93,7 +101,7 @@ pub async fn process_url_task(params: UrlTaskParams) {
         Ok(ProcessUrlResult {
             result: Ok(outcome),
             ..
-        }) => handle_success(&url_for_logging, outcome, &progress).await,
+        }) => handle_success(&url_for_logging, outcome, &progress),
         Ok(ProcessUrlResult {
             result: Err(e),
             retry_count,
@@ -106,14 +114,14 @@ pub async fn process_url_task(params: UrlTaskParams) {
                 &ctx,
                 &progress,
             )
-            .await
+            .await;
         }
         Err(_) => handle_timeout(&url_for_logging, process_start, &ctx, &progress).await,
     }
 }
 
 /// Handle successful URL processing.
-async fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskProgress<'_>) {
+fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskProgress<'_>) {
     progress.completed_urls.fetch_add(1, Ordering::Relaxed);
     match outcome {
         UrlProcessOutcome::Inserted => {
@@ -124,7 +132,7 @@ async fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &
         }
     }
     invoke_progress_callback(
-        progress.progress_callback,
+        progress.progress_callback.as_ref(),
         progress.completed_urls,
         progress.failed_urls,
         progress.skipped_urls,
@@ -144,7 +152,7 @@ async fn handle_failure(
     progress.failed_urls.fetch_add(1, Ordering::Relaxed);
     let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
-        progress.progress_callback,
+        progress.progress_callback.as_ref(),
         progress.completed_urls,
         progress.failed_urls,
         progress.skipped_urls,
@@ -177,7 +185,7 @@ async fn handle_timeout(
     progress.failed_urls.fetch_add(1, Ordering::Relaxed);
     let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
-        progress.progress_callback,
+        progress.progress_callback.as_ref(),
         progress.completed_urls,
         progress.failed_urls,
         progress.skipped_urls,
@@ -231,44 +239,6 @@ mod tests {
     use hickory_resolver::config::ResolverOpts;
     use hickory_resolver::TokioResolver;
     use std::sync::atomic::AtomicUsize;
-
-    /// Builds a minimal `ProcessingContext` for task tests (in-memory DB, no migrations).
-    /// `record_url_failure` will panic when inserting (tables not created); use
-    /// `minimal_ctx_with_migrations` when testing failure recording.
-    #[allow(dead_code)]
-    async fn minimal_ctx_without_migrations() -> Arc<ProcessingContext> {
-        let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
-        let redirect_client = Arc::new(
-            reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("test redirect client"),
-        );
-        let extractor = Arc::new(psl::List);
-        let resolver = Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build(),
-        );
-        let pool = Arc::new(
-            sqlx::SqlitePool::connect("sqlite::memory:")
-                .await
-                .expect("test pool"),
-        );
-        let ctx = ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
-                Arc::new(ProcessingStats::new()),
-                Arc::new(TimingStats::new()),
-                Some("run-1".to_string()),
-                false,
-                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            ),
-        );
-        Arc::new(ctx)
-    }
 
     /// Builds a minimal `ProcessingContext` with migrations so `record_url_failure` can succeed.
     async fn minimal_ctx_with_migrations() -> Arc<ProcessingContext> {
@@ -334,7 +304,7 @@ mod tests {
             progress_callback: &None,
         };
 
-        handle_success(&url, UrlProcessOutcome::Inserted, &progress).await;
+        handle_success(&url, UrlProcessOutcome::Inserted, &progress);
 
         assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 1);
@@ -357,7 +327,7 @@ mod tests {
             progress_callback: &None,
         };
 
-        handle_success(&url, UrlProcessOutcome::Skipped, &progress).await;
+        handle_success(&url, UrlProcessOutcome::Skipped, &progress);
 
         assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 0);

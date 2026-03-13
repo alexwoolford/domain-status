@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
+#[cfg(test)]
 use crate::fingerprint::ruleset::get_ruleset;
 
 /// Result of cookie matching for a single technology
@@ -20,7 +21,7 @@ pub struct CookieMatchResult {
 ///
 /// This matches wappalyzergo's `checkCookies()` → `matchMapString(cookies, cookiesPart)` flow.
 /// Supports wildcard cookie names (e.g., `_ga_*` matches `_ga_123456`).
-#[allow(dead_code)] // kept for fingerprint tests; main path uses check_cookies_with_ruleset
+#[cfg(test)]
 pub async fn check_cookies(
     cookies: &HashMap<String, String>,
 ) -> anyhow::Result<Vec<CookieMatchResult>> {
@@ -42,10 +43,18 @@ pub async fn check_cookies(
             // Check if cookie_name contains wildcard (*)
             if cookie_name.contains('*') {
                 // Convert wildcard pattern to regex (e.g., _ga_* -> ^_ga_.*$)
-                let wildcard_pattern = cookie_name.replace('*', ".*");
-                let cookie_regex = match regex::Regex::new(&format!("^{}$", wildcard_pattern)) {
-                    Ok(re) => re,
-                    Err(_) => continue, // Invalid regex, skip this cookie pattern
+                // Escape the non-wildcard parts to prevent regex metachar injection
+                let wildcard_pattern: String = cookie_name
+                    .split('*')
+                    .map(regex::escape)
+                    .collect::<Vec<_>>()
+                    .join(".*");
+                let cache_key = format!("cookie:{cookie_name}");
+                let Some(cookie_regex) = crate::fingerprint::patterns::get_or_compile_regex(
+                    &format!("^{wildcard_pattern}$"),
+                    &cache_key,
+                ) else {
+                    continue;
                 };
 
                 // Check all cookies for a match
@@ -59,7 +68,7 @@ pub async fn check_cookies(
                         if result.matched {
                             matched = true;
                             if version.is_none() && result.version.is_some() {
-                                version = result.version.clone();
+                                version.clone_from(&result.version);
                             }
                             if version.is_some() {
                                 break;
@@ -78,7 +87,7 @@ pub async fn check_cookies(
                     if result.matched {
                         matched = true;
                         if version.is_none() && result.version.is_some() {
-                            version = result.version.clone();
+                            version.clone_from(&result.version);
                         }
                         if version.is_some() {
                             break;
@@ -118,9 +127,8 @@ pub(crate) fn check_cookies_with_ruleset(
         for (cookie_name, pattern) in &tech.cookies {
             if cookie_name.contains('*') {
                 let wildcard_pattern = cookie_name.replace('*', ".*");
-                let cookie_regex = match regex::Regex::new(&format!("^{}$", wildcard_pattern)) {
-                    Ok(re) => re,
-                    Err(_) => continue,
+                let Ok(cookie_regex) = regex::Regex::new(&format!("^{wildcard_pattern}$")) else {
+                    continue;
                 };
                 for (actual_cookie_name, cookie_value) in cookies {
                     if cookie_regex.is_match(actual_cookie_name) {
@@ -132,7 +140,7 @@ pub(crate) fn check_cookies_with_ruleset(
                         if result.matched {
                             matched = true;
                             if version.is_none() && result.version.is_some() {
-                                version = result.version.clone();
+                                version.clone_from(&result.version);
                             }
                             if version.is_some() {
                                 break;
@@ -149,7 +157,7 @@ pub(crate) fn check_cookies_with_ruleset(
                 if result.matched {
                     matched = true;
                     if version.is_none() && result.version.is_some() {
-                        version = result.version.clone();
+                        version.clone_from(&result.version);
                     }
                     if version.is_some() {
                         break;

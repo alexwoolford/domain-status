@@ -212,6 +212,7 @@ pub struct Config {
     /// so they can be safely read from multiple threads.
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
+    // Type alias would obscure the callback signature at its only usage site
     pub progress_callback: Option<std::sync::Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
 
     /// Optional dependency overrides for tests (inject mock HTTP client, etc.).

@@ -54,8 +54,7 @@ pub fn log_progress(
             let eta_formatted = format_duration(eta_duration);
 
             info!(
-                "Progress: {}/{} ({:.1}%) | Completed: {} | Failed: {} | Elapsed: {:.1}s | Rate: {:.2} lines/sec | ETA: {}",
-                attempted, total, percentage, completed, failed, elapsed_secs, rate, eta_formatted
+                "Progress: {attempted}/{total} ({percentage:.1}%) | Completed: {completed} | Failed: {failed} | Elapsed: {elapsed_secs:.1}s | Rate: {rate:.2} lines/sec | ETA: {eta_formatted}"
             );
             return;
         }
@@ -63,8 +62,7 @@ pub fn log_progress(
 
     // Fallback to simple format if total is unknown
     info!(
-        "Processed {} lines ({} completed, {} failed) in {:.2} seconds (~{:.2} lines/sec)",
-        attempted, completed, failed, elapsed_secs, rate
+        "Processed {attempted} lines ({completed} completed, {failed} failed) in {elapsed_secs:.2} seconds (~{rate:.2} lines/sec)"
     );
 }
 
@@ -81,11 +79,11 @@ fn format_duration(duration: std::time::Duration) -> String {
     let seconds = total_secs % 60;
 
     match (hours, minutes, seconds) {
-        (0, 0, s) => format!("{}s", s),
-        (0, m, s) => format!("{}m {}s", m, s),
-        (h, 0, 0) => format!("{}h", h),
-        (h, m, 0) => format!("{}h {}m", h, m),
-        (h, m, s) => format!("{}h {}m {}s", h, m, s),
+        (0, 0, s) => format!("{s}s"),
+        (0, m, s) => format!("{m}m {s}s"),
+        (h, 0, 0) => format!("{h}h"),
+        (h, m, 0) => format!("{h}h {m}m"),
+        (h, m, s) => format!("{h}h {m}m {s}s"),
     }
 }
 

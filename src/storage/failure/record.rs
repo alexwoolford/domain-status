@@ -61,7 +61,7 @@ pub struct FailureRecordParams<'a> {
 /// # Arguments
 ///
 /// * `params` - Parameters for failure recording
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Sequential failure recording: error classification, context extraction, DB insert with redirect chain
 pub async fn record_url_failure(params: FailureRecordParams<'_>) {
     let attempted_url = params.url.to_string();
 
@@ -71,10 +71,10 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
 
     // Use provided context if fields are populated, otherwise use extracted context
     let final_url = params.context.final_url.or(extracted_context.final_url);
-    let redirect_chain: Vec<String> = if !params.context.redirect_chain.is_empty() {
-        params.context.redirect_chain
-    } else {
+    let redirect_chain: Vec<String> = if params.context.redirect_chain.is_empty() {
         extracted_context.redirect_chain
+    } else {
+        params.context.redirect_chain
     };
 
     // Extract domain information
@@ -106,7 +106,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
                 // Try to get underlying source for more detail
                 use std::error::Error as StdError;
                 if let Some(source) = reqwest_err.source() {
-                    reqwest_msg = format!("{}: {}", reqwest_msg, source);
+                    reqwest_msg = format!("{reqwest_msg}: {source}");
                 }
                 found_reqwest = true;
                 break;
@@ -121,18 +121,18 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
                 let chain_summary: Vec<String> = params
                     .error
                     .chain()
-                    .map(|e| e.to_string())
+                    .map(std::string::ToString::to_string)
                     .filter(|s| s.as_str() != reqwest_msg.as_str())
                     .take(3)
                     .collect();
-                if !chain_summary.is_empty() {
+                if chain_summary.is_empty() {
+                    reqwest_msg
+                } else {
                     format!(
                         "{} (error chain: {} -> ...)",
                         reqwest_msg,
                         chain_summary.join(" -> ")
                     )
-                } else {
-                    reqwest_msg
                 }
             } else {
                 reqwest_msg
@@ -142,7 +142,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
             let chain: Vec<String> = params
                 .error
                 .chain()
-                .map(|cause| cause.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             if chain.len() > 1 {
                 format!(
@@ -160,15 +160,15 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
         crate::utils::sanitize::sanitize_and_truncate_error_message(&msg)
     };
     let http_status = extract_http_status(params.error);
-    let response_headers = if !params.context.response_headers.is_empty() {
-        params.context.response_headers
-    } else {
+    let response_headers = if params.context.response_headers.is_empty() {
         extracted_context.response_headers
-    };
-    let request_headers = if !params.context.request_headers.is_empty() {
-        params.context.request_headers
     } else {
+        params.context.response_headers
+    };
+    let request_headers = if params.context.request_headers.is_empty() {
         extracted_context.request_headers
+    } else {
+        params.context.request_headers
     };
 
     // Log if we had to fall back to extraction (for observability)
@@ -198,7 +198,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
         retry_count: params.retry_count,
         elapsed_time_seconds: Some(params.elapsed_time),
         timestamp: chrono::Utc::now().timestamp_millis(),
-        run_id: params.run_id.map(|s| s.to_string()),
+        run_id: params.run_id.map(std::string::ToString::to_string),
         redirect_chain,
         response_headers,
         request_headers,

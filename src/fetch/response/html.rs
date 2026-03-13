@@ -22,8 +22,8 @@ use super::types::HtmlData;
 /// # Returns
 ///
 /// Extracted HTML data including title, keywords, description, structured data, etc.
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)] // Single-pass HTML tree walk extracting ~15 distinct data types
+#[allow(clippy::cognitive_complexity)] // Each HTML element type requires distinct extraction logic
 pub(crate) fn parse_html_content(
     body: &str,
     final_domain: &str,
@@ -154,14 +154,12 @@ pub(crate) fn parse_html_content(
     }
     // Fallback: Use regex to extract script sources that scraper might have missed
     // This is a safety net for edge cases where the HTML parser might miss script tags
-    use regex::Regex;
-    // Try multiple regex patterns to catch different script tag formats
-    let script_src_regex = match Regex::new(r#"(?i)<script[^>]*src\s*=\s*["']([^"']+)["']"#) {
-        Ok(re) => re,
-        Err(_) => {
-            Regex::new(r#"<script[^>]*src=["']([^"']+)["']"#).unwrap() // Fallback to simpler pattern
-        }
-    };
+    use std::sync::LazyLock;
+    static SCRIPT_SRC_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r#"(?i)<script[^>]*src\s*=\s*["']([^"']+)["']"#)
+            .expect("hardcoded script src regex")
+    });
+    let script_src_regex = &*SCRIPT_SRC_RE;
 
     let regex_extracted_scripts: Vec<String> = script_src_regex
         .captures_iter(body)
@@ -196,16 +194,16 @@ pub(crate) fn parse_html_content(
         for src in &script_sources {
             let src_lower = src.to_lowercase();
             if src_lower.contains("jquery") {
-                identified_scripts.push(format!("{} (jQuery)", src));
+                identified_scripts.push(format!("{src} (jQuery)"));
             } else if src_lower.contains("react") {
-                identified_scripts.push(format!("{} (React)", src));
+                identified_scripts.push(format!("{src} (React)"));
             } else if src_lower.contains("adobe")
                 || src_lower.contains("dtm")
                 || src_lower.contains("satellite")
             {
-                identified_scripts.push(format!("{} (Adobe DTM)", src));
+                identified_scripts.push(format!("{src} (Adobe DTM)"));
             } else if src_lower.contains("salesforce") || src_lower.contains("sfdc") {
-                identified_scripts.push(format!("{} (Salesforce)", src));
+                identified_scripts.push(format!("{src} (Salesforce)"));
             } else {
                 identified_scripts.push(src.clone());
             }
@@ -227,7 +225,7 @@ pub(crate) fn parse_html_content(
         el.value()
             .attr("href")
             .filter(|href| !href.is_empty())
-            .map(|href| href.to_string())
+            .map(std::string::ToString::to_string)
     });
     debug!("Extracted canonical URL for {final_domain}: {canonical_url:?}");
 
@@ -240,10 +238,10 @@ pub(crate) fn parse_html_content(
             let lower = content.to_lowercase();
             if let Some(pos) = lower.find("url=") {
                 let url_part = content[pos + 4..].trim().to_string();
-                if !url_part.is_empty() {
-                    Some(url_part)
-                } else {
+                if url_part.is_empty() {
                     None
+                } else {
+                    Some(url_part)
                 }
             } else {
                 None
@@ -265,11 +263,11 @@ pub(crate) fn parse_html_content(
             let hostname = if href.starts_with("//") {
                 url::Url::parse(&format!("https:{href}"))
                     .ok()
-                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+                    .and_then(|u| u.host_str().map(str::to_lowercase))
             } else if href.starts_with("http://") || href.starts_with("https://") {
                 url::Url::parse(href)
                     .ok()
-                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+                    .and_then(|u| u.host_str().map(str::to_lowercase))
             } else {
                 // Bare hostname like "fonts.googleapis.com"
                 Some(href.trim_end_matches('/').to_lowercase())
@@ -294,27 +292,9 @@ pub(crate) fn parse_html_content(
         el.value()
             .attr("href")
             .filter(|href| !href.is_empty())
-            .map(|href| href.to_string())
+            .map(std::string::ToString::to_string)
     });
     debug!("Extracted favicon URL for {final_domain}: {favicon_url:?}");
-
-    // Extract text content (limited for performance)
-    // Collect text with early termination to avoid allocating a full ~1.5MB string
-    // just to immediately truncate it. Stops appending once the limit is reached.
-    let limit = crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS;
-    let mut html_text = String::with_capacity(limit.min(64 * 1024));
-    for text_node in document.root_element().text() {
-        if html_text.len() >= limit {
-            break;
-        }
-        let remaining = limit - html_text.len();
-        if text_node.len() <= remaining {
-            html_text.push_str(text_node);
-        } else {
-            html_text.extend(text_node.chars().take(remaining));
-            break;
-        }
-    }
 
     // Extract body domains from href/src/action attributes (reuses existing DOM parse)
     let body_domain_selector = crate::utils::parse_selector_with_fallback(
@@ -336,18 +316,18 @@ pub(crate) fn parse_html_content(
             let host = if url_str.starts_with("//") {
                 url::Url::parse(&format!("https:{url_str}"))
                     .ok()
-                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+                    .and_then(|u| u.host_str().map(str::to_lowercase))
             } else if url_str.starts_with("http://") || url_str.starts_with("https://") {
                 url::Url::parse(url_str)
                     .ok()
-                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+                    .and_then(|u| u.host_str().map(str::to_lowercase))
             } else {
                 None
             };
             if let Some(fqdn) = host {
                 if fqdn.len() >= 4 && body_domain_seen.insert(fqdn.clone()) {
                     let reg = psl::domain_str(&fqdn)
-                        .map(|d| d.to_string())
+                        .map(std::string::ToString::to_string)
                         .or_else(|| psl::suffix_str(&fqdn).map(|_| fqdn.clone()));
                     if reg.is_some() {
                         body_domains.push((fqdn, reg));
@@ -375,7 +355,6 @@ pub(crate) fn parse_html_content(
         script_sources,
         script_content,
         script_tag_ids,
-        html_text,
         favicon_url,
         canonical_url,
         meta_refresh_url,
@@ -413,7 +392,6 @@ mod tests {
         assert_eq!(result.title, "Test Page");
         assert_eq!(result.keywords_str, Some("test, page".to_string()));
         assert_eq!(result.description, Some("A test page".to_string()));
-        assert!(result.html_text.contains("Hello"));
     }
 
     #[test]
@@ -650,25 +628,6 @@ mod tests {
         // Script content should be truncated to MAX_SCRIPT_CONTENT_SIZE
         assert!(result.script_content.len() <= crate::config::MAX_SCRIPT_CONTENT_SIZE + 1);
         // +1 for newline
-    }
-
-    #[test]
-    fn test_parse_html_content_html_text_limit() {
-        // Test that HTML text extraction is limited to MAX_HTML_TEXT_EXTRACTION_CHARS
-        // Create HTML with large text content
-        let large_text = "x".repeat(crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS + 10000);
-        let html = format!(r#"<html><body><p>{}</p></body></html>"#, large_text);
-        let stats = test_error_stats();
-        let result = parse_html_content(&html, "example.com", &stats);
-
-        // HTML text should be truncated to MAX_HTML_TEXT_EXTRACTION_CHARS
-        // (Note: HTML tags and whitespace also count, so may be slightly over)
-        assert!(
-            result.html_text.len() <= crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS + 100,
-            "HTML text length {} exceeds limit {}",
-            result.html_text.len(),
-            crate::config::MAX_HTML_TEXT_EXTRACTION_CHARS
-        );
     }
 
     #[test]

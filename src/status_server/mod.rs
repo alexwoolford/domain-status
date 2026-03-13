@@ -35,8 +35,7 @@ impl StatusServerHandle {
         match self.task.await {
             Ok(result) => result,
             Err(join_error) => Err(anyhow::anyhow!(
-                "Status server task failed to join: {}",
-                join_error
+                "Status server task failed to join: {join_error}"
             )),
         }
     }
@@ -58,14 +57,14 @@ pub async fn spawn_status_server(
 ) -> Result<StatusServerHandle, anyhow::Error> {
     let app = build_router(state);
 
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to bind status server to port {}: {}", port, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to bind status server to port {port}: {e}"))?;
 
-    log::info!("Status server listening on http://127.0.0.1:{}/", port);
-    log::info!("  - Health: http://127.0.0.1:{}/health", port);
-    log::info!("  - Metrics: http://127.0.0.1:{}/metrics", port);
-    log::info!("  - Status: http://127.0.0.1:{}/status", port);
+    log::info!("Status server listening on http://127.0.0.1:{port}/");
+    log::info!("  - Health: http://127.0.0.1:{port}/health");
+    log::info!("  - Metrics: http://127.0.0.1:{port}/metrics");
+    log::info!("  - Status: http://127.0.0.1:{port}/status");
 
     let shutdown = CancellationToken::new();
     let shutdown_signal = shutdown.clone();
@@ -75,7 +74,7 @@ pub async fn spawn_status_server(
                 shutdown_signal.cancelled().await;
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Status server error: {}", e))
+            .map_err(|e| anyhow::anyhow!("Status server error: {e}"))
     });
 
     Ok(StatusServerHandle { shutdown, task })

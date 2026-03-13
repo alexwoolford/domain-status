@@ -92,26 +92,17 @@ impl From<&WhoisResult> for WhoisCacheResult {
 
 impl From<WhoisCacheResult> for WhoisResult {
     fn from(cache: WhoisCacheResult) -> Self {
-        // SAFETY: Cast i64 to u32 for DateTime nanosecond conversion
-        // - Converting milliseconds to nanoseconds for DateTime::from_timestamp
-        // - ms % 1000 yields 0-999 (milliseconds within a second)
-        // - Multiply by 1_000_000 to convert milliseconds to nanoseconds: 0 to 999_000_000
-        // - u32::MAX is 4_294_967_295, which is > 999_000_000, so this always fits
-        // - No truncation possible: the value range (0-999_000_000) is well within u32 bounds
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        // Convert milliseconds to (secs, nanos) for DateTime::from_timestamp.
+        // Use rem_euclid so negative timestamps (pre-1970) produce valid 0..999 sub-second ms.
+        #[allow(clippy::cast_possible_truncation)] // rem_euclid(1000) is 0..999, * 1M fits in u32
+        let ms_to_dt = |ms: i64| {
+            let nanos = (ms.rem_euclid(1000) * 1_000_000) as u32;
+            DateTime::from_timestamp(ms.div_euclid(1000), nanos).unwrap_or_default()
+        };
         WhoisResult {
-            creation_date: cache.creation_date.map(|ms| {
-                DateTime::from_timestamp(ms / 1000, ((ms % 1000) * 1_000_000) as u32)
-                    .unwrap_or_default()
-            }),
-            expiration_date: cache.expiration_date.map(|ms| {
-                DateTime::from_timestamp(ms / 1000, ((ms % 1000) * 1_000_000) as u32)
-                    .unwrap_or_default()
-            }),
-            updated_date: cache.updated_date.map(|ms| {
-                DateTime::from_timestamp(ms / 1000, ((ms % 1000) * 1_000_000) as u32)
-                    .unwrap_or_default()
-            }),
+            creation_date: cache.creation_date.map(ms_to_dt),
+            expiration_date: cache.expiration_date.map(ms_to_dt),
+            updated_date: cache.updated_date.map(ms_to_dt),
             registrar: cache.registrar,
             registrant_country: cache.registrant_country,
             registrant_org: cache.registrant_org,

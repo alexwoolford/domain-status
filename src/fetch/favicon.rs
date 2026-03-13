@@ -45,8 +45,10 @@ pub(crate) fn compute_shodan_favicon_hash(raw_bytes: &[u8]) -> i32 {
     // MurmurHash3 32-bit with seed 0, cast to i32 for Shodan compatibility
     let hash = murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0);
 
-    // Reinterpret the u32 bits as i32 (Shodan stores as signed integer)
-    hash as i32
+    // Reinterpret u32 bits as i32 for Shodan compatibility (Shodan stores favicon hash as signed)
+    #[allow(clippy::cast_possible_wrap)]
+    let result = hash as i32;
+    result
 }
 
 /// Max redirect hops for favicon (SSRF-validated per hop).
@@ -73,11 +75,11 @@ async fn fetch_favicon_bytes(
         {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) => {
-                log::debug!("Favicon fetch failed for {}: {}", current_url, e);
+                log::debug!("Favicon fetch failed for {current_url}: {e}");
                 return Ok(None);
             }
             Err(_) => {
-                log::debug!("Favicon fetch timed out for {}", current_url);
+                log::debug!("Favicon fetch timed out for {current_url}");
                 return Ok(None);
             }
         };
@@ -87,10 +89,7 @@ async fn fetch_favicon_bytes(
             if let Some(location) = response.headers().get(reqwest::header::LOCATION) {
                 let location_str = location.to_str().unwrap_or("").trim();
                 if location_str.is_empty() {
-                    log::debug!(
-                        "Favicon redirect missing or invalid Location for {}",
-                        current_url
-                    );
+                    log::debug!("Favicon redirect missing or invalid Location for {current_url}");
                     return Ok(None);
                 }
                 let resolved = url::Url::parse(&current_url)
@@ -99,24 +98,22 @@ async fn fetch_favicon_bytes(
                     .map(|u| u.to_string());
                 let Some(next_url) = resolved else {
                     log::debug!(
-                        "Favicon redirect invalid Location for {}: {}",
-                        current_url,
-                        location_str
+                        "Favicon redirect invalid Location for {current_url}: {location_str}"
                     );
                     return Ok(None);
                 };
                 if validate_url_safe(&next_url).is_err() {
-                    log::debug!("Favicon redirect SSRF-unsafe target rejected: {}", next_url);
+                    log::debug!("Favicon redirect SSRF-unsafe target rejected: {next_url}");
                     return Ok(None);
                 }
-                log::debug!("Favicon following redirect {} -> {}", current_url, next_url);
+                log::debug!("Favicon following redirect {current_url} -> {next_url}");
                 current_url = next_url;
                 continue;
             }
         }
 
         if !status.is_success() {
-            log::debug!("Favicon fetch returned {} for {}", status, current_url);
+            log::debug!("Favicon fetch returned {status} for {current_url}");
             return Ok(None);
         }
 
@@ -128,7 +125,7 @@ async fn fetch_favicon_bytes(
             let chunk = match chunk_result {
                 Ok(c) => c,
                 Err(e) => {
-                    log::debug!("Favicon stream error for {}: {}", current_url, e);
+                    log::debug!("Favicon stream error for {current_url}: {e}");
                     return Ok(None);
                 }
             };
@@ -153,11 +150,7 @@ async fn fetch_favicon_bytes(
         return Ok(Some(buf));
     }
 
-    log::debug!(
-        "Favicon redirect loop limit ({}) exceeded for {}",
-        MAX_FAVICON_REDIRECTS,
-        url
-    );
+    log::debug!("Favicon redirect loop limit ({MAX_FAVICON_REDIRECTS}) exceeded for {url}");
     Ok(None)
 }
 
@@ -216,7 +209,7 @@ pub(crate) async fn fetch_and_hash_favicon(
         Ok(Some(b)) => b,
         Ok(None) => return None,
         Err(e) => {
-            log::debug!("Favicon fetch error for {}: {}", favicon_url, e);
+            log::debug!("Favicon fetch error for {favicon_url}: {e}");
             return None;
         }
     };

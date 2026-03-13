@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
+#[cfg(test)]
 use crate::fingerprint::ruleset::get_ruleset;
 
 /// Result of header matching for a single technology
@@ -19,7 +20,7 @@ pub struct HeaderMatchResult {
 /// Checks all technologies against headers and returns matches.
 ///
 /// This matches wappalyzergo's `checkHeaders()` → `matchMapString(headers, headersPart)` flow.
-#[allow(dead_code)] // kept for fingerprint tests; main path uses check_headers_with_ruleset
+#[cfg(test)]
 pub async fn check_headers(
     headers: &HashMap<String, String>,
 ) -> anyhow::Result<Vec<HeaderMatchResult>> {
@@ -49,7 +50,7 @@ pub async fn check_headers(
                 if result.matched {
                     matched = true;
                     if version.is_none() && result.version.is_some() {
-                        version = result.version.clone();
+                        version.clone_from(&result.version);
                     }
                     // wappalyzergo breaks after first match with version
                     if version.is_some() {
@@ -92,7 +93,7 @@ pub(crate) fn check_headers_with_ruleset(
                 if result.matched {
                     matched = true;
                     if version.is_none() && result.version.is_some() {
-                        version = result.version.clone();
+                        version.clone_from(&result.version);
                     }
                     if version.is_some() {
                         break;

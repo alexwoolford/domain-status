@@ -54,7 +54,7 @@ pub async fn init_db_pool_with_path(
 
     // Ensure parent directory exists with secure permissions (0o700 on Unix) before creating DB file.
     ensure_parent_dir_secure(db_path).map_err(|e| {
-        DatabaseError::FileCreationError(format!("Failed to create database directory: {}", e))
+        DatabaseError::FileCreationError(format!("Failed to create database directory: {e}"))
     })?;
 
     // Wrap blocking filesystem operation in spawn_blocking to avoid blocking tokio runtime.
@@ -72,13 +72,13 @@ pub async fn init_db_pool_with_path(
     .await
     .map_err(|e| {
         error!("Task panicked while creating database file: {e}");
-        DatabaseError::FileCreationError(format!("Task join error: {}", e))
+        DatabaseError::FileCreationError(format!("Task join error: {e}"))
     })?;
 
     match file_creation_result {
         Ok(()) => info!("Database file created successfully."),
         Err(ref e) if e.io_error.kind() == ErrorKind::AlreadyExists => {
-            info!("Database file already exists.")
+            info!("Database file already exists.");
         }
         Err(e) => {
             error!("Failed to create database file: {e}");
@@ -86,13 +86,20 @@ pub async fn init_db_pool_with_path(
         }
     }
 
-    let db_url = format!("sqlite:{}", db_path_str);
+    let db_url = format!("sqlite:{db_path_str}");
+    // Use SqliteConnectOptions::pragma() so that per-connection PRAGMAs
+    // (foreign_keys, synchronous) are applied to EVERY connection the pool
+    // creates, not just the first one. Without this, new pooled connections
+    // revert to SQLite defaults (foreign_keys=OFF, synchronous=FULL).
     let options = SqliteConnectOptions::from_str(&db_url)
         .map_err(|e| {
             error!("Failed to parse database URL: {e}");
-            DatabaseError::FileCreationError(format!("Invalid database path: {}", e))
+            DatabaseError::FileCreationError(format!("Invalid database path: {e}"))
         })?
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .pragma("foreign_keys", "ON")
+        .pragma("synchronous", "NORMAL")
+        .pragma("wal_autocheckpoint", "1000");
 
     let pool = SqlitePoolOptions::new()
         .max_connections(max_connections)
@@ -105,46 +112,13 @@ pub async fn init_db_pool_with_path(
             DatabaseError::SqlError(e)
         })?;
 
-    // Enable WAL mode for better concurrent access
+    // Enable WAL mode — this is a database-level (persistent) setting, so
+    // executing it once on any connection is sufficient.
     sqlx::query("PRAGMA journal_mode=WAL")
         .execute(&pool)
         .await
         .map_err(|e| {
             error!("Failed to set WAL mode: {e}");
-            DatabaseError::SqlError(e)
-        })?;
-
-    // In WAL mode, synchronous=NORMAL is safe and reduces fsync calls.
-    // The WAL journal provides crash safety; NORMAL only risks losing the last
-    // few transactions on OS crash (not application crash). This is the
-    // SQLite-recommended setting for WAL mode.
-    sqlx::query("PRAGMA synchronous=NORMAL")
-        .execute(&pool)
-        .await
-        .map_err(|e| {
-            error!("Failed to set synchronous mode: {e}");
-            DatabaseError::SqlError(e)
-        })?;
-
-    // Configure WAL autocheckpoint (P1 operational fix)
-    // Checkpoint every 1000 pages (~4MB with 4KB pages)
-    // This prevents unbounded WAL growth during bulk operations
-    // Default is 1000 pages; explicitly set for clarity and documentation
-    sqlx::query("PRAGMA wal_autocheckpoint=1000")
-        .execute(&pool)
-        .await
-        .map_err(|e| {
-            error!("Failed to set WAL autocheckpoint: {e}");
-            DatabaseError::SqlError(e)
-        })?;
-
-    // Enable foreign key enforcement (required for ON DELETE CASCADE to work)
-    // Without this, foreign key constraints are parsed but not enforced
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(|e| {
-            error!("Failed to enable foreign keys: {e}");
             DatabaseError::SqlError(e)
         })?;
 

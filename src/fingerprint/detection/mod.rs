@@ -21,9 +21,16 @@ use crate::error_handling::FingerprintError;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::ruleset::get_ruleset;
 
-use body::{check_body, check_body_with_ruleset};
-use cookies::{check_cookies, check_cookies_with_ruleset};
-use headers::{check_headers, check_headers_with_ruleset};
+#[cfg(test)]
+use body::check_body;
+#[cfg(test)]
+use cookies::check_cookies;
+#[cfg(test)]
+use headers::check_headers;
+
+use body::check_body_with_ruleset;
+use cookies::check_cookies_with_ruleset;
+use headers::check_headers_with_ruleset;
 use matching::apply_technology_exclusions;
 use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 
@@ -56,8 +63,8 @@ pub struct DetectedTechnology {
     pub version: Option<String>,
 }
 
-#[allow(clippy::too_many_lines)]
-#[allow(dead_code)] // kept for public API and fingerprint tests; main path uses detect_technologies_blocking
+#[allow(clippy::too_many_lines)] // Iterates over all technology rules checking headers, cookies, meta, scripts, HTML
+#[cfg(test)]
 pub async fn detect_technologies(
     meta_tags: &HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name
     script_sources: &[String],
@@ -98,7 +105,7 @@ pub async fn detect_technologies(
             .entry(result.tech_name.clone())
             .and_modify(|existing| {
                 if existing.version.is_none() && result.version.is_some() {
-                    existing.version = result.version.clone();
+                    existing.version.clone_from(&result.version);
                 }
             })
             .or_insert(TechInfo {
@@ -114,7 +121,7 @@ pub async fn detect_technologies(
                 .entry(result.tech_name.clone())
                 .and_modify(|existing| {
                     if existing.version.is_none() && result.version.is_some() {
-                        existing.version = result.version.clone();
+                        existing.version.clone_from(&result.version);
                     }
                 })
                 .or_insert(TechInfo {
@@ -131,7 +138,7 @@ pub async fn detect_technologies(
             .entry(result.tech_name.clone())
             .and_modify(|existing| {
                 if existing.version.is_none() && result.version.is_some() {
-                    existing.version = result.version.clone();
+                    existing.version.clone_from(&result.version);
                 }
             })
             .or_insert(TechInfo {
@@ -164,7 +171,7 @@ pub async fn detect_technologies(
                     // wappalyzergo adds implies without version (fingerprints.go:270-273)
                     // Implied technologies should extract their own versions from their own patterns,
                     // not inherit the parent's version
-                    implied_to_add.push((implied.to_string(), TechInfo { version: None }));
+                    implied_to_add.push((implied.clone(), TechInfo { version: None }));
                 }
             }
         }
@@ -196,7 +203,7 @@ pub async fn detect_technologies(
         .iter()
         .map(|(name, version)| {
             if let Some(ref ver) = version {
-                format!("{}:{}", name, ver)
+                format!("{name}:{ver}")
             } else {
                 name.clone()
             }
@@ -210,7 +217,7 @@ pub async fn detect_technologies(
         .into_iter()
         .filter(|(name, version)| {
             let formatted = if let Some(ref ver) = version {
-                format!("{}:{}", name, ver)
+                format!("{name}:{ver}")
             } else {
                 name.clone()
             };
@@ -234,9 +241,9 @@ pub async fn detect_technologies(
 /// CPU-bound technology detection using a pre-fetched ruleset.
 /// Intended to be run on a blocking thread (e.g. via `tokio::task::spawn_blocking`)
 /// to avoid starving the async executor with regex work.
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::unnecessary_wraps)] // Caller expects Result for map_err/and_then
+#[allow(clippy::too_many_arguments)] // Each arg is a distinct input signal for detection (headers, meta, scripts, etc.)
+#[allow(clippy::too_many_lines)] // Iterates over all technology rules checking multiple signal types
+#[allow(clippy::unnecessary_wraps)] // Caller expects Result for map_err/and_then chaining
 pub(crate) fn detect_technologies_blocking(
     ruleset: &Arc<FingerprintRuleset>,
     headers: &HeaderMap,
@@ -269,7 +276,7 @@ pub(crate) fn detect_technologies_blocking(
             .entry(result.tech_name.clone())
             .and_modify(|existing| {
                 if existing.version.is_none() && result.version.is_some() {
-                    existing.version = result.version.clone();
+                    existing.version.clone_from(&result.version);
                 }
             })
             .or_insert(TechInfo {
@@ -284,7 +291,7 @@ pub(crate) fn detect_technologies_blocking(
                 .entry(result.tech_name.clone())
                 .and_modify(|existing| {
                     if existing.version.is_none() && result.version.is_some() {
-                        existing.version = result.version.clone();
+                        existing.version.clone_from(&result.version);
                     }
                 })
                 .or_insert(TechInfo {
@@ -299,7 +306,7 @@ pub(crate) fn detect_technologies_blocking(
             .entry(result.tech_name.clone())
             .and_modify(|existing| {
                 if existing.version.is_none() && result.version.is_some() {
-                    existing.version = result.version.clone();
+                    existing.version.clone_from(&result.version);
                 }
             })
             .or_insert(TechInfo {
@@ -307,22 +314,33 @@ pub(crate) fn detect_technologies_blocking(
             });
     }
 
-    let mut implied_to_add = Vec::new();
-    for tech_name in detected.keys() {
-        let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
-            &tech_name[..colon_pos]
-        } else {
-            tech_name
-        };
-        if let Some(tech) = ruleset.technologies.get(base_tech_name) {
-            for implied in &tech.implies {
-                implied_to_add.push((implied.to_string(), TechInfo { version: None }));
+    // Add implied technologies (fixed-point: A→B, B→C must yield both B and C).
+    // Matches the async detect_technologies logic.
+    const MAX_IMPLIES_DEPTH: u32 = 10;
+    for _ in 0..MAX_IMPLIES_DEPTH {
+        let mut implied_to_add = Vec::new();
+        for tech_name in detected.keys() {
+            let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
+                &tech_name[..colon_pos]
+            } else {
+                tech_name
+            };
+            if let Some(tech) = ruleset.technologies.get(base_tech_name) {
+                for implied in &tech.implies {
+                    implied_to_add.push((implied.clone(), TechInfo { version: None }));
+                }
             }
         }
-    }
-    for (implied_name, tech_info) in implied_to_add {
-        if ruleset.technologies.contains_key(&implied_name) {
-            detected.entry(implied_name).or_insert(tech_info);
+        let mut added_any = false;
+        for (implied_name, tech_info) in implied_to_add {
+            if ruleset.technologies.contains_key(&implied_name)
+                && detected.insert(implied_name.clone(), tech_info).is_none()
+            {
+                added_any = true;
+            }
+        }
+        if !added_any {
+            break;
         }
     }
 
@@ -335,7 +353,7 @@ pub(crate) fn detect_technologies_blocking(
         .iter()
         .map(|(name, version)| {
             if let Some(ref ver) = version {
-                format!("{}:{}", name, ver)
+                format!("{name}:{ver}")
             } else {
                 name.clone()
             }
@@ -348,7 +366,7 @@ pub(crate) fn detect_technologies_blocking(
         .into_iter()
         .filter(|(name, version)| {
             let formatted = if let Some(ref ver) = version {
-                format!("{}:{}", name, ver)
+                format!("{name}:{ver}")
             } else {
                 name.clone()
             };

@@ -7,7 +7,9 @@
 //! to prevent duplication and ensure both formats stay in sync.
 
 use anyhow::Result;
-use sqlx::{QueryBuilder, Row, SqlitePool};
+#[cfg(test)]
+use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, Row};
 use std::io::{self, ErrorKind, Write};
 
 use crate::storage::DbPool;
@@ -104,7 +106,7 @@ pub(crate) async fn fetch_key_value_list(
         .map(|r| {
             let key: String = r.get::<Option<String>, _>(key_field).unwrap_or_default();
             let value: String = r.get::<Option<String>, _>(value_field).unwrap_or_default();
-            format!("{}:{}", key, value)
+            format!("{key}:{value}")
         })
         .collect();
     let count = items.len();
@@ -125,8 +127,7 @@ pub(crate) async fn fetch_filtered_http_headers(
     // Build query with IN clause for allowed headers
     // Use QueryBuilder to safely construct the query
     let mut query_builder = sqlx::QueryBuilder::new(&format!(
-        "SELECT header_name, header_value FROM {} WHERE url_status_id = ",
-        table
+        "SELECT header_name, header_value FROM {table} WHERE url_status_id = "
     ));
 
     query_builder.push_bind(url_status_id);
@@ -147,7 +148,7 @@ pub(crate) async fn fetch_filtered_http_headers(
         .map(|r| {
             let name: String = r.get("header_name");
             let value: String = r.get("header_value");
-            format!("{}:{}", name, value)
+            format!("{name}:{value}")
         })
         .collect();
     let joined = items.join(";");
@@ -155,7 +156,7 @@ pub(crate) async fn fetch_filtered_http_headers(
     // Get total count (all headers, not just filtered)
     let total_count = fetch_count_query(
         pool,
-        &format!("SELECT COUNT(*) FROM {} WHERE url_status_id = ?", table),
+        &format!("SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"),
         url_status_id,
     )
     .await?;
@@ -180,9 +181,7 @@ pub(crate) fn build_export_query<'a>(
                 us.ssl_cert_issuer, us.ssl_cert_valid_to_ms, us.cipher_suite, us.key_algorithm,
                 us.spf_record, us.dmarc_record, us.observed_at_ms, us.run_id,
                 us.body_sha256, us.content_length, us.http_version, us.body_word_count,
-                us.body_line_count, us.content_type, us.canonical_url, us.cert_fingerprint_sha256,
-                us.cert_serial_number, us.cert_is_self_signed, us.cert_is_wildcard,
-                us.cert_is_mismatched, us.meta_refresh_url
+                us.body_line_count, us.content_type, us.canonical_url, us.cert_fingerprint_sha256
          FROM url_status us",
     );
     build_where_clause(&mut qb, run_id, domain, status, since);
@@ -244,12 +243,9 @@ fn build_where_clause<'a>(
 }
 
 // The following functions return structured data (not formatted strings).
-// CSV/JSONL/Parquet use the helper functions above (fetch_string_list, fetch_key_value_list, etc.)
-// which format data for their specific output formats. These fetch_* functions are used by tests
-// and may be used by future export or analytics code.
-
+// Used by tests; the main export path uses the formatted helpers above.
+#[cfg(test)]
 /// Fetches redirect chain for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
 pub async fn fetch_redirect_chain(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -268,7 +264,7 @@ pub async fn fetch_redirect_chain(
 }
 
 /// Fetches technologies with optional versions for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
+#[cfg(test)]
 pub async fn fetch_technologies(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -289,127 +285,6 @@ pub async fn fetch_technologies(
                 r.get::<Option<String>, _>("technology_version"),
             )
         })
-        .collect())
-}
-
-/// Fetches certificate SANs for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
-pub async fn fetch_certificate_sans(
-    pool: &SqlitePool,
-    url_status_id: i64,
-) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT san_value FROM url_certificate_sans WHERE url_status_id = ? ORDER BY san_value",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| r.get::<String, _>("san_value"))
-        .collect())
-}
-
-/// Fetches OIDs for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
-pub async fn fetch_oids(pool: &SqlitePool, url_status_id: i64) -> Result<Vec<String>, sqlx::Error> {
-    let rows =
-        sqlx::query("SELECT oid FROM url_certificate_oids WHERE url_status_id = ? ORDER BY oid")
-            .bind(url_status_id)
-            .fetch_all(pool)
-            .await?;
-
-    Ok(rows.iter().map(|r| r.get::<String, _>("oid")).collect())
-}
-
-/// Fetches analytics IDs for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
-pub async fn fetch_analytics_ids(
-    pool: &SqlitePool,
-    url_status_id: i64,
-) -> Result<Vec<(String, String)>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT provider, tracking_id FROM url_analytics_ids
-         WHERE url_status_id = ? ORDER BY provider, tracking_id",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("provider"),
-                r.get::<String, _>("tracking_id"),
-            )
-        })
-        .collect())
-}
-
-/// Fetches social media links for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
-pub async fn fetch_social_media_links(
-    pool: &SqlitePool,
-    url_status_id: i64,
-) -> Result<Vec<(String, String)>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT platform, profile_url FROM url_social_media_links
-         WHERE url_status_id = ? ORDER BY platform, profile_url",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("platform"),
-                r.get::<String, _>("profile_url"),
-            )
-        })
-        .collect())
-}
-
-/// Fetches security warnings for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
-pub async fn fetch_security_warnings(
-    pool: &SqlitePool,
-    url_status_id: i64,
-) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT warning_code FROM url_security_warnings
-         WHERE url_status_id = ? ORDER BY warning_code",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| r.get::<String, _>("warning_code"))
-        .collect())
-}
-
-/// Fetches structured data types for a URL status record.
-#[allow(dead_code)] // Used in tests; available for export/analytics consumers
-pub async fn fetch_structured_data_types(
-    pool: &SqlitePool,
-    url_status_id: i64,
-) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT data_type FROM url_structured_data
-         WHERE url_status_id = ? ORDER BY data_type",
-    )
-    .bind(url_status_id)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| r.get::<String, _>("data_type"))
         .collect())
 }
 
@@ -509,22 +384,6 @@ mod tests {
         assert_eq!(techs.len(), 2);
         assert!(techs.contains(&("PHP".to_string(), None)));
         assert!(techs.contains(&("WordPress".to_string(), Some("6.0".to_string()))));
-    }
-
-    #[tokio::test]
-    async fn test_fetch_analytics_ids() {
-        let pool = create_test_pool().await;
-
-        sqlx::query("INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (1, 'Google Analytics', 'UA-12345')")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let ids = fetch_analytics_ids(&pool, 1).await.unwrap();
-        assert_eq!(
-            ids,
-            vec![("Google Analytics".to_string(), "UA-12345".to_string())]
-        );
     }
 
     #[tokio::test]

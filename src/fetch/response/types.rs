@@ -39,9 +39,6 @@ pub(crate) struct HtmlData {
     pub(crate) script_sources: Vec<String>,
     pub(crate) script_content: String, // Inline script content for js field detection
     pub(crate) script_tag_ids: HashSet<String>, // Script tag IDs (for __NEXT_DATA__ etc.)
-    #[allow(dead_code)]
-    // Kept for potential future use, but currently using html_body in detection
-    pub(crate) html_text: String,
     pub(crate) favicon_url: Option<String>, // Favicon URL extracted from <link rel="icon"> tags
     pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
     pub(crate) meta_refresh_url: Option<String>, // Meta refresh redirect URL

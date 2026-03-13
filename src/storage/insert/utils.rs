@@ -12,8 +12,8 @@ pub(crate) fn naive_datetime_to_millis(datetime: Option<&NaiveDateTime>) -> Opti
 
 /// Parses a JSON array string into a Vec<String>.
 /// Returns None if the string is None or empty, or if parsing fails.
-pub(crate) fn parse_json_array(json_str: &Option<String>) -> Option<Vec<String>> {
-    let json_str = json_str.as_ref()?;
+pub(crate) fn parse_json_array(json_str: Option<&String>) -> Option<Vec<String>> {
+    let json_str = json_str?;
     if json_str.is_empty() {
         return None;
     }
@@ -64,8 +64,8 @@ pub(crate) fn parse_mx_record(mx: &str) -> Option<(i32, String)> {
 /// Parses MX records from JSON array format.
 /// Expected JSON format: [{"priority": 10, "hostname": "mail.example.com"}, ...]
 /// Returns Vec of (priority, hostname) tuples.
-pub(crate) fn parse_mx_json_array(json_str: &Option<String>) -> Option<Vec<(i32, String)>> {
-    let json_str = json_str.as_ref()?;
+pub(crate) fn parse_mx_json_array(json_str: Option<&String>) -> Option<Vec<(i32, String)>> {
+    let json_str = json_str?;
     if json_str.is_empty() {
         return None;
     }
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn test_parse_json_array_valid() {
         let json = Some(r#"["item1", "item2", "item3"]"#.to_string());
-        let result = parse_json_array(&json);
+        let result = parse_json_array(json.as_ref());
         assert_eq!(
             result,
             Some(vec![
@@ -343,24 +343,24 @@ mod tests {
     #[test]
     fn test_parse_json_array_empty_string() {
         let json = Some("".to_string());
-        assert_eq!(parse_json_array(&json), None);
+        assert_eq!(parse_json_array(json.as_ref()), None);
     }
 
     #[test]
     fn test_parse_json_array_none() {
-        assert_eq!(parse_json_array(&None), None);
+        assert_eq!(parse_json_array(None), None);
     }
 
     #[test]
     fn test_parse_json_array_invalid_json() {
         let json = Some("not valid json".to_string());
-        assert_eq!(parse_json_array(&json), None);
+        assert_eq!(parse_json_array(json.as_ref()), None);
     }
 
     #[test]
     fn test_parse_json_array_not_array() {
         let json = Some(r#"{"key": "value"}"#.to_string());
-        assert_eq!(parse_json_array(&json), None);
+        assert_eq!(parse_json_array(json.as_ref()), None);
     }
 
     #[test]
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn test_parse_mx_json_array_objects_format() {
         let json = Some(r#"[{"priority": 10, "hostname": "mail1.example.com"}, {"priority": 20, "hostname": "mail2.example.com"}]"#.to_string());
-        let result = parse_mx_json_array(&json);
+        let result = parse_mx_json_array(json.as_ref());
         assert_eq!(
             result,
             Some(vec![
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn test_parse_mx_json_array_strings_format() {
         let json = Some(r#"["10 mail1.example.com", "20 mail2.example.com"]"#.to_string());
-        let result = parse_mx_json_array(&json);
+        let result = parse_mx_json_array(json.as_ref());
         assert_eq!(
             result,
             Some(vec![
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn test_parse_mx_json_array_strings_without_priority() {
         let json = Some(r#"["mail1.example.com", "mail2.example.com"]"#.to_string());
-        let result = parse_mx_json_array(&json);
+        let result = parse_mx_json_array(json.as_ref());
         assert_eq!(
             result,
             Some(vec![
@@ -495,14 +495,14 @@ mod tests {
 
     #[test]
     fn test_parse_mx_json_array_empty() {
-        assert_eq!(parse_mx_json_array(&None), None);
-        assert_eq!(parse_mx_json_array(&Some("".to_string())), None);
-        assert_eq!(parse_mx_json_array(&Some("[]".to_string())), None);
+        assert_eq!(parse_mx_json_array(None), None);
+        assert_eq!(parse_mx_json_array(Some(&"".to_string())), None);
+        assert_eq!(parse_mx_json_array(Some(&"[]".to_string())), None);
     }
 
     #[test]
     fn test_parse_mx_json_array_invalid_json() {
-        assert_eq!(parse_mx_json_array(&Some("not json".to_string())), None);
+        assert_eq!(parse_mx_json_array(Some(&"not json".to_string())), None);
     }
 
     #[test]
@@ -512,7 +512,7 @@ mod tests {
             r#"[{"priority": 10, "hostname": "mail.example.com"}, "20 mail2.example.com"]"#
                 .to_string(),
         );
-        let result = parse_mx_json_array(&json);
+        let result = parse_mx_json_array(json.as_ref());
         // Should parse objects first, ignore strings if objects found
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 1); // Only the object entry
@@ -522,7 +522,7 @@ mod tests {
     fn test_parse_mx_json_array_incomplete_object() {
         // Object missing priority or hostname should be skipped
         let json = Some(r#"[{"priority": 10}, {"hostname": "mail.example.com"}]"#.to_string());
-        let result = parse_mx_json_array(&json);
+        let result = parse_mx_json_array(json.as_ref());
         assert_eq!(result, None); // Empty result after filtering
     }
 }

@@ -12,8 +12,6 @@
 
 use std::fmt;
 
-use sha2::{Digest, Sha256};
-
 /// Number of context characters to capture before and after a match.
 const CONTEXT_CHARS: usize = 80;
 
@@ -31,7 +29,7 @@ pub enum SecretSeverity {
 }
 
 impl SecretSeverity {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             SecretSeverity::Critical => "critical",
             SecretSeverity::High => "high",
@@ -42,232 +40,6 @@ impl SecretSeverity {
 }
 
 impl fmt::Display for SecretSeverity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Legacy secret type enum (retained for API compatibility).
-/// Detection now uses gitleaks rule ids (strings) stored in `ExposedSecret.secret_type`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
-pub enum SecretType {
-    // Cloud Providers
-    AwsAccessKey,
-    AwsSessionToken,
-    AwsSecretKey,
-    GoogleApiKey,
-    GoogleOAuthToken,
-    AzureConnectionString,
-    AzureSasToken,
-
-    // AI/ML Providers
-    OpenAiApiKey,
-    AnthropicApiKey,
-    HuggingFaceToken,
-
-    // Payment
-    StripePublishableKey,
-    StripeSecretKey,
-    StripeRestrictedKey,
-    SquareAccessToken,
-
-    // Communication
-    SlackWebhook,
-    SlackBotToken,
-    SlackAppToken,
-    SlackUserToken,
-    DiscordWebhook,
-    DiscordBotToken,
-    TwilioAccountSid,
-    SendGridApiKey,
-
-    // Source Control
-    GitHubToken,
-    GitHubFineGrained,
-    GitLabToken,
-    BitbucketAppPassword,
-
-    // Database
-    DatabaseUrl,
-    FirebaseUrl,
-    AzureCosmosDb,
-
-    // Cryptographic Keys
-    PrivateKey,
-
-    // Infrastructure
-    HerokuApiKey,
-    VercelToken,
-    DigitalOceanToken,
-    NpmToken,
-    PypiToken,
-    TerraformCloudToken,
-    VaultToken,
-    FlyIoToken,
-
-    // Services
-    MailchimpApiKey,
-    MailgunApiKey,
-    MapboxToken,
-    ShopifyToken,
-    AlgoliaApiKey,
-    SentryDsn,
-    PlaidToken,
-    SupabaseKey,
-
-    // Monitoring
-    DatadogApiKey,
-    NewRelicKey,
-    GrafanaToken,
-
-    // Infrastructure (additional)
-    CloudflareApiToken,
-    LinearApiKey,
-    DopplerToken,
-    FastlyApiToken,
-}
-
-#[allow(dead_code)]
-impl SecretType {
-    /// Returns the secret type as a `snake_case` string for DB storage.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            // Cloud
-            SecretType::AwsAccessKey => "aws_access_key",
-            SecretType::AwsSessionToken => "aws_session_token",
-            SecretType::AwsSecretKey => "aws_secret_key",
-            SecretType::GoogleApiKey => "google_api_key",
-            SecretType::GoogleOAuthToken => "google_oauth_token",
-            SecretType::AzureConnectionString => "azure_connection_string",
-            SecretType::AzureSasToken => "azure_sas_token",
-            // AI/ML
-            SecretType::OpenAiApiKey => "openai_api_key",
-            SecretType::AnthropicApiKey => "anthropic_api_key",
-            SecretType::HuggingFaceToken => "huggingface_token",
-            // Payment
-            SecretType::StripePublishableKey => "stripe_publishable_key",
-            SecretType::StripeSecretKey => "stripe_secret_key",
-            SecretType::StripeRestrictedKey => "stripe_restricted_key",
-            SecretType::SquareAccessToken => "square_access_token",
-            // Communication
-            SecretType::SlackWebhook => "slack_webhook",
-            SecretType::SlackBotToken => "slack_bot_token",
-            SecretType::SlackAppToken => "slack_app_token",
-            SecretType::SlackUserToken => "slack_user_token",
-            SecretType::DiscordWebhook => "discord_webhook",
-            SecretType::DiscordBotToken => "discord_bot_token",
-            SecretType::TwilioAccountSid => "twilio_account_sid",
-            SecretType::SendGridApiKey => "sendgrid_api_key",
-            // Source Control
-            SecretType::GitHubToken => "github_token",
-            SecretType::GitHubFineGrained => "github_fine_grained",
-            SecretType::GitLabToken => "gitlab_token",
-            SecretType::BitbucketAppPassword => "bitbucket_app_password",
-            // Database
-            SecretType::DatabaseUrl => "database_url",
-            SecretType::FirebaseUrl => "firebase_url",
-            SecretType::AzureCosmosDb => "azure_cosmos_db",
-            // Crypto
-            SecretType::PrivateKey => "private_key",
-            // Infrastructure
-            SecretType::HerokuApiKey => "heroku_api_key",
-            SecretType::VercelToken => "vercel_token",
-            SecretType::DigitalOceanToken => "digitalocean_token",
-            SecretType::NpmToken => "npm_token",
-            SecretType::PypiToken => "pypi_token",
-            SecretType::TerraformCloudToken => "terraform_cloud_token",
-            SecretType::VaultToken => "vault_token",
-            SecretType::FlyIoToken => "flyio_token",
-            // Services
-            SecretType::MailchimpApiKey => "mailchimp_api_key",
-            SecretType::MailgunApiKey => "mailgun_api_key",
-            SecretType::MapboxToken => "mapbox_token",
-            SecretType::ShopifyToken => "shopify_token",
-            SecretType::AlgoliaApiKey => "algolia_api_key",
-            SecretType::SentryDsn => "sentry_dsn",
-            SecretType::PlaidToken => "plaid_token",
-            SecretType::SupabaseKey => "supabase_key",
-            // Monitoring
-            SecretType::DatadogApiKey => "datadog_api_key",
-            SecretType::NewRelicKey => "newrelic_key",
-            SecretType::GrafanaToken => "grafana_token",
-            // Additional infrastructure
-            SecretType::CloudflareApiToken => "cloudflare_api_token",
-            SecretType::LinearApiKey => "linear_api_key",
-            SecretType::DopplerToken => "doppler_token",
-            SecretType::FastlyApiToken => "fastly_api_token",
-        }
-    }
-
-    /// Returns the severity classification for this secret type.
-    pub fn severity(&self) -> SecretSeverity {
-        match self {
-            // Critical: direct compromise or financial impact
-            SecretType::AwsSecretKey
-            | SecretType::StripeSecretKey
-            | SecretType::StripeRestrictedKey
-            | SecretType::PrivateKey
-            | SecretType::DatabaseUrl
-            | SecretType::AzureConnectionString
-            | SecretType::AzureCosmosDb
-            | SecretType::SlackBotToken
-            | SecretType::SlackUserToken
-            | SecretType::DiscordBotToken
-            | SecretType::GitHubToken
-            | SecretType::GitHubFineGrained
-            | SecretType::GitLabToken
-            | SecretType::VaultToken => SecretSeverity::Critical,
-
-            // High: significant access, may need pairing or have limits
-            SecretType::AwsAccessKey
-            | SecretType::AwsSessionToken
-            | SecretType::OpenAiApiKey
-            | SecretType::AnthropicApiKey
-            | SecretType::HuggingFaceToken
-            | SecretType::SendGridApiKey
-            | SecretType::TwilioAccountSid
-            | SecretType::NpmToken
-            | SecretType::PypiToken
-            | SecretType::DigitalOceanToken
-            | SecretType::HerokuApiKey
-            | SecretType::VercelToken
-            | SecretType::TerraformCloudToken
-            | SecretType::FlyIoToken
-            | SecretType::ShopifyToken
-            | SecretType::BitbucketAppPassword
-            | SecretType::MailgunApiKey
-            | SecretType::SupabaseKey
-            | SecretType::CloudflareApiToken
-            | SecretType::DopplerToken
-            | SecretType::PlaidToken
-            | SecretType::FastlyApiToken => SecretSeverity::High,
-
-            // Medium: potentially sensitive but often scoped/restricted
-            SecretType::GoogleApiKey
-            | SecretType::GoogleOAuthToken
-            | SecretType::AzureSasToken
-            | SecretType::SlackWebhook
-            | SecretType::SlackAppToken
-            | SecretType::DiscordWebhook
-            | SecretType::SquareAccessToken
-            | SecretType::MailchimpApiKey
-            | SecretType::AlgoliaApiKey
-            | SecretType::DatadogApiKey
-            | SecretType::NewRelicKey
-            | SecretType::GrafanaToken
-            | SecretType::SentryDsn
-            | SecretType::LinearApiKey => SecretSeverity::Medium,
-
-            // Low: intentionally public or minimal impact
-            SecretType::StripePublishableKey
-            | SecretType::FirebaseUrl
-            | SecretType::MapboxToken => SecretSeverity::Low,
-        }
-    }
-}
-
-impl fmt::Display for SecretType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -286,52 +58,6 @@ pub struct ExposedSecret {
     pub severity: SecretSeverity,
     /// Heuristic location hint (`inline_script`, `html_comment`, `url_parameter`, etc.).
     pub location: String,
-}
-
-/// Returns a stable redacted representation that preserves dedupe utility without retaining the raw secret.
-#[allow(dead_code)]
-pub fn redact_exposed_secret_value(value: &str) -> String {
-    if value.starts_with("redacted(") {
-        return value.to_string();
-    }
-
-    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
-    if value.chars().count() <= 8 {
-        format!(
-            "redacted(len={},sha256={})",
-            value.chars().count(),
-            &digest[..16]
-        )
-    } else {
-        let prefix: String = value.chars().take(4).collect();
-        let suffix: String = value
-            .chars()
-            .rev()
-            .take(4)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        format!(
-            "redacted({prefix}...{suffix},len={},sha256={})",
-            value.chars().count(),
-            &digest[..16]
-        )
-    }
-}
-
-/// Redacts secret occurrences inside analyst context while preserving surrounding text.
-#[allow(dead_code)]
-pub fn redact_exposed_secret_context(context: &str, matched_value: &str) -> String {
-    if matched_value.is_empty() {
-        return context.to_string();
-    }
-
-    if matched_value.starts_with("redacted(") {
-        return context.to_string();
-    }
-
-    context.replace(matched_value, &redact_exposed_secret_value(matched_value))
 }
 
 /// Shannon entropy (log2) of the string, over byte frequencies.
@@ -358,6 +84,7 @@ fn shannon_entropy(s: &str) -> f64 {
 }
 
 /// Severity for a gitleaks rule id. Uses a small mapping for known types; default High.
+#[allow(clippy::match_same_arms)] // Explicit High arm documents known rule IDs; wildcard is the default
 fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
     match rule_id {
         // Critical: direct compromise or financial
@@ -449,9 +176,8 @@ fn extract_secret(
     full_match: &str,
     secret_group: Option<u32>,
 ) -> String {
-    let caps = match captures {
-        Some(c) => c,
-        None => return full_match.to_string(),
+    let Some(caps) = captures else {
+        return full_match.to_string();
     };
     if let Some(n) = secret_group {
         if n > 0 {
@@ -472,7 +198,6 @@ fn extract_secret(
 
 /// Returns true if the match should be skipped by a per-rule allowlist.
 /// Respects condition: OR = any criterion skips; AND = all must match (path is N/A for single-blob, so AND with paths never skips).
-#[allow(dead_code)]
 pub(crate) fn rule_allowlist_skips(
     allowlists: &[crate::parse::gitleaks::CompiledRuleAllowlist],
     matched_value: &str,
@@ -567,24 +292,32 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     let config = &crate::parse::gitleaks::GITLEAKS;
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let body_lower = body.to_lowercase();
 
     for rule in &config.rules {
         // Rules restricted to specific file paths (e.g. .tf, .hcl) are for repo scanning; skip when scanning a single blob (HTML) with no path.
         if rule.path.is_some() {
             continue;
         }
-        // Gitleaks prefilter: if rule has keywords, run regex only when at least one keyword appears in fragment (case-insensitive).
+        // Gitleaks prefilter: if rule has keywords, run regex only when at least one keyword
+        // appears in body (case-insensitive). Use eq_ignore_ascii_case byte search to avoid
+        // allocating a full lowercase copy of the body.
         if let Some(ref kws) = rule.keywords {
-            if !kws.is_empty() && !kws.iter().any(|kw| body_lower.contains(kw)) {
+            if !kws.is_empty()
+                && !kws.iter().any(|kw| {
+                    body.as_bytes()
+                        .windows(kw.len())
+                        .any(|w| w.eq_ignore_ascii_case(kw.as_bytes()))
+                })
+            {
                 continue;
             }
         }
 
-        for mat in rule.regex.find_iter(body) {
+        // Use captures_iter directly (avoids redundant find_iter + re-capture per match)
+        for cap in rule.regex.captures_iter(body) {
+            let Some(mat) = cap.get(0) else { continue };
             let full_match = mat.as_str();
-            let captures = rule.regex.captures(full_match);
-            let matched_value = extract_secret(captures, full_match, rule.secret_group);
+            let matched_value = extract_secret(Some(cap), full_match, rule.secret_group);
 
             if let Some(entropy_threshold) = rule.entropy {
                 if shannon_entropy(&matched_value) < entropy_threshold {
@@ -624,6 +357,51 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Returns a stable redacted representation that preserves dedupe utility without retaining the raw secret.
+    fn redact_exposed_secret_value(value: &str) -> String {
+        use sha2::{Digest, Sha256};
+        if value.starts_with("redacted(") {
+            return value.to_string();
+        }
+
+        let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+        if value.chars().count() <= 8 {
+            format!(
+                "redacted(len={},sha256={})",
+                value.chars().count(),
+                &digest[..16]
+            )
+        } else {
+            let prefix: String = value.chars().take(4).collect();
+            let suffix: String = value
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            format!(
+                "redacted({prefix}...{suffix},len={},sha256={})",
+                value.chars().count(),
+                &digest[..16]
+            )
+        }
+    }
+
+    /// Redacts secret occurrences inside analyst context while preserving surrounding text.
+    fn redact_exposed_secret_context(context: &str, matched_value: &str) -> String {
+        if matched_value.is_empty() {
+            return context.to_string();
+        }
+
+        if matched_value.starts_with("redacted(") {
+            return context.to_string();
+        }
+
+        context.replace(matched_value, &redact_exposed_secret_value(matched_value))
+    }
 
     // === Cloud Providers ===
 

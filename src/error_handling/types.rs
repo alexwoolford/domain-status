@@ -60,7 +60,6 @@ pub enum InitializationError {
 
     /// Error initializing the DNS resolver.
     #[error("DNS resolver initialization error: {0}")]
-    #[allow(dead_code)] // Reserved for future use if fallback fails
     DnsResolverError(String),
 }
 
@@ -125,6 +124,7 @@ pub enum ErrorType {
     TitleExtractError, // Missing title - could be an error if we expect one
     ProcessUrlTimeout,
     // DNS errors
+    DnsForwardLookupError,
     DnsNsLookupError,
     DnsTxtLookupError,
     DnsMxLookupError,
@@ -172,7 +172,7 @@ impl std::fmt::Display for ErrorType {
 }
 
 impl ErrorType {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             ErrorType::HttpRequestBuilderError => "HTTP request builder error",
             ErrorType::HttpRequestRedirectError => "HTTP request redirect error",
@@ -194,6 +194,7 @@ impl ErrorType {
             ErrorType::HttpRequestGatewayTimeout => "Gateway Timeout (504)",
             ErrorType::TitleExtractError => "Title extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
+            ErrorType::DnsForwardLookupError => "DNS forward lookup error",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
             ErrorType::DnsTxtLookupError => "DNS TXT lookup error",
             ErrorType::DnsMxLookupError => "DNS MX lookup error",
@@ -208,8 +209,7 @@ impl ErrorType {
 
 impl WarningType {
     /// Returns a human-readable string representation of the warning type.
-    #[allow(dead_code)] // May be used for future reporting features
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             WarningType::MissingMetaKeywords => "Missing meta keywords",
             WarningType::MissingMetaDescription => "Missing meta description",
@@ -220,8 +220,7 @@ impl WarningType {
 
 impl InfoType {
     /// Returns a human-readable string representation of the info type.
-    #[allow(dead_code)] // May be used for future reporting features
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             InfoType::HttpRedirect => "HTTP redirect",
             InfoType::HttpsRedirect => "HTTP to HTTPS redirect",

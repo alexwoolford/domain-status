@@ -8,7 +8,7 @@ use std::time::Duration;
 /// This extracts the Git commit hash that identifies the exact version of the
 /// ruleset being used. This is important for reproducibility - you can see
 /// exactly which version of the fingerprints was used for each detection.
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // Parses GitHub API JSON with multiple fallback paths for commit SHA extraction
 pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     // Extract repo and path from URL
     // e.g., https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
@@ -34,29 +34,21 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     // parts[5] = branch (e.g., "main")
     // parts[6..] = path (e.g., "src/technologies")
 
-    let owner = match parts.get(3) {
-        Some(o) => o,
-        None => {
-            log::debug!("No owner found in URL parts");
-            return None;
-        }
+    let Some(owner) = parts.get(3) else {
+        log::debug!("No owner found in URL parts");
+        return None;
     };
-    let repo = match parts.get(4) {
-        Some(r) => r,
-        None => {
-            log::debug!("No repo found in URL parts");
-            return None;
-        }
+    let Some(repo) = parts.get(4) else {
+        log::debug!("No repo found in URL parts");
+        return None;
     };
     let path = parts[6..].join("/");
-    log::debug!("Extracted: owner={}, repo={}, path={}", owner, repo, path);
+    log::debug!("Extracted: owner={owner}, repo={repo}, path={path}");
 
-    let api_url = format!(
-        "https://api.github.com/repos/{}/{}/commits?path={}&per_page=1",
-        owner, repo, path
-    );
+    let api_url =
+        format!("https://api.github.com/repos/{owner}/{repo}/commits?path={path}&per_page=1");
 
-    log::debug!("Fetching commit SHA from: {}", api_url);
+    log::debug!("Fetching commit SHA from: {api_url}");
 
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
@@ -66,8 +58,7 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     // Use GITHUB_TOKEN when set (increases rate limit from 60 to 5000 requests/hour)
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         if !token.is_empty() {
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-            {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
                 headers.insert(reqwest::header::AUTHORIZATION, value);
                 log::debug!("Using GITHUB_TOKEN for commit SHA request");
             }
@@ -88,7 +79,7 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         sha: String,
     }
 
-    log::debug!("Fetching commit SHA from GitHub API: {}", api_url);
+    log::debug!("Fetching commit SHA from GitHub API: {api_url}");
     match client.get(&api_url).send().await {
         Ok(resp) => {
             let status = resp.status();
@@ -100,7 +91,7 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
                                 log::debug!("Found commit SHA: {}", commit.sha);
                                 Some(commit.sha.clone())
                             } else {
-                                log::warn!("No commits found in response for path: {}", path);
+                                log::warn!("No commits found in response for path: {path}");
                                 None
                             }
                         }
@@ -114,21 +105,17 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
                         }
                     },
                     Err(e) => {
-                        log::warn!("Failed to read commit response: {}", e);
+                        log::warn!("Failed to read commit response: {e}");
                         None
                     }
                 }
             } else {
-                log::warn!(
-                    "GitHub API returned status: {} for URL: {}",
-                    status,
-                    api_url
-                );
+                log::warn!("GitHub API returned status: {status} for URL: {api_url}");
                 None
             }
         }
         Err(e) => {
-            log::warn!("Failed to fetch commit SHA from {}: {}", api_url, e);
+            log::warn!("Failed to fetch commit SHA from {api_url}: {e}");
             None
         }
     }

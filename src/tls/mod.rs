@@ -90,13 +90,13 @@ async fn resolve_public_tls_addr(domain: &str, resolver: &TokioResolver) -> Resu
     let response = resolver
         .lookup_ip(domain)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to resolve {}: {}", domain, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to resolve {domain}: {e}"))?;
 
     response
         .iter()
         .find(|ip| crate::security::safe_resolver::is_public_ip(*ip))
         .map(|ip| SocketAddr::new(ip, 443))
-        .ok_or_else(|| anyhow::anyhow!("No public IP addresses resolved for {}", domain))
+        .ok_or_else(|| anyhow::anyhow!("No public IP addresses resolved for {domain}"))
 }
 
 fn parse_certificate_info_from_der(
@@ -130,7 +130,7 @@ fn parse_certificate_info_from_der(
         .validity
         .not_before
         .to_rfc2822()
-        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_before: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_before: {e}"))?;
     let valid_from = NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
         .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
 
@@ -138,7 +138,7 @@ fn parse_certificate_info_from_der(
         .validity
         .not_after
         .to_rfc2822()
-        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_after: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_after: {e}"))?;
     let valid_to = NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
         .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
 
@@ -188,7 +188,7 @@ fn parse_certificate_info_from_der(
 /// - TCP connection fails
 /// - TLS handshake fails
 /// - Certificate parsing fails
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Sequential TLS handshake + certificate field extraction; splitting would obscure the flow
 pub async fn get_ssl_certificate_info(
     domain: String,
     resolver: &TokioResolver,
@@ -209,7 +209,7 @@ pub async fn get_ssl_certificate_info(
         Ok(name) => name,
         Err(e) => {
             error!("Invalid domain name: {e}");
-            return Err(anyhow::anyhow!("Invalid domain name: {}", e));
+            return Err(anyhow::anyhow!("Invalid domain name: {e}"));
         }
     };
 
@@ -225,9 +225,7 @@ pub async fn get_ssl_certificate_info(
         Ok(Err(e)) => {
             error!("Failed to connect to {domain} ({socket_addr}) - {e}");
             return Err(anyhow::anyhow!(
-                "Failed to connect to {} via {}",
-                domain,
-                socket_addr
+                "Failed to connect to {domain} via {socket_addr}"
             ));
         }
         Err(_) => {
@@ -251,7 +249,7 @@ pub async fn get_ssl_certificate_info(
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => {
             error!("TLS connection failed for {domain}: {e}");
-            return Err(anyhow::anyhow!("TLS connection failed for {}", domain));
+            return Err(anyhow::anyhow!("TLS connection failed for {domain}"));
         }
         Err(_) => {
             error!("TLS handshake timeout for {domain}");
@@ -270,7 +268,7 @@ pub async fn get_ssl_certificate_info(
             .get_ref()
             .1
             .protocol_version()
-            .map(|v| match v {
+            .map_or(crate::models::TlsVersion::Unknown, |v| match v {
                 ProtocolVersion::TLSv1_0 => crate::models::TlsVersion::Tls10,
                 ProtocolVersion::TLSv1_1 => crate::models::TlsVersion::Tls11,
                 ProtocolVersion::TLSv1_2 => crate::models::TlsVersion::Tls12,
@@ -278,7 +276,6 @@ pub async fn get_ssl_certificate_info(
                 ProtocolVersion::SSLv2 | ProtocolVersion::SSLv3 => crate::models::TlsVersion::Ssl30,
                 _ => crate::models::TlsVersion::Unknown,
             })
-            .unwrap_or(crate::models::TlsVersion::Unknown)
     };
 
     // Extract negotiated cipher suite
@@ -299,8 +296,7 @@ pub async fn get_ssl_certificate_info(
     }
 
     Err(anyhow::anyhow!(
-        "Failed to retrieve certificate information for {}",
-        domain
+        "Failed to retrieve certificate information for {domain}"
     ))
 }
 

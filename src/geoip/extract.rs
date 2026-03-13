@@ -40,7 +40,7 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
 
         // Look for the specified database .mmdb file
         if let Some(file_name) = path.file_name() {
-            let expected_name = format!("{}.mmdb", db_name);
+            let expected_name = format!("{db_name}.mmdb");
             if file_name.to_str() == Some(&expected_name) {
                 let declared_size = usize::try_from(entry.size()).unwrap_or(usize::MAX);
                 if declared_size > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
@@ -59,9 +59,7 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
                 entry
                     .take(read_limit)
                     .read_to_end(&mut mmdb_bytes)
-                    .with_context(|| {
-                        format!("Failed to read {}.mmdb file from archive", db_name)
-                    })?;
+                    .with_context(|| format!("Failed to read {db_name}.mmdb file from archive"))?;
                 if mmdb_bytes.len() > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
                     bail!(
                         "{}.mmdb entry exceeded size limit while reading (max: {} bytes)",
@@ -80,8 +78,7 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
     }
 
     Err(anyhow::anyhow!(
-        "{}.mmdb not found in tar.gz archive",
-        db_name
+        "{db_name}.mmdb not found in tar.gz archive"
     ))
 }
 

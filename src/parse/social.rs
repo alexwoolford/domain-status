@@ -42,7 +42,7 @@ pub enum SocialPlatform {
 
 impl SocialPlatform {
     /// Returns the platform name as a string slice.
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             SocialPlatform::LinkedIn => "LinkedIn",
             SocialPlatform::Twitter => "Twitter",
@@ -175,12 +175,12 @@ pub fn extract_social_media_links(document: &Html) -> Vec<SocialMediaLink> {
                     let full_url = if href.starts_with("http://") || href.starts_with("https://") {
                         href.to_string()
                     } else if href.starts_with("//") {
-                        format!("https:{}", href)
+                        format!("https:{href}")
                     } else if href.starts_with('/') {
                         // Relative URL - skip for now (would need base URL)
                         continue;
                     } else {
-                        format!("https://{}", href)
+                        format!("https://{href}")
                     };
 
                     seen_urls.insert(href.to_string());

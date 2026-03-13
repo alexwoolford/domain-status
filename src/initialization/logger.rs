@@ -11,7 +11,7 @@ use crate::config::LogFormat;
 use crate::error_handling::InitializationError;
 use crate::initialization::log_filters;
 use crate::utils::ensure_parent_dir_secure;
-use colored::*;
+use colored::Colorize;
 use log::LevelFilter;
 
 /// Initializes the logger with the specified level and format.
@@ -132,12 +132,12 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 /// Returns `Err` when the log file cannot be created or logger setup fails.
 pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), InitializationError> {
     ensure_parent_dir_secure(log_file).map_err(|e| {
-        InitializationError::LoggerSetupError(format!("Failed to create log directory: {}", e))
+        InitializationError::LoggerSetupError(format!("Failed to create log directory: {e}"))
     })?;
 
     // Create/truncate the log file
     let file = File::create(log_file).map_err(|e| {
-        InitializationError::LoggerSetupError(format!("Failed to create log file: {}", e))
+        InitializationError::LoggerSetupError(format!("Failed to create log file: {e}"))
     })?;
     let file = Mutex::new(file);
 
@@ -170,7 +170,7 @@ pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), In
         }
 
         // Write to buffer (this goes to env_logger's target)
-        write!(buf, "{}", line)
+        write!(buf, "{line}")
     });
 
     // Target the file instead of stderr

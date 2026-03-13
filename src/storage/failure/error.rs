@@ -36,10 +36,9 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
             let kind = categorize_resolve_error(resolve_err);
             return match kind {
                 DnsResolveErrorKind::Timeout => ErrorType::ProcessUrlTimeout,
-                DnsResolveErrorKind::NxDomain | DnsResolveErrorKind::NoRecords => {
-                    dns_error_type_from_message(&resolve_err.to_string().to_lowercase())
-                }
-                DnsResolveErrorKind::Other => {
+                DnsResolveErrorKind::NxDomain
+                | DnsResolveErrorKind::NoRecords
+                | DnsResolveErrorKind::Other => {
                     dns_error_type_from_message(&resolve_err.to_string().to_lowercase())
                 }
             };

@@ -124,7 +124,7 @@ impl<C: Clock> WhoisCacheStore<C> {
         // so the quota isn't bypassed after a restart with a pre-populated cache directory.
         if count == 1 {
             let existing = std::fs::read_dir(cache_path)
-                .map(|rd| rd.filter(|e| e.is_ok()).count())
+                .map(|rd| rd.flatten().count())
                 .unwrap_or(0);
             if existing > 1 {
                 // Set the counter to existing count (atomic, so other threads see it too)

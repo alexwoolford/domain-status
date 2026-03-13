@@ -12,7 +12,7 @@ use super::super::super::utils::{
 pub(crate) async fn insert_nameservers(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    nameservers_json: &Option<String>,
+    nameservers_json: Option<&String>,
 ) {
     if let Some(ns) = parse_json_array(nameservers_json) {
         if ns.is_empty() {
@@ -44,7 +44,7 @@ pub(crate) async fn insert_nameservers(
 pub(crate) async fn insert_txt_records(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    txt_records_json: &Option<String>,
+    txt_records_json: Option<&String>,
 ) {
     if let Some(txts) = parse_json_array(txt_records_json) {
         if txts.is_empty() {
@@ -83,7 +83,7 @@ pub(crate) async fn insert_txt_records(
 pub(crate) async fn insert_mx_records(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    mx_records_json: &Option<String>,
+    mx_records_json: Option<&String>,
 ) {
     if let Some(mx_records) = parse_mx_json_array(mx_records_json) {
         if mx_records.is_empty() {
@@ -116,7 +116,7 @@ pub(crate) async fn insert_mx_records(
 pub(crate) async fn insert_cname_records(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    cname_records_json: &Option<String>,
+    cname_records_json: Option<&String>,
 ) {
     if let Some(cnames) = parse_json_array(cname_records_json) {
         if cnames.is_empty() {
@@ -148,7 +148,7 @@ pub(crate) async fn insert_cname_records(
 pub(crate) async fn insert_ipv6_addresses(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    aaaa_records_json: &Option<String>,
+    aaaa_records_json: Option<&String>,
 ) {
     if let Some(addrs) = parse_json_array(aaaa_records_json) {
         if addrs.is_empty() {
@@ -180,9 +180,9 @@ pub(crate) async fn insert_ipv6_addresses(
 pub(crate) async fn insert_caa_records(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
-    caa_records_json: &Option<String>,
+    caa_records_json: Option<&String>,
 ) {
-    if let Some(ref json_str) = caa_records_json {
+    if let Some(json_str) = caa_records_json {
         let parsed: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
             Ok(v) => v,
             Err(_) => return,
@@ -203,6 +203,7 @@ pub(crate) async fn insert_caa_records(
             let flag = record["flag"].as_u64().unwrap_or(0);
             let tag = record["tag"].as_str().unwrap_or("");
             let value = record["value"].as_str().unwrap_or("");
+            // CAA flags are 0 or 128 per RFC 8659, fits in i32
             #[allow(clippy::cast_possible_truncation)]
             let flag_i32 = flag as i32;
             query_builder = query_builder
@@ -238,7 +239,7 @@ mod tests {
         let mut tx = pool.begin().await.expect("Failed to start transaction");
         let nameservers_json = Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string());
 
-        insert_nameservers(&mut tx, url_status_id, &nameservers_json).await;
+        insert_nameservers(&mut tx, url_status_id, nameservers_json.as_ref()).await;
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
@@ -263,7 +264,7 @@ mod tests {
         let mut tx = pool.begin().await.expect("Failed to start transaction");
         let nameservers_json = None;
 
-        insert_nameservers(&mut tx, url_status_id, &nameservers_json).await;
+        insert_nameservers(&mut tx, url_status_id, nameservers_json.as_ref()).await;
         tx.commit().await.expect("Failed to commit transaction");
 
         let count: i64 =
@@ -285,7 +286,7 @@ mod tests {
         let txt_records_json =
             Some(r#"["v=spf1 include:_spf.example.com ~all", "v=dmarc1; p=none"]"#.to_string());
 
-        insert_txt_records(&mut tx, url_status_id, &txt_records_json).await;
+        insert_txt_records(&mut tx, url_status_id, txt_records_json.as_ref()).await;
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
@@ -311,7 +312,7 @@ mod tests {
         let txt_records_json =
             Some(r#"["google-site-verification=abc123", "some other record"]"#.to_string());
 
-        insert_txt_records(&mut tx, url_status_id, &txt_records_json).await;
+        insert_txt_records(&mut tx, url_status_id, txt_records_json.as_ref()).await;
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify record types
@@ -338,12 +339,12 @@ mod tests {
 
         // First insert
         let mut tx1 = pool.begin().await.expect("Failed to start transaction");
-        insert_txt_records(&mut tx1, url_status_id, &txt_records_json).await;
+        insert_txt_records(&mut tx1, url_status_id, txt_records_json.as_ref()).await;
         tx1.commit().await.expect("Failed to commit transaction");
 
         // Rescan: insert same records again (ON CONFLICT DO NOTHING)
         let mut tx2 = pool.begin().await.expect("Failed to start transaction");
-        insert_txt_records(&mut tx2, url_status_id, &txt_records_json).await;
+        insert_txt_records(&mut tx2, url_status_id, txt_records_json.as_ref()).await;
         tx2.commit().await.expect("Failed to commit transaction");
 
         let count: i64 =
@@ -364,7 +365,7 @@ mod tests {
         let mut tx = pool.begin().await.expect("Failed to start transaction");
         let mx_records_json = Some(r#"[{"priority": 10, "hostname": "mail1.example.com"}, {"priority": 20, "hostname": "mail2.example.com"}]"#.to_string());
 
-        insert_mx_records(&mut tx, url_status_id, &mx_records_json).await;
+        insert_mx_records(&mut tx, url_status_id, mx_records_json.as_ref()).await;
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion

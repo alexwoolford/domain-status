@@ -24,8 +24,8 @@ use super::types::{AdditionalDnsData, AdditionalDnsResult};
 /// # Returns
 ///
 /// Returns DNS data and any partial failures (errors that didn't prevent processing).
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)] // Fetches NS/TXT/MX/CNAME/AAAA/CAA records in parallel; inherently sequential result assembly
+#[allow(clippy::cognitive_complexity)] // Each DNS record type has distinct parsing logic
 pub(crate) async fn fetch_additional_dns_records(
     final_domain: &str,
     resolver: &hickory_resolver::TokioResolver,
@@ -65,13 +65,13 @@ pub(crate) async fn fetch_additional_dns_records(
     };
 
     // Extract TXT records for both JSON storage and SPF/DMARC extraction
-    let txt_for_extraction = txt_result
-        .as_ref()
-        .map(|txt| txt.clone())
-        .unwrap_or_else(|e| {
-            log::debug!("Failed to extract TXT records for pattern matching: {}", e);
+    let txt_for_extraction = match &txt_result {
+        Ok(records) => records.clone(),
+        Err(e) => {
+            log::debug!("Failed to extract TXT records for pattern matching: {e}");
             Vec::new()
-        });
+        }
+    };
 
     let txt_records = match txt_result {
         Ok(txt) if !txt.is_empty() => {
@@ -100,8 +100,7 @@ pub(crate) async fn fetch_additional_dns_records(
 
     // Also check _dmarc subdomain for DMARC
     if dmarc_record.is_none() {
-        if let Ok(dmarc_txt) =
-            lookup_txt_records(&format!("_dmarc.{}", final_domain), resolver).await
+        if let Ok(dmarc_txt) = lookup_txt_records(&format!("_dmarc.{final_domain}"), resolver).await
         {
             dmarc_record = extract_dmarc_record(&dmarc_txt);
         }

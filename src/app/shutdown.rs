@@ -49,20 +49,19 @@ pub async fn shutdown_gracefully(
             } => {
                 // Task completed - handle result
                 match result {
-                    Ok(_) => {
+                    Ok(()) => {
                         // Task completed successfully
                     }
                     Err(e) => {
                         // Task panicked or was cancelled - log but continue
-                        log::debug!("Logging task completed with error: {:?}", e);
+                        log::debug!("Logging task completed with error: {e:?}");
                     }
                 }
             }
-            _ = timeout_future.as_mut() => {
+            () = timeout_future.as_mut() => {
                 // Timeout - abort the task forcefully
                 log::debug!(
-                    "Logging task did not complete within {} seconds, aborting",
-                    SHUTDOWN_TIMEOUT_SECS
+                    "Logging task did not complete within {SHUTDOWN_TIMEOUT_SECS} seconds, aborting"
                 );
                 // Extract task from mutex before aborting (drop guard first)
                 // Note: tokio::select! ensures only one branch executes, so this is safe
@@ -86,10 +85,7 @@ pub async fn shutdown_gracefully(
 
     if let Some(status_server) = status_server {
         if let Err(error) = status_server.shutdown().await {
-            log::debug!(
-                "Status server completed with error during shutdown: {}",
-                error
-            );
+            log::debug!("Status server completed with error during shutdown: {error}");
         }
     }
 }

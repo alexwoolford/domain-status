@@ -18,7 +18,7 @@ fn micros_to_ms(micros: u64) -> u64 {
 }
 
 /// Builds the structured `/status` response from the current state and elapsed time.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Assembles all status fields from atomic counters into a single response struct
 pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> StatusResponse {
     let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
     let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
@@ -103,13 +103,25 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
                     .get_error_count(ErrorType::HttpRequestBotDetectionError),
             dns_error: state
                 .error_stats
-                .get_error_count(ErrorType::DnsNsLookupError)
+                .get_error_count(ErrorType::DnsForwardLookupError)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::DnsNsLookupError)
                 + state
                     .error_stats
                     .get_error_count(ErrorType::DnsTxtLookupError)
                 + state
                     .error_stats
-                    .get_error_count(ErrorType::DnsMxLookupError),
+                    .get_error_count(ErrorType::DnsMxLookupError)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::DnsCnameLookupError)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::DnsAaaaLookupError)
+                + state
+                    .error_stats
+                    .get_error_count(ErrorType::DnsCaaLookupError),
             tls_error: state
                 .error_stats
                 .get_error_count(ErrorType::TlsCertificateError),
@@ -196,7 +208,7 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to serialize status: {}", e),
+                format!("Failed to serialize status: {e}"),
             )
                 .into_response();
         }

@@ -55,10 +55,7 @@ pub(crate) async fn load_from_cache(
     if let Ok(age) = metadata.last_updated.elapsed() {
         if age > CACHE_DURATION {
             return Err(anyhow::anyhow!(
-                "Cache expired (age: {:?}, max: {:?}) for sources: {}",
-                age,
-                CACHE_DURATION,
-                expected_sources
+                "Cache expired (age: {age:?}, max: {CACHE_DURATION:?}) for sources: {expected_sources}"
             ));
         }
     }
@@ -80,13 +77,13 @@ pub(crate) async fn load_from_cache(
                         cats
                     }
                     Err(e) => {
-                        log::warn!("Failed to parse categories from cache: {}", e);
+                        log::warn!("Failed to parse categories from cache: {e}");
                         std::collections::HashMap::new()
                     }
                 }
             }
             Err(e) => {
-                log::warn!("Failed to read categories from cache: {}", e);
+                log::warn!("Failed to read categories from cache: {e}");
                 std::collections::HashMap::new()
             }
         }

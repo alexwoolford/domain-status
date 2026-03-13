@@ -40,13 +40,12 @@ pub(crate) fn apply_technology_exclusions(
             ruleset
                 .technologies
                 .get(other_base_name)
-                .map(|other_tech| {
+                .is_some_and(|other_tech| {
                     other_tech
                         .excludes
                         .iter()
                         .any(|excluded| excluded == base_tech_name)
                 })
-                .unwrap_or(false)
         });
 
         if !is_excluded {
@@ -148,9 +147,8 @@ mod tests {
     pub struct TechnologyMatchParams<'a> {
         /// The technology to match
         pub tech: &'a Technology,
-        /// The technology name (for exclusions and special cases)
-        #[allow(dead_code)]
-        pub tech_name: &'a str,
+        /// The technology name (used by callers for exclusion logic after matching)
+        pub _tech_name: &'a str,
         /// HTTP headers (normalized to lowercase)
         pub headers: &'a std::collections::HashMap<String, String>,
         /// HTTP cookies (normalized to lowercase)
@@ -164,9 +162,7 @@ mod tests {
         /// The URL being checked
         pub url: &'a str,
         /// Script tag IDs found in HTML (for __`NEXT_DATA`__ etc.)
-        #[allow(dead_code)]
-        // JS pattern matching is disabled to match wappalyzergo, but kept for potential future use
-        pub script_tag_ids: &'a HashSet<String>, // Used for JS pattern matching (currently disabled)
+        pub _script_tag_ids: &'a HashSet<String>,
     }
 
     /// Result of technology matching with optional version
@@ -256,10 +252,19 @@ mod tests {
             // Check if cookie_name contains wildcard (*)
             if cookie_name.contains('*') {
                 // Convert wildcard pattern to regex (e.g., _ga_* -> ^_ga_.*$)
-                let wildcard_pattern = cookie_name.replace('*', ".*");
-                let cookie_regex = match regex::Regex::new(&format!("^{}$", wildcard_pattern)) {
-                    Ok(re) => re,
-                    Err(_) => continue, // Invalid regex, skip this cookie pattern
+                // Escape non-wildcard parts to prevent regex metachar injection
+                let wildcard_pattern: String = cookie_name
+                    .split('*')
+                    .map(regex::escape)
+                    .collect::<Vec<_>>()
+                    .join(".*");
+                let cache_key = format!("cookie:{}", cookie_name);
+                let cookie_regex = match crate::fingerprint::patterns::get_or_compile_regex(
+                    &format!("^{}$", wildcard_pattern),
+                    &cache_key,
+                ) {
+                    Some(re) => re,
+                    None => continue,
                 };
 
                 // Check all cookies for a match
@@ -976,14 +981,14 @@ mod tests {
         let tech = create_empty_technology();
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &[],
             html_text: "some content",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         // Technology with no patterns should not match (tested in matches_technology function)
@@ -1005,14 +1010,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &[],
             html_text: "",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(), // No matching script tag ID
+            _script_tag_ids: &HashSet::new(), // No matching script tag ID
         };
 
         let result = matches_technology(params).await;
@@ -1031,14 +1036,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &cookies,
             meta_tags: &HashMap::new(),
             script_sources: &[],
             html_text: "",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1059,14 +1064,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &headers,
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &[],
             html_text: "",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1086,14 +1091,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &[],
             html_text: "",
             url: "https://example.com/page",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1114,14 +1119,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &script_sources,
             html_text: "",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1140,14 +1145,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &[],
             html_text: &html_text,
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1178,14 +1183,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &HashMap::new(),
             script_sources: &script_sources,
             html_text: "",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1243,14 +1248,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(), // No cookies, but should still match via script
             meta_tags: &HashMap::new(),
             script_sources: &script_sources,
             html_text: "",
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;
@@ -1523,14 +1528,14 @@ mod tests {
 
         let params = TechnologyMatchParams {
             tech: &tech,
-            tech_name: "TestTech",
+            _tech_name: "TestTech",
             headers: &HashMap::new(),
             cookies: &HashMap::new(),
             meta_tags: &meta_tags,
             script_sources: &[],
             html_text: r#"<link rel='stylesheet' href='/wp-content/themes/style.css'>"#, // HTML that matches
             url: "https://example.com",
-            script_tag_ids: &HashSet::new(),
+            _script_tag_ids: &HashSet::new(),
         };
 
         let result = matches_technology(params).await;

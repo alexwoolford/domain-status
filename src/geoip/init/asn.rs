@@ -15,7 +15,7 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
     {
         let reader = GEOIP_ASN_READER
             .read()
-            .map_err(|e| anyhow::anyhow!("GeoIP ASN reader lock poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("GeoIP ASN reader lock poisoned: {e}"))?;
         if reader.is_some() {
             return Ok(()); // Already loaded
         }
@@ -51,14 +51,13 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
                     Ok((reader, metadata)) => {
                         let reader_arc = Arc::new(reader);
                         *GEOIP_ASN_READER.write().map_err(|e| {
-                            anyhow::anyhow!("GeoIP ASN writer lock poisoned: {}", e)
+                            anyhow::anyhow!("GeoIP ASN writer lock poisoned: {e}")
                         })? = Some((reader_arc, metadata));
                         log::info!("GeoIP ASN database loaded successfully");
                     }
                     Err(e) => {
                         log::warn!(
-                            "Failed to load ASN database: {}. Continuing without ASN lookups.",
-                            e
+                            "Failed to load ASN database: {e}. Continuing without ASN lookups."
                         );
                     }
                 }
@@ -69,12 +68,15 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
                         if let Ok((reader, metadata)) = load_from_file(cache_path).await {
                             let reader_arc = Arc::new(reader);
                             *GEOIP_ASN_READER.write().map_err(|e| {
-                                anyhow::anyhow!("GeoIP ASN writer lock poisoned: {}", e)
+                                anyhow::anyhow!("GeoIP ASN writer lock poisoned: {e}")
                             })? = Some((reader_arc, metadata));
                             log::info!("GeoIP ASN database loaded from cache");
                         }
                     } else {
-                        log::warn!("Cache file path contains invalid UTF-8: {:?}", cache_file);
+                        log::warn!(
+                            "Cache file path contains invalid UTF-8: {}",
+                            cache_file.display()
+                        );
                     }
                 }
             }

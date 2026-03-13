@@ -2,26 +2,6 @@
 //!
 //! Provides common helper functions used across multiple fetch submodules.
 
-/// Serializes a value to JSON string.
-///
-/// Note: JSON object key order is not guaranteed by the JSON spec, but `serde_json`
-/// typically preserves insertion order for `HashMap`. If deterministic key ordering
-/// is required, use `BTreeMap` in the source data structure instead.
-///
-/// # Errors
-///
-/// If serialization fails, logs a warning and returns an empty JSON object `"{}"`.
-#[allow(dead_code)] // Used in tests
-pub(crate) fn serialize_json<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_string(value).unwrap_or_else(|e| {
-        log::warn!(
-            "Failed to serialize value to JSON: {}. Using default: {{}}",
-            e
-        );
-        "{}".to_string()
-    })
-}
-
 /// Serializes a value to JSON string with a custom default for errors.
 ///
 /// Useful for arrays where we want "[]" instead of "{}" on serialization failure.
@@ -36,11 +16,7 @@ pub(crate) fn serialize_json<T: serde::Serialize>(value: &T) -> String {
 /// If serialization fails, logs a warning and returns the provided default.
 pub(crate) fn serialize_json_with_default<T: serde::Serialize>(value: &T, default: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|e| {
-        log::warn!(
-            "Failed to serialize value to JSON: {}. Using default: {}",
-            e,
-            default
-        );
+        log::warn!("Failed to serialize value to JSON: {e}. Using default: {default}");
         default.to_string()
     })
 }
@@ -49,6 +25,13 @@ pub(crate) fn serialize_json_with_default<T: serde::Serialize>(value: &T, defaul
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    fn serialize_json<T: serde::Serialize>(value: &T) -> String {
+        serde_json::to_string(value).unwrap_or_else(|e| {
+            log::warn!("Failed to serialize value to JSON: {e}. Using default: {{}}");
+            "{}".to_string()
+        })
+    }
 
     #[test]
     fn test_serialize_json_success() {
