@@ -384,7 +384,7 @@ async fn insert_contact_links_enrichment(
     }
 }
 
-/// Inserts exposed secrets for a record.
+/// Inserts exposed secrets and their decoded JWT claims for a record.
 async fn insert_exposed_secrets_enrichment(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -393,7 +393,19 @@ async fn insert_exposed_secrets_enrichment(
 ) {
     if !exposed_secrets.is_empty() {
         match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
-            Ok(()) => summary.exposed_secrets_inserted = true,
+            Ok(ids) => {
+                summary.exposed_secrets_inserted = true;
+                // Insert decoded JWT claims for secrets that have them
+                for (secret, &secret_id) in exposed_secrets.iter().zip(&ids) {
+                    if let Some(ref jwt) = secret.decoded_jwt {
+                        if let Err(e) = insert::insert_jwt_claims(pool, secret_id, jwt).await {
+                            log::warn!(
+                                "Failed to insert JWT claims for exposed_secret_id {secret_id}: {e}"
+                            );
+                        }
+                    }
+                }
+            }
             Err(e) => {
                 summary.exposed_secrets_failed = true;
                 log::warn!(

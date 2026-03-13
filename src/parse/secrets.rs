@@ -58,6 +58,8 @@ pub struct ExposedSecret {
     pub severity: SecretSeverity,
     /// Heuristic location hint (`inline_script`, `html_comment`, `url_parameter`, etc.).
     pub location: String,
+    /// Decoded JWT claims (populated only for `secret_type` "jwt" or "jwt-base64").
+    pub decoded_jwt: Option<crate::parse::jwt::DecodedJwt>,
 }
 
 /// Shannon entropy (log2) of the string, over byte frequencies.
@@ -341,12 +343,18 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
 
             let location = infer_location(&context).to_string();
             let severity = severity_for_rule_id(&rule.id);
+            let decoded_jwt = match rule.id.as_str() {
+                "jwt" => crate::parse::jwt::decode_jwt(&matched_value),
+                "jwt-base64" => crate::parse::jwt::decode_jwt_base64(&matched_value),
+                _ => None,
+            };
             results.push(ExposedSecret {
                 secret_type: rule.id.clone(),
                 matched_value,
                 context,
                 severity,
                 location,
+                decoded_jwt,
             });
         }
     }

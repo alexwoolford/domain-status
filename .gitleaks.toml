@@ -15,6 +15,7 @@ paths = [
   '''tests/''',
   # Secret detection module uses example patterns in tests and pattern definitions
   '''src/parse/secrets\.rs''',
+  '''src/parse/jwt\.rs''',
   '''src/storage/insert/enrichment/secrets\.rs''',
   # Gitleaks rule config: contains intentional allowlist literals (known test/example keys), not leaked secrets
   '''config/gitleaks\.toml''',

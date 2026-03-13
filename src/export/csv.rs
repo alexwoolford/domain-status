@@ -371,10 +371,17 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
                 .exposed_secrets
                 .iter()
                 .map(|s| {
-                    format!(
+                    let base = format!(
                         "[{}] {}|{}|{}",
                         s.severity, s.secret_type, s.location, s.matched_value
-                    )
+                    );
+                    // Append decoded JWT summary when available
+                    match (&s.jwt_algorithm, &s.jwt_issuer) {
+                        (Some(alg), Some(iss)) => format!("{base}|alg={alg}|iss={iss}"),
+                        (Some(alg), None) => format!("{base}|alg={alg}"),
+                        (None, Some(iss)) => format!("{base}|iss={iss}"),
+                        (None, None) => base,
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("; "),
