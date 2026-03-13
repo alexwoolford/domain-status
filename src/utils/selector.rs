@@ -18,10 +18,7 @@ use scraper::Selector;
 pub fn parse_selector_with_fallback(selector_str: &str, context: &str) -> Selector {
     Selector::parse(selector_str).unwrap_or_else(|e| {
         log::error!(
-            "Failed to parse CSS selector '{}' in {}: {}. Using fallback selector.",
-            selector_str,
-            context,
-            e
+            "Failed to parse CSS selector '{selector_str}' in {context}: {e}. Using fallback selector."
         );
         // Fallback to a selector that won't match anything
         // Use a known-valid selector that won't match: "*:not(*)"

@@ -57,7 +57,7 @@ use super::row::{build_export_row, build_url, extract_main_row_data, parse_strin
 ///
 /// # Errors
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Sequential export pipeline: DB setup, query, row serialization, output
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)
         .await
@@ -114,7 +114,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             .map(|t| {
                 json!({
                     "name": t.name,
-                    "version": t.version.clone().map(Value::String).unwrap_or(Value::Null)
+                    "version": t.version.clone().map_or(Value::Null, Value::String)
                 })
             })
             .collect();

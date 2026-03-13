@@ -37,12 +37,12 @@ use anyhow::{Context, Result};
 /// both simple TLDs (e.g., "example.com") and multi-part TLDs (e.g., "example.co.uk").
 pub fn extract_domain(_list: &psl::List, url: &str) -> Result<String> {
     // First validate that the URL can be parsed
-    let parsed = url::Url::parse(url).with_context(|| format!("Failed to parse URL: {}", url))?;
+    let parsed = url::Url::parse(url).with_context(|| format!("Failed to parse URL: {url}"))?;
 
     // Ensure URL has a host component
     let host = parsed
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL '{}' has no host component", url))?;
+        .ok_or_else(|| anyhow::anyhow!("URL '{url}' has no host component"))?;
 
     // Reject IP addresses (they don't have registrable domains)
     // Check both IPv4 and IPv6 addresses
@@ -50,19 +50,17 @@ pub fn extract_domain(_list: &psl::List, url: &str) -> Result<String> {
         || host.parse::<std::net::Ipv6Addr>().is_ok()
         || parsed
             .host()
-            .map(|h| matches!(h, url::Host::Ipv4(_) | url::Host::Ipv6(_)))
-            .unwrap_or(false)
+            .is_some_and(|h| matches!(h, url::Host::Ipv4(_) | url::Host::Ipv6(_)))
     {
         return Err(anyhow::anyhow!(
-            "IP addresses do not have registrable domains: {}",
-            host
+            "IP addresses do not have registrable domains: {host}"
         ));
     }
 
     // Use psl::domain_str() to get the registrable domain as a string
     psl::domain_str(host)
-        .ok_or_else(|| anyhow::anyhow!("Failed to extract domain from URL: {}", url))
-        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Failed to extract domain from URL: {url}"))
+        .map(std::string::ToString::to_string)
 }
 
 #[cfg(test)]

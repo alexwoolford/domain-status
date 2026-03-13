@@ -49,7 +49,7 @@ pub struct RecordPreparationParams<'a> {
 /// # Arguments
 ///
 /// * `params` - Parameters for record preparation (ownership transferred)
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Assembles BatchRecord from response data, DNS, TLS, fingerprints, and enrichment data
 pub async fn prepare_record_for_insertion(
     params: RecordPreparationParams<'_>,
 ) -> (BatchRecord, (u64, u64, u64)) {
@@ -64,7 +64,7 @@ pub async fn prepare_record_for_insertion(
         &params.additional_dns,
         params.elapsed,
         params.timestamp,
-        &params.ctx.config.run_id,
+        params.ctx.config.run_id.as_ref(),
     );
 
     // Perform enrichment lookups in parallel where possible
@@ -101,12 +101,12 @@ pub async fn prepare_record_for_insertion(
             let security_start = Instant::now();
             let security_warnings = crate::security::analyze_security(
                 &params.resp_data.final_url,
-                &params.tls_dns_data.tls_version,
+                params.tls_dns_data.tls_version,
                 &params.resp_data.security_headers,
-                &params.tls_dns_data.subject,
-                &params.tls_dns_data.issuer,
-                &params.tls_dns_data.valid_to,
-                &params.tls_dns_data.subject_alternative_names,
+                params.tls_dns_data.subject.as_deref(),
+                params.tls_dns_data.issuer.as_deref(),
+                params.tls_dns_data.valid_to.as_ref(),
+                params.tls_dns_data.subject_alternative_names.as_ref(),
             );
             let security_analysis_us = duration_to_us(security_start.elapsed());
             (security_warnings, security_analysis_us)
@@ -279,7 +279,6 @@ mod tests {
             script_sources: Vec::new(),
             script_content: String::new(),
             script_tag_ids: std::collections::HashSet::new(),
-            html_text: "Test".to_string(),
             favicon_url: None,
             canonical_url: None,
             meta_refresh_url: None,

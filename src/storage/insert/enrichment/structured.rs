@@ -22,8 +22,7 @@ pub async fn insert_structured_data(
         for json_ld_value in &structured_data.json_ld {
             let json_str = serde_json::to_string(json_ld_value).map_err(|e| {
                 DatabaseError::SqlError(sqlx::Error::Protocol(format!(
-                    "Failed to serialize JSON-LD: {}",
-                    e
+                    "Failed to serialize JSON-LD: {e}"
                 )))
             })?;
 

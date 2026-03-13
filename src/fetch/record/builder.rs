@@ -24,13 +24,15 @@ fn root_domain(fqdn: &str) -> Option<String> {
     // psl::domain_str returns None for bare PSL suffixes like "akamaihd.net" or
     // "googleapis.com" (they're public suffixes, not registrable domains).
     // Fall back to the FQDN itself — it's still meaningful as an organizational identity.
-    psl::domain_str(fqdn).map(|d| d.to_string()).or_else(|| {
-        if psl::suffix_str(fqdn).is_some() {
-            Some(fqdn.to_string())
-        } else {
-            None
-        }
-    })
+    psl::domain_str(fqdn)
+        .map(std::string::ToString::to_string)
+        .or_else(|| {
+            if psl::suffix_str(fqdn).is_some() {
+                Some(fqdn.to_string())
+            } else {
+                None
+            }
+        })
 }
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::response::{HtmlData, ResponseData};
@@ -41,15 +43,17 @@ use crate::storage::{BatchRecord, CookieInfo};
 fn extract_csp_domains(csp: &str) -> Vec<(String, String, Option<String>)> {
     let mut results = Vec::new();
     let mut seen = HashSet::new();
-    // Domain-like pattern: optional scheme, then hostname
-    let domain_re = Regex::new(
-        r"(?:https?://)?(\*\.)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)",
-    )
-    .expect("CSP domain regex");
+    static CSP_DOMAIN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(
+            r"(?:https?://)?(\*\.)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)",
+        )
+        .expect("CSP domain regex")
+    });
+    let domain_re = &*CSP_DOMAIN_RE;
 
     for directive_part in csp.split(';') {
         let parts: Vec<&str> = directive_part.trim().splitn(2, ' ').collect();
-        let directive = parts.first().unwrap_or(&"").to_string();
+        let directive = (*parts.first().unwrap_or(&"")).to_string();
         let values = parts.get(1).unwrap_or(&"");
 
         for cap in domain_re.captures_iter(values) {
@@ -140,7 +144,7 @@ pub(crate) fn build_url_record(
     additional_dns: &AdditionalDnsData,
     elapsed: f64,
     timestamp: i64,
-    run_id: &Option<String>,
+    run_id: Option<&String>,
 ) -> UrlRecord {
     UrlRecord {
         initial_domain: resp_data.initial_domain.clone(),
@@ -178,7 +182,7 @@ pub(crate) fn build_url_record(
         dmarc_record: additional_dns.dmarc_record.clone(),
         cipher_suite: tls_dns_data.cipher_suite.clone(),
         key_algorithm: tls_dns_data.key_algorithm.clone(),
-        run_id: run_id.clone(),
+        run_id: run_id.cloned(),
         body_sha256: resp_data.body_sha256.clone(),
         content_length: resp_data.content_length,
         http_version: resp_data.http_version.clone(),
@@ -300,14 +304,21 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         let cn = params.tls_dns_data.subject.as_deref().unwrap_or("");
         let matches_san = sans_vec.iter().any(|san| {
             if let Some(wildcard_base) = san.strip_prefix("*.") {
-                domain == san
-                    || domain.ends_with(&format!(".{wildcard_base}"))
-                    || domain == wildcard_base
+                // RFC 6125: wildcard covers exactly one label level.
+                // *.example.com matches foo.example.com but NOT foo.bar.example.com.
+                domain == wildcard_base
+                    || domain.strip_suffix(wildcard_base).is_some_and(|prefix| {
+                        prefix.ends_with('.') && !prefix[..prefix.len() - 1].contains('.')
+                    })
             } else {
                 domain == san
             }
         });
-        let matches_cn = cn.contains(domain);
+        // Extract CN value from subject DN (e.g., "CN=example.com, O=Org")
+        let matches_cn = cn
+            .split(',')
+            .filter_map(|part| part.trim().strip_prefix("CN="))
+            .any(|cn_val| cn_val.trim() == domain);
         params.record.cert_is_mismatched = Some(!matches_san && !matches_cn);
     }
 
@@ -394,7 +405,6 @@ mod tests {
             script_sources: vec![],
             script_content: String::new(),
             script_tag_ids: HashSet::new(),
-            html_text: "Test content".to_string(),
             favicon_url: None,
             canonical_url: None,
             meta_refresh_url: None,
@@ -455,7 +465,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &run_id,
+            run_id.as_ref(),
         );
 
         assert_eq!(record.initial_domain, "example.com");
@@ -485,7 +495,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         // Empty strings should be normalized to None
@@ -509,7 +519,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         assert_eq!(record.keywords, None);
@@ -531,7 +541,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &run_id,
+            run_id.as_ref(),
         );
 
         let technologies = vec![
@@ -602,7 +612,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         let batch_record = build_batch_record(BatchRecordParams {
@@ -640,7 +650,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         let batch_record = build_batch_record(BatchRecordParams {
@@ -677,7 +687,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         let partial_failures = vec![
@@ -734,7 +744,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         // Whitespace-only strings should be preserved (not normalized to None)
@@ -763,7 +773,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         let batch_record = build_batch_record(BatchRecordParams {
@@ -809,7 +819,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         let batch_record = build_batch_record(BatchRecordParams {
@@ -850,7 +860,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         // Create a large redirect chain (100 URLs)
@@ -902,7 +912,7 @@ mod tests {
             &additional_dns,
             1.5,
             1234567890,
-            &None,
+            None,
         );
 
         let run_id = Some("test-run-456".to_string());

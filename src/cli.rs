@@ -42,7 +42,7 @@ fn log_level_cli_to_config(l: &CliLogLevel) -> LogLevel {
     }
 }
 
-fn log_format_cli_to_config(f: &CliLogFormat) -> LogFormat {
+fn log_format_cli_to_config(f: CliLogFormat) -> LogFormat {
     match f {
         CliLogFormat::Plain => LogFormat::Plain,
         CliLogFormat::Json => LogFormat::Json,
@@ -63,7 +63,7 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
     Config {
         file: cli.file,
         log_level: log_level_cli_to_config(&cli.log_level),
-        log_format: log_format_cli_to_config(&cli.log_format),
+        log_format: log_format_cli_to_config(cli.log_format),
         log_level_filter_override,
         db_path: cli.db_path,
         max_concurrency: cli.max_concurrency,
@@ -242,7 +242,7 @@ fn create_progress_callback(
     Arc::new(move |completed, failed, skipped, total| {
         pb.set_length(total as u64);
         pb.set_position((completed + failed + skipped) as u64);
-        pb.set_message(format!("✓{} ✗{} ⊘{}", completed, failed, skipped));
+        pb.set_message(format!("✓{completed} ✗{failed} ⊘{skipped}"));
     })
 }
 
@@ -263,7 +263,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
 
     let report = run_scan(config.clone())
         .await
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!(
         "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
         report.total_urls,
@@ -301,7 +301,7 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
             CliExportFormat::Jsonl => "jsonl",
             CliExportFormat::Parquet => "parquet",
         };
-        Some(PathBuf::from(format!("domain_status_export.{}", extension)))
+        Some(PathBuf::from(format!("domain_status_export.{extension}")))
     };
 
     let lib_format = match export_cmd.format {
@@ -344,7 +344,7 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
     if let Some(ref path) = output_path {
         eprintln!("✅ Exported {} records to {}", count, path.display());
     } else {
-        eprintln!("✅ Exported {} records to {}", count, format_name);
+        eprintln!("✅ Exported {count} records to {format_name}");
     }
 
     Ok(0)
@@ -477,6 +477,7 @@ pub fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanRepo
             if report.total_urls == 0 {
                 return EXIT_NO_URLS_PCT;
             }
+            // URL counts are typically < 10M, well within f64 52-bit mantissa
             #[allow(clippy::cast_precision_loss)]
             let failure_pct = (report.failed as f64 / report.total_urls as f64) * 100.0;
             if failure_pct > f64::from(pct_threshold) {

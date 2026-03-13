@@ -26,10 +26,10 @@ pub(crate) async fn insert_redirect_chain(
 
     let mut query_builder = sqlx::query(&query);
     for (index, (url, status)) in redirect_chain.iter().enumerate() {
+        // Redirect chains are short (< 20 hops), index + 1 fits in i32
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let sequence_order = (index + 1) as i32; // 1-based ordering
-        #[allow(clippy::cast_lossless)]
-        let status_i32 = *status as i32;
+        let status_i32 = i32::from(*status);
         query_builder = query_builder
             .bind(url_status_id)
             .bind(sequence_order)

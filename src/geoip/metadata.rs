@@ -33,11 +33,11 @@ pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     tokio::fs::create_dir_all(parent).await?;
 
-    let file_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "geoip.tmp".to_string());
-    let temp_path = parent.join(format!(".{}.tmp", file_name));
+    let file_name = path.file_name().map_or_else(
+        || "geoip.tmp".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
 
     tokio::fs::write(&temp_path, bytes).await?;
     if let Err(error) = tokio::fs::rename(&temp_path, path).await {

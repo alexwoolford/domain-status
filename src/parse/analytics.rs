@@ -22,7 +22,7 @@ pub enum AnalyticsProvider {
 
 impl AnalyticsProvider {
     /// Returns the provider name as a string slice.
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             AnalyticsProvider::GoogleAnalytics => "Google Analytics",
             AnalyticsProvider::GoogleAnalytics4 => "Google Analytics 4",
@@ -95,7 +95,7 @@ fn is_valid_gtm_id(id: &str) -> bool {
 /// # Returns
 ///
 /// A vector of `AnalyticsId` structs containing provider and ID pairs.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Each analytics provider has a distinct regex pattern; they are sequential and independent
 pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     let mut analytics_ids = Vec::new();
     let mut seen_ids = std::collections::HashSet::<(AnalyticsProvider, String)>::new();
@@ -191,7 +191,7 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // This catches GTM IDs that appear without the keywords above
     // Must be uppercase GTM- followed by uppercase letters/numbers only
     static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"\b(GTM-[A-Z0-9]{4,})\b"#)
+        Regex::new(r"\b(GTM-[A-Z0-9]{4,})\b")
             .expect("GTM_STANDALONE_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in GTM_STANDALONE_PATTERN.captures_iter(html) {
@@ -215,7 +215,7 @@ pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     // AdSense publisher IDs are typically 16 digits (e.g., pub-1234567890123456)
     // We require at least 10 digits to avoid false positives like "pub-1"
     static ADSENSE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)(?:ca-)?pub-(\d{10,})"#)
+        Regex::new(r"(?i)(?:ca-)?pub-(\d{10,})")
             .expect("ADSENSE_PATTERN is a hardcoded valid regex; this is a compile-time bug")
     });
     for cap in ADSENSE_PATTERN.captures_iter(html) {

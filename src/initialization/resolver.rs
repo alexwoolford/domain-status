@@ -53,10 +53,7 @@ pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
     // This provides better security, DNSSEC validation, and correctness improvements
     let resolver = TokioResolver::builder_tokio()
         .map_err(|e| {
-            InitializationError::DnsResolverError(format!(
-                "Failed to create resolver builder: {}",
-                e
-            ))
+            InitializationError::DnsResolverError(format!("Failed to create resolver builder: {e}"))
         })?
         .with_options(opts)
         .build();

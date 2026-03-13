@@ -42,11 +42,11 @@ pub struct UrlRecordInsertParams<'a> {
     /// Vector of DNS names from certificate SAN extension (will be inserted into `url_certificate_sans` table)
     pub subject_alternative_names: &'a [String],
     /// CNAME records JSON (will be inserted into `url_cname_records` table)
-    pub cname_records: &'a Option<String>,
+    pub cname_records: Option<&'a String>,
     /// AAAA (IPv6) records JSON (will be inserted into `url_ipv6_addresses` table)
-    pub aaaa_records: &'a Option<String>,
+    pub aaaa_records: Option<&'a String>,
     /// CAA records JSON (will be inserted into `url_caa_records` table)
-    pub caa_records: &'a Option<String>,
+    pub caa_records: Option<&'a String>,
     /// CSP domains (directive, fqdn, `registrable_domain`)
     pub csp_domains: &'a [(String, String, Option<String>)],
     /// Cookie security info
@@ -80,14 +80,14 @@ pub struct UrlRecordInsertParams<'a> {
 ///
 /// # Errors
 /// Returns `Err` when the transaction or any insert fails.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Thin wrapper; length comes from insert_url_record_impl
 pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     with_sqlite_retry(|| insert_url_record_impl(&params)).await
 }
 
 /// Internal implementation of `insert_url_record` (without retry logic).
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)] // Inserts main record + ~15 satellite tables in a single transaction
+#[allow(clippy::cognitive_complexity)] // Each satellite table has distinct insert logic
 async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_to.as_ref());
@@ -161,7 +161,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(&params.record.title)
     .bind(&params.record.keywords)
     .bind(&params.record.description)
-    .bind(params.record.tls_version.as_ref().map(|v| v.as_str()))
+    .bind(params.record.tls_version.as_ref().map(crate::models::TlsVersion::as_str))
     .bind(&params.record.ssl_cert_subject)
     .bind(&params.record.ssl_cert_issuer)
     .bind(valid_from_millis)
@@ -171,7 +171,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(&params.record.spf_record)
     .bind(&params.record.dmarc_record)
     .bind(&params.record.cipher_suite)
-    .bind(params.record.key_algorithm.as_ref().map(|k| k.as_str()))
+    .bind(params.record.key_algorithm.as_ref().map(crate::models::KeyAlgorithm::as_str))
     .bind(&params.record.run_id)
     .bind(&params.record.body_sha256)
     .bind(params.record.content_length)
@@ -208,8 +208,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             // by Drop anyway, but being explicit makes the intent clear
             if let Err(rollback_err) = tx.rollback().await {
                 log::warn!(
-                    "Failed to rollback transaction after main insert error (this is non-fatal): {}",
-                    rollback_err
+                    "Failed to rollback transaction after main insert error (this is non-fatal): {rollback_err}"
                 );
             }
             return Err(e);
@@ -280,9 +279,9 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     }
 
     insert_technologies(&mut tx, url_status_id, params.technologies).await;
-    insert_nameservers(&mut tx, url_status_id, &params.record.nameservers).await;
-    insert_txt_records(&mut tx, url_status_id, &params.record.txt_records).await;
-    insert_mx_records(&mut tx, url_status_id, &params.record.mx_records).await;
+    insert_nameservers(&mut tx, url_status_id, params.record.nameservers.as_ref()).await;
+    insert_txt_records(&mut tx, url_status_id, params.record.txt_records.as_ref()).await;
+    insert_mx_records(&mut tx, url_status_id, params.record.mx_records.as_ref()).await;
     insert_security_headers(&mut tx, url_status_id, params.security_headers).await;
     insert_http_headers(&mut tx, url_status_id, params.http_headers).await;
     insert_oids(&mut tx, url_status_id, params.oids).await;
@@ -529,9 +528,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
@@ -588,9 +587,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
@@ -640,9 +639,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
@@ -697,9 +696,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
@@ -756,9 +755,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
@@ -779,9 +778,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
@@ -840,9 +839,9 @@ mod tests {
             redirect_chain: &redirect_chain,
             technologies: &technologies,
             subject_alternative_names: &sans,
-            cname_records: &None,
-            aaaa_records: &None,
-            caa_records: &None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],

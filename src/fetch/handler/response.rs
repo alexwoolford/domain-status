@@ -30,7 +30,7 @@ use std::time::Instant;
 /// # Errors
 ///
 /// Returns an error if domain extraction, DNS resolution, or database insertion fails.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Orchestrates response extraction, DNS/TLS, fingerprinting, and record assembly
 pub async fn handle_response(
     response: reqwest::Response,
     original_url: &str,
@@ -77,10 +77,7 @@ pub async fn handle_response(
     .await?
     else {
         // Non-HTML or empty response, skip silently
-        debug!(
-            "Skipping URL {} (non-HTML content-type or empty body)",
-            final_url_str
-        );
+        debug!("Skipping URL {final_url_str} (non-HTML content-type or empty body)");
         return Ok(UrlProcessOutcome::Skipped);
     };
 
@@ -93,7 +90,7 @@ pub async fn handle_response(
     let html_data =
         tokio::task::spawn_blocking(move || parse_html_content(&body, &final_domain, &error_stats))
             .await
-            .map_err(|e| anyhow::anyhow!("HTML parsing task failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("HTML parsing task failed: {e}"))?;
     metrics.html_parsing_us = duration_to_us(html_parse_start.elapsed());
 
     // Run tech detection and DNS/TLS in parallel (they're independent)
@@ -188,12 +185,8 @@ pub async fn handle_response(
     insert_batch_record(&ctx.db.pool, batch_record)
         .await
         .map_err(|e| {
-            log::error!(
-                "Failed to insert record for URL {}: {}",
-                final_url_for_logging,
-                e
-            );
-            anyhow::anyhow!("Database write failed: {}", e)
+            log::error!("Failed to insert record for URL {final_url_for_logging}: {e}");
+            anyhow::anyhow!("Database write failed: {e}")
         })?;
 
     // Calculate total_us from start_time (same baseline as http_request_us)

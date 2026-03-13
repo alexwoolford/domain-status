@@ -71,18 +71,15 @@ pub struct ScanResources {
     /// Unique run identifier (format: `run_<timestamp_millis>`)
     pub run_id: String,
     /// Start time as Unix timestamp in milliseconds (used for run metadata)
-    #[allow(dead_code)] // Reserved for run metadata / logging
     pub start_time_epoch: i64,
     /// Start time as Instant for elapsed time calculations
     pub start_time: std::time::Instant,
 
     // Fingerprinting and GeoIP
-    /// Fingerprint detection ruleset (kept loaded during scan)
-    #[allow(dead_code)] // Kept for reference; detection uses shared_ctx
-    pub ruleset: Arc<FingerprintRuleset>,
-    /// Optional `GeoIP` database metadata (kept for reference)
-    #[allow(dead_code)] // Kept for reference during scan
-    pub geoip_metadata: Option<GeoIpMetadata>,
+    /// Fingerprint detection ruleset (held to keep Arc alive during scan).
+    pub _ruleset: Arc<FingerprintRuleset>,
+    /// Optional `GeoIP` database metadata (held to keep data alive during scan).
+    pub _geoip_metadata: Option<GeoIpMetadata>,
 
     // Configuration
     /// Original configuration (for reference during finalization)

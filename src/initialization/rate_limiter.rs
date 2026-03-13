@@ -22,12 +22,11 @@ use tokio::time::{interval, Duration as TokioDuration};
 /// Instances are usually created via [`init_rate_limiter()`].
 pub struct RateLimiter {
     permits: Arc<TokioSemaphore>,
-    #[allow(dead_code)]
     capacity: usize,
     /// Fixed requests per second (set at creation, never changed).
     rps: u32,
-    #[allow(dead_code)] // Used for cancellation token reference
-    shutdown: tokio_util::sync::CancellationToken,
+    /// Held to keep the `CancellationToken` alive for the background refill task.
+    _shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl std::fmt::Debug for RateLimiter {
@@ -50,8 +49,10 @@ fn compute_refill_permits(
         return (0, 0.0);
     }
 
+    // RPS is u32 (max ~4B), converted losslessly via f64::from; elapsed * rps fits in f64
     #[allow(clippy::cast_precision_loss)]
     let permits_to_add_f64 = f64::from(current_rps) * elapsed.as_secs_f64() + fractional_permits;
+    // floor() is non-negative (inputs are non-negative), truncation acceptable for permit count
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let whole_permits = permits_to_add_f64.floor() as usize;
     let permits_to_restore = capacity.saturating_sub(available);
@@ -61,6 +62,7 @@ fn compute_refill_permits(
         0.0
     } else {
         #[allow(clippy::cast_precision_loss)]
+        // whole_permits is small (bounded by capacity), fits in f64
         {
             permits_to_add_f64 - whole_permits as f64
         }
@@ -88,7 +90,6 @@ impl RateLimiter {
     }
 
     /// Gets the configured RPS value.
-    #[allow(dead_code)] // Useful for debugging/monitoring
     #[must_use]
     pub fn current_rps(&self) -> u32 {
         self.rps
@@ -151,7 +152,7 @@ pub fn init_rate_limiter(
         permits: Arc::new(TokioSemaphore::new(capacity)),
         capacity,
         rps,
-        shutdown: shutdown_clone.clone(),
+        _shutdown: shutdown_clone.clone(),
     });
 
     let permits = limiter.permits.clone();
@@ -184,7 +185,7 @@ pub fn init_rate_limiter(
 
                     last_time = now;
                 }
-                _ = shutdown_clone.cancelled() => {
+                () = shutdown_clone.cancelled() => {
                     log::debug!("Rate limiter background task shutting down");
                     break;
                 }

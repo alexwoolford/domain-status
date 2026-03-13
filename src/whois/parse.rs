@@ -97,14 +97,11 @@ pub(crate) fn enrich_result_from_raw_text(mut result: WhoisResult) -> WhoisResul
 
 /// Converts an internal WHOIS payload to our application result.
 pub(crate) fn convert_payload(payload: &WhoisPayload) -> WhoisResult {
-    let parsed = match &payload.parsed {
-        Some(p) => p,
-        None => {
-            return WhoisResult {
-                raw_text: Some(payload.raw_text.clone()),
-                ..Default::default()
-            };
-        }
+    let Some(parsed) = &payload.parsed else {
+        return WhoisResult {
+            raw_text: Some(payload.raw_text.clone()),
+            ..Default::default()
+        };
     };
 
     let creation_date = parsed.creation_date.as_ref().and_then(|s| {

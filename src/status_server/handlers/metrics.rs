@@ -21,14 +21,15 @@ fn escape_prometheus_label_value(s: &str) -> String {
 }
 
 /// Renders the Prometheus metrics payload for the given state and elapsed time.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Prometheus text format requires one line per metric; splitting would fragment the output
 pub(crate) fn render_metrics(state: &StatusState, elapsed: f64) -> String {
     let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
     let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
-    let skipped = state.skipped_urls.load(Ordering::SeqCst);
-    let active = attempted.saturating_sub(completed + failed + skipped);
+    // completed already includes skipped (handle_success increments both),
+    // so don't subtract skipped again or active will underflow.
+    let active = attempted.saturating_sub(completed + failed);
     #[allow(clippy::cast_precision_loss)]
     let rate = if elapsed > 0.0 {
         completed as f64 / elapsed
@@ -46,7 +47,7 @@ pub(crate) fn render_metrics(state: &StatusState, elapsed: f64) -> String {
             let avg = timing_stats.averages();
 
             format!(
-                r#"
+                r"
 # HELP domain_status_timing_http_request_ms Average HTTP request time in milliseconds
 # TYPE domain_status_timing_http_request_ms gauge
 domain_status_timing_http_request_ms {}
@@ -90,7 +91,7 @@ domain_status_timing_security_analysis_ms {}
 # HELP domain_status_timing_total_ms Average total processing time in milliseconds
 # TYPE domain_status_timing_total_ms gauge
 domain_status_timing_total_ms {}
-"#,
+",
                 micros_to_ms(avg.http_request_us),
                 micros_to_ms(avg.dns_forward_us),
                 micros_to_ms(avg.dns_reverse_us),

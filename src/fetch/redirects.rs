@@ -97,7 +97,7 @@ pub async fn resolve_redirect_chain(
     let skip_initial_validation = cfg!(test) && is_loopback_url(start_url);
     if !skip_initial_validation {
         validate_url_safe(start_url)
-            .with_context(|| format!("Unsafe initial URL rejected: {}", start_url))?;
+            .with_context(|| format!("Unsafe initial URL rejected: {start_url}"))?;
     }
 
     // Pre-allocate chain with capacity to avoid reallocations
@@ -111,7 +111,7 @@ pub async fn resolve_redirect_chain(
     let mut final_response: Option<reqwest::Response> = None; // Non-redirect response to return to caller (avoids double fetch)
 
     for hop_num in 0..max_hops {
-        last_fetched_url = current.clone(); // This is the URL we're about to fetch
+        last_fetched_url.clone_from(&current); // This is the URL we're about to fetch
 
         // Add realistic browser headers to reduce bot detection during redirect resolution
         // This is critical because sites may serve different content (or block) based on headers
@@ -130,7 +130,7 @@ pub async fn resolve_redirect_chain(
             if name.as_str().eq_ignore_ascii_case("alt-svc") {
                 if let Ok(alt_svc_str) = value.to_str() {
                     alt_svc_header = Some(alt_svc_str.to_string());
-                    log::trace!("Captured alt-svc header from redirect hop {}", hop_num);
+                    log::trace!("Captured alt-svc header from redirect hop {hop_num}");
                     break;
                 }
             }
@@ -151,9 +151,7 @@ pub async fn resolve_redirect_chain(
                     Ok(s) => s,
                     Err(e) => {
                         log::warn!(
-                            "Location header for {} contains invalid UTF-8: {}. Skipping redirect.",
-                            current,
-                            e
+                            "Location header for {current} contains invalid UTF-8: {e}. Skipping redirect."
                         );
                         // Break here: we've reached a non-redirect state (invalid redirect)
                         // last_fetched_url is the final URL we actually fetched
@@ -170,7 +168,7 @@ pub async fn resolve_redirect_chain(
                 let current_url = Url::parse(&current).ok();
                 let is_same_origin = current_url
                     .as_ref()
-                    .and_then(|c| c.host())
+                    .and_then(reqwest::Url::host)
                     .and_then(|c_host| new_url.host().map(|n_host| hosts_match(c_host, n_host)))
                     .unwrap_or(false);
 
@@ -178,10 +176,7 @@ pub async fn resolve_redirect_chain(
                     // Only validate if redirecting to a different origin
                     if let Err(e) = validate_url_safe(&new_url_str) {
                         log::warn!(
-                            "Blocked unsafe cross-origin redirect from {} to {}: {}. Stopping redirect chain.",
-                            current,
-                            new_url_str,
-                            e
+                            "Blocked unsafe cross-origin redirect from {current} to {new_url_str}: {e}. Stopping redirect chain."
                         );
                         // Break here: we've reached an unsafe redirect
                         // last_fetched_url is the final URL we actually fetched
@@ -193,11 +188,7 @@ pub async fn resolve_redirect_chain(
                 // Return the last URL we actually fetched instead of the Location header URL
                 if hop_num == max_hops - 1 {
                     log::warn!(
-                        "Redirect chain for {} exceeded max_hops ({}). Stopping at {} (which returned redirect to {}).",
-                        start_url,
-                        max_hops,
-                        last_fetched_url,
-                        new_url
+                        "Redirect chain for {start_url} exceeded max_hops ({max_hops}). Stopping at {last_fetched_url} (which returned redirect to {new_url})."
                     );
                     // Return the last URL we actually fetched, not the Location header URL
                     // This ensures we only return URLs that were actually fetched
@@ -207,23 +198,17 @@ pub async fn resolve_redirect_chain(
                 // Only allocate String when we actually need to update current
                 current = new_url.to_string();
                 continue;
-            } else {
-                // Redirect status but no Location header - this is unusual, log and break
-                log::warn!(
-                    "Redirect status {} for {} but no Location header",
-                    status_code,
-                    current
-                );
-                // Break here: we've reached a non-redirect state (invalid redirect)
-                // last_fetched_url is the final URL we actually fetched
-                break;
             }
-        } else {
-            // Not a redirect, we've reached the final URL.
-            // Save the response so the caller can reuse it (avoids a second fetch).
-            final_response = Some(resp);
+            // Redirect status but no Location header - this is unusual, log and break
+            log::warn!("Redirect status {status_code} for {current} but no Location header");
+            // Break here: we've reached a non-redirect state (invalid redirect)
+            // last_fetched_url is the final URL we actually fetched
             break;
         }
+        // Not a redirect, we've reached the final URL.
+        // Save the response so the caller can reuse it (avoids a second fetch).
+        final_response = Some(resp);
+        break;
     }
 
     // Use last_fetched_url as the final URL (the last URL we actually fetched)

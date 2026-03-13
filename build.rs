@@ -36,16 +36,14 @@ fn emit_version_env() {
             .ok()
             .filter(|o| o.status.success())
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
         let build_date = std::process::Command::new("date")
             .args(["+%Y-%m-%d"])
             .output()
             .ok()
             .filter(|o| o.status.success())
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
         format!("{version_base} (debug {git_hash} {build_date})")
     };
     println!("cargo:rustc-env=DOMAIN_STATUS_VERSION={version_string}");

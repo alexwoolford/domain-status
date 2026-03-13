@@ -20,9 +20,9 @@ async fn test_insert_empty_collections() {
 
     // Test all empty cases
     insert_technologies(&mut tx, url_status_id, &[]).await;
-    insert_nameservers(&mut tx, url_status_id, &None).await;
-    insert_txt_records(&mut tx, url_status_id, &None).await;
-    insert_mx_records(&mut tx, url_status_id, &None).await;
+    insert_nameservers(&mut tx, url_status_id, None).await;
+    insert_txt_records(&mut tx, url_status_id, None).await;
+    insert_mx_records(&mut tx, url_status_id, None).await;
     insert_security_headers(&mut tx, url_status_id, &HashMap::new()).await;
     insert_http_headers(&mut tx, url_status_id, &HashMap::new()).await;
     insert_oids(&mut tx, url_status_id, &HashSet::new()).await;

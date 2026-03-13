@@ -69,13 +69,14 @@ pub async fn init_ruleset(
         // Use default sources (both enthec and HTTPArchive)
         DEFAULT_FINGERPRINTS_URLS
             .iter()
-            .map(|s| s.to_string())
+            .map(|s| (*s).to_string())
             .collect()
     };
 
-    let cache_path = cache_dir
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
+    let cache_path = cache_dir.map_or_else(
+        || PathBuf::from(DEFAULT_CACHE_DIR),
+        std::path::Path::to_path_buf,
+    );
 
     // Create a cache key from all sources
     // Use SHA256 hash to avoid URL character issues and ensure deterministic caching
@@ -129,17 +130,6 @@ pub async fn init_ruleset(
     Ok(ruleset_arc)
 }
 
-/// Gets the current ruleset metadata (for storing in database)
-#[allow(dead_code)] // Used when persisting run metadata; may be used by export
-pub async fn get_ruleset_metadata() -> Option<FingerprintMetadata> {
-    // Clone the Arc immediately to release the lock
-    let ruleset = {
-        let guard = RULESET.read().await;
-        guard.as_ref()?.clone()
-    };
-    Some(ruleset.metadata.clone())
-}
-
 /// Gets the current ruleset (for use in detection)
 pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
     let guard = RULESET.read().await;
@@ -147,8 +137,8 @@ pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
 }
 
 /// Fetches ruleset from multiple sources and merges them (matching Go implementation)
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)] // Tries multiple source types (URL, file, GitHub dir/commit) with fallback logic
+#[allow(clippy::cognitive_complexity)] // Each source type has distinct fetch/parse/merge logic
 async fn fetch_ruleset_from_multiple_sources(
     sources: &[String],
     cache_dir: &Path,
@@ -163,7 +153,7 @@ async fn fetch_ruleset_from_multiple_sources(
     // If a source fails, log a warning but continue with other sources
     // This allows partial success (e.g., if one GitHub repo is rate-limited, we can still use the other)
     for source in sources {
-        log::info!("Fetching from source: {}", source);
+        log::info!("Fetching from source: {source}");
 
         let technologies = match if source.starts_with("http://") || source.starts_with("https://")
         {
@@ -177,9 +167,7 @@ async fn fetch_ruleset_from_multiple_sources(
             }
             Err(e) => {
                 log::warn!(
-                    "Failed to fetch from source '{}': {}. Continuing with other sources...",
-                    source,
-                    e
+                    "Failed to fetch from source '{source}': {e}. Continuing with other sources..."
                 );
                 // Check if this is a rate limit error and provide helpful guidance
                 if e.to_string().contains("rate limit") {
@@ -224,8 +212,7 @@ async fn fetch_ruleset_from_multiple_sources(
         let categories = if source.starts_with("http://") || source.starts_with("https://") {
             fetch_categories_from_url(source).await.unwrap_or_else(|e| {
                 log::warn!(
-                    "Failed to fetch categories from {}: {}. Continuing without categories from this source.",
-                    source, e
+                    "Failed to fetch categories from {source}: {e}. Continuing without categories from this source."
                 );
                 HashMap::new()
             })
@@ -234,8 +221,7 @@ async fn fetch_ruleset_from_multiple_sources(
                 .await
                 .unwrap_or_else(|e| {
                     log::warn!(
-                        "Failed to load categories from path {}: {}. Continuing without categories from this source.",
-                        source, e
+                        "Failed to load categories from path {source}: {e}. Continuing without categories from this source."
                     );
                     HashMap::new()
                 })
@@ -251,7 +237,7 @@ async fn fetch_ruleset_from_multiple_sources(
             source.contains("github.com") || source.contains("raw.githubusercontent.com");
         if is_github {
             if let Some(sha) = get_latest_commit_sha(source).await {
-                versions.push(format!("{}:{}", source, sha));
+                versions.push(format!("{source}:{sha}"));
             }
         }
     }

@@ -36,15 +36,8 @@ mod tests {
     #[test]
     fn test_analyze_security_no_https() {
         let headers = HashMap::new();
-        let warnings = analyze_security(
-            "http://example.com",
-            &None,
-            &headers,
-            &None,
-            &None,
-            &None,
-            &None,
-        );
+        let warnings =
+            analyze_security("http://example.com", None, &headers, None, None, None, None);
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::NoHttps));
     }
@@ -58,12 +51,12 @@ mod tests {
         );
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls11),
+            Some(TlsVersion::Tls11),
             &headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(warnings.contains(&SecurityWarning::WeakTls));
     }
@@ -73,12 +66,12 @@ mod tests {
         let headers = HashMap::new();
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(warnings.contains(&SecurityWarning::MissingHsts));
         assert!(warnings.contains(&SecurityWarning::MissingCsp));
@@ -108,12 +101,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
         assert_eq!(warnings.len(), 0);
     }
@@ -152,12 +145,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingHsts));
@@ -179,12 +172,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingCsp));
@@ -209,12 +202,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
@@ -239,12 +232,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
@@ -273,12 +266,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
         // All headers present (case-insensitive match) - no warnings
         assert_eq!(warnings.len(), 0);
@@ -295,12 +288,12 @@ mod tests {
 
         let warnings = analyze_security(
             "http://example.com",
-            &Some(TlsVersion::Tls11),
+            Some(TlsVersion::Tls11),
             &headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         // Should only have NoHttps warning, not WeakTls or missing headers
@@ -315,12 +308,12 @@ mod tests {
         let headers = HashMap::new();
         let warnings = analyze_security(
             "https://example.com",
-            &None,
+            None,
             &headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         // Should have missing headers warnings, but not WeakTls (no version info)
@@ -352,12 +345,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls11),
+            Some(TlsVersion::Tls11),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
 
         // Should only have WeakTls warning
@@ -379,12 +372,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls10),
+            Some(TlsVersion::Tls10),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&valid_date),
+            None,
         );
 
         // Should have WeakTls + all missing headers (but NOT InvalidCertificate since cert is valid)
@@ -420,12 +413,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(expired_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&expired_date),
+            None,
         );
 
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
@@ -458,12 +451,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some(subject.to_string()),
-            &Some(issuer.to_string()),
-            &Some(valid_date),
-            &None,
+            Some(subject),
+            Some(issuer),
+            Some(&valid_date),
+            None,
         );
 
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
@@ -489,12 +482,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some(subject.to_string()),
-            &Some(issuer.to_string()),
-            &Some(valid_date),
-            &None,
+            Some(subject),
+            Some(issuer),
+            Some(&valid_date),
+            None,
         );
 
         // Should detect as self-signed (normalized comparison)
@@ -520,12 +513,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some(subject.to_string()),
-            &Some(issuer.to_string()),
-            &Some(valid_date),
-            &None,
+            Some(subject),
+            Some(issuer),
+            Some(&valid_date),
+            None,
         );
 
         // Should detect as self-signed (case-insensitive comparison)
@@ -555,12 +548,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()), // Different issuer (not self-signed)
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"), // Different issuer (not self-signed)
+            Some(&valid_date),
+            None,
         );
 
         // Should have no warnings (all good)
@@ -575,12 +568,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &None, // No certificate subject (extraction failed)
-            &None, // No certificate issuer
-            &None, // No certificate expiration
-            &None,
+            None, // No certificate subject (extraction failed)
+            None, // No certificate issuer
+            None, // No certificate expiration
+            None,
         );
 
         // Should have InvalidCertificate warning due to extraction failure
@@ -596,12 +589,12 @@ mod tests {
 
         let warnings = analyze_security(
             "http://example.com",
-            &None,
+            None,
             &headers,
-            &None, // No certificate info (expected for HTTP)
-            &None,
-            &None,
-            &None,
+            None, // No certificate info (expected for HTTP)
+            None,
+            None,
+            None,
         );
 
         // Should only have NoHttps warning, not InvalidCertificate
@@ -625,12 +618,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some(subject.to_string()),
-            &Some(issuer.to_string()),
-            &Some(expired_date),
-            &None,
+            Some(subject),
+            Some(issuer),
+            Some(&expired_date),
+            None,
         );
 
         // Should have InvalidCertificate warning (only once, not duplicated)
@@ -656,12 +649,12 @@ mod tests {
         // Have subject and valid_to, but missing issuer
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &headers,
-            &Some("CN=example.com".to_string()),
-            &None, // Missing issuer - can't check validity
-            &Some(valid_date),
-            &None,
+            Some("CN=example.com"),
+            None, // Missing issuer - can't check validity
+            Some(&valid_date),
+            None,
         );
 
         // Should have InvalidCertificate warning because we can't verify the certificate

@@ -51,23 +51,21 @@ async fn insert_failure_redirect_chain(
     redirect_chain: &[String],
 ) -> Result<(), DatabaseError> {
     for (order, redirect_url) in redirect_chain.iter().enumerate() {
+        #[allow(clippy::cast_possible_wrap)] // Redirect chains are short (< 20 hops), fits in i64
+        let sequence_order = (order + 1) as i64; // 1-based sequence_order
         sqlx::query(
             "INSERT INTO url_failure_redirect_chain (url_failure_id, sequence_order, redirect_url)
              VALUES (?, ?, ?)
              ON CONFLICT(url_failure_id, sequence_order) DO NOTHING",
         )
         .bind(failure_id)
-        .bind((order + 1) as i64) // 1-based sequence_order
+        .bind(sequence_order)
         .bind(redirect_url)
         .execute(&mut **tx)
         .await
         .map_err(|e| {
             log::error!(
-                "Failed to insert redirect chain entry for failure_id {} (order: {}, url: {}): {}",
-                failure_id,
-                order,
-                redirect_url,
-                e
+                "Failed to insert redirect chain entry for failure_id {failure_id} (order: {order}, url: {redirect_url}): {e}"
             );
             DatabaseError::SqlError(e)
         })?;
@@ -239,8 +237,7 @@ async fn insert_url_failure_impl(
             // by Drop anyway, but being explicit makes the intent clear
             if let Err(rollback_err) = tx.rollback().await {
                 log::warn!(
-                    "Failed to rollback transaction after main failure insert error (this is non-fatal): {}",
-                    rollback_err
+                    "Failed to rollback transaction after main failure insert error (this is non-fatal): {rollback_err}"
                 );
             }
             return Err(e);
@@ -266,11 +263,7 @@ async fn insert_url_failure_impl(
         Ok(()) => {
             // All inserts succeeded - commit transaction
             tx.commit().await.map_err(|e| {
-                log::error!(
-                    "Failed to commit transaction for failure_id {}: {}",
-                    failure_id,
-                    e
-                );
+                log::error!("Failed to commit transaction for failure_id {failure_id}: {e}");
                 DatabaseError::SqlError(e)
             })?;
             Ok(failure_id)
@@ -281,8 +274,7 @@ async fn insert_url_failure_impl(
             // by Drop anyway, but being explicit makes the intent clear
             if let Err(rollback_err) = tx.rollback().await {
                 log::warn!(
-                    "Failed to rollback transaction after satellite insert error (this is non-fatal): {}",
-                    rollback_err
+                    "Failed to rollback transaction after satellite insert error (this is non-fatal): {rollback_err}"
                 );
             }
             Err(e)

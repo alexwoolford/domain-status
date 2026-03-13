@@ -32,7 +32,7 @@ fn extract_common_name(subject: &str) -> Option<&str> {
 fn hostname_matches_certificate(
     final_url: &str,
     cert_subject: &str,
-    cert_sans: &Option<Vec<String>>,
+    cert_sans: Option<&Vec<String>>,
 ) -> bool {
     let Ok(parsed) = url::Url::parse(final_url) else {
         return false;
@@ -67,12 +67,12 @@ fn hostname_matches_certificate(
 /// A vector of security warnings found
 pub fn analyze_security(
     final_url: &str,
-    tls_version: &Option<TlsVersion>,
+    tls_version: Option<TlsVersion>,
     security_headers: &HashMap<String, String>,
-    cert_subject: &Option<String>,
-    cert_issuer: &Option<String>,
-    cert_valid_to: &Option<chrono::NaiveDateTime>,
-    cert_sans: &Option<Vec<String>>,
+    cert_subject: Option<&str>,
+    cert_issuer: Option<&str>,
+    cert_valid_to: Option<&chrono::NaiveDateTime>,
+    cert_sans: Option<&Vec<String>>,
 ) -> Vec<SecurityWarning> {
     let mut warnings = Vec::new();
 
@@ -197,12 +197,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &None, // no TLS version provided
+            None, // no TLS version provided
             &security_headers,
-            &None, // no certificate
-            &None,
-            &None,
-            &None,
+            None, // no certificate
+            None,
+            None,
+            None,
         );
 
         // Should have warnings for missing security headers, but not for HTTPS
@@ -215,12 +215,12 @@ mod tests {
 
         let warnings = analyze_security(
             "http://example.com", // HTTP not HTTPS
-            &None,
+            None,
             &security_headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         assert!(warnings.contains(&SecurityWarning::NoHttps));
@@ -232,12 +232,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         // Should warn about missing security headers
@@ -263,12 +263,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         // Should not warn about missing headers
@@ -284,12 +284,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls10), // Weak TLS version
+            Some(TlsVersion::Tls10), // Weak TLS version
             &security_headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         assert!(warnings.contains(&SecurityWarning::WeakTls));
@@ -301,12 +301,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13), // Strong TLS version
+            Some(TlsVersion::Tls13), // Strong TLS version
             &security_headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         assert!(!warnings.contains(&SecurityWarning::WeakTls));
@@ -324,12 +324,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt".to_string()),
-            &Some(expired_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt"),
+            Some(&expired_date),
+            None,
         );
 
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
@@ -348,12 +348,12 @@ mod tests {
         // Subject == Issuer means self-signed
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=example.com".to_string()), // Same as subject = self-signed
-            &Some(future_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=example.com"), // Same as subject = self-signed
+            Some(&future_date),
+            None,
         );
 
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
@@ -371,12 +371,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &Some("CN=example.com".to_string()),
-            &Some("CN=Let's Encrypt Authority X3".to_string()),
-            &Some(future_date),
-            &None,
+            Some("CN=example.com"),
+            Some("CN=Let's Encrypt Authority X3"),
+            Some(&future_date),
+            None,
         );
 
         // Should not have invalid certificate warning
@@ -390,12 +390,12 @@ mod tests {
         // HTTPS but no certificate info (extraction failed)
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &None, // No certificate info
-            &None,
-            &None,
-            &None,
+            None, // No certificate info
+            None,
+            None,
+            None,
         );
 
         // Should warn about invalid certificate (couldn't extract)
@@ -412,12 +412,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &Some("CN=other.example".to_string()),
-            &Some("CN=Trusted Issuer".to_string()),
-            &Some(future_date),
-            &Some(vec!["other.example".to_string()]),
+            Some("CN=other.example"),
+            Some("CN=Trusted Issuer"),
+            Some(&future_date),
+            Some(&vec!["other.example".to_string()]),
         );
 
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
@@ -440,12 +440,12 @@ mod tests {
 
         let warnings = analyze_security(
             "https://example.com",
-            &Some(TlsVersion::Tls13),
+            Some(TlsVersion::Tls13),
             &security_headers,
-            &None,
-            &None,
-            &None,
-            &None,
+            None,
+            None,
+            None,
+            None,
         );
 
         // Should not warn about missing headers (case-insensitive matching)

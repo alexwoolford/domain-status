@@ -10,7 +10,7 @@ use crate::fingerprint::models::Technology;
 use crate::security::validate_url_safe;
 
 /// Fetches all JSON files from a GitHub directory and merges them
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Sequential GitHub API: list directory, fetch each JSON, parse and merge into ruleset
 pub(crate) async fn fetch_from_github_directory(
     dir_url: &str,
     client: &Client,
@@ -27,41 +27,29 @@ pub(crate) async fn fetch_from_github_directory(
             let repo = parts[4];
             let branch = parts.get(5).copied().unwrap_or("main"); // Extract branch, default to "main"
             let path = parts[6..].join("/");
-            let constructed_url = format!(
-                "https://api.github.com/repos/{}/{}/contents/{}",
-                owner, repo, path
-            );
+            let constructed_url =
+                format!("https://api.github.com/repos/{owner}/{repo}/contents/{path}");
             // Validate constructed URL (defense in depth)
-            validate_url_safe(&constructed_url).with_context(|| {
-                format!("Unsafe GitHub API URL constructed: {}", constructed_url)
-            })?;
+            validate_url_safe(&constructed_url)
+                .with_context(|| format!("Unsafe GitHub API URL constructed: {constructed_url}"))?;
             (constructed_url, branch)
         } else {
             return Err(anyhow::anyhow!(
                 "Invalid GitHub URL format. Expected: \
-                'https://raw.githubusercontent.com/owner/repo/branch/path', got: '{}'",
-                dir_url
+                'https://raw.githubusercontent.com/owner/repo/branch/path', got: '{dir_url}'"
             ));
         }
     } else {
         // Already an API URL or different format - validate it
-        validate_url_safe(dir_url)
-            .with_context(|| format!("Unsafe GitHub API URL: {}", dir_url))?;
+        validate_url_safe(dir_url).with_context(|| format!("Unsafe GitHub API URL: {dir_url}"))?;
         (dir_url.to_string(), "main") // Default branch if not specified
     };
 
-    log::info!(
-        "Fetching technology files from GitHub directory: {}",
-        api_url
-    );
+    log::info!("Fetching technology files from GitHub directory: {api_url}");
 
     // Fetch directory listing with branch reference
-    let api_url_with_ref = format!("{}?ref={}", api_url, branch);
-    log::debug!(
-        "Fetching directory listing from: {} (branch: {})",
-        api_url_with_ref,
-        branch
-    );
+    let api_url_with_ref = format!("{api_url}?ref={branch}");
+    log::debug!("Fetching directory listing from: {api_url_with_ref} (branch: {branch})");
 
     // Build request with optional GitHub token for authentication
     let mut request = client
@@ -73,7 +61,7 @@ pub(crate) async fn fetch_from_github_directory(
     // Token can be set via environment variable or .env file (loaded at startup)
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         if !token.is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", token));
+            request = request.header("Authorization", format!("Bearer {token}"));
             log::info!("Using GitHub token for authentication (rate limit: 5000 requests/hour)");
         }
     }
@@ -99,16 +87,12 @@ pub(crate) async fn fetch_from_github_directory(
                 \
                 Alternatively, use a cached ruleset or wait before retrying. \
                 \
-                Error: {} - {}",
-                status,
-                error_text
+                Error: {status} - {error_text}"
             ));
         }
 
         return Err(anyhow::anyhow!(
-            "Failed to fetch directory listing: {} - {}",
-            status,
-            error_text
+            "Failed to fetch directory listing: {status} - {error_text}"
         ));
     }
 
@@ -127,7 +111,12 @@ pub(crate) async fn fetch_from_github_directory(
     // Filter for JSON files only
     let json_files: Vec<_> = entries
         .into_iter()
-        .filter(|f| f.file_type == "file" && f.name.ends_with(".json"))
+        .filter(|f| {
+            f.file_type == "file"
+                && std::path::Path::new(&f.name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        })
         .collect();
 
     log::info!("Found {} JSON files to fetch", json_files.len());
@@ -139,19 +128,14 @@ pub(crate) async fn fetch_from_github_directory(
             // SSRF protection: validate download URL from GitHub API
             // GitHub API should only return raw.githubusercontent.com URLs, but validate to be safe
             if let Err(e) = validate_url_safe(&download_url) {
-                log::warn!(
-                    "Skipping unsafe download URL from GitHub API: {} - {}",
-                    download_url,
-                    e
-                );
+                log::warn!("Skipping unsafe download URL from GitHub API: {download_url} - {e}");
                 continue;
             }
 
             // Additional check: ensure it's actually a GitHub URL (defense in depth)
             if !download_url.starts_with("https://raw.githubusercontent.com/") {
                 log::warn!(
-                    "Suspicious download URL from GitHub API (not raw.githubusercontent.com): {}",
-                    download_url
+                    "Suspicious download URL from GitHub API (not raw.githubusercontent.com): {download_url}"
                 );
                 continue;
             }
@@ -165,10 +149,7 @@ pub(crate) async fn fetch_from_github_directory(
                             if let Some(content_length) = resp.content_length() {
                                 if content_length > MAX_RULESET_DOWNLOAD_SIZE as u64 {
                                     log::warn!(
-                                        "File {} too large ({} bytes, max: {}), skipping",
-                                        download_url,
-                                        content_length,
-                                        MAX_RULESET_DOWNLOAD_SIZE
+                                        "File {download_url} too large ({content_length} bytes, max: {MAX_RULESET_DOWNLOAD_SIZE}), skipping"
                                     );
                                     return None;
                                 }
@@ -191,13 +172,13 @@ pub(crate) async fn fetch_from_github_directory(
                                     {
                                         Ok(techs) => Some(techs),
                                         Err(e) => {
-                                            log::warn!("Failed to parse {}: {}", download_url, e);
+                                            log::warn!("Failed to parse {download_url}: {e}");
                                             None
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    log::warn!("Failed to read {}: {}", download_url, e);
+                                    log::warn!("Failed to read {download_url}: {e}");
                                     None
                                 }
                             }
@@ -207,7 +188,7 @@ pub(crate) async fn fetch_from_github_directory(
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to request {}: {}", download_url, e);
+                        log::warn!("Failed to request {download_url}: {e}");
                         None
                     }
                 }

@@ -132,10 +132,12 @@ fn extract_json_ld(html: &str) -> Vec<serde_json::Value> {
 fn extract_open_graph(document: &Html) -> HashMap<String, String> {
     let mut og_tags = HashMap::new();
 
-    // Selector for meta tags with property attribute starting with "og:"
-    let selector_str = r#"meta[property^="og:"]"#;
-    if let Ok(selector) = Selector::parse(selector_str) {
-        for element in document.select(&selector) {
+    static OG_SELECTOR: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse(r#"meta[property^="og:"]"#).expect("OG selector")
+    });
+    {
+        let selector = &*OG_SELECTOR;
+        for element in document.select(selector) {
             if let (Some(property), Some(content)) = (
                 element.value().attr("property"),
                 element.value().attr("content"),
@@ -154,16 +156,15 @@ fn extract_open_graph(document: &Html) -> HashMap<String, String> {
 fn extract_twitter_cards(document: &Html) -> HashMap<String, String> {
     let mut twitter_tags = HashMap::new();
 
-    // Selector for meta tags with name attribute starting with "twitter:"
-    let selector_str = r#"meta[name^="twitter:"]"#;
-    if let Ok(selector) = Selector::parse(selector_str) {
-        for element in document.select(&selector) {
-            if let (Some(name), Some(content)) = (
-                element.value().attr("name"),
-                element.value().attr("content"),
-            ) {
-                twitter_tags.insert(name.to_string(), content.to_string());
-            }
+    static TWITTER_SELECTOR: std::sync::LazyLock<Selector> = std::sync::LazyLock::new(|| {
+        Selector::parse(r#"meta[name^="twitter:"]"#).expect("Twitter card selector")
+    });
+    for element in document.select(&TWITTER_SELECTOR) {
+        if let (Some(name), Some(content)) = (
+            element.value().attr("name"),
+            element.value().attr("content"),
+        ) {
+            twitter_tags.insert(name.to_string(), content.to_string());
         }
     }
 

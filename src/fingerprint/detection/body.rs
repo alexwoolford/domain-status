@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
+#[cfg(test)]
 use crate::fingerprint::ruleset::get_ruleset;
 
 /// Result of body matching for a single technology
@@ -28,7 +29,7 @@ pub struct BodyMatchResult {
 /// 4. URL patterns (checked last)
 ///
 /// wappalyzergo takes the first version found across all pattern types.
-#[allow(dead_code)] // kept for fingerprint tests; main path uses check_body_with_ruleset
+#[cfg(test)]
 pub async fn check_body(
     html_body: &str,
     script_sources: &[String],

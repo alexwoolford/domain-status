@@ -27,7 +27,7 @@ use super::github::fetch_from_github_directory;
 /// to prevent `DoS` attacks via extremely large files.
 pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technology>> {
     // SSRF protection: validate URL before fetching
-    validate_url_safe(url).with_context(|| format!("Unsafe ruleset URL rejected: {}", url))?;
+    validate_url_safe(url).with_context(|| format!("Unsafe ruleset URL rejected: {url}"))?;
 
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
     use crate::initialization::init_resolver;
@@ -45,14 +45,18 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
     // Check if URL points to a directory (GitHub) or a file
     // For HTTP Archive, we need to fetch all JSON files from the directory
     // raw.githubusercontent.com URLs that don't end in .json are directories
-    if url.contains("raw.githubusercontent.com") && !url.ends_with(".json") {
+    if url.contains("raw.githubusercontent.com")
+        && !std::path::Path::new(url)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
         // It's a directory - fetch all JSON files via GitHub API
         log::debug!("Detected GitHub directory URL, fetching via API");
         return fetch_from_github_directory(url, &client).await;
     }
 
     // Single file - fetch with retries and size limits
-    log::debug!("Fetching single file from: {}", url);
+    log::debug!("Fetching single file from: {url}");
 
     let mut last_error = None;
     for attempt in 1..=MAX_NETWORK_DOWNLOAD_RETRIES {
@@ -62,10 +66,7 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
                 last_error = Some(e);
                 if attempt < MAX_NETWORK_DOWNLOAD_RETRIES {
                     log::warn!(
-                        "Failed to fetch ruleset from {} (attempt {}/{}), retrying...",
-                        url,
-                        attempt,
-                        MAX_NETWORK_DOWNLOAD_RETRIES
+                        "Failed to fetch ruleset from {url} (attempt {attempt}/{MAX_NETWORK_DOWNLOAD_RETRIES}), retrying..."
                     );
                     // Exponential backoff: 1s, 2s, 4s
                     tokio::time::sleep(Duration::from_secs(1 << (attempt - 1))).await;
@@ -76,9 +77,7 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
 
     Err(last_error.unwrap_or_else(|| {
         anyhow::anyhow!(
-            "Failed to fetch ruleset from {} after {} attempts",
-            url,
-            MAX_NETWORK_DOWNLOAD_RETRIES
+            "Failed to fetch ruleset from {url} after {MAX_NETWORK_DOWNLOAD_RETRIES} attempts"
         )
     }))
 }
@@ -102,9 +101,7 @@ async fn fetch_single_file_with_size_limit(
     if let Some(content_length) = response.content_length() {
         if content_length > MAX_RULESET_DOWNLOAD_SIZE as u64 {
             return Err(anyhow::anyhow!(
-                "Ruleset file too large: {} bytes (max: {} bytes)",
-                content_length,
-                MAX_RULESET_DOWNLOAD_SIZE
+                "Ruleset file too large: {content_length} bytes (max: {MAX_RULESET_DOWNLOAD_SIZE} bytes)"
             ));
         }
     }

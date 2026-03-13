@@ -124,8 +124,8 @@ fn compile_global_allowlist(raw: Option<AllowlistRaw>) -> CompiledGlobalAllowlis
 }
 
 fn parse_condition(condition: Option<&str>) -> AllowlistCondition {
-    match condition.map(|s| s.to_uppercase()).as_deref() {
-        Some("AND") | Some("&&") => AllowlistCondition::And,
+    match condition.map(str::to_uppercase).as_deref() {
+        Some("AND" | "&&") => AllowlistCondition::And,
         _ => AllowlistCondition::Or,
     }
 }
@@ -219,7 +219,7 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
     let file: OverridesFile = match toml::from_str(overlay_toml) {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("Failed to parse gitleaks.overrides.toml: {}", e);
+            log::warn!("Failed to parse gitleaks.overrides.toml: {e}");
             return;
         }
     };
@@ -227,12 +227,9 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
     // Add entirely new rules from [[rules]] entries
     if let Some(new_rules) = file.rules {
         for r in new_rules {
-            let regex_str = match &r.regex {
-                Some(s) => s,
-                None => {
-                    log::debug!("Skipping override rule '{}': no regex", r.id);
-                    continue;
-                }
+            let Some(regex_str) = &r.regex else {
+                log::debug!("Skipping override rule '{}': no regex", r.id);
+                continue;
             };
             let regex = match Regex::new(regex_str) {
                 Ok(re) => re,
@@ -295,7 +292,7 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
 fn load_compiled() -> GitleaksCompiled {
     let toml_str = include_str!("../../config/gitleaks.toml");
     let value: Value =
-        toml::from_str(toml_str).unwrap_or_else(|e| panic!("Failed to parse gitleaks.toml: {}", e));
+        toml::from_str(toml_str).unwrap_or_else(|e| panic!("Failed to parse gitleaks.toml: {e}"));
 
     let global_allowlist = value.get("allowlist").and_then(|v| {
         toml::to_string(v)
@@ -308,7 +305,7 @@ fn load_compiled() -> GitleaksCompiled {
     let raw_rules: Vec<RuleRaw> = match rules_val {
         Value::Array(_) => {
             let raw: GitleaksConfigRaw = toml::from_str(toml_str)
-                .unwrap_or_else(|e| panic!("Failed to parse gitleaks.toml rules: {}", e));
+                .unwrap_or_else(|e| panic!("Failed to parse gitleaks.toml rules: {e}"));
             raw.rules
         }
         Value::Table(t) => rules_from_table(t),
@@ -318,12 +315,9 @@ fn load_compiled() -> GitleaksCompiled {
     let mut rules: Vec<CompiledRule> = raw_rules
         .into_iter()
         .filter_map(|r| {
-            let regex_str = match &r.regex {
-                Some(s) => s,
-                None => {
-                    log::debug!("Skipping gitleaks rule '{}': no regex (path-only)", r.id);
-                    return None;
-                }
+            let Some(regex_str) = &r.regex else {
+                log::debug!("Skipping gitleaks rule '{}': no regex (path-only)", r.id);
+                return None;
             };
             let regex = match Regex::new(regex_str) {
                 Ok(re) => re,
@@ -356,9 +350,7 @@ fn load_compiled() -> GitleaksCompiled {
         })
         .collect();
 
-    if rules.is_empty() {
-        panic!("gitleaks.toml produced no valid rules");
-    }
+    assert!(!rules.is_empty(), "gitleaks.toml produced no valid rules");
 
     // Apply overlay so web-specific allowlists (e.g. sourcegraph) are not lost when refreshing upstream gitleaks.toml.
     let overlay_toml = include_str!("../../config/gitleaks.overrides.toml");

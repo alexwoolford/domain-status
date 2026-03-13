@@ -44,7 +44,9 @@ impl std::fmt::Display for FailureContextError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Provide more useful error message with context details
         if let Some(ref final_url) = self.context.final_url {
-            if !self.context.redirect_chain.is_empty() {
+            if self.context.redirect_chain.is_empty() {
+                write!(f, "Request failed for {final_url}")
+            } else {
                 write!(
                     f,
                     "Request failed for {} (redirected from {} via {} hop(s))",
@@ -52,8 +54,6 @@ impl std::fmt::Display for FailureContextError {
                     self.context.redirect_chain.first().unwrap_or(final_url),
                     self.context.redirect_chain.len().saturating_sub(1)
                 )
-            } else {
-                write!(f, "Request failed for {}", final_url)
             }
         } else {
             write!(f, "Request failed (no final URL available)")

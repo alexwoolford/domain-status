@@ -46,16 +46,14 @@ use url::Url;
 /// assert!(validate_url_safe("file:///etc/passwd").is_err());
 /// ```
 pub fn validate_url_safe(url_str: &str) -> Result<()> {
-    let url = Url::parse(url_str).with_context(|| format!("Failed to parse URL: {}", url_str))?;
+    let url = Url::parse(url_str).with_context(|| format!("Failed to parse URL: {url_str}"))?;
 
     // Only allow http:// and https:// schemes
     match url.scheme() {
         "http" | "https" => {}
         scheme => {
             return Err(anyhow::anyhow!(
-                "Unsafe URL scheme '{}' (only http:// and https:// allowed): {}",
-                scheme,
-                url_str
+                "Unsafe URL scheme '{scheme}' (only http:// and https:// allowed): {url_str}"
             ));
         }
     }
@@ -67,33 +65,27 @@ pub fn validate_url_safe(url_str: &str) -> Result<()> {
                 // Check for localhost variants
                 if is_localhost_domain(domain) {
                     return Err(anyhow::anyhow!(
-                        "Unsafe URL: localhost domain '{}' is not allowed: {}",
-                        domain,
-                        url_str
+                        "Unsafe URL: localhost domain '{domain}' is not allowed: {url_str}"
                     ));
                 }
             }
             url::Host::Ipv4(ip) => {
                 if is_private_ipv4(ip) {
                     return Err(anyhow::anyhow!(
-                        "Unsafe URL: private IPv4 address '{}' is not allowed: {}",
-                        ip,
-                        url_str
+                        "Unsafe URL: private IPv4 address '{ip}' is not allowed: {url_str}"
                     ));
                 }
             }
             url::Host::Ipv6(ip) => {
                 if is_private_ipv6(ip) {
                     return Err(anyhow::anyhow!(
-                        "Unsafe URL: private IPv6 address '{}' is not allowed: {}",
-                        ip,
-                        url_str
+                        "Unsafe URL: private IPv6 address '{ip}' is not allowed: {url_str}"
                     ));
                 }
             }
         }
     } else {
-        return Err(anyhow::anyhow!("URL has no host component: {}", url_str));
+        return Err(anyhow::anyhow!("URL has no host component: {url_str}"));
     }
 
     Ok(())

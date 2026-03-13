@@ -20,7 +20,7 @@ use crate::fetch::{resolve_redirect_chain, ProcessingContext};
 /// # Errors
 ///
 /// Returns an error if redirect resolution, HTTP request, or response handling fails.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Full request lifecycle: SSRF check, redirect resolution, HTTP request, response handling
 pub async fn handle_http_request(
     ctx: &ProcessingContext,
     url: &str,
@@ -97,7 +97,7 @@ pub async fn handle_http_request(
                         reqwest::header::HeaderValue::from_str(alt_svc_str),
                     ) {
                         response.headers_mut().insert(header_name, header_value);
-                        log::trace!("Added alt-svc header from redirect chain: {}", alt_svc_str);
+                        log::trace!("Added alt-svc header from redirect chain: {alt_svc_str}");
                     }
                 }
             }

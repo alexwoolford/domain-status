@@ -6,10 +6,6 @@
 use std::time::Duration;
 
 // constants (used as defaults)
-#[allow(dead_code)]
-/// Maximum concurrent requests (semaphore limit)
-/// Increased from 20 to 30 for better throughput while maintaining low bot detection risk
-pub const SEMAPHORE_LIMIT: usize = 30;
 /// Interval in seconds for logging progress updates during URL processing
 pub const LOGGING_INTERVAL: usize = 5;
 /// Per-URL processing timeout in seconds
@@ -94,10 +90,6 @@ pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
 pub const MAX_TOTAL_SCRIPT_CONTENT: usize = 500 * 1024; // 500KB total
 
 // HTML text extraction limits
-/// Maximum HTML text content to extract in characters (50KB)
-/// Limits the amount of text we extract from HTML for performance
-/// This prevents excessive memory usage on very large pages
-pub const MAX_HTML_TEXT_EXTRACTION_CHARS: usize = 50_000;
 /// Maximum HTML preview length in characters for debugging (500 chars)
 /// Used when logging HTML previews for debugging purposes
 pub const MAX_HTML_PREVIEW_CHARS: usize = 500;

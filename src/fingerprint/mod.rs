@@ -25,12 +25,14 @@ mod patterns;
 mod ruleset;
 
 // Re-export public API
+#[cfg(test)]
+pub use detection::detect_technologies;
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
-pub use detection::{detect_technologies, get_technology_category, DetectedTechnology};
+pub use detection::{get_technology_category, DetectedTechnology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
-pub use ruleset::{get_ruleset_metadata, init_ruleset};
+pub use ruleset::init_ruleset;
 
 // For spawn_blocking path (fetch layer): ruleset fetch + blocking detection
 pub(crate) use detection::detect_technologies_blocking;
@@ -41,22 +43,8 @@ mod tests {
     use super::*;
     use crate::fingerprint::js_parsing::strip_js_comments_and_strings;
     use crate::fingerprint::patterns::matches_pattern;
-    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+    use reqwest::header::HeaderMap;
     use std::collections::{HashMap, HashSet};
-
-    #[allow(dead_code)]
-    fn create_test_headers() -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static("server"),
-            HeaderValue::from_static("nginx/1.18.0"),
-        );
-        headers.insert(
-            HeaderName::from_static("x-powered-by"),
-            HeaderValue::from_static("PHP/7.4"),
-        );
-        headers
-    }
 
     #[tokio::test]
     async fn test_pattern_matching() {

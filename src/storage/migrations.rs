@@ -70,7 +70,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), anyhow::Error> {
             Ok(())
         })
         .await
-        .map_err(|e| anyhow::anyhow!("Task panicked during migration extraction: {}", e))??;
+        .map_err(|e| anyhow::anyhow!("Task panicked during migration extraction: {e}"))??;
 
         // Run migrations from the temp directory
         // temp_dir stays alive for the entire function, so files remain accessible

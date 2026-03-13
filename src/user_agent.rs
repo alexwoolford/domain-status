@@ -44,18 +44,17 @@ async fn fetch_latest_chrome_version() -> String {
     for source in sources {
         match try_fetch_chrome_version(source).await {
             Ok(version) => {
-                log::debug!("Fetched Chrome version {} from {}", version, source);
+                log::debug!("Fetched Chrome version {version} from {source}");
                 return version;
             }
             Err(e) => {
-                log::debug!("Failed to fetch Chrome version from {}: {}", source, e);
+                log::debug!("Failed to fetch Chrome version from {source}: {e}");
             }
         }
     }
 
     log::warn!(
-        "Failed to fetch latest Chrome version from all sources, using fallback: {}",
-        FALLBACK_CHROME_VERSION
+        "Failed to fetch latest Chrome version from all sources, using fallback: {FALLBACK_CHROME_VERSION}"
     );
     FALLBACK_CHROME_VERSION.to_string()
 }
@@ -85,7 +84,7 @@ async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
         // Extract major version (e.g., "131.0.6778.85" -> "131.0.0.0")
         let version = text.trim();
         let major = version.split('.').next().unwrap_or(version);
-        Ok(format!("{}.0.0.0", major))
+        Ok(format!("{major}.0.0.0"))
     } else if url.contains("chrome-for-testing") {
         // JSON response: extract version from "stable" channel
         #[derive(Deserialize)]
@@ -112,7 +111,7 @@ async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
                     .next()
                     .unwrap_or(&stable.version)
                     .to_string();
-                return Ok(format!("{}.0.0.0", major));
+                return Ok(format!("{major}.0.0.0"));
             }
         }
         Err(anyhow::anyhow!("No stable version found in JSON"))
@@ -127,9 +126,10 @@ async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
 /// Returns the cached version if it exists and is less than 30 days old.
 /// Otherwise, fetches the latest version and caches it.
 pub async fn get_chrome_version(cache_dir: Option<&Path>) -> String {
-    let cache_path = cache_dir
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CACHE_DIR));
+    let cache_path = cache_dir.map_or_else(
+        || PathBuf::from(DEFAULT_CACHE_DIR),
+        std::path::Path::to_path_buf,
+    );
 
     // Try to load from cache first
     if let Ok(version) = load_from_cache(&cache_path).await {
@@ -141,7 +141,7 @@ pub async fn get_chrome_version(cache_dir: Option<&Path>) -> String {
 
     // Save to cache (ignore errors - caching is best-effort)
     if let Err(e) = save_to_cache(&cache_path, &version).await {
-        log::debug!("Failed to save User-Agent cache: {}", e);
+        log::debug!("Failed to save User-Agent cache: {e}");
     }
 
     version
@@ -161,8 +161,7 @@ async fn load_from_cache(cache_dir: &Path) -> Result<String, anyhow::Error> {
     // Check if cache is fresh. If last_updated is in the future, elapsed() returns Err — treat as valid (skip age check).
     match metadata.last_updated.elapsed() {
         Ok(age) if age > CACHE_DURATION => return Err(anyhow::anyhow!("Cache expired")),
-        Ok(_) => {}  // Fresh
-        Err(_) => {} // Future timestamp (clock skew or test); cannot compute age, accept cache
+        Ok(_) | Err(_) => {} // Fresh, or future timestamp (clock skew or test); accept cache
     }
 
     Ok(metadata.chrome_version)
@@ -188,8 +187,7 @@ async fn save_to_cache(cache_dir: &Path, version: &str) -> Result<(), anyhow::Er
 /// Generates a User-Agent string with the given Chrome version.
 pub fn generate_user_agent(chrome_version: &str) -> String {
     format!(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{} Safari/537.36",
-        chrome_version
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36"
     )
 }
 

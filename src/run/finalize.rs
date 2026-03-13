@@ -71,13 +71,13 @@ pub async fn finalize_scan(
     // 2. Memory constraints: Processing billions of URLs would exhaust system memory first
     // 3. Database schema: SQLite uses INTEGER (i32) for these columns
     // 4. Realistic usage: Typical production runs process 100K-10M URLs, well within i32 range
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let total_urls = resources.total_urls_attempted.load(Ordering::SeqCst) as i32;
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let successful_urls = resources.successful_urls.load(Ordering::SeqCst) as i32;
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let failed_urls_count = resources.failed_urls.load(Ordering::SeqCst) as i32;
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let skipped_urls_count = resources.skipped_urls.load(Ordering::SeqCst) as i32;
 
     // Update run statistics in database
@@ -98,10 +98,7 @@ pub async fn finalize_scan(
         .execute(resources.pool.as_ref())
         .await
     {
-        log::warn!(
-            "Failed to checkpoint WAL file (this is non-critical): {}",
-            e
-        );
+        log::warn!("Failed to checkpoint WAL file (this is non-critical): {e}");
     }
 
     // Close database pool
@@ -255,8 +252,8 @@ mod tests {
             run_id: run_id.to_string(),
             start_time_epoch: start_time_ms,
             start_time,
-            ruleset,
-            geoip_metadata: None,
+            _ruleset: ruleset,
+            _geoip_metadata: None,
             config,
         };
 

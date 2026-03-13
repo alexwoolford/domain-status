@@ -43,9 +43,6 @@ impl std::error::Error for WrappedIoError {
 pub trait IoErrorContext<T> {
     /// Attaches the path as context; the error message will include it.
     fn with_path<P: AsRef<Path>>(self, path: P) -> Result<T, WrappedIoError>;
-    /// Attaches a string as context (e.g. operation name).
-    #[allow(dead_code)]
-    fn with_str<S: Into<String>>(self, context: S) -> Result<T, WrappedIoError>;
 }
 
 impl<T> IoErrorContext<T> for Result<T, io::Error> {
@@ -53,13 +50,6 @@ impl<T> IoErrorContext<T> for Result<T, io::Error> {
         self.map_err(|e| WrappedIoError {
             io_error: e,
             context: path.as_ref().to_string_lossy().to_string(),
-        })
-    }
-
-    fn with_str<S: Into<String>>(self, context: S) -> Result<T, WrappedIoError> {
-        self.map_err(|e| WrappedIoError {
-            io_error: e,
-            context: context.into(),
         })
     }
 }
@@ -82,10 +72,10 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
     if parent.as_os_str().is_empty() || parent == Path::new(".") {
         return Ok(());
     }
-    let _already_exists = parent.is_dir();
+    let already_exists = parent.is_dir();
     std::fs::create_dir_all(parent)?;
     #[cfg(unix)]
-    if !_already_exists {
+    if !already_exists {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(parent)?.permissions();
         perms.set_mode(0o700);
@@ -98,21 +88,23 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
 ///
 /// Call when reading config or other sensitive files so users are prompted to
 /// restrict permissions (e.g. `chmod 600`). No-op on non-Unix or if metadata cannot be read.
-pub fn warn_if_world_readable(_path: &Path) {
+pub fn warn_if_world_readable(path: &Path) {
     #[cfg(unix)]
     {
-        if let Ok(meta) = std::fs::metadata(_path) {
+        if let Ok(meta) = std::fs::metadata(path) {
             let mode = meta.permissions().mode();
             // World-readable or world-writable
             if (mode & 0o006) != 0 {
                 log::warn!(
                     "Config file {} is world-readable (mode {:o}); consider chmod 600 to protect secrets",
-                    _path.display(),
+                    path.display(),
                     mode & 0o777
                 );
             }
         }
     }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// If the error chain contains an IO or path-related error, prints a short hint to stderr.

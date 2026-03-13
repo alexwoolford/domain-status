@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use sqlx::Row;
-use std::collections::HashMap;
 
 use crate::storage::DbPool;
 
@@ -84,7 +83,6 @@ pub struct HttpHeader {
 
 /// Main row data from the `url_status` table.
 #[derive(Debug)]
-#[allow(dead_code)] // Fields available to export formatters; not all used yet
 pub struct MainRowData {
     pub id: i64,
     pub initial_domain: String,
@@ -116,11 +114,6 @@ pub struct MainRowData {
     pub content_type: Option<String>,
     pub canonical_url: Option<String>,
     pub cert_fingerprint_sha256: Option<String>,
-    pub cert_serial_number: Option<String>,
-    pub cert_is_self_signed: Option<bool>,
-    pub cert_is_wildcard: Option<bool>,
-    pub cert_is_mismatched: Option<bool>,
-    pub meta_refresh_url: Option<String>,
 }
 
 /// A single redirect entry.
@@ -180,7 +173,6 @@ pub struct CaaRecord {
 /// This struct consolidates all satellite data fetched from various tables
 /// for a single URL record, providing a unified view for exporters.
 #[derive(Debug)]
-#[allow(dead_code)] // Fields available to export formatters; not all used yet
 pub struct ExportRow {
     /// Main row data from `url_status` table
     pub main: MainRowData,
@@ -284,18 +276,6 @@ pub struct ExportRow {
     /// CAA records
     pub caa_records: Vec<CaaRecord>,
     pub caa_count: usize,
-
-    /// CSP domains
-    pub csp_domain_count: usize,
-
-    /// Cookies
-    pub cookie_count: usize,
-
-    /// Resource hints
-    pub resource_hint_count: usize,
-
-    /// Body domains
-    pub body_domain_count: usize,
 }
 
 /// Key HTTP headers to include in exports.
@@ -352,11 +332,6 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         content_type: row.get("content_type"),
         canonical_url: row.get("canonical_url"),
         cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),
-        cert_serial_number: row.get("cert_serial_number"),
-        cert_is_self_signed: row.get("cert_is_self_signed"),
-        cert_is_wildcard: row.get("cert_is_wildcard"),
-        cert_is_mismatched: row.get("cert_is_mismatched"),
-        meta_refresh_url: row.get("meta_refresh_url"),
     }
 }
 
@@ -510,8 +485,8 @@ async fn fetch_social_and_structured(
     Ok((social_media_links, structured_data_entries))
 }
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::too_many_lines)] // Sequentially fetches ~15 related tables to build a single export row
+#[allow(clippy::cognitive_complexity)] // Inherent in assembling data from many DB tables into one struct
 pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<ExportRow> {
     let url_status_id = main.id;
 
@@ -581,8 +556,12 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
 
     // Fetch DNS records (actual data)
     let (nameservers, txt_records, mx_records) = fetch_dns_records(pool, url_status_id).await?;
+    // DNS record counts are bounded by EXPORT_LIMIT (small constant), safe to cast
+    #[allow(clippy::cast_possible_wrap)]
     let nameserver_count = nameservers.len() as i64;
+    #[allow(clippy::cast_possible_wrap)]
     let txt_count = txt_records.len() as i64;
+    #[allow(clippy::cast_possible_wrap)]
     let mx_count = mx_records.len() as i64;
 
     // Fetch CNAME records
@@ -856,106 +835,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         ipv6_count,
         caa_records,
         caa_count,
-        csp_domain_count: sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM url_csp_domains WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_one(pool.as_ref())
-        .await
-        .unwrap_or(0) as usize,
-        cookie_count: sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM url_cookies WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_one(pool.as_ref())
-        .await
-        .unwrap_or(0) as usize,
-        resource_hint_count: sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM url_resource_hints WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_one(pool.as_ref())
-        .await
-        .unwrap_or(0) as usize,
-        body_domain_count: sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM url_body_domains WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_one(pool.as_ref())
-        .await
-        .unwrap_or(0) as usize,
     })
-}
-
-/// Parse technologies string into a list of (name, version) tuples.
-///
-/// The input string is in format "name1:version1,name2:version2,..."
-pub fn parse_technologies(technologies_str: &str) -> Vec<(String, Option<String>)> {
-    if technologies_str.is_empty() {
-        return vec![];
-    }
-
-    technologies_str
-        .split(',')
-        .filter_map(|s| {
-            let parts: Vec<&str> = s.split(':').collect();
-            if !parts.is_empty() && !parts[0].is_empty() {
-                let name = parts[0].to_string();
-                let version = if parts.len() >= 2 && !parts[1].is_empty() {
-                    Some(parts[1].to_string())
-                } else {
-                    None
-                };
-                Some((name, version))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// Parse key-value string into a list of (key, value) tuples.
-///
-/// The input string is in format "key1:value1,key2:value2,..."
-pub fn parse_key_value_pairs(kv_str: &str) -> Vec<(String, String)> {
-    if kv_str.is_empty() {
-        return vec![];
-    }
-
-    kv_str
-        .split(',')
-        .filter_map(|s| {
-            let parts: Vec<&str> = s.split(':').collect();
-            if parts.len() >= 2 {
-                Some((parts[0].to_string(), parts[1..].join(":")))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// Parse headers string into a `HashMap`.
-///
-/// The input string is in format "header1:value1;header2:value2;..."
-/// Note: values may contain colons, so we only split on the first colon.
-#[allow(dead_code)]
-pub fn parse_headers(headers_str: &str) -> HashMap<String, String> {
-    if headers_str.is_empty() {
-        return HashMap::new();
-    }
-
-    headers_str
-        .split(';')
-        .filter_map(|s| {
-            let parts: Vec<&str> = s.split(':').collect();
-            if parts.len() >= 2 {
-                Some((parts[0].to_string(), parts[1..].join(":")))
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 /// Parse a comma-separated string into a Vec of strings.
@@ -964,7 +844,10 @@ pub fn parse_string_list(list_str: &str) -> Vec<String> {
         return vec![];
     }
 
-    list_str.split(',').map(|s| s.to_string()).collect()
+    list_str
+        .split(',')
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 /// Build the URL from `final_domain`.
@@ -972,6 +855,6 @@ pub fn build_url(final_domain: &str) -> String {
     if final_domain.starts_with("http://") || final_domain.starts_with("https://") {
         final_domain.to_string()
     } else {
-        format!("https://{}", final_domain)
+        format!("https://{final_domain}")
     }
 }

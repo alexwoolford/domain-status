@@ -61,7 +61,7 @@ fn format_date(ts_ms: Option<i64>) -> String {
 ///
 /// # Errors
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // Sequential export: DB setup, query, ~80 CSV columns written in order
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)
         .await

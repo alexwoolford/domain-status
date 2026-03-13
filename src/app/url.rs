@@ -50,18 +50,17 @@ pub fn validate_and_normalize_url(url: &str) -> Option<String> {
     }
 
     // Validate: check syntax and scheme
-    match url::Url::parse(&normalized) {
-        Ok(parsed) => match parsed.scheme() {
+    if let Ok(parsed) = url::Url::parse(&normalized) {
+        match parsed.scheme() {
             "http" | "https" => Some(normalized),
             _ => {
                 warn!("Skipping unsupported scheme for URL: {url}");
                 None
             }
-        },
-        Err(_) => {
-            warn!("Skipping invalid URL: {url}");
-            None
         }
+    } else {
+        warn!("Skipping invalid URL: {url}");
+        None
     }
 }
 
