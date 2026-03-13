@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-03-12
+
+### Fixed
+- **UTF-8 panic in secret scanner**: `extract_context` panicked when byte arithmetic (`start - 80`) landed inside a multi-byte UTF-8 character (e.g. Polish `ę`). This crashed a 2-day scan at 3% through 873K URLs. Now uses `is_char_boundary()` scan to find safe slice points.
+- **Documentation accuracy audit**: DATABASE.md, QUERIES.md, and README.md updated to match current schema (migrations 0001–0008). Added missing `url_jwt_claims` table, fixed duplicate query numbering, corrected library import path, added `skipped_urls` to run history queries, documented `UNIQUE(run_id, final_domain)` constraint.
+
+### Added
+- Regression test `test_context_multibyte_boundary_no_panic` to prevent future UTF-8 boundary panics in the secret scanner.
+
 ## [0.1.19] - 2026-03-12
 
 ### Added
