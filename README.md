@@ -575,7 +575,7 @@ The database uses a **star schema** design pattern with:
 
 **Key Features:**
 - WAL mode for concurrent reads/writes
-- **Idempotency:** `UNIQUE (final_domain, observed_at_ms)` ensures at most one row per final domain per observation time. A new run with the same URL can overwrite that row if it falls in the same millisecond window; runs in the same second can overwrite each other. For repeat scans, include each URL once per run and use run_id to distinguish runs.
+- **Idempotency:** `UNIQUE(run_id, final_domain)` ensures at most one row per domain per run. If the same domain appears multiple times in one input file, only the last result is kept. A legacy `UNIQUE(final_domain, observed_at_ms)` constraint also exists for backwards compatibility.
 - Comprehensive indexes for fast queries
 - Normalized structure for efficient storage and analytics
 
@@ -640,6 +640,7 @@ SELECT
     total_urls,
     successful_urls,
     failed_urls,
+    skipped_urls,
     ROUND(100.0 * successful_urls / total_urls, 1) as success_rate
 FROM runs
 WHERE end_time_ms IS NOT NULL
@@ -649,15 +650,15 @@ LIMIT 10;
 
 **Example output:**
 ```
-run_id              | version | start_time          | end_time            | elapsed_seconds | total_urls | successful_urls | failed_urls | success_rate
---------------------|---------|---------------------|---------------------|-----------------|------------|-----------------|------------|--------------
-run_1765150444953   | 0.1.4   | 2025-01-07 23:33:59 | 2025-01-07 23:34:52 | 52.1            | 100        | 89              | 11         | 89.0
+run_id              | version | start_time          | end_time            | elapsed_seconds | total_urls | successful_urls | failed_urls | skipped_urls | success_rate
+--------------------|---------|---------------------|---------------------|-----------------|------------|-----------------|------------|--------------|-------------
+run_1765150444953   | 0.1.4   | 2025-01-07 23:33:59 | 2025-01-07 23:34:52 | 52.1            | 100        | 89              | 11         | 0            | 89.0
 ```
 
 **Using the library API:**
 
 ```rust
-use domain_status::storage::query_run_history;
+use domain_status::query_run_history;
 use sqlx::SqlitePool;
 
 let pool = SqlitePool::connect("sqlite:./domain_status.db").await?;

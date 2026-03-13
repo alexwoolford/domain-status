@@ -264,7 +264,7 @@ ORDER BY cnt DESC;
 
 ## GeoIP Analysis
 
-### 14. Find all domains by country
+### 20. Find all domains by country
 
 ```sql
 SELECT
@@ -278,7 +278,7 @@ JOIN url_geoip ug ON us.id = ug.url_status_id
 ORDER BY ug.country_code, ug.city;
 ```
 
-### 15. Count domains by country
+### 21. Count domains by country
 
 ```sql
 SELECT
@@ -293,7 +293,7 @@ ORDER BY domain_count DESC;
 
 ## Run History
 
-### 16. List all scan runs
+### 22. List all scan runs
 
 ```sql
 SELECT
@@ -309,7 +309,7 @@ FROM runs
 ORDER BY start_time_ms DESC;
 ```
 
-### 17. Compare results between runs
+### 23. Compare results between runs
 
 ```sql
 -- Find URLs that changed status between runs
@@ -324,7 +324,7 @@ WHERE us1.run_id = 'run_1234567890'  -- Replace with your run IDs
   AND us1.http_status != us2.http_status;
 ```
 
-### 18. Find new technologies detected in latest run
+### 24. Find new technologies detected in latest run
 
 ```sql
 SELECT DISTINCT
@@ -347,7 +347,7 @@ ORDER BY us2.final_domain, ut2.technology_category;
 
 ## Error Analysis
 
-### 19. Find all errors by type
+### 25. Find all errors by type
 
 ```sql
 SELECT
@@ -359,7 +359,7 @@ GROUP BY error_type
 ORDER BY error_count DESC;
 ```
 
-### 20. Find domains with most failures
+### 26. Find domains with most failures
 
 ```sql
 SELECT
@@ -374,7 +374,7 @@ LIMIT 20;
 
 ## Performance Analysis
 
-### 21. Find slowest URLs (by response time)
+### 27. Find slowest URLs (by response time)
 
 ```sql
 SELECT
@@ -383,12 +383,11 @@ SELECT
     response_time_seconds,
     datetime(observed_at_ms/1000, 'unixepoch') as scanned_at
 FROM url_status
-WHERE response_time_seconds IS NOT NULL
 ORDER BY response_time_seconds DESC
 LIMIT 20;
 ```
 
-### 22. Average response time by domain
+### 28. Average response time by domain
 
 ```sql
 SELECT
@@ -398,14 +397,13 @@ SELECT
     ROUND(MAX(response_time_seconds), 3) as max_response_time,
     COUNT(*) as request_count
 FROM url_status
-WHERE response_time_seconds IS NOT NULL
 GROUP BY final_domain
 ORDER BY avg_response_time DESC;
 ```
 
 ## Security Analysis
 
-### 23. Find domains without TLS
+### 29. Find domains without TLS
 
 ```sql
 SELECT
@@ -417,7 +415,7 @@ WHERE tls_version IS NULL
 ORDER BY final_domain;
 ```
 
-### 24. Find domains with security warnings
+### 30. Find domains with security warnings
 
 ```sql
 SELECT
@@ -430,7 +428,7 @@ JOIN url_security_warnings usw ON us.id = usw.url_status_id
 ORDER BY us.final_domain, usw.warning_code;
 ```
 
-### 25. Find exposed secrets (sorted by severity)
+### 31. Find exposed secrets (sorted by severity)
 
 ```sql
 SELECT
@@ -452,7 +450,7 @@ ORDER BY
     us.initial_domain;
 ```
 
-### 26. Count exposed secrets by type
+### 32. Count exposed secrets by type
 
 ```sql
 SELECT
@@ -469,7 +467,7 @@ ORDER BY
 
 ## Contact Information
 
-### 27. Find all email contacts
+### 33. Find all email contacts
 
 ```sql
 SELECT
@@ -482,7 +480,7 @@ WHERE cl.contact_type = 'email'
 ORDER BY us.initial_domain;
 ```
 
-### 28. Find all phone contacts
+### 34. Find all phone contacts
 
 ```sql
 SELECT
@@ -497,7 +495,7 @@ ORDER BY us.initial_domain;
 
 ## Advanced Queries
 
-### 29. Complete domain summary
+### 35. Complete domain summary
 
 ```sql
 SELECT
@@ -513,7 +511,7 @@ GROUP BY us.final_domain
 ORDER BY url_count DESC;
 ```
 
-### 30. Find domains with multiple redirects
+### 36. Find domains with multiple redirects
 
 ```sql
 SELECT
@@ -528,7 +526,7 @@ HAVING redirect_count > 3
 ORDER BY redirect_count DESC;
 ```
 
-### 31. Find domains sharing the same TLS certificate
+### 37. Find domains sharing the same TLS certificate
 
 ```sql
 SELECT
@@ -541,6 +539,60 @@ GROUP BY san.san_value
 HAVING domain_count > 1
 ORDER BY domain_count DESC;
 ```
+
+## JWT Claims Analysis
+
+### 38. Find decoded JWT claims from exposed tokens
+
+```sql
+SELECT
+    us.final_domain,
+    es.secret_type,
+    jc.algorithm,
+    jc.issuer,
+    jc.subject,
+    datetime(jc.expiration_ms/1000, 'unixepoch') as expires,
+    datetime(jc.issued_at_ms/1000, 'unixepoch') as issued_at
+FROM url_jwt_claims jc
+JOIN url_exposed_secrets es ON es.id = jc.exposed_secret_id
+JOIN url_status us ON us.id = es.url_status_id
+ORDER BY jc.expiration_ms DESC;
+```
+
+### 39. Count JWT tokens by algorithm and issuer
+
+```sql
+SELECT
+    jc.algorithm,
+    jc.issuer,
+    COUNT(*) as token_count
+FROM url_jwt_claims jc
+GROUP BY jc.algorithm, jc.issuer
+ORDER BY token_count DESC;
+```
+
+## Query validation (MCP-tested)
+
+Queries were run against a SQLite DB via the SQLite MCP. Failures are due to **schema evolution**: the test DB was on an older schema; every missing table/column **does exist** in the migrations (see below).
+
+| #   | Status  | Notes |
+|-----|--------|--------|
+| 1–3 | OK     | Return rows. |
+| 4   | **FAIL** | `no such column: urc.http_status` — column added in **0006_osint_signals.sql** (`ALTER TABLE url_redirect_chain ADD COLUMN http_status INTEGER`). |
+| 5–13 | OK    | Return rows (or empty). Query 11 uses placeholder `example.com`; replace with a domain you have. |
+| 14  | **FAIL** | `no such table: url_cname_records` — table created in **0006_osint_signals.sql**. |
+| 15  | **FAIL** | `no such table: url_ipv6_addresses` — table created in **0006_osint_signals.sql**. |
+| 16  | **FAIL** | `no such table: url_caa_records` — table created in **0006_osint_signals.sql**. |
+| 17  | **FAIL** | `no such column: body_sha256` — added in **0006_osint_signals.sql** on `url_status`. |
+| 18  | **FAIL** | `no such column: cert_fingerprint_sha256` — added in **0006_osint_signals.sql** on `url_status`. |
+| 19  | **FAIL** | `no such column: http_version` — added in **0006_osint_signals.sql** on `url_status`. |
+| 20–21 | OK   | Return rows or empty. |
+| 22  | **FAIL** | `no such column: skipped_urls` — added in **0004_add_skipped_urls_to_runs.sql** on `runs`. |
+| 23–37 | OK   | Return rows or empty. |
+| 38  | **FAIL** | `no such table: url_jwt_claims` — table created in **0008_jwt_claims.sql**. |
+| 39  | **FAIL** | `no such table: url_jwt_claims` — same as 38. |
+
+**Summary:** All failures are from running against a DB that has not had the full migration set applied. The queries are correct for the current schema. Apply migrations in order (0004 → 0006 → 0008) and all 39 queries should run.
 
 ## Tips
 

@@ -2,7 +2,7 @@
 
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
-The schema is created by migrations (`migrations/0001_initial_schema.sql` through `migrations/0007_osint_tier3.sql`) and follows a simple pattern:
+The schema is created by migrations (`migrations/0001_initial_schema.sql` through `migrations/0008_jwt_claims.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
@@ -42,6 +42,8 @@ erDiagram
     url_status ||--o{ url_cookies : has
     url_status ||--o{ url_resource_hints : has
     url_status ||--o{ url_body_domains : has
+
+    url_exposed_secrets ||--o| url_jwt_claims : has
 
     url_failures ||--o{ url_failure_redirect_chain : has
     url_failures ||--o{ url_failure_response_headers : has
@@ -197,6 +199,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_security_warnings` | Derived security findings | `warning_code`, `warning_description` |
 | `url_technologies` | Technology fingerprint matches | `technology_name`, `technology_version`, `technology_category` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
+| `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `header_json`, `payload_json`, `algorithm`, `issuer`, `subject`, `expiration_ms` |
 
 ## Failure Satellites
 
@@ -213,6 +216,8 @@ These tables hang off `url_failures.id`:
 - Most `url_status` satellites use `FOREIGN KEY ... ON DELETE CASCADE`.
 - `url_status.run_id` and `url_failures.run_id` reference `runs(run_id)`.
 - `url_whois` and `url_geoip` are one-to-one enrichments per successful observation.
+- `url_jwt_claims` is a one-to-one enrichment per `url_exposed_secrets` row (only populated for `jwt`/`jwt-base64` secret types).
+- `UNIQUE(run_id, final_domain)` ensures at most one `url_status` row per domain per run.
 - Several multi-valued concepts are normalized into child tables rather than stored inline.
 
 ## Schema Notes That Commonly Matter
@@ -279,6 +284,17 @@ SELECT secret_type, severity, COUNT(*) AS findings
 FROM url_exposed_secrets
 GROUP BY secret_type, severity
 ORDER BY findings DESC, secret_type;
+```
+
+Decoded JWT claims for exposed tokens:
+
+```sql
+SELECT es.secret_type, jc.algorithm, jc.issuer, jc.subject,
+       datetime(jc.expiration_ms/1000, 'unixepoch') AS expires
+FROM url_jwt_claims jc
+JOIN url_exposed_secrets es ON es.id = jc.exposed_secret_id
+JOIN url_status s ON s.id = es.url_status_id
+ORDER BY jc.expiration_ms DESC;
 ```
 
 ## Operational Notes
