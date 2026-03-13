@@ -126,9 +126,12 @@ pub async fn handle_http_request(
             // For OSINT, ALL HTTP responses are valuable observations — a 403 WAF page
             // has TLS certs, headers, technologies, etc. Only send to the failure path
             // for 429 (rate limit) and 5xx (server error) which should trigger retries.
-            // Everything else (2xx, 3xx, 4xx) is fully processed and saved.
+            // Everything else (2xx, 3xx, 4xx, and non-standard codes like 7xx) is fully
+            // processed and saved. We bound to 500..600 because reqwest's
+            // error_for_status() only returns Err for 400-599; non-standard codes
+            // outside that range return Ok and would panic on unwrap_err().
             let status_code = response.status().as_u16();
-            if status_code == 429 || status_code >= 500 {
+            if status_code == 429 || (500..600).contains(&status_code) {
                 let e = response.error_for_status().unwrap_err();
                 update_error_stats(&ctx.config.error_stats, &e);
 
