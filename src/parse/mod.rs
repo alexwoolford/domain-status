@@ -13,6 +13,7 @@ mod analytics;
 mod contact;
 mod gitleaks;
 mod html;
+pub mod jwt;
 mod secrets;
 mod social;
 mod structured;

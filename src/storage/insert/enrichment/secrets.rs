@@ -6,25 +6,25 @@ use crate::error_handling::DatabaseError;
 use crate::parse::ExposedSecret;
 use crate::storage::insert::retry::with_sqlite_retry;
 
-/// Inserts detected exposed secrets into the database.
+/// Inserts detected exposed secrets and returns their database row IDs.
 ///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to `url_status.id`
-/// * `secrets` - Vector of exposed secrets detected in HTML
+/// The returned IDs correspond 1:1 with the input `secrets` slice, enabling
+/// the caller to insert related data (e.g., decoded JWT claims) keyed by
+/// `exposed_secret_id`.
 pub async fn insert_exposed_secrets(
     pool: &SqlitePool,
     url_status_id: i64,
     secrets: &[ExposedSecret],
-) -> Result<(), DatabaseError> {
+) -> Result<Vec<i64>, DatabaseError> {
     with_sqlite_retry(|| async {
+        let mut ids = Vec::with_capacity(secrets.len());
         for secret in secrets {
-            sqlx::query(
+            let row: (i64,) = sqlx::query_as(
                 "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
                  VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(url_status_id, secret_type, matched_value) DO UPDATE SET
-                 severity=excluded.severity, location=excluded.location, context=excluded.context",
+                 severity=excluded.severity, location=excluded.location, context=excluded.context
+                 RETURNING id",
             )
             .bind(url_status_id)
             .bind(&secret.secret_type)
@@ -32,12 +32,13 @@ pub async fn insert_exposed_secrets(
             .bind(secret.severity.as_str())
             .bind(&secret.location)
             .bind(&secret.context)
-            .execute(pool)
+            .fetch_one(pool)
             .await
             .map_err(DatabaseError::SqlError)?;
+            ids.push(row.0);
         }
 
-        Ok(())
+        Ok(ids)
     })
     .await
 }
@@ -61,6 +62,7 @@ mod tests {
             context: "var key = AKIAIOSFODNN7EXAMPLE;".to_string(),
             severity: SecretSeverity::High,
             location: "inline_script".to_string(),
+            decoded_jwt: None,
         }];
 
         let result = insert_exposed_secrets(&pool, url_status_id, &secrets).await;
@@ -109,6 +111,7 @@ mod tests {
                 context: "context1".to_string(),
                 severity: SecretSeverity::High,
                 location: "html_body".to_string(),
+                decoded_jwt: None,
             },
             ExposedSecret {
                 secret_type: "gcp-api-key".to_string(),
@@ -116,6 +119,7 @@ mod tests {
                 context: "context2".to_string(),
                 severity: SecretSeverity::Medium,
                 location: "html_body".to_string(),
+                decoded_jwt: None,
             },
         ];
 
@@ -144,6 +148,7 @@ mod tests {
             context: "original context".to_string(),
             severity: SecretSeverity::High,
             location: "html_body".to_string(),
+            decoded_jwt: None,
         };
 
         insert_exposed_secrets(&pool, url_status_id, &[secret])
@@ -157,6 +162,7 @@ mod tests {
             context: "updated context".to_string(),
             severity: SecretSeverity::High,
             location: "html_body".to_string(),
+            decoded_jwt: None,
         };
 
         insert_exposed_secrets(&pool, url_status_id, &[secret2])

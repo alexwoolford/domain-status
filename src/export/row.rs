@@ -57,7 +57,7 @@ pub struct ContactLinkRecord {
     pub contact_value: String,
 }
 
-/// An exposed secret detected in HTML.
+/// An exposed secret detected in HTML, with optional decoded JWT claims.
 #[derive(Debug, Clone)]
 pub struct ExposedSecretRecord {
     pub secret_type: String,
@@ -65,6 +65,15 @@ pub struct ExposedSecretRecord {
     pub severity: String,
     pub location: String,
     pub context: Option<String>,
+    // Decoded JWT claims (populated only for jwt/jwt-base64 secrets)
+    pub jwt_algorithm: Option<String>,
+    pub jwt_issuer: Option<String>,
+    pub jwt_subject: Option<String>,
+    pub jwt_audience: Option<String>,
+    pub jwt_expiration_ms: Option<i64>,
+    pub jwt_issued_at_ms: Option<i64>,
+    pub jwt_header_json: Option<String>,
+    pub jwt_payload_json: Option<String>,
 }
 
 /// A partial failure (DNS/TLS error that didn't block processing).
@@ -761,9 +770,16 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     .collect();
     let contact_link_count = contact_links.len();
 
-    // Fetch exposed secrets
+    // Fetch exposed secrets with optional decoded JWT claims
     let exposed_secrets: Vec<ExposedSecretRecord> = sqlx::query(
-        "SELECT secret_type, matched_value, severity, location, context FROM url_exposed_secrets WHERE url_status_id = ? ORDER BY secret_type LIMIT ?",
+        "SELECT es.secret_type, es.matched_value, es.severity, es.location, es.context,
+                jc.algorithm AS jwt_algorithm, jc.issuer AS jwt_issuer,
+                jc.subject AS jwt_subject, jc.audience AS jwt_audience,
+                jc.expiration_ms AS jwt_expiration_ms, jc.issued_at_ms AS jwt_issued_at_ms,
+                jc.header_json AS jwt_header_json, jc.payload_json AS jwt_payload_json
+         FROM url_exposed_secrets es
+         LEFT JOIN url_jwt_claims jc ON jc.exposed_secret_id = es.id
+         WHERE es.url_status_id = ? ORDER BY es.secret_type LIMIT ?",
     )
     .bind(url_status_id)
     .bind(EXPORT_LIMIT)
@@ -776,6 +792,14 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         severity: r.get("severity"),
         location: r.get("location"),
         context: r.get("context"),
+        jwt_algorithm: r.get("jwt_algorithm"),
+        jwt_issuer: r.get("jwt_issuer"),
+        jwt_subject: r.get("jwt_subject"),
+        jwt_audience: r.get("jwt_audience"),
+        jwt_expiration_ms: r.get("jwt_expiration_ms"),
+        jwt_issued_at_ms: r.get("jwt_issued_at_ms"),
+        jwt_header_json: r.get("jwt_header_json"),
+        jwt_payload_json: r.get("jwt_payload_json"),
     })
     .collect();
     let exposed_secret_count = exposed_secrets.len();

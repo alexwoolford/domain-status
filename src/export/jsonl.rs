@@ -286,13 +286,28 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
                 json!(export_row
                     .exposed_secrets
                     .iter()
-                    .map(|s| json!({
-                        "secret_type": s.secret_type,
-                        "matched_value": s.matched_value,
-                        "severity": s.severity,
-                        "location": s.location,
-                        "context": s.context,
-                    }))
+                    .map(|s| {
+                        let mut obj = json!({
+                            "secret_type": s.secret_type,
+                            "matched_value": s.matched_value,
+                            "severity": s.severity,
+                            "location": s.location,
+                            "context": s.context,
+                        });
+                        if s.jwt_algorithm.is_some() || s.jwt_issuer.is_some() {
+                            obj["jwt_claims"] = json!({
+                                "algorithm": s.jwt_algorithm,
+                                "issuer": s.jwt_issuer,
+                                "subject": s.jwt_subject,
+                                "audience": s.jwt_audience,
+                                "expiration_ms": s.jwt_expiration_ms,
+                                "issued_at_ms": s.jwt_issued_at_ms,
+                                "header_json": s.jwt_header_json,
+                                "payload_json": s.jwt_payload_json,
+                            });
+                        }
+                        obj
+                    })
                     .collect::<Vec<_>>()),
             );
             map.insert(

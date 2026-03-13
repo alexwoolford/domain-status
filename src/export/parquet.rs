@@ -319,6 +319,14 @@ fn build_schema() -> Schema {
                         Field::new("severity", DataType::Utf8, false),
                         Field::new("location", DataType::Utf8, false),
                         Field::new("context", DataType::Utf8, true),
+                        Field::new("jwt_algorithm", DataType::Utf8, true),
+                        Field::new("jwt_issuer", DataType::Utf8, true),
+                        Field::new("jwt_subject", DataType::Utf8, true),
+                        Field::new("jwt_audience", DataType::Utf8, true),
+                        Field::new("jwt_expiration_ms", DataType::Int64, true),
+                        Field::new("jwt_issued_at_ms", DataType::Int64, true),
+                        Field::new("jwt_header_json", DataType::Utf8, true),
+                        Field::new("jwt_payload_json", DataType::Utf8, true),
                     ]
                     .into(),
                 ),
@@ -474,15 +482,31 @@ fn write_batch(
             Field::new("severity", DataType::Utf8, false),
             Field::new("location", DataType::Utf8, false),
             Field::new("context", DataType::Utf8, true),
+            Field::new("jwt_algorithm", DataType::Utf8, true),
+            Field::new("jwt_issuer", DataType::Utf8, true),
+            Field::new("jwt_subject", DataType::Utf8, true),
+            Field::new("jwt_audience", DataType::Utf8, true),
+            Field::new("jwt_expiration_ms", DataType::Int64, true),
+            Field::new("jwt_issued_at_ms", DataType::Int64, true),
+            Field::new("jwt_header_json", DataType::Utf8, true),
+            Field::new("jwt_payload_json", DataType::Utf8, true),
         ];
         let builder = StructBuilder::new(
             fields.clone(),
             vec![
-                Box::new(StringBuilder::new()),
-                Box::new(StringBuilder::new()),
-                Box::new(StringBuilder::new()),
-                Box::new(StringBuilder::new()),
-                Box::new(StringBuilder::new()),
+                Box::new(StringBuilder::new()), // secret_type
+                Box::new(StringBuilder::new()), // matched_value
+                Box::new(StringBuilder::new()), // severity
+                Box::new(StringBuilder::new()), // location
+                Box::new(StringBuilder::new()), // context
+                Box::new(StringBuilder::new()), // jwt_algorithm
+                Box::new(StringBuilder::new()), // jwt_issuer
+                Box::new(StringBuilder::new()), // jwt_subject
+                Box::new(StringBuilder::new()), // jwt_audience
+                Box::new(Int64Builder::new()),  // jwt_expiration_ms
+                Box::new(Int64Builder::new()),  // jwt_issued_at_ms
+                Box::new(StringBuilder::new()), // jwt_header_json
+                Box::new(StringBuilder::new()), // jwt_payload_json
             ],
         );
         ListBuilder::new(builder)
@@ -912,6 +936,63 @@ fn write_batch(
                     .field_builder::<StringBuilder>(4)
                     .unwrap(),
                 s.context.as_ref(),
+            );
+            // JWT decoded fields (indices 5-12)
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(5)
+                    .unwrap(),
+                s.jwt_algorithm.as_ref(),
+            );
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(6)
+                    .unwrap(),
+                s.jwt_issuer.as_ref(),
+            );
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(7)
+                    .unwrap(),
+                s.jwt_subject.as_ref(),
+            );
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(8)
+                    .unwrap(),
+                s.jwt_audience.as_ref(),
+            );
+            append_opt_i64(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<Int64Builder>(9)
+                    .unwrap(),
+                s.jwt_expiration_ms,
+            );
+            append_opt_i64(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<Int64Builder>(10)
+                    .unwrap(),
+                s.jwt_issued_at_ms,
+            );
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(11)
+                    .unwrap(),
+                s.jwt_header_json.as_ref(),
+            );
+            append_opt_str(
+                exposed_secrets_b
+                    .values()
+                    .field_builder::<StringBuilder>(12)
+                    .unwrap(),
+                s.jwt_payload_json.as_ref(),
             );
             exposed_secrets_b.values().append(true);
         }
