@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.21] - 2026-03-13
 
 ### Fixed
-- **Panic on non-standard HTTP status codes**: Servers returning codes outside the standard range (e.g. HTTP 702 from `the origin`) caused `unwrap_err()` panic because reqwest's `error_for_status()` only returns `Err` for 400–599. Changed the 5xx check from `>= 500` to `500..600` so non-standard codes are processed as normal observations.
+- **Panic on non-standard HTTP status codes**: Servers returning non-standard codes outside the 100–599 range (e.g. HTTP 702) caused `unwrap_err()` panic because reqwest's `error_for_status()` only returns `Err` for 400–599. Changed the 5xx check from `>= 500` to `500..600` so non-standard codes are processed as normal observations.
 
 ## [0.1.20] - 2026-03-12
 
