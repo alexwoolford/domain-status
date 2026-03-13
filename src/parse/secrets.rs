@@ -246,19 +246,16 @@ fn extract_context(body: &str, start: usize, end: usize) -> String {
     let ctx_start = start.saturating_sub(CONTEXT_CHARS);
     let ctx_end = (end + CONTEXT_CHARS).min(body.len());
 
-    // Find valid char boundaries (compatible with MSRV 1.85)
-    let safe_start = body[..ctx_start]
-        .char_indices()
-        .next_back()
-        .map_or(0, |(i, _)| i);
-    let safe_end = if ctx_end >= body.len() {
-        body.len()
-    } else {
-        body[ctx_end..]
-            .char_indices()
-            .next()
-            .map_or(body.len(), |(i, _)| ctx_end + i)
-    };
+    // Snap to valid char boundaries without slicing at potentially invalid offsets.
+    // Walk backwards from ctx_start to find the previous char boundary.
+    let safe_start = (0..=ctx_start)
+        .rev()
+        .find(|&i| body.is_char_boundary(i))
+        .unwrap_or(0);
+    // Walk forwards from ctx_end to find the next char boundary.
+    let safe_end = (ctx_end..=body.len())
+        .find(|&i| body.is_char_boundary(i))
+        .unwrap_or(body.len());
 
     body[safe_start..safe_end].to_string()
 }
