@@ -597,6 +597,30 @@ mod tests {
         assert!(secrets[0].context.contains("BBBB"));
     }
 
+    /// Regression test: `extract_context` must not panic when the context window
+    /// (start - 80 bytes or end + 80 bytes) lands inside a multi-byte UTF-8
+    /// character. This reproduces the crash from a Polish page containing 'ę'
+    /// (2-byte UTF-8) where byte arithmetic fell between the two bytes.
+    #[test]
+    fn test_context_multibyte_boundary_no_panic() {
+        // Build a prefix of exactly 79 ASCII bytes followed by a 2-byte char 'ę'.
+        // The AWS key match starts right after 'ę', so start - 80 = byte 79,
+        // which is the second byte of 'ę' (not a char boundary).
+        let prefix = format!("{}\u{0119}", "X".repeat(79)); // 79 + 2 = 81 bytes
+        assert_eq!(prefix.len(), 81);
+        assert!(!prefix.is_char_boundary(80)); // byte 80 is inside 'ę'
+
+        // Same trick for suffix: 79 ASCII bytes preceded by a 2-byte char.
+        let suffix = format!("\u{0119}{}", "Y".repeat(79)); // 2 + 79 = 81 bytes
+
+        let body = format!("{} {} {}", prefix, AWS_KEY, suffix);
+        let secrets = detect_exposed_secrets(&body);
+        assert_eq!(secrets.len(), 1, "should detect the AWS key");
+        // Context should include parts of both prefix and suffix without panicking.
+        assert!(secrets[0].context.contains("XXXX"));
+        assert!(secrets[0].context.contains("YYYY"));
+    }
+
     #[test]
     fn test_gitleaks_config_loads() {
         let config = &crate::parse::gitleaks::GITLEAKS;
