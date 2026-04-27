@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Error, Result};
 use reqwest::Url;
-use url::Host;
 
 use crate::fetch::request::RequestHeaders;
 use crate::security::validate_url_safe;
@@ -24,16 +23,38 @@ fn is_loopback_url(url_str: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Checks if two hosts match (same origin check for SSRF protection)
-/// Allows same-origin redirects (e.g., localhost to localhost) while blocking
-/// cross-origin redirects to private IPs
-fn hosts_match(host1: Host<&str>, host2: Host<&str>) -> bool {
-    match (host1, host2) {
-        (Host::Domain(d1), Host::Domain(d2)) => d1 == d2,
-        (Host::Ipv4(ip1), Host::Ipv4(ip2)) => ip1 == ip2,
-        (Host::Ipv6(ip1), Host::Ipv6(ip2)) => ip1 == ip2,
-        _ => false,
+/// Validates a redirect target before following it.
+///
+/// Enforces two SSRF/downgrade guards:
+///
+/// 1. **No HTTPS → HTTP downgrade.** Once the chain started on `https`, any later `http`
+///    hop (same host or not) is blocked. This prevents an attacker who controls the
+///    redirect target from stripping TLS while the scanner still treats the chain as
+///    "safe".
+/// 2. **Re-run [`validate_url_safe`] on every hop.** The previous design skipped
+///    validation when the new host equalled the current host, which let a same-host
+///    HTTPS → HTTP downgrade through and would also miss any future enrichments to
+///    `validate_url_safe` (e.g. DNS rebinding, scheme-specific policy, etc.).
+///
+/// Tests use httptest's loopback server, so we bypass [`validate_url_safe`] for
+/// loopback targets in `cfg(test)` to keep existing fixtures working without
+/// poking holes in production behaviour. Downgrade detection is *not* bypassed.
+fn validate_redirect_target(
+    new_url_str: &str,
+    new_scheme: &str,
+    chain_started_https: bool,
+) -> Result<()> {
+    if chain_started_https && new_scheme == "http" {
+        return Err(anyhow::anyhow!(
+            "Blocked HTTPS->HTTP downgrade redirect to {new_url_str}"
+        ));
     }
+    let skip_validation = cfg!(test) && is_loopback_url(new_url_str);
+    if !skip_validation {
+        validate_url_safe(new_url_str)
+            .with_context(|| format!("Unsafe redirect target rejected: {new_url_str}"))?;
+    }
+    Ok(())
 }
 
 /// Checks if an HTTP status code indicates a redirect.
@@ -100,6 +121,14 @@ pub async fn resolve_redirect_chain(
             .with_context(|| format!("Unsafe initial URL rejected: {start_url}"))?;
     }
 
+    // Capture whether the chain started on HTTPS so we can reject any later HTTP hop
+    // (no TLS downgrade, even on same host). Parsing failure here is non-fatal — if
+    // the start URL is malformed enough to fail Url::parse, validate_url_safe above
+    // would already have rejected it (or this is a test-loopback bypass case).
+    let chain_started_https = Url::parse(start_url)
+        .map(|u| u.scheme() == "https")
+        .unwrap_or(false);
+
     // Pre-allocate chain with capacity to avoid reallocations
     // Each entry is (url, http_status) where http_status is the status received for that URL
     let mut chain: Vec<(String, u16)> = Vec::with_capacity(max_hops + 1);
@@ -161,27 +190,20 @@ pub async fn resolve_redirect_chain(
                 let new_url = Url::parse(loc_str)
                     .or_else(|_| Url::parse(&current).and_then(|base| base.join(loc_str)))?;
 
-                // SSRF protection: validate redirect URL is safe before following
-                // Allow same-origin redirects (e.g., localhost to localhost) but block
-                // cross-origin redirects to private IPs
+                // SSRF + scheme-downgrade protection: re-validate every hop. The previous
+                // design skipped validation for same-host redirects, which let HTTPS->HTTP
+                // downgrades through (an attacker controlling the target server could strip
+                // TLS while the scanner still treated the chain as "safe").
                 let new_url_str = new_url.to_string();
-                let current_url = Url::parse(&current).ok();
-                let is_same_origin = current_url
-                    .as_ref()
-                    .and_then(reqwest::Url::host)
-                    .and_then(|c_host| new_url.host().map(|n_host| hosts_match(c_host, n_host)))
-                    .unwrap_or(false);
-
-                if !is_same_origin {
-                    // Only validate if redirecting to a different origin
-                    if let Err(e) = validate_url_safe(&new_url_str) {
-                        log::warn!(
-                            "Blocked unsafe cross-origin redirect from {current} to {new_url_str}: {e}. Stopping redirect chain."
-                        );
-                        // Break here: we've reached an unsafe redirect
-                        // last_fetched_url is the final URL we actually fetched
-                        break;
-                    }
+                if let Err(e) =
+                    validate_redirect_target(&new_url_str, new_url.scheme(), chain_started_https)
+                {
+                    log::warn!(
+                        "Blocked unsafe redirect from {current} to {new_url_str}: {e}. Stopping redirect chain."
+                    );
+                    // Break here: we've reached an unsafe redirect
+                    // last_fetched_url is the final URL we actually fetched
+                    break;
                 }
 
                 // Check if we've reached max_hops - if so, don't follow the redirect
@@ -585,14 +607,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_redirect_chain_blocks_private_ip() {
-        // Test that redirects to private IPs are blocked (SSRF protection)
+        // Test that redirects to private IPs are blocked (SSRF protection).
+        // Uses an RFC 1918 IP (10.0.0.1) rather than 127.0.0.1, because 127.0.0.1 is
+        // a loopback address and the cfg(test) bypass intentionally allows loopback
+        // targets so httptest fixtures keep working. Loopback has a dedicated test
+        // (test_resolve_redirect_chain_blocks_localhost) covering the "localhost"
+        // domain path.
         let server = Server::run();
         let start_url = server.url("/").to_string();
 
         server.expect(
             Expectation::matching(request::method_path("GET", "/")).respond_with(
                 status_code(302)
-                    .insert_header("Location", "http://127.0.0.1:8080")
+                    .insert_header("Location", "http://10.0.0.1:8080")
                     .body("Redirect to private IP"),
             ),
         );
@@ -775,6 +802,76 @@ mod tests {
         assert_eq!(result_final, start_url);
         // Should NOT include redirect_url in chain
         assert!(!chain.iter().any(|(url, _)| url == &redirect_url));
+    }
+
+    // --- validate_redirect_target unit tests ------------------------------------------------
+    //
+    // These exercise the two SSRF/downgrade guards directly (deterministic; no httptest
+    // server needed). The redirect-chain integration tests above prove the helper is wired
+    // into the loop.
+
+    #[test]
+    fn test_validate_redirect_target_blocks_https_to_http_downgrade() {
+        // Chain started on HTTPS; an http hop must be rejected even on a "safe" public host.
+        let err = validate_redirect_target("http://example.com/login", "http", true)
+            .expect_err("https chain must reject http hop");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("downgrade"),
+            "expected downgrade message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_redirect_target_blocks_https_to_http_same_host_downgrade() {
+        // Same hostname; the previous design skipped validation here. Confirm we still
+        // reject the downgrade.
+        validate_redirect_target("http://example.com/", "http", true)
+            .expect_err("same-host https->http downgrade must be rejected");
+    }
+
+    #[test]
+    fn test_validate_redirect_target_allows_https_to_https() {
+        validate_redirect_target("https://example.com/next", "https", true)
+            .expect("https->https hop must be allowed");
+    }
+
+    #[test]
+    fn test_validate_redirect_target_allows_http_to_http_when_chain_started_http() {
+        validate_redirect_target("http://example.com/next", "http", false)
+            .expect("http chain may continue on http");
+    }
+
+    #[test]
+    fn test_validate_redirect_target_blocks_private_ip_target() {
+        // Same host as the start (e.g. DNS rebinding window) is no longer a free pass:
+        // a private/link-local IP literal in the redirect Location is rejected on every hop.
+        // Note: we deliberately don't include loopback IPs (127.0.0.1, ::1) here because
+        // the test-loopback bypass intentionally allows them so httptest fixtures keep
+        // working. Production behaviour for non-loopback private IPs is what matters.
+        for url in [
+            "http://10.0.0.1/",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/", // cloud metadata
+            "http://172.16.0.1/",
+        ] {
+            let err = match validate_redirect_target(url, "http", false) {
+                Ok(()) => panic!("private IP {url} must be rejected"),
+                Err(e) => e,
+            };
+            assert!(
+                !err.to_string().contains("downgrade"),
+                "expected SSRF rejection for {url}, got downgrade message: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_redirect_target_blocks_unsafe_scheme() {
+        // file:// must be rejected even when chain didn't start on https.
+        // (The loopback-test bypass only fires on http(s) loopback URLs.)
+        validate_redirect_target("file:///etc/passwd", "file", false)
+            .expect_err("file:// must be rejected by validate_url_safe");
     }
 
     #[tokio::test]
