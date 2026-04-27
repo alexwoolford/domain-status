@@ -257,6 +257,59 @@ mod tests {
         acquire.await.expect("waiter task should complete");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn test_rate_limiter_concurrent_acquire_with_cancellation_does_not_deadlock() {
+        // Reproduces the "scan cancellation + rate limiter" interaction that the
+        // audit flagged. Spawn many concurrent acquirers against a small permit
+        // budget; cancel the early ones (drop their futures) before they win a
+        // permit and confirm:
+        //   1. the limiter does not deadlock or panic.
+        //   2. dropping a queued waiter does not leak the permit it was waiting
+        //      on (subsequent acquires must still progress as the bucket refills).
+        //   3. the surviving acquirers complete within a bounded time window.
+        let (limiter, _shutdown) = init_rate_limiter(20, 4).unwrap();
+
+        // Drain the burst budget so all subsequent acquires must wait for refill.
+        for _ in 0..4 {
+            limiter.acquire().await;
+        }
+
+        // Spawn 8 waiters; we'll cancel the first 4 by aborting their JoinHandles.
+        let mut waiters: Vec<tokio::task::JoinHandle<()>> = (0..8)
+            .map(|_| {
+                let limiter = Arc::clone(&limiter);
+                tokio::spawn(async move {
+                    limiter.acquire().await;
+                })
+            })
+            .collect();
+
+        // Yield once so each waiter actually parks on the semaphore.
+        tokio::task::yield_now().await;
+
+        // Cancel half the waiters by aborting them. Aborting drops the
+        // pending acquire future without consuming a permit, which is the
+        // mode this test guards against leaking.
+        for w in waiters.drain(..4) {
+            w.abort();
+            // JoinError::is_cancelled is fine to ignore here.
+            let _ = w.await;
+        }
+
+        // Advance virtual time enough to refill several permits (20 rps -> 1 permit
+        // every 50 ms; 250 ms gives at least 4 permits, enough for the 4 survivors).
+        tokio::time::advance(Duration::from_millis(250)).await;
+
+        // The remaining 4 waiters must all complete within a bounded wall-clock
+        // window. If a leaked permit kept the semaphore at 0 we'd time out here.
+        let join_all = futures::future::join_all(waiters);
+        timeout(Duration::from_secs(2), join_all)
+            .await
+            .expect("surviving acquirers should complete after refill")
+            .into_iter()
+            .for_each(|res| res.expect("waiter task panicked"));
+    }
+
     #[tokio::test]
     async fn test_rate_limiter_shutdown() {
         let (limiter, shutdown) = init_rate_limiter(10, 5).unwrap();
