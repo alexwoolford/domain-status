@@ -11,7 +11,7 @@
 
 mod analytics;
 mod contact;
-mod gitleaks;
+pub(crate) mod gitleaks;
 mod html;
 pub mod jwt;
 mod secrets;

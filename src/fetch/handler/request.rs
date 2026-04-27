@@ -129,30 +129,59 @@ pub async fn handle_http_request(
             // Everything else (2xx, 3xx, 4xx, and non-standard codes like 7xx) is fully
             // processed and saved. We bound to 500..600 because reqwest's
             // error_for_status() only returns Err for 400-599; non-standard codes
-            // outside that range return Ok and would panic on unwrap_err().
+            // outside that range return Ok.
             let status_code = response.status().as_u16();
-            if status_code == 429 || (500..600).contains(&status_code) {
-                let e = response.error_for_status().unwrap_err();
-                update_error_stats(&ctx.config.error_stats, &e);
+            // Match (not unwrap_err) so a future change in reqwest's classification of
+            // 429/5xx as Err can't panic here: in the impossible-today Ok branch we just
+            // synthesize a clear anyhow error instead of unwinding.
+            let failure_match = status_code == 429 || (500..600).contains(&status_code);
+            if failure_match {
+                match response.error_for_status() {
+                    Err(e) => {
+                        update_error_stats(&ctx.config.error_stats, &e);
 
-                log::error!(
-                    "HTTP request error for {}: {} (status: {:?})",
-                    url,
-                    e,
-                    e.status()
-                );
+                        log::error!(
+                            "HTTP request error for {}: {} (status: {:?})",
+                            url,
+                            e,
+                            e.status()
+                        );
 
-                let failure_context = crate::storage::failure::FailureContext {
-                    final_url: Some(final_url_string.clone()),
-                    redirect_chain: redirect_chain.iter().map(|(url, _)| url.clone()).collect(),
-                    response_headers: response_headers.clone(),
-                    request_headers: request_headers.clone(),
-                };
-                let error = Error::from(e);
-                Err(crate::storage::failure::attach_failure_context(
-                    error.context(format!("HTTP request failed for {url}")),
-                    failure_context,
-                ))
+                        let failure_context = crate::storage::failure::FailureContext {
+                            final_url: Some(final_url_string.clone()),
+                            redirect_chain: redirect_chain
+                                .iter()
+                                .map(|(url, _)| url.clone())
+                                .collect(),
+                            response_headers: response_headers.clone(),
+                            request_headers: request_headers.clone(),
+                        };
+                        let error = Error::from(e);
+                        Err(crate::storage::failure::attach_failure_context(
+                            error.context(format!("HTTP request failed for {url}")),
+                            failure_context,
+                        ))
+                    }
+                    Ok(_) => {
+                        // Defensive: should be unreachable today, but if reqwest ever stops
+                        // classifying 429/5xx as Err, surface a clear error instead of panicking.
+                        let failure_context = crate::storage::failure::FailureContext {
+                            final_url: Some(final_url_string.clone()),
+                            redirect_chain: redirect_chain
+                                .iter()
+                                .map(|(url, _)| url.clone())
+                                .collect(),
+                            response_headers: response_headers.clone(),
+                            request_headers: request_headers.clone(),
+                        };
+                        Err(crate::storage::failure::attach_failure_context(
+                            anyhow::anyhow!(
+                                "HTTP request for {url} returned status {status_code} (treated as failure)"
+                            ),
+                            failure_context,
+                        ))
+                    }
+                }
             } else {
                 // Track 403 as info metric (bot detection) but still process the response
                 if status_code == 403 {
