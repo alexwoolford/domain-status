@@ -1,12 +1,10 @@
 [advisories]
 ignore = [
-  # reqwest pulls this in behind the optional native-tls feature; we only use rustls.
-  # Remove once the upstream dependency tree no longer resolves it at all.
+  # rsa 0.9.10 lands in Cargo.lock via sqlx -> sqlx-mysql -> num-bigint-dig -> rsa,
+  # even though we only enable sqlx's `sqlite` feature so rsa is never actually
+  # compiled or linked into our binary. There is no patched version of rsa
+  # (Marvin attack mitigation work is still upstream).
+  # Remove once sqlx no longer pulls sqlx-mysql into the resolution graph or
+  # rsa ships a constant-time fix.
   "RUSTSEC-2023-0071",
-  # fxhash 0.2.1 is still transitively required by scraper/selectors.
-  # Remove once selectors migrates away or we replace the dependency chain.
-  "RUSTSEC-2025-0057",
-  # rustls-pemfile 1.0.4 is still required by reqwest's rustls stack.
-  # Remove once reqwest/rustls moves to a maintained replacement.
-  "RUSTSEC-2025-0134"
 ]
