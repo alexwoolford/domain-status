@@ -417,10 +417,17 @@ mod tests {
     fn test_detect_aws_access_key() {
         let body = format!(r#"var key = "{}";"#, AWS_KEY);
         let secrets = detect_exposed_secrets(&body);
-        assert_eq!(secrets.len(), 1, "expected one secret, got {:?}", secrets);
-        assert_eq!(secrets[0].secret_type, "aws-access-token");
-        assert_eq!(secrets[0].matched_value, AWS_KEY);
-        assert_eq!(secrets[0].severity, SecretSeverity::High);
+        // The body must trigger the dedicated `aws-access-token` rule. It may
+        // ALSO trigger the broader `generic-api-key` rule (the latter started
+        // catching this same value once we raised the gitleaks regex size
+        // limit and the previously-skipped rule began compiling). Assert on
+        // the dedicated rule's presence rather than the total count.
+        let aws = secrets
+            .iter()
+            .find(|s| s.secret_type == "aws-access-token")
+            .unwrap_or_else(|| panic!("expected an aws-access-token secret in {secrets:?}"));
+        assert_eq!(aws.matched_value, AWS_KEY);
+        assert_eq!(aws.severity, SecretSeverity::High);
     }
 
     #[test]

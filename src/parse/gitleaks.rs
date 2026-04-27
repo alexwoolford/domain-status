@@ -8,10 +8,31 @@
 //! the "rules" table in key order when it is a Table (mixed rules + allowlists).
 
 use anyhow::{anyhow, Context, Result};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use std::sync::OnceLock;
 use toml::Value;
+
+/// Maximum compiled-regex size budget for gitleaks rules.
+///
+/// The `regex` crate's default cap is 10 MB. Several real gitleaks rules —
+/// `generic-api-key`, `pypi-upload-token`, `vault-batch-token` — compile to
+/// well over 10 MB because of large character-class alternations. Without
+/// raising this they are silently dropped by `Regex::new` with a "Compiled
+/// regex exceeds size limit" error and the bundled ruleset loses coverage
+/// of those secret types entirely.
+///
+/// 64 MB comfortably covers every rule shipped in `config/gitleaks.toml`
+/// (largest seen so far is ~24 MB compiled) while still bounding memory.
+const REGEX_SIZE_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Compile a gitleaks-rule regex with a raised size limit so large alternation
+/// patterns (`generic-api-key`, etc.) are not silently dropped.
+fn compile_rule_regex(pattern: &str) -> Result<Regex, regex::Error> {
+    RegexBuilder::new(pattern)
+        .size_limit(REGEX_SIZE_LIMIT)
+        .build()
+}
 
 /// Raw TOML structure for the global allowlist (paths ignored for single-blob scan).
 #[derive(Debug, Default, Deserialize)]
@@ -328,7 +349,7 @@ fn load_compiled() -> Result<GitleaksCompiled> {
                 log::debug!("Skipping gitleaks rule '{}': no regex (path-only)", r.id);
                 return None;
             };
-            let regex = match Regex::new(regex_str) {
+            let regex = match compile_rule_regex(regex_str) {
                 Ok(re) => re,
                 Err(e) => {
                     log::warn!("Skipping gitleaks rule '{}': invalid regex: {}", r.id, e);
@@ -458,6 +479,30 @@ mod tests {
             "allowlist regex should match EXAMPLE suffix, got {:?}",
             regexes[0]
         );
+    }
+
+    /// Regression guard: the bundled `gitleaks.toml` contains a few rules whose
+    /// compiled regex is well over the `regex` crate's default 10 MB size limit.
+    /// Without [`REGEX_SIZE_LIMIT`] raising the cap, `Regex::new` returns
+    /// "Compiled regex exceeds size limit" and the rules are silently skipped —
+    /// users lose detection of those secret types and only see a WARN line at
+    /// startup. This test fails loudly if any of those rules vanish from the
+    /// loaded ruleset.
+    #[test]
+    fn test_oversized_regex_rules_are_loaded() {
+        let config = gitleaks();
+        // These three rules were observed to exceed the default 10 MB regex
+        // size limit and were being skipped before commit fix(parse/gitleaks).
+        // Add new entries here whenever real upstream gitleaks updates push
+        // additional rules over the threshold.
+        for expected_id in ["generic-api-key", "pypi-upload-token", "vault-batch-token"] {
+            assert!(
+                config.rules.iter().any(|r| r.id == expected_id),
+                "rule '{expected_id}' must be present in the bundled ruleset \
+                 (was previously skipped due to compiled-regex size limit; \
+                 see REGEX_SIZE_LIMIT in src/parse/gitleaks.rs)"
+            );
+        }
     }
 
     /// Overlay merge: gitleaks.overrides.toml appends allowlists to rules by `rule_id`. sourcegraph-access-token gets overlay allowlists.
