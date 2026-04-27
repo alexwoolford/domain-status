@@ -47,8 +47,23 @@ impl<C: Clock> WhoisCacheStore<C> {
         domain: &str,
     ) -> Result<Option<WhoisCacheEntry>> {
         let cache_file = Self::cache_file(cache_path, domain);
-        if !tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
-            return Ok(None);
+        // Distinguish "file doesn't exist" (cache miss, return Ok(None)) from "I/O
+        // error checking existence" (e.g. permission denied on the cache dir).
+        // The previous `unwrap_or(false)` collapsed both cases into a cache miss,
+        // hiding transient failures and bypassing the cache without any signal.
+        match tokio::fs::try_exists(&cache_file).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(None),
+            Err(e) => {
+                // I/O error: warn and treat as a miss so the scan still progresses,
+                // but the operator gets a log entry to investigate.
+                log::warn!(
+                    "Failed to check WHOIS cache file existence for {} ({}): {e}; treating as cache miss",
+                    cache_file.display(),
+                    domain
+                );
+                return Ok(None);
+            }
         }
 
         let metadata = tokio::fs::metadata(&cache_file)

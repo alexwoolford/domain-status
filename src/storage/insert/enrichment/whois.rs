@@ -22,15 +22,31 @@ pub async fn insert_whois_data(
     let expiration_date_ms = whois.expiration_date.map(|dt| dt.timestamp_millis());
     let updated_date_ms = whois.updated_date.map(|dt| dt.timestamp_millis());
 
-    // Serialize status and nameservers to JSON
-    let status_json = whois
-        .status
-        .as_ref()
-        .map(|s| serde_json::to_string(s).unwrap_or_default());
-    let nameservers_json = whois
-        .nameservers
-        .as_ref()
-        .map(|n| serde_json::to_string(n).unwrap_or_default());
+    // Serialize status and nameservers to JSON.
+    //
+    // `serde_json::to_string` of `Vec<String>` cannot fail in practice (no custom
+    // Serialize impls in the chain), but the previous `unwrap_or_default()` would
+    // silently write an empty string ("") into the column on any future bug,
+    // indistinguishable from a real empty list. Log + write NULL instead so any
+    // regression is visible.
+    let status_json = whois.status.as_ref().and_then(|s| match serde_json::to_string(s) {
+        Ok(json) => Some(json),
+        Err(e) => {
+            log::warn!(
+                "BUG: failed to serialize whois.status as JSON for url_status_id={url_status_id}: {e}; storing NULL"
+            );
+            None
+        }
+    });
+    let nameservers_json = whois.nameservers.as_ref().and_then(|n| match serde_json::to_string(n) {
+        Ok(json) => Some(json),
+        Err(e) => {
+            log::warn!(
+                "BUG: failed to serialize whois.nameservers as JSON for url_status_id={url_status_id}: {e}; storing NULL"
+            );
+            None
+        }
+    });
 
     with_sqlite_retry(|| async {
         sqlx::query(

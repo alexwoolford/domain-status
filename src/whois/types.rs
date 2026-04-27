@@ -93,16 +93,24 @@ impl From<&WhoisResult> for WhoisCacheResult {
 impl From<WhoisCacheResult> for WhoisResult {
     fn from(cache: WhoisCacheResult) -> Self {
         // Convert milliseconds to (secs, nanos) for DateTime::from_timestamp.
-        // Use rem_euclid so negative timestamps (pre-1970) produce valid 0..999 sub-second ms.
+        //
+        // If the cached value is unrepresentable as a `DateTime<Utc>` (e.g. a
+        // corrupted or out-of-range integer), preserve `None` rather than
+        // collapsing to 1970-01-01 via `unwrap_or_default()`. The previous
+        // behaviour silently wrote a confidently-wrong creation/expiration date
+        // to the database, which is harder to spot than a NULL.
+        //
+        // Use rem_euclid so negative timestamps (pre-1970) produce valid 0..999
+        // sub-second ms.
         #[allow(clippy::cast_possible_truncation)] // rem_euclid(1000) is 0..999, * 1M fits in u32
-        let ms_to_dt = |ms: i64| {
+        let ms_to_dt = |ms: i64| -> Option<DateTime<Utc>> {
             let nanos = (ms.rem_euclid(1000) * 1_000_000) as u32;
-            DateTime::from_timestamp(ms.div_euclid(1000), nanos).unwrap_or_default()
+            DateTime::from_timestamp(ms.div_euclid(1000), nanos)
         };
         WhoisResult {
-            creation_date: cache.creation_date.map(ms_to_dt),
-            expiration_date: cache.expiration_date.map(ms_to_dt),
-            updated_date: cache.updated_date.map(ms_to_dt),
+            creation_date: cache.creation_date.and_then(ms_to_dt),
+            expiration_date: cache.expiration_date.and_then(ms_to_dt),
+            updated_date: cache.updated_date.and_then(ms_to_dt),
             registrar: cache.registrar,
             registrant_country: cache.registrant_country,
             registrant_org: cache.registrant_org,
@@ -149,6 +157,38 @@ mod tests {
         let converted_back: WhoisResult = cache_result.into();
         assert!(converted_back.creation_date.is_none());
         assert!(converted_back.registrar.is_none());
+    }
+
+    #[test]
+    fn test_whois_cache_result_unrepresentable_timestamp_is_none() {
+        // A corrupted or out-of-range millisecond integer must round-trip back to
+        // `None`, not collapse to 1970-01-01 (which silently corrupts the data).
+        // i64::MAX is well outside the range DateTime<Utc> can represent.
+        let cache = WhoisCacheResult {
+            creation_date: Some(i64::MAX),
+            expiration_date: Some(i64::MIN),
+            updated_date: Some(0),
+            registrar: None,
+            registrant_country: None,
+            registrant_org: None,
+            status: None,
+            nameservers: None,
+            raw_text: None,
+        };
+        let result: WhoisResult = cache.into();
+        assert!(
+            result.creation_date.is_none(),
+            "i64::MAX ms must round-trip to None, not 1970-01-01"
+        );
+        assert!(
+            result.expiration_date.is_none(),
+            "i64::MIN ms must round-trip to None, not 1970-01-01"
+        );
+        // 0 ms is a valid timestamp (epoch) — should round-trip to Some(epoch).
+        assert!(
+            result.updated_date.is_some(),
+            "0 ms is a valid timestamp and must round-trip to Some(epoch)"
+        );
     }
 
     #[test]
