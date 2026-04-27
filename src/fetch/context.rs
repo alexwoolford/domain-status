@@ -44,6 +44,10 @@ pub struct ConfigContext {
     pub enable_whois: bool,
     /// Live runtime counters for retries and degradation paths
     pub runtime_metrics: Arc<RuntimeMetrics>,
+    /// If true, redirect resolution allows loopback URLs (`127.0.0.1`, `::1`) so
+    /// integration tests against `httptest`/`wiremock` mock servers work.
+    /// Mirrors `Config::allow_localhost_for_tests`. Must NOT be set in production.
+    pub allow_localhost_for_tests: bool,
 }
 
 /// Main processing context containing all shared resources.
@@ -92,6 +96,7 @@ impl ConfigContext {
         run_id: Option<String>,
         enable_whois: bool,
         runtime_metrics: Arc<RuntimeMetrics>,
+        allow_localhost_for_tests: bool,
     ) -> Self {
         Self {
             error_stats,
@@ -99,6 +104,7 @@ impl ConfigContext {
             run_id,
             enable_whois,
             runtime_metrics,
+            allow_localhost_for_tests,
         }
     }
 }
@@ -177,6 +183,7 @@ mod tests {
                 run_id.clone(),
                 enable_whois,
                 Arc::new(RuntimeMetrics::default()),
+                true,
             ),
         );
 
@@ -242,6 +249,7 @@ mod tests {
                 run_id,
                 enable_whois,
                 Arc::new(RuntimeMetrics::default()),
+                true,
             ),
         );
 

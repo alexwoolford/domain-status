@@ -247,6 +247,7 @@ mod tests {
                 None,
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+                true,
             ),
         )
     }
@@ -296,6 +297,7 @@ mod tests {
                 Some("test-run".to_string()),
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+                true,
             ),
         )
     }
@@ -1093,6 +1095,7 @@ mod tests {
                 Some("test-run".to_string()),
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+                true,
             ),
         );
 

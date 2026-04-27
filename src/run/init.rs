@@ -229,6 +229,7 @@ pub async fn init_scan_resources(
             Some(run_id.clone()),
             config.enable_whois,
             Arc::clone(&runtime_metrics),
+            config.allow_localhost_for_tests,
         ),
     ));
 
@@ -241,6 +242,7 @@ pub async fn init_scan_resources(
         error_stats,
         timing_stats,
         runtime_metrics,
+        in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         completed_urls,
         successful_urls,
         skipped_urls,

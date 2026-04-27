@@ -215,6 +215,7 @@ mod tests {
                 Some(run_id.to_string()),
                 false,
                 Arc::new(RuntimeMetrics::default()),
+                true,
             ),
         ));
 
@@ -243,6 +244,7 @@ mod tests {
             error_stats,
             timing_stats,
             runtime_metrics: Arc::new(RuntimeMetrics::default()),
+            in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             completed_urls,
             successful_urls,
             skipped_urls,

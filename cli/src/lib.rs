@@ -93,6 +93,13 @@ pub struct ScanCommand {
 
     #[arg(long, default_value = "domain_status.log")]
     pub log_file: PathBuf,
+
+    /// Maximum time (seconds) to wait for in-flight tasks to finish after the
+    /// input queue is exhausted. Tasks still running after this window are
+    /// aborted and recorded in `url_failures` with the timeout reason.
+    /// Raise this for WHOIS-heavy small batches if scans report drain timeouts.
+    #[arg(long, default_value_t = 10)]
+    pub drain_timeout_secs: u64,
 }
 
 /// Export command arguments.

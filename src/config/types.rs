@@ -228,6 +228,17 @@ pub struct Config {
     /// 127.0.0.1 or ::1. Must not be set in production.
     #[doc(hidden)]
     pub allow_localhost_for_tests: bool,
+
+    /// Maximum time (seconds) to wait for in-flight tasks to drain after the input
+    /// queue is exhausted (or after a Ctrl-C). Tasks that haven't completed within
+    /// this window are aborted. Each abandoned URL is recorded as a `url_failures`
+    /// row with `error_type = ProcessUrlTimeout` so users can see which URLs were
+    /// lost.
+    ///
+    /// Default: 10 seconds. Lower this in tests to deterministically force the
+    /// drain-timeout path; raise it for production scans with very slow upstream
+    /// services (e.g. WHOIS-heavy workloads on small batches).
+    pub drain_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -252,6 +263,7 @@ impl Default for Config {
             progress_callback: None,
             dependency_overrides: None,
             allow_localhost_for_tests: false,
+            drain_timeout_secs: 10,
         }
     }
 }
@@ -284,6 +296,7 @@ impl std::fmt::Debug for Config {
                 &self.dependency_overrides.as_ref().map(|_| "<overrides>"),
             )
             .field("allow_localhost_for_tests", &self.allow_localhost_for_tests)
+            .field("drain_timeout_secs", &self.drain_timeout_secs)
             .finish()
     }
 }

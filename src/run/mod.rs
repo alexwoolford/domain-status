@@ -13,9 +13,10 @@ mod init;
 mod resources;
 mod task;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use log::warn;
 use tokio::task::JoinSet;
@@ -23,7 +24,91 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::{log_progress, validate_and_normalize_url};
 use crate::config::{LOGGING_INTERVAL, STATUS_SERVER_LOGGING_INTERVAL_SECS};
+use crate::error_handling::ErrorType;
 use crate::security::validate_url_safe;
+use crate::storage::insert::insert_url_failure;
+use crate::storage::models::UrlFailureRecord;
+use crate::storage::DbPool;
+
+/// RAII guard that registers a URL with the in-flight registry on construction
+/// and removes it on drop.
+///
+/// The drain phase reads what's still in the registry when its deadline fires
+/// to record a `url_failures` row for every abandoned URL. The guard's `Drop`
+/// runs synchronously even when a task future is aborted at an `.await` point,
+/// so successful tasks remove themselves before the drain snapshot, and aborted
+/// tasks remain visible — exactly the distinction we need.
+struct InFlightGuard {
+    registry: Arc<Mutex<HashSet<String>>>,
+    url: Option<String>,
+}
+
+impl InFlightGuard {
+    fn register(registry: Arc<Mutex<HashSet<String>>>, url: String) -> Self {
+        if let Ok(mut set) = registry.lock() {
+            set.insert(url.clone());
+        }
+        Self {
+            registry,
+            url: Some(url),
+        }
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Some(url) = self.url.take() {
+            if let Ok(mut set) = self.registry.lock() {
+                set.remove(&url);
+            }
+        }
+    }
+}
+
+/// Records a `url_failures` row for each URL whose task was abandoned at the
+/// drain timeout. Returns the number of rows successfully inserted.
+///
+/// Failures here are best-effort: an insert failure is logged but does not
+/// abort the rest of the loop, since the alternative (leaving the URL with
+/// no record at all) is worse than logging.
+async fn record_drain_timeout_failures(
+    pool: &DbPool,
+    run_id: &str,
+    drain_timeout_secs: u64,
+    abandoned: &[String],
+) -> usize {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let mut inserted = 0usize;
+    for url in abandoned {
+        let domain = url::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_else(|| url.clone());
+        let record = UrlFailureRecord {
+            url: url.clone(),
+            final_url: None,
+            domain,
+            final_domain: None,
+            error_type: ErrorType::ProcessUrlTimeout,
+            error_message: format!(
+                "Aborted at scan drain timeout ({drain_timeout_secs}s expired); task did not finish in time"
+            ),
+            http_status: None,
+            retry_count: 0,
+            elapsed_time_seconds: None,
+            timestamp: now_ms,
+            run_id: Some(run_id.to_string()),
+            redirect_chain: vec![],
+            response_headers: vec![],
+            request_headers: vec![],
+        };
+        match insert_url_failure(pool.as_ref(), &record).await {
+            Ok(_) => inserted += 1,
+            Err(e) => log::error!("Failed to insert drain-timeout url_failures row for {url}: {e}"),
+        }
+    }
+    inserted
+}
 
 pub use resources::{ScanLoopResult, ScanResources, UrlTaskParams};
 
@@ -318,9 +403,18 @@ pub async fn run_scan(
                     progress_callback: progress_callback.clone(),
                 };
 
+                // Wrap the task so an InFlightGuard registers the URL on entry and
+                // removes it on drop. The drain phase reads what is still registered
+                // when its deadline fires to record a url_failures row for every URL
+                // that was aborted, instead of silently incrementing a counter.
+                let registry = Arc::clone(&resources.in_flight_urls);
+                let url_for_registry = url.clone();
                 // JoinSet::spawn() is like FuturesUnordered::push(tokio::spawn(...))
                 // but manages the JoinHandle internally without accumulating them all in memory
-                tasks.spawn(task::process_url_task(task_params));
+                tasks.spawn(async move {
+                    let _guard = InFlightGuard::register(registry, url_for_registry);
+                    task::process_url_task(task_params).await;
+                });
             }
             () = cancel.cancelled() => {
                 log::info!("Received interrupt (Ctrl-C), finishing current work and finalizing...");
@@ -332,27 +426,42 @@ pub async fn run_scan(
     // Phase 5: Drain remaining tasks with timeout so Ctrl-C doesn't hang indefinitely.
     // Use a single wall-clock deadline for the entire drain, not per-task timeouts,
     // so N slow tasks can't extend the shutdown to N * timeout.
-    const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-    let drain_deadline = tokio::time::Instant::now() + DRAIN_TIMEOUT;
+    let drain_timeout_secs = resources.config.drain_timeout_secs;
+    let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs);
+    let drain_deadline = tokio::time::Instant::now() + drain_timeout;
     loop {
         let remaining = drain_deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            let abandoned = tasks.len();
-            if abandoned > 0 {
+            // Snapshot the URLs whose tasks are still in flight BEFORE aborting them.
+            // The InFlightGuard::Drop removes URLs on natural completion, so the set
+            // we read here is exactly the set that did NOT finish in time.
+            let abandoned: Vec<String> = resources
+                .in_flight_urls
+                .lock()
+                .map(|set| set.iter().cloned().collect())
+                .unwrap_or_default();
+            let abandoned_count = abandoned.len();
+            if abandoned_count > 0 {
                 log::warn!(
-                    "Drain timeout ({}s) reached, {} in-flight task(s) aborted and counted as failed",
-                    DRAIN_TIMEOUT.as_secs(),
-                    abandoned
+                    "Drain timeout ({drain_timeout_secs}s) reached, recording {abandoned_count} in-flight task(s) as failures and aborting"
                 );
-                // abandoned is JoinSet::len() which is bounded by max_concurrency (usize)
+                let inserted = record_drain_timeout_failures(
+                    &resources.pool,
+                    &resources.run_id,
+                    drain_timeout_secs,
+                    &abandoned,
+                )
+                .await;
+                if inserted < abandoned_count {
+                    log::warn!(
+                        "Recorded {inserted}/{abandoned_count} drain-timeout failures (the rest hit DB errors; see preceding log lines)"
+                    );
+                }
                 resources
                     .failed_urls
-                    .fetch_add(abandoned, Ordering::Relaxed);
+                    .fetch_add(abandoned_count, Ordering::Relaxed);
             } else {
-                log::info!(
-                    "Drain timeout ({}s) reached, no remaining tasks",
-                    DRAIN_TIMEOUT.as_secs()
-                );
+                log::info!("Drain timeout ({drain_timeout_secs}s) reached, no remaining tasks");
             }
             tasks.abort_all();
             cancel.cancel();
@@ -469,6 +578,7 @@ mod tests {
             progress_callback: None,
             dependency_overrides: None,
             allow_localhost_for_tests: false,
+            drain_timeout_secs: 10,
         };
 
         let result = run_scan(config).await;
@@ -557,6 +667,7 @@ mod tests {
             progress_callback: None,
             dependency_overrides: None,
             allow_localhost_for_tests: false,
+            drain_timeout_secs: 10,
         };
 
         let result = run_scan(config).await;

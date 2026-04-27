@@ -3,8 +3,9 @@
 //! This module defines the `ScanResources` struct which holds all initialized
 //! resources needed for a URL scan operation.
 
+use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Type alias for progress callback function (completed, failed, skipped, total).
 pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>;
@@ -52,6 +53,17 @@ pub struct ScanResources {
     pub timing_stats: Arc<TimingStats>,
     /// Live runtime counters for retries and degradation paths
     pub runtime_metrics: Arc<RuntimeMetrics>,
+
+    // In-flight URL registry — used by the drain phase to record a `url_failures`
+    // row for every URL whose task is still running when the drain timeout fires,
+    // so users see exactly which URLs were lost rather than only an aggregate
+    // "X failed" count. Each spawned task adds its URL on entry and removes it on
+    // exit via an RAII guard ([`InFlightGuard`] in `run/mod.rs`).
+    //
+    // `std::sync::Mutex` (not `tokio::sync::Mutex`) so `InFlightGuard::Drop` can
+    // run synchronously when a task future is aborted at an `.await` point.
+    /// Set of URLs whose tasks are currently in flight (registered/unregistered by RAII guard).
+    pub in_flight_urls: Arc<Mutex<HashSet<String>>>,
 
     // Counters
     /// Count of successfully processed URLs

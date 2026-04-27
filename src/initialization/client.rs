@@ -171,6 +171,7 @@ mod tests {
             progress_callback: None,
             dependency_overrides: None,
             allow_localhost_for_tests: false,
+            drain_timeout_secs: 10,
         }
     }
 

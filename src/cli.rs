@@ -80,6 +80,7 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         progress_callback: None,
         dependency_overrides: None,
         allow_localhost_for_tests: false,
+        drain_timeout_secs: cli.drain_timeout_secs,
     }
 }
 
@@ -579,6 +580,7 @@ mod tests {
             fail_on: CliFailOn::AnyFailure,
             fail_on_pct_threshold: 15,
             log_file: PathBuf::from("domain_status.log"),
+            drain_timeout_secs: 10,
         };
 
         let config: Config = config_from_scan_command(scan_cmd);
