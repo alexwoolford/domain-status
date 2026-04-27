@@ -43,6 +43,9 @@ secrets.yaml
 secrets.json
 secrets.toml
 
+# MCP server config (contains user-specific absolute paths)
+.mcp.json
+
 # Temporary LLM-generated working files (should never be committed)
 *_REVIEW.md
 *_PLAN.md
@@ -98,7 +101,7 @@ compare_detection
 :memory:
 proptest-regressions/
 
-rust-reference-projects/
+rust-reference-projects
 reference-repos/
 rust-cache/
 
