@@ -181,7 +181,7 @@ clap_mangen = "^0.2"
 [dev-dependencies]
 tokio = { version = "^1", features = ["test-util"] }
 httptest = "^0.16"
-proptest = "^1.4"          # Property-based testing
+proptest = "^1.11"          # Property-based testing
 insta = { version = "^1.38", features = ["yaml"] }  # Snapshot/golden testing
 pretty_assertions = "^1.4"  # Better test output
 assert_cmd = "^2.0"         # CLI testing
