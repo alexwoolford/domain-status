@@ -176,6 +176,23 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_invalid_utf8_payload_returns_none() {
+        // Base64-valid bytes that aren't UTF-8 (lone 0xFF, isolated continuation
+        // bytes 0x80, etc). decode_jwt's `String::from_utf8(...).ok()?` must
+        // return None here rather than panicking. Past UTF-8 issues elsewhere in
+        // the crate make this worth pinning down explicitly.
+        let not_utf8 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode([0xff, 0xfe, 0xfd, 0xfc, 0x80, 0x81]);
+        let valid_header =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"alg":"HS256"}"#);
+        // Invalid UTF-8 in either segment should produce None (not panic).
+        let bad_header = format!("{not_utf8}.{valid_header}.sig");
+        assert!(decode_jwt(&bad_header).is_none());
+        let bad_payload = format!("{valid_header}.{not_utf8}.sig");
+        assert!(decode_jwt(&bad_payload).is_none());
+    }
+
+    #[test]
     fn test_decode_jwt_with_trailing_backslash() {
         let with_backslash = format!("{NETLIFY_JWT}\\");
         let jwt = decode_jwt(&with_backslash).unwrap();

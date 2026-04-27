@@ -282,6 +282,110 @@ mod tests {
         assert!(parse_whois_date("2024-01-15T10:30:45Z").is_some());
     }
 
+    /// Stronger value asserts: several existing date-parser tests only check
+    /// `is_some()`. These verify the fields actually round-trip to the expected
+    /// year/month/day/hour/min/sec — including fractional seconds, timezone
+    /// offsets that must normalize to UTC, and the WHOIS-specific `dd-Mmm-yyyy`
+    /// format that the chrono fallback handles.
+    #[test]
+    fn test_parse_whois_date_values_fractional_seconds() {
+        let dt = parse_whois_date("2024-01-15T10:30:45.123456Z").expect("should parse");
+        // Must normalize to UTC and preserve the wall-clock time.
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-01-15 10:30:45"
+        );
+        // Fractional seconds: 123_456 us = 123_456_000 ns.
+        assert_eq!(dt.timestamp_subsec_nanos(), 123_456_000);
+    }
+
+    #[test]
+    fn test_parse_whois_date_values_with_offset_normalises_to_utc() {
+        // 10:30:45 in +02:00 == 08:30:45 UTC.
+        let dt = parse_whois_date("2024-01-15T10:30:45+02:00").expect("should parse");
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-01-15 08:30:45"
+        );
+    }
+
+    #[test]
+    fn test_parse_whois_date_values_dd_mmm_yyyy() {
+        let dt = parse_whois_date("15-Jan-2024").expect("should parse");
+        // No time component in source -> midnight UTC.
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-01-15 00:00:00"
+        );
+    }
+
+    // --- bound_raw_text / UTF-8 truncation tests --------------------------------------------
+    //
+    // The WHOIS raw response is bounded before it hits the DB. The previous
+    // changelog notes UTF-8 panics in this area, so it's worth pinning down the
+    // boundary invariants explicitly: result must be valid UTF-8, must respect
+    // the cap, and must not split a multi-byte codepoint.
+
+    #[test]
+    fn test_bound_raw_text_short_input_unchanged() {
+        let input = "short whois response";
+        assert_eq!(bound_raw_text(input), input);
+    }
+
+    #[test]
+    fn test_bound_raw_text_long_input_is_capped_and_valid_utf8() {
+        // Multi-byte codepoints (4-byte 🚀, 3-byte 测/试) so the byte length
+        // exceeds char count; this is exactly the shape that triggers
+        // "truncate at byte N landed mid-codepoint" panics.
+        let unit = "abc🚀测试 ";
+        let mut input = String::new();
+        while input.len() <= crate::config::MAX_WHOIS_RAW_TEXT_SIZE + unit.len() {
+            input.push_str(unit);
+        }
+        assert!(input.len() > crate::config::MAX_WHOIS_RAW_TEXT_SIZE);
+
+        let bounded = bound_raw_text(&input);
+        assert!(
+            bounded.len() <= crate::config::MAX_WHOIS_RAW_TEXT_SIZE,
+            "bounded length {} exceeds cap {}",
+            bounded.len(),
+            crate::config::MAX_WHOIS_RAW_TEXT_SIZE
+        );
+        // String guarantees valid UTF-8, but assert explicitly so a future
+        // refactor that returned bytes wouldn't silently break this contract.
+        assert!(
+            std::str::from_utf8(bounded.as_bytes()).is_ok(),
+            "bounded text must be valid UTF-8"
+        );
+        // The truncation suffix must land at the end (and be reachable, since
+        // suffix.len() < cap).
+        assert!(
+            bounded.ends_with("(truncated raw WHOIS response)"),
+            "expected truncation suffix at end of: {bounded:?}"
+        );
+    }
+
+    #[test]
+    fn test_bound_raw_text_truncation_lands_on_char_boundary() {
+        // Build an input where the natural truncation byte falls inside a
+        // 4-byte codepoint, to make sure the helper steps back to a boundary
+        // rather than panicking.
+        let mut input = "x".repeat(crate::config::MAX_WHOIS_RAW_TEXT_SIZE - 2);
+        input.push('🚀'); // 4 bytes; pushes total to MAX + 2, so naive truncate at MAX would split it.
+        input.push_str(" trailing junk");
+
+        let bounded = bound_raw_text(&input);
+        assert!(bounded.len() <= crate::config::MAX_WHOIS_RAW_TEXT_SIZE);
+        assert!(
+            bounded.is_char_boundary(bounded.len()),
+            "bounded length {} must be on a UTF-8 char boundary",
+            bounded.len()
+        );
+        // We don't care which side of the rocket the cut falls on — just that
+        // the bytes form valid UTF-8 and the length is capped.
+        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+    }
+
     #[test]
     fn test_convert_payload_epoch_creation_date_becomes_none() {
         let payload = WhoisPayload {
