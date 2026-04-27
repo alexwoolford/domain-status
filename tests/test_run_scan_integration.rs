@@ -223,14 +223,27 @@ async fn test_run_scan_respects_rate_limit() {
 /// records `url_failures` rows for drain-timeout aborts, those URLs were
 /// silently lost — the failed counter incremented but no DB row was written,
 /// so users had no way to find which URLs had failed or retry them.
-/// An ad-hoc 90-URL test discovered this; this regression test makes sure the
-/// failure path is exercised on every CI run.
 ///
 /// Setup: a wiremock server that delays every response longer than the drain
-/// timeout. With `drain_timeout_secs=1` and a 5 s response delay, every URL
+/// timeout. With `drain_timeout_secs=1` and a 10 s response delay, every URL
 /// is guaranteed to still be in flight when drain fires. We then assert the
 /// recorded `url_failures` rows match the input URLs exactly.
+///
+/// `#[ignore]` rationale: `run_scan` calls `init_ruleset` which fetches the
+/// fingerprint rules from GitHub, hitting the unauthenticated 60/hr rate
+/// limit on shared CI runners (observed: macOS leg of the matrix flaked
+/// while ubuntu/windows passed). The same pattern is used by the sibling
+/// `test_run_scan_enforces_max_concurrency` and `test_run_scan_respects_rate_limit`
+/// tests in this file. The e2e job runs `cargo test ... -- --ignored` on
+/// every push and same-repo PR, so the regression gate stays active for
+/// merges to main.
+///
+/// FOLLOWUP: make the fingerprint init network-independent (write a minimal
+/// fingerprint JSON to a temp file and pass its path via `Config.fingerprints`)
+/// so this test can run in the regular Test Suite matrix and gate PRs from
+/// forks.
 #[tokio::test]
+#[ignore = "needs network for fingerprint ruleset; runs in e2e job via --ignored"]
 async fn test_run_scan_drain_timeout_records_failures() {
     let total_urls: usize = 5;
     let drain_timeout_secs: u64 = 1;

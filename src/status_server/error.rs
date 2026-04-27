@@ -66,14 +66,19 @@ impl StatusServerError {
     }
 }
 
-/// Lifecycle errors for [`super::spawn_status_server`] and
-/// [`super::StatusServerHandle::shutdown`].
+/// Lifecycle errors for `spawn_status_server` and `StatusServerHandle::shutdown`.
 ///
 /// Typed (rather than `anyhow::Error`) so library callers can branch on the
 /// failure mode (port already bound, server-loop crash, background-task
 /// panic) without parsing error messages.
 ///
 /// Marked `#[non_exhaustive]` so adding new failure modes is not breaking.
+///
+/// Note: the `super::` references are written as plain code spans rather than
+/// rustdoc intra-doc links because the parent `status_server` module is
+/// private; rustdoc's `private-intra-doc-links` lint (escalated to error by
+/// CI's `RUSTDOCFLAGS="-D warnings"` setting) would reject the bracketed
+/// `super::...` form.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum StatusServerLifecycleError {
