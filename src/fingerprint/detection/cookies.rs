@@ -45,10 +45,10 @@ fn wildcard_cookie_regex(cookie_name: &str) -> Option<regex::Regex> {
 #[cfg(test)]
 pub async fn check_cookies(
     cookies: &HashMap<String, String>,
-) -> anyhow::Result<Vec<CookieMatchResult>> {
-    let ruleset = get_ruleset().await.ok_or_else(|| {
-        anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
-    })?;
+) -> Result<Vec<CookieMatchResult>, crate::error_handling::FingerprintError> {
+    let ruleset = get_ruleset()
+        .await
+        .ok_or(crate::error_handling::FingerprintError::RulesetNotInitialized)?;
 
     let mut results = Vec::new();
 

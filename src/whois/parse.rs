@@ -124,16 +124,8 @@ pub(crate) fn convert_payload(payload: &WhoisPayload) -> WhoisResult {
         registrar: parsed.registrar.clone(),
         registrant_country: None,
         registrant_org: None,
-        status: if parsed.status.is_empty() {
-            None
-        } else {
-            Some(parsed.status.clone())
-        },
-        nameservers: if parsed.name_servers.is_empty() {
-            None
-        } else {
-            Some(parsed.name_servers.clone())
-        },
+        status: parsed.status.clone(),
+        nameservers: parsed.name_servers.clone(),
         raw_text: Some(payload.raw_text.clone()),
     })
 }
@@ -430,15 +422,9 @@ mod tests {
         assert_eq!(result.registrant_org, None);
         assert_eq!(
             result.nameservers,
-            Some(vec![
-                "ns1.example.com".to_string(),
-                "ns2.example.com".to_string()
-            ])
+            vec!["ns1.example.com".to_string(), "ns2.example.com".to_string()]
         );
-        assert_eq!(
-            result.status,
-            Some(vec!["clientTransferProhibited".to_string()])
-        );
+        assert_eq!(result.status, vec!["clientTransferProhibited".to_string()]);
         assert_eq!(result.raw_text.as_deref(), Some("raw whois"));
         assert!(result.creation_date.is_some());
         assert!(result.expiration_date.is_some());
@@ -488,10 +474,7 @@ mod tests {
         assert_eq!(result.registrar.as_deref(), Some("Registrar"));
         assert_eq!(result.registrant_org.as_deref(), Some("Example Org"));
         assert_eq!(result.registrant_country.as_deref(), Some("US"));
-        assert_eq!(
-            result.nameservers,
-            Some(vec!["ns1.example.com".to_string()])
-        );
+        assert_eq!(result.nameservers, vec!["ns1.example.com".to_string()]);
     }
 
     #[test]

@@ -57,8 +57,8 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
-          cargo test --doc --locked
-          cargo doc --no-deps --locked
+          cargo test --doc --all-features --locked
+          cargo doc --no-deps --all-features --locked
 
   test:
     name: Test Suite (${{ matrix.os }})

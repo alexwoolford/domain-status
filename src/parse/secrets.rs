@@ -16,7 +16,11 @@ use std::fmt;
 const CONTEXT_CHARS: usize = 80;
 
 /// Severity levels for exposed secrets.
+///
+/// Marked `#[non_exhaustive]` so adding new tiers (e.g. `Informational`) is not
+/// a breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SecretSeverity {
     /// Can directly compromise systems or charge money (e.g., AWS secret key, Stripe secret key, private keys).
     Critical,

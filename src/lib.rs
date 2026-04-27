@@ -85,18 +85,29 @@ pub mod whois;
 pub use cli::evaluate_exit_code;
 pub use config::{Config, FailOn, LogFormat, LogLevel, ScanDependencyOverrides};
 pub use error_handling::{
-    log_error_chain, DatabaseError, ErrorExt, FingerprintError, ReqwestErrorExt, RunScanError,
-    StartupError,
+    log_error_chain, DatabaseError, ErrorExt, FingerprintError, MigrationError, ReqwestErrorExt,
+    RunScanError, StartupError,
 };
+// Reachable from `StartupError::StatusServer(_)` — surface the type so callers
+// matching on that variant can name it.
 pub use exit_codes::{EXIT_NO_URLS_PCT, EXIT_POLICY_FAILURE, EXIT_RUNTIME_ERROR, EXIT_SUCCESS};
 pub use geoip::GeoIpService;
 pub use models::{KeyAlgorithm, TlsVersion};
 pub use run::{run_scan, ScanReport};
+pub use status_server::StatusServerLifecycleError;
 pub use storage::{
     init_db_pool_with_path, query_run_history, run_migrations, RunSummary, UrlRecord,
 };
-// Re-export insert types for testing
-pub use storage::insert::{insert_url_record, UrlRecordInsertParams};
-// Re-export whois types for testing
+// Low-level insert helpers used by the crate's own integration tests under
+// `tests/`. These are NOT a stable public API — they expose internals of the
+// SQLite write pipeline, with all the surface that requires (column lists,
+// FK ordering, retry semantics). Gated behind the `test-utils` feature so the
+// default published crate doesn't include them in its semver surface.
+//
+// Enable with `cargo test --features test-utils` (already part of `just test`,
+// `just ci`, and the CI workflow's `--all-features` invocation).
+#[cfg(feature = "test-utils")]
+pub use storage::insert::url::{insert_url_record, UrlRecordInsertParams};
+
 pub use utils::print_io_error_hint_if_applicable;
 pub use whois::{lookup_whois, WhoisResult};

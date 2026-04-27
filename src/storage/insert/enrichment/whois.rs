@@ -24,29 +24,33 @@ pub async fn insert_whois_data(
 
     // Serialize status and nameservers to JSON.
     //
-    // `serde_json::to_string` of `Vec<String>` cannot fail in practice (no custom
-    // Serialize impls in the chain), but the previous `unwrap_or_default()` would
-    // silently write an empty string ("") into the column on any future bug,
-    // indistinguishable from a real empty list. Log + write NULL instead so any
-    // regression is visible.
-    let status_json = whois.status.as_ref().and_then(|s| match serde_json::to_string(s) {
-        Ok(json) => Some(json),
-        Err(e) => {
-            log::warn!(
-                "BUG: failed to serialize whois.status as JSON for url_status_id={url_status_id}: {e}; storing NULL"
-            );
-            None
+    // The in-memory API uses `Vec<String>` (possibly empty); on disk we keep
+    // the "missing-vs-present" distinction by writing NULL when the vector is
+    // empty rather than the empty-array literal `[]`. That preserves the
+    // semantics existing exports rely on (`status_json IS NULL` means "lookup
+    // returned no statuses" — same as before the API simplified).
+    //
+    // `serde_json::to_string` of `Vec<String>` cannot fail in practice (no
+    // custom Serialize impls in the chain), but the previous `unwrap_or_default()`
+    // would silently write an empty string ("") into the column on any future
+    // bug, indistinguishable from a real empty list. Log + write NULL instead
+    // so any regression is visible.
+    fn vec_to_json_or_null(column: &str, url_status_id: i64, v: &[String]) -> Option<String> {
+        if v.is_empty() {
+            return None;
         }
-    });
-    let nameservers_json = whois.nameservers.as_ref().and_then(|n| match serde_json::to_string(n) {
-        Ok(json) => Some(json),
-        Err(e) => {
-            log::warn!(
-                "BUG: failed to serialize whois.nameservers as JSON for url_status_id={url_status_id}: {e}; storing NULL"
-            );
-            None
+        match serde_json::to_string(v) {
+            Ok(json) => Some(json),
+            Err(e) => {
+                log::warn!(
+                    "BUG: failed to serialize whois.{column} as JSON for url_status_id={url_status_id}: {e}; storing NULL"
+                );
+                None
+            }
         }
-    });
+    }
+    let status_json = vec_to_json_or_null("status", url_status_id, &whois.status);
+    let nameservers_json = vec_to_json_or_null("nameservers", url_status_id, &whois.nameservers);
 
     with_sqlite_retry(|| async {
         sqlx::query(

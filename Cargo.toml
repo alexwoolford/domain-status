@@ -65,6 +65,43 @@ strip = true
 name = "domain_status"
 path = "src/lib.rs"
 
+[features]
+default = []
+# Internal: exposes low-level insert helpers (`insert_url_record`,
+# `UrlRecordInsertParams`) for the crate's own integration tests under
+# `tests/`. Not a stable public API — never enable in downstream production
+# code. Run the affected tests with `cargo test --features test-utils`
+# (already covered by `just test` / `just ci` / CI's `--all-features`).
+test-utils = []
+
+# Integration tests that drive the low-level insert pipeline directly.
+# `required-features` makes `cargo test` skip them silently (rather than
+# fail to compile) when the `test-utils` feature isn't enabled.
+[[test]]
+name = "resiliency_cancellation"
+path = "tests/resiliency_cancellation.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "resiliency_break_it"
+path = "tests/resiliency_break_it.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "db_pool_timeout_bug"
+path = "tests/db_pool_timeout_bug.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "stress_concurrency_mismatch"
+path = "tests/stress_concurrency_mismatch.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "stress_database_scale"
+path = "tests/stress_database_scale.rs"
+required-features = ["test-utils"]
+
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate", "stream"] }

@@ -32,7 +32,7 @@ fn extract_common_name(subject: &str) -> Option<&str> {
 fn hostname_matches_certificate(
     final_url: &str,
     cert_subject: &str,
-    cert_sans: Option<&Vec<String>>,
+    cert_sans: Option<&[String]>,
 ) -> bool {
     let Ok(parsed) = url::Url::parse(final_url) else {
         return false;
@@ -72,7 +72,7 @@ pub fn analyze_security(
     cert_subject: Option<&str>,
     cert_issuer: Option<&str>,
     cert_valid_to: Option<&chrono::NaiveDateTime>,
-    cert_sans: Option<&Vec<String>>,
+    cert_sans: Option<&[String]>,
 ) -> Vec<SecurityWarning> {
     let mut warnings = Vec::new();
 
@@ -417,7 +417,7 @@ mod tests {
             Some("CN=other.example"),
             Some("CN=Trusted Issuer"),
             Some(&future_date),
-            Some(&vec!["other.example".to_string()]),
+            Some(&["other.example".to_string()]),
         );
 
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));

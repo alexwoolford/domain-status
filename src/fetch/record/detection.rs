@@ -45,11 +45,8 @@ pub(crate) async fn detect_technologies_safely(
         )
     })
     .await
-    .map_err(|e| {
-        crate::error_handling::FingerprintError::DetectionFailed(anyhow::anyhow!(
-            "Technology detection task panicked: {e}"
-        ))
-    })
+    // `JoinError` -> `FingerprintError::DetectionTaskJoin` via `#[from]`.
+    .map_err(crate::error_handling::FingerprintError::from)
     .and_then(|r| r);
 
     match result {
@@ -75,7 +72,7 @@ pub(crate) async fn detect_technologies_safely(
                         e
                     );
                 }
-                crate::error_handling::FingerprintError::DetectionFailed(_) => {
+                crate::error_handling::FingerprintError::DetectionTaskJoin(_) => {
                     log::warn!(
                         "Failed to detect technologies for {}: {}",
                         resp_data.final_domain,

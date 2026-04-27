@@ -37,7 +37,11 @@ pub struct ScanDependencyOverrides {
 /// Exit code policy for handling failures.
 ///
 /// Controls when the CLI should exit with a non-zero code based on scan results.
+///
+/// Marked `#[non_exhaustive]` so adding new policies (e.g. `OnConsecutive`,
+/// `WhenAnyFailureMatches(...)`) is not a breaking change.
 #[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FailOn {
     /// Never exit with error code (always return 0)
     ///
@@ -96,7 +100,11 @@ impl From<LogLevel> for log::LevelFilter {
 /// Controls how log messages are formatted:
 /// - `Plain`: Human-readable format with colors (default)
 /// - `Json`: Structured JSON format for machine parsing
+///
+/// Marked `#[non_exhaustive]` so adding new output formats (logfmt, OTLP, etc.)
+/// is not a breaking change.
 #[derive(Copy, Clone, Debug, ValueEnum)]
+#[non_exhaustive]
 pub enum LogFormat {
     /// Human-readable format with colors (default)
     Plain,

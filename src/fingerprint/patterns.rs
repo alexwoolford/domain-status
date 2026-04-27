@@ -75,7 +75,7 @@ pub(crate) fn check_meta_patterns(
     // wappalyzergo passes raw content value to pattern.Evaluate (which uses case-insensitive regex)
     // We pass raw content, which is correct
     // meta_values is a Vec<String> because there can be multiple meta tags with the same name
-    let check_patterns = |meta_values: &Vec<String>| -> MetaMatchResult {
+    let check_patterns = |meta_values: &[String]| -> MetaMatchResult {
         let mut matched_version: Option<String> = None;
         let mut has_match = false;
 

@@ -15,7 +15,12 @@ use std::fmt;
 /// Eliminates primitive obsession by replacing raw `String` algorithm names
 /// with a type-safe enum. The `Other(String)` variant handles unknown OIDs
 /// that don't map to a recognized algorithm.
+///
+/// Marked `#[non_exhaustive]` so adding new public-key algorithms is not a
+/// semver-breaking change. Downstream `match` expressions must include a
+/// `_ =>` arm (or use the `Other` variant as a catch-all).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum KeyAlgorithm {
     /// RSA (OID 1.2.840.113549.1.1.1)
     RSA,
@@ -74,7 +79,12 @@ impl fmt::Display for KeyAlgorithm {
 /// with a type-safe enum. This fixes a subtle bug where the Debug format
 /// of rustls versions (`TLS13`) didn't match the string comparisons in
 /// security analysis (`"TLSv1.3"`), making the weak-TLS check fragile.
+///
+/// Marked `#[non_exhaustive]` so a future TLS 1.4 (or post-quantum protocol)
+/// can be added without breaking downstream callers. The `Unknown` variant
+/// is also available as a catch-all for legacy match arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TlsVersion {
     /// TLS 1.0 (insecure)
     Tls10,

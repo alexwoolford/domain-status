@@ -9,8 +9,17 @@ use std::time::SystemTime;
 /// Fields are normalized into optional structured values because WHOIS and RDAP
 /// responses are highly inconsistent across registries.
 ///
-/// A missing field means the upstream source did not provide a trustworthy value;
-/// it does not necessarily mean the domain itself lacks that property.
+/// A missing scalar field (`None`) means the upstream source did not provide a
+/// trustworthy value; it does not necessarily mean the domain itself lacks that
+/// property.
+///
+/// `status` and `nameservers` are plain `Vec<String>` (possibly empty) rather
+/// than `Option<Vec<String>>`. The `Option` form had three states (None, empty,
+/// non-empty) which is one too many — callers had to handle "absent" and
+/// "empty" separately even though both meant "no values to display". An empty
+/// vector now expresses "the lookup completed but returned no entries" and the
+/// downstream DB write path stores NULL for the empty case so the
+/// "missing-vs-present" distinction is preserved at the storage layer.
 ///
 /// # Examples
 ///
@@ -20,9 +29,7 @@ use std::time::SystemTime;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// if let Some(whois) = lookup_whois("example.com", None).await? {
-///     if let Some(nameservers) = whois.nameservers {
-///         println!("{} nameservers", nameservers.len());
-///     }
+///     println!("{} nameservers", whois.nameservers.len());
 /// }
 /// # Ok(())
 /// # }
@@ -45,9 +52,11 @@ pub struct WhoisResult {
     /// leaves it as `None` when it cannot confidently map an organization value.
     pub registrant_org: Option<String>,
     /// Domain status values such as `clientTransferProhibited`.
-    pub status: Option<Vec<String>>,
+    /// Empty vector when the upstream source returned no values.
+    pub status: Vec<String>,
     /// Nameservers extracted from WHOIS/RDAP payloads.
-    pub nameservers: Option<Vec<String>>,
+    /// Empty vector when the upstream source returned no values.
+    pub nameservers: Vec<String>,
     /// Raw WHOIS text when available.
     pub raw_text: Option<String>,
 }
@@ -61,6 +70,13 @@ pub(crate) struct WhoisCacheEntry {
 }
 
 /// Serializable version of `WhoisResult` for caching
+///
+/// Note: `status` and `nameservers` stay `Option<Vec<String>>` on disk so
+/// existing cache files (which used the old `WhoisResult` shape) keep
+/// deserialising. The conversion to/from `WhoisResult` collapses
+/// `None`/`Some(empty)` into `Vec::new()` and `Some(non-empty)` into the
+/// vector verbatim, so the in-memory API is the simpler `Vec<String>`
+/// (possibly empty) while the on-disk JSON is unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WhoisCacheResult {
     creation_date: Option<i64>,
@@ -76,6 +92,15 @@ pub(crate) struct WhoisCacheResult {
 
 impl From<&WhoisResult> for WhoisCacheResult {
     fn from(result: &WhoisResult) -> Self {
+        // Empty vec -> None on disk (preserves the existing JSON shape so old
+        // cache files round-trip identically).
+        let vec_to_opt = |v: &Vec<String>| -> Option<Vec<String>> {
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.clone())
+            }
+        };
         WhoisCacheResult {
             creation_date: result.creation_date.map(|dt| dt.timestamp_millis()),
             expiration_date: result.expiration_date.map(|dt| dt.timestamp_millis()),
@@ -83,8 +108,8 @@ impl From<&WhoisResult> for WhoisCacheResult {
             registrar: result.registrar.clone(),
             registrant_country: result.registrant_country.clone(),
             registrant_org: result.registrant_org.clone(),
-            status: result.status.clone(),
-            nameservers: result.nameservers.clone(),
+            status: vec_to_opt(&result.status),
+            nameservers: vec_to_opt(&result.nameservers),
             raw_text: result.raw_text.clone(),
         }
     }
@@ -114,8 +139,12 @@ impl From<WhoisCacheResult> for WhoisResult {
             registrar: cache.registrar,
             registrant_country: cache.registrant_country,
             registrant_org: cache.registrant_org,
-            status: cache.status,
-            nameservers: cache.nameservers,
+            // Old cache files store `null` for absent lists; in-memory API uses
+            // an empty vector for both "absent" and "empty" — the distinction
+            // is preserved at the storage boundary in WhoisCacheResult::from
+            // and in the SQL write path in storage::insert::enrichment::whois.
+            status: cache.status.unwrap_or_default(),
+            nameservers: cache.nameservers.unwrap_or_default(),
             raw_text: cache.raw_text,
         }
     }
@@ -134,8 +163,8 @@ mod tests {
             registrar: Some("Test Registrar".to_string()),
             registrant_country: Some("US".to_string()),
             registrant_org: Some("Test Org".to_string()),
-            status: Some(vec!["active".to_string()]),
-            nameservers: Some(vec!["ns1.example.com".to_string()]),
+            status: vec!["active".to_string()],
+            nameservers: vec!["ns1.example.com".to_string()],
             raw_text: Some("Raw text".to_string()),
         };
 
@@ -146,7 +175,7 @@ mod tests {
         assert!(converted_back.expiration_date.is_some());
         assert_eq!(converted_back.registrar, Some("Test Registrar".to_string()));
         assert_eq!(converted_back.registrant_country, Some("US".to_string()));
-        assert_eq!(converted_back.status, Some(vec!["active".to_string()]));
+        assert_eq!(converted_back.status, vec!["active".to_string()]);
     }
 
     #[test]
@@ -157,6 +186,64 @@ mod tests {
         let converted_back: WhoisResult = cache_result.into();
         assert!(converted_back.creation_date.is_none());
         assert!(converted_back.registrar.is_none());
+    }
+
+    /// Wire-compat check: existing on-disk cache JSON used `null` and
+    /// `[...]` for `status`/`nameservers`. After tightening `WhoisResult` to
+    /// plain `Vec<String>`, those old payloads must still deserialise to a
+    /// sane `WhoisResult` (with `Vec::new()` standing in for both `null` and
+    /// missing list entries) so the on-disk WHOIS cache survives the
+    /// upgrade. Regression gate for D-2.
+    #[test]
+    fn test_whois_cache_json_compat_old_null_status_round_trips() {
+        // Hand-crafted JSON that mirrors what the previous WhoisCacheResult
+        // shape would have written for "no statuses, two nameservers".
+        let raw = r#"{
+            "creation_date": null,
+            "expiration_date": null,
+            "updated_date": null,
+            "registrar": "Some Registrar",
+            "registrant_country": null,
+            "registrant_org": null,
+            "status": null,
+            "nameservers": ["ns1.example.com", "ns2.example.com"],
+            "raw_text": null
+        }"#;
+        let cache: WhoisCacheResult =
+            serde_json::from_str(raw).expect("legacy cache JSON must still deserialize");
+        let result: WhoisResult = cache.into();
+        assert_eq!(result.registrar.as_deref(), Some("Some Registrar"));
+        assert!(result.status.is_empty(), "null on disk -> empty Vec");
+        assert_eq!(
+            result.nameservers,
+            vec!["ns1.example.com".to_string(), "ns2.example.com".to_string()]
+        );
+    }
+
+    /// Wire-compat check the other direction: an in-memory `WhoisResult` with
+    /// an empty status vector must serialise to JSON with `status: null` (not
+    /// `status: []`) so existing exports/queries that distinguish "absent"
+    /// from "explicit empty" keep behaving the same way after the API change.
+    #[test]
+    fn test_whois_cache_json_compat_empty_vec_serialises_as_null() {
+        let result = WhoisResult {
+            registrar: Some("R".to_string()),
+            status: vec![], // empty list of WHOIS statuses
+            nameservers: vec!["ns1.example.com".to_string()],
+            ..WhoisResult::default()
+        };
+        let cache: WhoisCacheResult = (&result).into();
+        let json: serde_json::Value = serde_json::to_value(&cache).expect("cache must serialise");
+        assert_eq!(
+            json["status"],
+            serde_json::Value::Null,
+            "empty in-memory Vec must persist as JSON null (preserves absent-vs-empty distinction)"
+        );
+        assert_eq!(
+            json["nameservers"],
+            serde_json::json!(["ns1.example.com"]),
+            "non-empty Vec must persist as a JSON array"
+        );
     }
 
     #[test]
@@ -200,8 +287,8 @@ mod tests {
             registrar: Some("Test Registrar".to_string()),
             registrant_country: Some("US".to_string()),
             registrant_org: Some("Test Org".to_string()),
-            status: Some(vec!["active".to_string()]),
-            nameservers: Some(vec!["ns1.example.com".to_string()]),
+            status: vec!["active".to_string()],
+            nameservers: vec!["ns1.example.com".to_string()],
             raw_text: Some("Raw text".to_string()),
         };
 

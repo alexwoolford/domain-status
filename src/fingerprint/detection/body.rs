@@ -35,10 +35,10 @@ pub async fn check_body(
     script_sources: &[String],
     meta_tags: &HashMap<String, Vec<String>>,
     url: &str,
-) -> anyhow::Result<Vec<BodyMatchResult>> {
-    let ruleset = get_ruleset().await.ok_or_else(|| {
-        anyhow::anyhow!("Ruleset not initialized. Call init_ruleset() before running detection.")
-    })?;
+) -> Result<Vec<BodyMatchResult>, crate::error_handling::FingerprintError> {
+    let ruleset = get_ruleset()
+        .await
+        .ok_or(crate::error_handling::FingerprintError::RulesetNotInitialized)?;
 
     let mut results = Vec::new();
 
