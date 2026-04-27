@@ -874,42 +874,10 @@ mod tests {
             .expect_err("file:// must be rejected by validate_url_safe");
     }
 
-    #[tokio::test]
-    async fn test_resolve_redirect_chain_invalid_utf8_location_header() {
-        // Test that invalid UTF-8 in Location header is handled gracefully
-        // This is critical - malformed redirects could cause crashes or infinite loops
-        // The code at line 96-107 handles invalid UTF-8 by breaking the redirect chain
-        // This test verifies that behavior
-        let server = Server::run();
-
-        // Create a Location header with invalid UTF-8 (null bytes)
-        // httptest may sanitize this, so we test the code path that handles it
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/")).respond_with(
-                status_code(302)
-                    .insert_header("Location", "/valid-redirect") // Use valid URL since httptest sanitizes
-                    .body("Redirect"),
-            ),
-        );
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/valid-redirect"))
-                .respond_with(status_code(200).body("OK")),
-        );
-
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
-
-        let start_url = server.url("/").to_string();
-        let result = resolve_redirect_chain(&start_url, 10, &client).await;
-
-        // Should succeed with valid redirect
-        // The invalid UTF-8 handling is tested implicitly - if Location header
-        // contains invalid UTF-8, to_str() at line 96 will fail and break the chain
-        // This test verifies the redirect resolution works correctly
-        assert!(result.is_ok());
-        let (_final_url, chain, _alt_svc, _) = result.unwrap();
-        assert!(!chain.is_empty());
-    }
+    // Removed: a previous test claimed to exercise the invalid-UTF-8 Location
+    // path, but as the comments admitted, httptest sanitizes such headers, so it
+    // really only exercised "302 with a valid relative Location" — which is
+    // already covered by `test_resolve_redirect_chain_relative_location`. The
+    // invalid-UTF-8 break in `resolve_redirect_chain` is exercised at the
+    // header-decode level by `reqwest`'s own header tests.
 }

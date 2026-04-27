@@ -179,15 +179,19 @@ fn test_extract_domain_simple_tld_no_extraction_needed() {
 }
 
 #[test]
-fn test_extract_domain_multi_part_tld_extraction() {
+fn test_extract_domain_idn_punycode_multi_part_tld() {
     let extractor = test_extractor();
-    // Test multi-part TLD that requires extraction (covers line 165)
-    // This should trigger the extraction path and the extracted domain check
-    let result = extract_domain(&extractor, "https://www.example.co.uk");
+    // Replaces a previous duplicate of test_extract_domain_uk_domain. Covers an
+    // IDN-style host with a multi-part TLD that the registrable-domain extraction
+    // path must handle (Wappalyzer tests, japanese ccTLDs, German .de, etc.).
+    // psl crate normalizes ASCII compatibility encoding (xn--*).
+    let result = extract_domain(&extractor, "https://www.xn--bcher-kva.de"); // bücher.de
     assert!(result.is_ok());
     let domain = result.unwrap();
-    // Should return "example.co.uk" (extracted), not "co.uk" (suffix)
-    assert_eq!(domain, "example.co.uk");
+    assert_eq!(
+        domain, "xn--bcher-kva.de",
+        "IDN host should resolve to its punycode-encoded registrable domain"
+    );
 }
 
 #[test]
@@ -212,35 +216,6 @@ fn test_extract_domain_fallback_when_extraction_fails() {
 // - Position at start (line 136)
 // These paths are defensive programming and unlikely to occur with valid URLs,
 // but they prevent panics if edge cases arise.
-
-#[test]
-fn test_psl_domain_behavior() {
-    // This test verifies what psl returns
-    let extractor = test_extractor();
-
-    println!("\nTesting psl API behavior:");
-    println!("==========================");
-
-    let urls = vec![
-        "https://www.example.com",
-        "https://www.example.co.uk",
-        "https://example.co.uk",
-    ];
-
-    for url in urls {
-        println!("\nURL: {}", url);
-
-        match extract_domain(&extractor, url) {
-            Ok(domain) => {
-                println!("  Registrable domain: {}", domain);
-                println!("  -> psl correctly returns registrable domain");
-            }
-            Err(e) => {
-                println!("  Error: {}", e);
-            }
-        }
-    }
-}
 
 // Property-based tests using proptest
 use proptest::prelude::*;
