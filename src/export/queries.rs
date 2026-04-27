@@ -114,16 +114,44 @@ pub(crate) async fn fetch_key_value_list(
     Ok((joined, count))
 }
 
+/// Identifies which header table an export query targets.
+///
+/// `SQLite` query builders cannot bind a table name as a parameter, so we have to
+/// inline it textually. Using an enum (rather than a `&str`) makes the set of
+/// valid identifiers exhaustive and verified at compile time, so a future caller
+/// mistake cannot accidentally introduce a SQL-injection footgun.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HttpHeadersTable {
+    /// `url_http_headers` — full response headers captured during the scan.
+    Standard,
+    /// `url_security_headers` — security-relevant headers (CSP, HSTS, etc.) only.
+    Security,
+}
+
+impl HttpHeadersTable {
+    /// Returns the SQL identifier for this table. Always a static string literal
+    /// from a closed set, so it cannot smuggle attacker-controlled SQL.
+    fn as_sql_ident(self) -> &'static str {
+        match self {
+            HttpHeadersTable::Standard => "url_http_headers",
+            HttpHeadersTable::Security => "url_security_headers",
+        }
+    }
+}
+
 /// Helper: Fetch filtered HTTP headers and format as "name:value" strings.
 /// Returns (`joined_string`, `total_count`).
 /// The joined string contains only filtered headers (separated by semicolons),
 /// but the count is the total number of headers in the table.
 pub(crate) async fn fetch_filtered_http_headers(
     pool: &DbPool,
-    table: &str,
+    table: HttpHeadersTable,
     url_status_id: i64,
     allowed_headers: &[&str],
 ) -> Result<(String, i64)> {
+    // Static identifier from a closed enum (HttpHeadersTable). Safe to inline.
+    let table = table.as_sql_ident();
+
     // Build query with IN clause for allowed headers
     // Use QueryBuilder to safely construct the query
     let mut query_builder = sqlx::QueryBuilder::new(&format!(
@@ -575,7 +603,7 @@ mod tests {
 
         let (result, count) = fetch_filtered_http_headers(
             &pool_arc,
-            "url_http_headers",
+            HttpHeadersTable::Standard,
             999,
             &["Content-Type", "Server"],
         )
@@ -613,7 +641,7 @@ mod tests {
 
         let (result, total_count) = fetch_filtered_http_headers(
             &pool_arc,
-            "url_http_headers",
+            HttpHeadersTable::Standard,
             1,
             &["Content-Type", "Server"],
         )

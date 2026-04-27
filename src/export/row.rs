@@ -10,6 +10,7 @@ use crate::storage::DbPool;
 
 use super::queries::{
     fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
+    HttpHeadersTable,
 };
 
 const EXPORT_LIMIT: i64 = crate::config::MAX_EXPORT_RELATED_RECORDS;
@@ -677,14 +678,18 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     .await?;
 
     // Fetch HTTP headers
-    let (http_headers_str, http_header_count) =
-        fetch_filtered_http_headers(pool, "url_http_headers", url_status_id, HTTP_KEY_HEADERS)
-            .await?;
+    let (http_headers_str, http_header_count) = fetch_filtered_http_headers(
+        pool,
+        HttpHeadersTable::Standard,
+        url_status_id,
+        HTTP_KEY_HEADERS,
+    )
+    .await?;
 
     // Fetch security headers (filtered, for backward compat)
     let (security_headers_str, security_header_count) = fetch_filtered_http_headers(
         pool,
-        "url_security_headers",
+        HttpHeadersTable::Security,
         url_status_id,
         SECURITY_KEY_HEADERS,
     )

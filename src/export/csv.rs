@@ -400,6 +400,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
 mod tests {
     use super::super::queries::{
         fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
+        HttpHeadersTable,
     };
     use crate::storage::{migrations::run_migrations, DbPool};
     use sqlx::{Row, SqlitePool};
@@ -676,7 +677,7 @@ mod tests {
 
         let (joined, total_count) = fetch_filtered_http_headers(
             &pool_arc,
-            "url_http_headers",
+            HttpHeadersTable::Standard,
             url_id + 999, // Non-existent ID
             &["Content-Type", "Server"],
         )
@@ -720,7 +721,7 @@ mod tests {
 
         let (joined, total_count) = fetch_filtered_http_headers(
             &pool_arc,
-            "url_http_headers",
+            HttpHeadersTable::Standard,
             url_id,
             &["Content-Type", "Server"],
         )
@@ -766,7 +767,7 @@ mod tests {
 
         let (joined, total_count) = fetch_filtered_http_headers(
             &pool_arc,
-            "url_http_headers",
+            HttpHeadersTable::Standard,
             url_id,
             &["Content-Type", "Server"],
         )
