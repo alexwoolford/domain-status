@@ -62,6 +62,7 @@ fn create_test_config(
         progress_callback: None,
         dependency_overrides: None,
         allow_localhost_for_tests: true, // Mock server is 127.0.0.1; required for rate-limit and concurrency tests
+        drain_timeout_secs: 10,
     }
 }
 
@@ -212,5 +213,126 @@ async fn test_run_scan_respects_rate_limit() {
     println!(
         "✅ Rate limit test passed: took {:?} for {} URLs at {} RPS",
         elapsed, total_urls, rate_limit_rps
+    );
+}
+
+/// Regression test for the drain-timeout silent-loss bug.
+///
+/// Background: when the drain phase fires (`drain_timeout_secs` after the input
+/// queue is exhausted), in-flight tasks are aborted. Before the fix that
+/// records `url_failures` rows for drain-timeout aborts, those URLs were
+/// silently lost — the failed counter incremented but no DB row was written,
+/// so users had no way to find which URLs had failed or retry them.
+/// An ad-hoc 90-URL test discovered this; this regression test makes sure the
+/// failure path is exercised on every CI run.
+///
+/// Setup: a wiremock server that delays every response longer than the drain
+/// timeout. With `drain_timeout_secs=1` and a 5 s response delay, every URL
+/// is guaranteed to still be in flight when drain fires. We then assert the
+/// recorded `url_failures` rows match the input URLs exactly.
+#[tokio::test]
+async fn test_run_scan_drain_timeout_records_failures() {
+    let total_urls: usize = 5;
+    let drain_timeout_secs: u64 = 1;
+    // Server delay must be longer than drain_timeout_secs so tasks are still
+    // mid-fetch when the deadline fires. Bump well above the 1s drain so
+    // background scheduling can't make the test flaky on slow CI.
+    let response_delay = Duration::from_secs(10);
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/slow/.*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("OK")
+                .set_delay(response_delay),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let urls: Vec<String> = (0..total_urls)
+        .map(|i| format!("{}/slow/{i}", mock_server.uri()))
+        .collect();
+    let url_file = write_urls_to_file(&urls);
+    let db_file = create_temp_db();
+
+    let mut config = create_test_config(
+        url_file.path().to_path_buf(),
+        db_file.path().to_path_buf(),
+        total_urls, // permit every URL to start
+        0,          // no rate limit
+    );
+    config.drain_timeout_secs = drain_timeout_secs;
+    // Per-request HTTP timeout must be long enough that the *drain* fires first.
+    // Otherwise reqwest would time out each task individually before drain runs,
+    // which is a different code path than the one we're testing.
+    config.timeout_seconds = 60;
+
+    // Run scan; the drain phase should kick in ~drain_timeout_secs after the
+    // queue empties (well before the per-URL HTTP timeout).
+    let report = run_scan(config).await.expect("run_scan should complete");
+
+    // Every URL should be accounted for: success + failure + skipped == input.
+    assert_eq!(
+        report.total_urls, total_urls,
+        "report.total_urls should equal input URL count"
+    );
+    let accounted = report.successful + report.failed + report.skipped;
+    assert_eq!(
+        accounted, total_urls,
+        "every input URL must be accounted for in the report (was {accounted}/{total_urls})"
+    );
+
+    // None of these URLs could possibly succeed within the drain window, so
+    // every one of them must land in url_failures with a drain-timeout reason.
+    assert_eq!(
+        report.failed, total_urls,
+        "all {total_urls} URLs should have failed at drain timeout"
+    );
+
+    // Open the DB and verify the url_failures rows were actually written —
+    // this is the bug that prompted the fix: previously the failed counter
+    // ticked up but the rows were silently dropped.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_file.path().display()))
+        .await
+        .expect("open scan DB");
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_failures")
+        .fetch_one(&pool)
+        .await
+        .expect("query url_failures count");
+    assert_eq!(
+        row_count, total_urls as i64,
+        "url_failures must contain a row per abandoned URL (this is the regression \
+         that the drain-timeout fix addresses; the failure counter alone is not enough)"
+    );
+
+    // Each row should be tagged with the drain-timeout error type and reason.
+    // We match on substrings so the exact phrasing of the error message can
+    // evolve without breaking the regression gate.
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT attempted_url, error_type, error_message FROM url_failures")
+            .fetch_all(&pool)
+            .await
+            .expect("read url_failures");
+    for (url, error_type, error_message) in &rows {
+        assert_eq!(
+            error_type, "Process URL timeout",
+            "url_failures row for {url} must use the ProcessUrlTimeout error type"
+        );
+        assert!(
+            error_message.contains("drain timeout"),
+            "url_failures row for {url} must mention drain timeout in its error message; got: {error_message}"
+        );
+    }
+
+    // The set of attempted URLs in url_failures must match the input set
+    // exactly — neither a subset (some lost) nor a superset (any duplicates).
+    let mut got: Vec<String> = rows.iter().map(|(u, _, _)| u.clone()).collect();
+    let mut want = urls.clone();
+    got.sort();
+    want.sort();
+    assert_eq!(
+        got, want,
+        "every input URL must appear in url_failures exactly once"
     );
 }

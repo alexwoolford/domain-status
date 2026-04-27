@@ -283,6 +283,7 @@ mod tests {
                 Some("run-1".to_string()),
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+                true,
             ),
         );
         Arc::new(ctx)

@@ -29,7 +29,13 @@ pub async fn handle_http_request(
     debug!("Resolving redirects for {url}");
 
     let (final_url_string, redirect_chain, alt_svc_header, reused_response) =
-        resolve_redirect_chain(url, MAX_REDIRECT_HOPS, &ctx.network.redirect_client).await?;
+        resolve_redirect_chain(
+            url,
+            MAX_REDIRECT_HOPS,
+            &ctx.network.redirect_client,
+            ctx.config.allow_localhost_for_tests,
+        )
+        .await?;
 
     // Track redirect info metrics
     // redirect_chain includes the original URL, so:
@@ -272,6 +278,7 @@ mod tests {
                 None,
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+                true,
             ),
         )
     }
@@ -451,6 +458,7 @@ mod tests {
                 None,
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
+                true,
             ),
         );
 

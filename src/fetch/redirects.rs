@@ -36,20 +36,23 @@ fn is_loopback_url(url_str: &str) -> bool {
 ///    HTTPS → HTTP downgrade through and would also miss any future enrichments to
 ///    `validate_url_safe` (e.g. DNS rebinding, scheme-specific policy, etc.).
 ///
-/// Tests use httptest's loopback server, so we bypass [`validate_url_safe`] for
-/// loopback targets in `cfg(test)` to keep existing fixtures working without
-/// poking holes in production behaviour. Downgrade detection is *not* bypassed.
+/// `allow_loopback` is the runtime escape hatch for tests using
+/// `httptest`/`wiremock` mock servers (which bind to `127.0.0.1` / `::1`). When
+/// set, loopback targets bypass the SSRF check, but **not** the downgrade
+/// check — the downgrade rule fires regardless. Production callers must always
+/// pass `false`. Wired through from `Config::allow_localhost_for_tests`.
 fn validate_redirect_target(
     new_url_str: &str,
     new_scheme: &str,
     chain_started_https: bool,
+    allow_loopback: bool,
 ) -> Result<()> {
     if chain_started_https && new_scheme == "http" {
         return Err(anyhow::anyhow!(
             "Blocked HTTPS->HTTP downgrade redirect to {new_url_str}"
         ));
     }
-    let skip_validation = cfg!(test) && is_loopback_url(new_url_str);
+    let skip_validation = allow_loopback && is_loopback_url(new_url_str);
     if !skip_validation {
         validate_url_safe(new_url_str)
             .with_context(|| format!("Unsafe redirect target rejected: {new_url_str}"))?;
@@ -98,6 +101,7 @@ pub async fn resolve_redirect_chain(
     start_url: &str,
     max_hops: usize,
     client: &reqwest::Client,
+    allow_loopback: bool,
 ) -> Result<
     (
         String,
@@ -114,8 +118,10 @@ pub async fn resolve_redirect_chain(
 
     // SSRF protection: validate initial URL before any request. IP literals (e.g. http://169.254.169.254)
     // bypass the HTTP client's DNS-based SafeResolver because reqwest connects directly without resolution.
-    // In test builds we allow loopback so tests using httptest's server.url() (e.g. http://[::1]:port) can run.
-    let skip_initial_validation = cfg!(test) && is_loopback_url(start_url);
+    // `allow_loopback` is wired from `Config::allow_localhost_for_tests` so integration tests using
+    // httptest's server.url() (e.g. http://[::1]:port or http://127.0.0.1:port) can run; production
+    // callers always pass `false`.
+    let skip_initial_validation = allow_loopback && is_loopback_url(start_url);
     if !skip_initial_validation {
         validate_url_safe(start_url)
             .with_context(|| format!("Unsafe initial URL rejected: {start_url}"))?;
@@ -195,9 +201,12 @@ pub async fn resolve_redirect_chain(
                 // downgrades through (an attacker controlling the target server could strip
                 // TLS while the scanner still treated the chain as "safe").
                 let new_url_str = new_url.to_string();
-                if let Err(e) =
-                    validate_redirect_target(&new_url_str, new_url.scheme(), chain_started_https)
-                {
+                if let Err(e) = validate_redirect_target(
+                    &new_url_str,
+                    new_url.scheme(),
+                    chain_started_https,
+                    allow_loopback,
+                ) {
                     log::warn!(
                         "Blocked unsafe redirect from {current} to {new_url_str}: {e}. Stopping redirect chain."
                     );
@@ -266,8 +275,9 @@ mod tests {
             .unwrap();
 
         let url = server.url("/").to_string();
-        let (final_url, chain, _alt_svc, _) =
-            resolve_redirect_chain(&url, 10, &client).await.unwrap();
+        let (final_url, chain, _alt_svc, _) = resolve_redirect_chain(&url, 10, &client, true)
+            .await
+            .unwrap();
 
         assert_eq!(final_url, url);
         assert_eq!(chain.len(), 1);
@@ -297,9 +307,10 @@ mod tests {
             .unwrap();
 
         let start_url = server.url("/").to_string();
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
@@ -339,9 +350,10 @@ mod tests {
         // Iteration 1: Add url1, request, redirect to url2, but we're at max_hops-1, so we break
         // Result: chain has 2 URLs (start_url, url1), final = url1 (the last URL we actually fetched)
         // We do NOT return url2 because we never fetched it - we hit the redirect limit
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 2, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 2, &client, true)
+                .await
+                .unwrap();
 
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0].0, start_url);
@@ -357,7 +369,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = resolve_redirect_chain("https://example.com", 0, &client).await;
+        let result = resolve_redirect_chain("https://example.com", 0, &client, true).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -388,9 +400,10 @@ mod tests {
             .unwrap();
 
         let start_url = server.url("/start").to_string();
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
@@ -414,9 +427,10 @@ mod tests {
 
         let start_url = server.url("/").to_string();
         // Should break out of loop when redirect status but no Location header
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         // Should include the start URL in chain, but not follow redirect
         assert_eq!(chain.len(), 1);
@@ -448,9 +462,10 @@ mod tests {
             .unwrap();
 
         let start_url = server.url("/301").to_string();
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
@@ -476,9 +491,10 @@ mod tests {
 
         let start_url = server.url("/").to_string();
         // Should handle gracefully - if no Location header or invalid, should break loop
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         // Should return the start URL since no valid redirect was found
         assert_eq!(chain.len(), 1);
@@ -493,7 +509,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = resolve_redirect_chain("http://169.254.169.254", 10, &client).await;
+        let result = resolve_redirect_chain("http://169.254.169.254", 10, &client, true).await;
         assert!(
             result.is_err(),
             "Initial link-local URL must be rejected before any request"
@@ -518,7 +534,7 @@ mod tests {
 
         // Use a URL that will timeout or fail to connect
         let invalid_url = "http://192.0.2.0:9999/invalid"; // RFC 5737 test address, should fail
-        let result = resolve_redirect_chain(invalid_url, 10, &client).await;
+        let result = resolve_redirect_chain(invalid_url, 10, &client, true).await;
 
         // Should return an error (network failure)
         assert!(result.is_err(), "Network error should return error");
@@ -553,7 +569,7 @@ mod tests {
 
             let start_url = server.url("/start").to_string();
             let (result_final, chain, _alt_svc, _) =
-                resolve_redirect_chain(&start_url, 10, &client)
+                resolve_redirect_chain(&start_url, 10, &client, true)
                     .await
                     .unwrap();
 
@@ -597,9 +613,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&base_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&base_url, 10, &client, true)
+                .await
+                .unwrap();
 
         assert_eq!(result_final, final_url);
         assert_eq!(chain.len(), 2);
@@ -629,9 +646,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         // Should stop at the start URL, not follow redirect to private IP
         assert_eq!(result_final, start_url);
@@ -658,9 +676,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         // Should stop at the start URL, not follow redirect to localhost
         assert_eq!(result_final, start_url);
@@ -686,9 +705,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         // Should stop at the start URL, not follow redirect to file://
         assert_eq!(result_final, start_url);
@@ -719,9 +739,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 10, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 10, &client, true)
+                .await
+                .unwrap();
 
         // Should follow redirect to public URL
         assert_eq!(result_final, final_url);
@@ -763,8 +784,9 @@ mod tests {
             .unwrap();
 
         // With max_hops=5, should stop after 5 hops (A -> B -> A -> B -> A)
-        let (result_final, chain, _alt_svc, _) =
-            resolve_redirect_chain(&url_a, 5, &client).await.unwrap();
+        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&url_a, 5, &client, true)
+            .await
+            .unwrap();
 
         // Should stop at max_hops, not loop infinitely
         // Chain should contain: [A, B, A, B, A] (5 hops)
@@ -793,9 +815,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let (result_final, chain, _alt_svc, _) = resolve_redirect_chain(&start_url, 1, &client)
-            .await
-            .unwrap();
+        let (result_final, chain, _alt_svc, _) =
+            resolve_redirect_chain(&start_url, 1, &client, true)
+                .await
+                .unwrap();
 
         // With max_hops=1, should only fetch start URL, not follow redirect
         assert_eq!(chain.len(), 1);
@@ -813,7 +836,7 @@ mod tests {
     #[test]
     fn test_validate_redirect_target_blocks_https_to_http_downgrade() {
         // Chain started on HTTPS; an http hop must be rejected even on a "safe" public host.
-        let err = validate_redirect_target("http://example.com/login", "http", true)
+        let err = validate_redirect_target("http://example.com/login", "http", true, false)
             .expect_err("https chain must reject http hop");
         let msg = err.to_string();
         assert!(
@@ -826,19 +849,19 @@ mod tests {
     fn test_validate_redirect_target_blocks_https_to_http_same_host_downgrade() {
         // Same hostname; the previous design skipped validation here. Confirm we still
         // reject the downgrade.
-        validate_redirect_target("http://example.com/", "http", true)
+        validate_redirect_target("http://example.com/", "http", true, false)
             .expect_err("same-host https->http downgrade must be rejected");
     }
 
     #[test]
     fn test_validate_redirect_target_allows_https_to_https() {
-        validate_redirect_target("https://example.com/next", "https", true)
+        validate_redirect_target("https://example.com/next", "https", true, false)
             .expect("https->https hop must be allowed");
     }
 
     #[test]
     fn test_validate_redirect_target_allows_http_to_http_when_chain_started_http() {
-        validate_redirect_target("http://example.com/next", "http", false)
+        validate_redirect_target("http://example.com/next", "http", false, false)
             .expect("http chain may continue on http");
     }
 
@@ -855,7 +878,7 @@ mod tests {
             "http://169.254.169.254/", // cloud metadata
             "http://172.16.0.1/",
         ] {
-            let err = match validate_redirect_target(url, "http", false) {
+            let err = match validate_redirect_target(url, "http", false, false) {
                 Ok(()) => panic!("private IP {url} must be rejected"),
                 Err(e) => e,
             };
@@ -870,7 +893,7 @@ mod tests {
     fn test_validate_redirect_target_blocks_unsafe_scheme() {
         // file:// must be rejected even when chain didn't start on https.
         // (The loopback-test bypass only fires on http(s) loopback URLs.)
-        validate_redirect_target("file:///etc/passwd", "file", false)
+        validate_redirect_target("file:///etc/passwd", "file", false, false)
             .expect_err("file:// must be rejected by validate_url_safe");
     }
 
