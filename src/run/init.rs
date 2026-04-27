@@ -166,6 +166,10 @@ pub async fn init_scan_resources(
         .await
         .context("Failed to initialize fingerprint ruleset")?;
 
+    // Eagerly load the bundled gitleaks ruleset so any malformed config surfaces as
+    // a clean startup error instead of as a panic on first secret-scan use.
+    crate::parse::gitleaks::init_gitleaks().context("Failed to load bundled gitleaks ruleset")?;
+
     // Initialize GeoIP database
     let geoip_metadata = match crate::geoip::init_geoip(config.geoip.as_deref(), None).await {
         Ok(metadata) => metadata,

@@ -288,7 +288,7 @@ fn infer_location(context: &str) -> &'static str {
 /// applies entropy and allowlist filters, and returns findings with gitleaks rule id
 /// as `secret_type` and derived severity.
 pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
-    let config = &crate::parse::gitleaks::GITLEAKS;
+    let config = crate::parse::gitleaks::gitleaks();
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_gitleaks_config_loads() {
-        let config = &crate::parse::gitleaks::GITLEAKS;
+        let config = crate::parse::gitleaks::gitleaks();
         assert!(config.rules.len() > 200, "expected 200+ gitleaks rules");
         assert!(!config.global_allowlist.regexes.is_empty());
     }

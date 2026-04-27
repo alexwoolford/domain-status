@@ -53,7 +53,7 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
                 }
 
                 let read_limit = u64::try_from(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1)
-                    .expect("GeoIP archive size limit fits in u64");
+                    .context("GeoIP archive size limit must fit in u64")?;
                 let capacity = declared_size.min(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE);
                 let mut mmdb_bytes = Vec::with_capacity(capacity);
                 entry

@@ -7,9 +7,10 @@
 //! preceding `[[rules]]` (same behavior as Gitleaks/Viper) by walking
 //! the "rules" table in key order when it is a Table (mixed rules + allowlists).
 
+use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::Deserialize;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 use toml::Value;
 
 /// Raw TOML structure for the global allowlist (paths ignored for single-blob scan).
@@ -286,13 +287,19 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
     }
 }
 
-/// Parse and compile the bundled gitleaks config. Panics on parse or if no rules.
-/// Associates each [[rules.allowlists]] with the preceding [[rules]] by walking the rules table in key order.
-/// Then merges config/gitleaks.overrides.toml if present (web-specific allowlists, not overwritten by upstream refresh).
-fn load_compiled() -> GitleaksCompiled {
+/// Parse and compile the bundled gitleaks config.
+///
+/// Associates each `[[rules.allowlists]]` with the preceding `[[rules]]` by walking
+/// the rules table in key order. Then merges `config/gitleaks.overrides.toml` if
+/// present (web-specific allowlists, not overwritten by upstream refresh).
+///
+/// Returns an error if the bundled `config/gitleaks.toml` is malformed or contains
+/// no compilable rules. Callers should invoke [`init_gitleaks`] eagerly during scan
+/// initialization so any error surfaces as a clean startup failure rather than as
+/// a panic on first secret-scan use.
+fn load_compiled() -> Result<GitleaksCompiled> {
     let toml_str = include_str!("../../config/gitleaks.toml");
-    let value: Value =
-        toml::from_str(toml_str).unwrap_or_else(|e| panic!("Failed to parse gitleaks.toml: {e}"));
+    let value: Value = toml::from_str(toml_str).context("Failed to parse gitleaks.toml")?;
 
     let global_allowlist = value.get("allowlist").and_then(|v| {
         toml::to_string(v)
@@ -301,15 +308,17 @@ fn load_compiled() -> GitleaksCompiled {
     });
     let global_allowlist = compile_global_allowlist(global_allowlist);
 
-    let rules_val = value.get("rules").expect("gitleaks.toml must have [rules]");
+    let rules_val = value
+        .get("rules")
+        .ok_or_else(|| anyhow!("gitleaks.toml must have [rules]"))?;
     let raw_rules: Vec<RuleRaw> = match rules_val {
         Value::Array(_) => {
-            let raw: GitleaksConfigRaw = toml::from_str(toml_str)
-                .unwrap_or_else(|e| panic!("Failed to parse gitleaks.toml rules: {e}"));
+            let raw: GitleaksConfigRaw =
+                toml::from_str(toml_str).context("Failed to parse gitleaks.toml rules")?;
             raw.rules
         }
         Value::Table(t) => rules_from_table(t),
-        _ => panic!("gitleaks.toml rules must be array or table"),
+        _ => return Err(anyhow!("gitleaks.toml rules must be array or table")),
     };
 
     let mut rules: Vec<CompiledRule> = raw_rules
@@ -350,20 +359,60 @@ fn load_compiled() -> GitleaksCompiled {
         })
         .collect();
 
-    assert!(!rules.is_empty(), "gitleaks.toml produced no valid rules");
+    if rules.is_empty() {
+        return Err(anyhow!("gitleaks.toml produced no valid rules"));
+    }
 
     // Apply overlay so web-specific allowlists (e.g. sourcegraph) are not lost when refreshing upstream gitleaks.toml.
     let overlay_toml = include_str!("../../config/gitleaks.overrides.toml");
     merge_overrides_into_rules(&mut rules, overlay_toml);
 
-    GitleaksCompiled {
+    Ok(GitleaksCompiled {
         global_allowlist,
         rules,
-    }
+    })
 }
 
-/// Compiled gitleaks config, loaded once at first use.
-pub static GITLEAKS: LazyLock<GitleaksCompiled> = LazyLock::new(load_compiled);
+/// Compiled gitleaks config. Populated by [`init_gitleaks`] during scan init.
+static GITLEAKS: OnceLock<GitleaksCompiled> = OnceLock::new();
+
+/// Eagerly load and validate the bundled gitleaks config.
+///
+/// Idempotent: subsequent calls return `Ok(())` without re-parsing.
+///
+/// # Errors
+///
+/// Returns an error if the bundled `config/gitleaks.toml` is malformed or
+/// produces no compilable rules. Surface this from scan startup so any error
+/// is reported as a clean failure rather than as a panic on first use.
+pub fn init_gitleaks() -> Result<()> {
+    if GITLEAKS.get().is_some() {
+        return Ok(());
+    }
+    let compiled = load_compiled()?;
+    let _ = GITLEAKS.set(compiled);
+    Ok(())
+}
+
+/// Get the loaded gitleaks ruleset.
+///
+/// Lazily initializes the ruleset on first call (so unit tests that do not run
+/// through scan init still work). The lazy fallback panics with a clear message
+/// only if the bundled `config/gitleaks.toml` is malformed — that is a
+/// developer-introduced bug, not a runtime input. Production callers go through
+/// [`init_gitleaks`] in scan init, which surfaces the same failure as a clean
+/// startup error before any scanning starts.
+pub fn gitleaks() -> &'static GitleaksCompiled {
+    GITLEAKS.get_or_init(|| {
+        load_compiled().unwrap_or_else(|e| {
+            panic!(
+                "BUG: bundled config/gitleaks.toml failed to load: {e:?}. \
+                 This indicates a malformed bundled config; callers should use init_gitleaks() \
+                 during scan startup to receive this error as a Result instead."
+            )
+        })
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -414,7 +463,7 @@ mod tests {
     /// Overlay merge: gitleaks.overrides.toml appends allowlists to rules by `rule_id`. sourcegraph-access-token gets overlay allowlists.
     #[test]
     fn test_overlay_merge_appends_allowlists() {
-        let config = &GITLEAKS;
+        let config = gitleaks();
         let rule = config
             .rules
             .iter()
