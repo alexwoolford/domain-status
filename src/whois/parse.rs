@@ -104,29 +104,18 @@ pub(crate) fn convert_payload(payload: &WhoisPayload) -> WhoisResult {
         };
     };
 
-    let creation_date = parsed.creation_date.as_ref().and_then(|s| {
-        parse_date_string(s).or_else(|| {
-            DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        })
-    });
-
-    let expiration_date = parsed.expiration_date.as_ref().and_then(|s| {
-        parse_date_string(s).or_else(|| {
-            DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        })
-    });
-
-    let updated_date = parsed.updated_date.as_ref().and_then(|s| {
-        parse_date_string(s).or_else(|| {
-            DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        })
-    });
+    let creation_date = parsed
+        .creation_date
+        .as_ref()
+        .and_then(|s| parse_whois_date(s));
+    let expiration_date = parsed
+        .expiration_date
+        .as_ref()
+        .and_then(|s| parse_whois_date(s));
+    let updated_date = parsed
+        .updated_date
+        .as_ref()
+        .and_then(|s| parse_whois_date(s));
 
     enrich_result_from_raw_text(WhoisResult {
         creation_date,
@@ -152,6 +141,21 @@ pub(crate) fn convert_payload(payload: &WhoisPayload) -> WhoisResult {
 /// Converts a third-party WHOIS response into our internal result via the owned DTO.
 pub(crate) fn convert_parsed_data(response: &WhoisResponse) -> WhoisResult {
     convert_payload(&WhoisPayload::from(response))
+}
+
+/// Parses a WHOIS date string, returning `None` for sentinel values like the Unix epoch
+/// that registrars (e.g. Squarespace) use to mean "unknown".
+fn parse_whois_date(date_str: &str) -> Option<DateTime<Utc>> {
+    let dt = parse_date_string(date_str).or_else(|| {
+        DateTime::parse_from_rfc3339(date_str)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    })?;
+    // Reject Unix epoch (1970-01-01T00:00:00Z) — registrars use it as a sentinel for "unknown"
+    if dt.timestamp() == 0 {
+        return None;
+    }
+    Some(dt)
 }
 
 /// Attempts to parse a date string in various formats
@@ -268,6 +272,39 @@ mod tests {
             let date = dt.date_naive();
             assert!(date.format("%Y").to_string().starts_with("2024"));
         }
+    }
+
+    #[test]
+    fn test_parse_whois_date_rejects_unix_epoch() {
+        assert!(parse_whois_date("1970-01-01T00:00:00Z").is_none());
+        assert!(parse_whois_date("1970-01-01").is_none());
+        // Valid dates should still work
+        assert!(parse_whois_date("2024-01-15T10:30:45Z").is_some());
+    }
+
+    #[test]
+    fn test_convert_payload_epoch_creation_date_becomes_none() {
+        let payload = WhoisPayload {
+            raw_text: "raw whois".to_string(),
+            parsed: Some(ParsedWhoisPayload {
+                registrar: Some("Squarespace Domains II LLC".to_string()),
+                creation_date: Some("1970-01-01T00:00:00Z".to_string()),
+                expiration_date: Some("2026-11-15T04:16:34Z".to_string()),
+                updated_date: None,
+                name_servers: vec![],
+                status: vec![],
+            }),
+        };
+
+        let result = convert_payload(&payload);
+        assert!(
+            result.creation_date.is_none(),
+            "epoch-zero creation date should be treated as None"
+        );
+        assert!(
+            result.expiration_date.is_some(),
+            "valid expiration date should be preserved"
+        );
     }
 
     #[test]
