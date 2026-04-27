@@ -87,20 +87,6 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[tokio::test]
-    async fn test_run_migrations_with_invalid_pool() {
-        // Test error handling when pool is invalid (closed connection)
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("Failed to create test pool");
-        drop(pool); // Close the pool
-
-        // This should fail because the pool is closed
-        // We can't easily test this without creating an invalid pool,
-        // but we verify the function signature accepts a pool reference
-        let _ = run_migrations;
-    }
-
-    #[tokio::test]
     async fn test_run_migrations_success_with_memory_db() {
         // Test successful migration on a fresh memory database
         let pool = SqlitePool::connect("sqlite::memory:")
@@ -154,22 +140,25 @@ mod tests {
         // and the second run doesn't fail
     }
 
+    /// Smoke test that `run_migrations` succeeds against a fresh in-memory pool.
+    ///
+    /// In dev (where `migrations/` exists at the workspace root) this exercises
+    /// the source-directory branch of `run_migrations`. In distributed binaries
+    /// the embedded-extraction branch handles the same job; both end up running
+    /// the same SQL, so this is the only branch easily exercisable from tests.
+    /// The previous version of this test claimed to test the embedded path
+    /// (which it cannot do without injecting a path), so it was renamed to
+    /// reflect what it actually verifies.
     #[tokio::test]
-    async fn test_run_migrations_embedded_extraction_path() {
-        // Test that embedded migrations are extracted correctly when source directory doesn't exist
-        // This is critical - ensures distributed binaries work without migrations directory
-        // We can't easily test this without mocking, but we verify the code path exists
+    async fn test_run_migrations_succeeds_on_fresh_pool() {
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("Failed to create test pool");
 
-        // In development, source migrations exist, so this uses the source path
-        // In distributed binaries, source doesn't exist, so it extracts embedded migrations
-        // Both paths should work
         let result = run_migrations(&pool).await;
         assert!(
             result.is_ok(),
-            "Migrations should work whether using source or embedded migrations"
+            "Migrations should succeed on fresh database"
         );
     }
 }

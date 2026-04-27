@@ -99,13 +99,61 @@ async fn snapshot_jsonl_export_minimal() {
 
 #[test]
 #[allow(deprecated)] // cargo_bin_cmd! requires cargo dev-dependency; migrate when upgrading
-fn snapshot_cli_help() {
+fn cli_help_includes_must_have_flags() {
+    // Replaces a previous full-text snapshot of `--help`. That snapshot would
+    // churn whenever any clap-generated description, hint, or subcommand line
+    // changed, even though every test still passed. What we actually want to
+    // guard is "the user-facing flags that downstream tooling relies on are
+    // still discoverable", which is far better expressed as a handful of
+    // substring asserts than as a frozen 200-line blob.
     let mut cmd = assert_cmd::Command::cargo_bin("domain_status").expect("cargo_bin domain_status");
     cmd.arg("--help");
     let output = cmd.output().expect("run domain_status --help");
     assert!(output.status.success(), "help should succeed");
     let help = String::from_utf8_lossy(&output.stdout);
-    // Normalize executable name so snapshot is platform-agnostic (Windows: domain_status.exe)
+
+    // Normalize executable name so the assertions are platform-agnostic
+    // (Windows would otherwise add the `.exe` suffix).
     let help = help.replace("domain_status.exe", "domain_status");
-    insta::assert_snapshot!(help);
+
+    // Must-have entries on the top-level `--help`. If any of these vanish,
+    // downstream documentation, scripts, and CI invocations will silently lose
+    // their contract — that is what this test exists to catch. Subcommand
+    // flags (`--config`, `--db-path`, etc.) are checked under `scan --help`
+    // because clap renders them per-subcommand.
+    for needle in [
+        "Usage:",
+        "domain_status",
+        "Commands:",
+        "scan",
+        "export",
+        "Options:",
+        "--help",
+        "--version",
+    ] {
+        assert!(
+            help.contains(needle),
+            "expected `{needle}` in `--help` output, got:\n{help}"
+        );
+    }
+
+    // Sanity-check `scan --help` so the subcommand flags downstream tooling
+    // depends on are still surfaced.
+    let mut scan_cmd =
+        assert_cmd::Command::cargo_bin("domain_status").expect("cargo_bin domain_status");
+    scan_cmd.arg("scan").arg("--help");
+    let scan_output = scan_cmd.output().expect("run domain_status scan --help");
+    assert!(scan_output.status.success(), "scan --help should succeed");
+    let scan_help = String::from_utf8_lossy(&scan_output.stdout);
+    for needle in [
+        "--config",
+        "--db-path",
+        "--max-concurrency",
+        "--rate-limit-rps",
+    ] {
+        assert!(
+            scan_help.contains(needle),
+            "expected `{needle}` in `scan --help` output, got:\n{scan_help}"
+        );
+    }
 }

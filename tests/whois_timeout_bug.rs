@@ -64,43 +64,6 @@ async fn test_whois_lookup_no_timeout() {
     );
 }
 
-/// Demonstrates that even valid domains can take too long without timeout.
-///
-/// Some WHOIS servers are notoriously slow. Without a timeout,
-/// a slow server can block workers for extended periods.
-#[tokio::test]
-#[ignore]
-async fn test_whois_lookup_slow_server() {
-    // Use a domain that might have slow WHOIS servers
-    // (This is just for demonstration - actual time varies)
-    let domain = "example.com";
-
-    let start = Instant::now();
-
-    // Wrap in timeout to prevent test from hanging
-    let result = timeout(Duration::from_secs(15), lookup_whois(domain, None)).await;
-
-    let elapsed = start.elapsed();
-
-    println!(
-        "WHOIS lookup for {} took {:.2}s",
-        domain,
-        elapsed.as_secs_f64()
-    );
-
-    let is_ok = result.is_ok();
-    println!("Result: {:?}", result.map(|r| r.map(|_| "Success")));
-
-    // Even if successful, WHOIS should not take more than 5s
-    // (Most WHOIS queries complete in <2s when properly optimized)
-    if is_ok && elapsed.as_secs() > 7 {
-        println!(
-            "WARNING: WHOIS took {:.2}s - should have timeout to prevent worker blocking",
-            elapsed.as_secs_f64()
-        );
-    }
-}
-
 /// Documents the fix: WHOIS with explicit timeout.
 ///
 /// This test shows how WHOIS should be called with a proper timeout

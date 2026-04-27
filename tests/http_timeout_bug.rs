@@ -9,48 +9,11 @@
 
 use std::time::{Duration, Instant};
 
-/// Demonstrates that HTTP client hangs on slow TCP connect.
-///
-/// This test uses a "blackhole" IP (TEST-NET-1: 192.0.2.1) that drops packets.
-/// A properly configured HTTP client should timeout quickly during TCP connect
-/// (`config::TCP_CONNECT_TIMEOUT_SECS` = 5s), but without .`connect_timeout()`,
-/// it waits for the full global timeout (10s).
-#[tokio::test]
-#[ignore] // Run with: cargo test --test http_timeout_bug -- --ignored
-async fn test_http_client_slow_tcp_connect() {
-    // Use non-routable IP - TCP connect will hang/timeout
-    let blackhole_ip = "10.255.255.1:80";
-
-    // Create HTTP client using the same configuration as the codebase
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10)) // Global timeout from config
-        // BUG: Missing .connect_timeout(Duration::from_secs(5))
-        .build()
-        .expect("Failed to build client");
-
-    let start = Instant::now();
-    let url = format!("http://{}/", blackhole_ip);
-
-    let result = client.get(&url).send().await;
-
-    let elapsed = start.elapsed();
-
-    // Expected: Should timeout after ~5s (TCP_CONNECT_TIMEOUT_SECS)
-    // Actual: Times out after 10s (global timeout)
-    println!("Request took {:.2}s", elapsed.as_secs_f64());
-    println!("Result: {:?}", result.map(|r| r.status()));
-
-    // **BUG DEMONSTRATED**: Without connect_timeout(), the request takes 10s instead of 5s
-    // This test documents the bug behavior - it does NOT assert failure to avoid breaking CI
-    // The fix is validated by test_http_client_with_connect_timeout_fix
-    if elapsed.as_secs() >= 7 {
-        println!(
-            "BUG CONFIRMED: HTTP client took {:.2}s instead of failing fast (~5s) during TCP connect",
-            elapsed.as_secs_f64()
-        );
-        println!("This demonstrates the bug exists without .connect_timeout()");
-    }
-}
+// Note: a previous "demonstration" test for the no-connect_timeout case was
+// removed. It only printed the elapsed time and never asserted, so it could not
+// fail even when the bug regressed. The post-fix test below
+// (test_http_client_with_connect_timeout_fix) does assert the elapsed time
+// against the expected connect-timeout, which is the actual regression gate.
 
 /// Demonstrates the fix: reqwest with `connect_timeout`.
 #[tokio::test]
