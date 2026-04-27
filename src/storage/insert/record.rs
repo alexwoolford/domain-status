@@ -93,24 +93,13 @@ pub async fn insert_batch_record(
     // Clone domain for error message (record will be moved to insert_enrichment_data)
     let domain = record.url_record.initial_domain.clone();
 
-    // Insert main URL record
-    let url_status_id = insert::insert_url_record(insert::url::UrlRecordInsertParams {
-        pool,
-        record: &record.url_record,
-        security_headers: &record.security_headers,
-        http_headers: &record.http_headers,
-        oids: &record.oids,
-        redirect_chain: &record.redirect_chain,
-        technologies: &record.technologies,
-        subject_alternative_names: &record.subject_alternative_names,
-        cname_records: record.cname_records.as_ref(),
-        aaaa_records: record.aaaa_records.as_ref(),
-        caa_records: record.caa_records.as_ref(),
-        csp_domains: &record.csp_domains,
-        cookies: &record.cookies,
-        resource_hints: &record.resource_hints,
-        body_domains: &record.body_domains,
-    })
+    // Insert main URL record. The 14-field mapping from BatchRecord to the
+    // url_status insert params lives in `UrlRecordInsertParams::from_batch`
+    // so adding a new column doesn't require a parallel edit at every
+    // production call site.
+    let url_status_id = insert::insert_url_record(
+        insert::url::UrlRecordInsertParams::from_batch(pool, &record),
+    )
     .await
     .map_err(|e| {
         log::error!(
