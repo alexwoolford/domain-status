@@ -57,6 +57,49 @@ pub struct UrlRecordInsertParams<'a> {
     pub body_domains: &'a [(String, Option<String>)],
 }
 
+impl<'a> UrlRecordInsertParams<'a> {
+    /// Build params from a complete [`crate::storage::record::BatchRecord`].
+    ///
+    /// The production scan pipeline collects everything that goes into a
+    /// URL row into a `BatchRecord`, then calls `insert_url_record`. Mapping
+    /// the 14 individual fields manually at the call site (the previous
+    /// shape) made every new field a two-place edit — the struct definition
+    /// here, plus the manual field assignment in `insert_batch_record`. By
+    /// putting the mapping in one place, the call site stays a one-liner
+    /// and the struct can grow without churning callers.
+    ///
+    /// Test code constructs `UrlRecordInsertParams` directly to exercise
+    /// specific scenarios; that path is unchanged.
+    ///
+    /// Crate-internal (`pub(crate)`) because `BatchRecord` is itself a
+    /// crate-internal aggregate — exposing this constructor publicly would
+    /// pull `BatchRecord` (and through it, several other crate-private types
+    /// like `FaviconData`) into the public API surface.
+    #[must_use]
+    pub(crate) fn from_batch(
+        pool: &'a sqlx::SqlitePool,
+        batch: &'a crate::storage::record::BatchRecord,
+    ) -> Self {
+        Self {
+            pool,
+            record: &batch.url_record,
+            security_headers: &batch.security_headers,
+            http_headers: &batch.http_headers,
+            oids: &batch.oids,
+            redirect_chain: &batch.redirect_chain,
+            technologies: &batch.technologies,
+            subject_alternative_names: &batch.subject_alternative_names,
+            cname_records: batch.cname_records.as_ref(),
+            aaaa_records: batch.aaaa_records.as_ref(),
+            caa_records: batch.caa_records.as_ref(),
+            csp_domains: &batch.csp_domains,
+            cookies: &batch.cookies,
+            resource_hints: &batch.resource_hints,
+            body_domains: &batch.body_domains,
+        }
+    }
+}
+
 /// Inserts a `UrlRecord` into the database with retry logic for transient errors.
 ///
 /// This function inserts data into:
