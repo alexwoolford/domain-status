@@ -13,6 +13,7 @@ mod types;
 
 #[allow(unused_imports)] // Re-exported for use when fallible handlers are added
 pub use error::StatusServerError;
+pub use error::StatusServerLifecycleError;
 
 use axum::routing::get;
 use axum::Router;
@@ -25,18 +26,22 @@ pub use types::StatusState;
 #[derive(Debug)]
 pub struct StatusServerHandle {
     shutdown: CancellationToken,
-    task: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
+    task: tokio::task::JoinHandle<Result<(), StatusServerLifecycleError>>,
 }
 
 impl StatusServerHandle {
     /// Gracefully stop the status server and wait for the task to exit.
-    pub async fn shutdown(self) -> Result<(), anyhow::Error> {
+    ///
+    /// Returns a typed [`StatusServerLifecycleError`] so callers can branch
+    /// on `Bind` / `Serve` / `BackgroundTask` failures without inspecting
+    /// error message strings.
+    pub async fn shutdown(self) -> Result<(), StatusServerLifecycleError> {
         self.shutdown.cancel();
         match self.task.await {
             Ok(result) => result,
-            Err(join_error) => Err(anyhow::anyhow!(
-                "Status server task failed to join: {join_error}"
-            )),
+            // `JoinError` -> `StatusServerLifecycleError::BackgroundTask` via
+            // `#[from]`.
+            Err(join_error) => Err(StatusServerLifecycleError::from(join_error)),
         }
     }
 }
@@ -54,12 +59,12 @@ pub fn build_router(state: StatusState) -> Router {
 pub async fn spawn_status_server(
     port: u16,
     state: StatusState,
-) -> Result<StatusServerHandle, anyhow::Error> {
+) -> Result<StatusServerHandle, StatusServerLifecycleError> {
     let app = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to bind status server to port {port}: {e}"))?;
+        .map_err(|source| StatusServerLifecycleError::Bind { port, source })?;
 
     log::info!("Status server listening on http://127.0.0.1:{port}/");
     log::info!("  - Health: http://127.0.0.1:{port}/health");
@@ -74,7 +79,7 @@ pub async fn spawn_status_server(
                 shutdown_signal.cancelled().await;
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Status server error: {e}"))
+            .map_err(StatusServerLifecycleError::Serve)
     });
 
     Ok(StatusServerHandle { shutdown, task })
@@ -163,9 +168,23 @@ mod tests {
         let error = spawn_status_server(port, create_test_state())
             .await
             .expect_err("port already bound should fail");
-        let message = error.to_string();
-        assert!(message.contains("Failed to bind status server"));
-        assert!(message.contains(&port.to_string()));
+        // The error must be the typed `Bind` variant (callers branch on
+        // this; previously they had to parse the anyhow message string,
+        // which is fragile).
+        match &error {
+            StatusServerLifecycleError::Bind {
+                port: returned_port,
+                source,
+            } => {
+                assert_eq!(*returned_port, port);
+                // io::ErrorKind on bind contention is platform-dependent
+                // (AddrInUse on most, PermissionDenied on Windows in some
+                // cases); we just confirm an io::Error landed in `source`.
+                let _ = source.kind();
+            }
+            other => panic!("expected StatusServerLifecycleError::Bind, got {other:?}"),
+        }
+        assert!(error.to_string().contains(&port.to_string()));
     }
 
     #[tokio::test]

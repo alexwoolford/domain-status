@@ -106,7 +106,7 @@ pub async fn prepare_record_for_insertion(
                 params.tls_dns_data.subject.as_deref(),
                 params.tls_dns_data.issuer.as_deref(),
                 params.tls_dns_data.valid_to.as_ref(),
-                params.tls_dns_data.subject_alternative_names.as_ref(),
+                params.tls_dns_data.subject_alternative_names.as_deref(),
             );
             let security_analysis_us = duration_to_us(security_start.elapsed());
             (security_warnings, security_analysis_us)

@@ -58,8 +58,8 @@ pub use reqwest_ext::ReqwestErrorExt;
 pub use resolve_ext::{categorize_resolve_error, DnsResolveErrorKind};
 pub use stats::ProcessingStats;
 pub use types::{
-    DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, RunScanError,
-    StartupError, WarningType,
+    DatabaseError, ErrorType, FingerprintError, InfoType, InitializationError, MigrationError,
+    RunScanError, StartupError, WarningType,
 };
 
 /// Logs each cause in an error chain with `log::error!`.

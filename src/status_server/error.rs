@@ -1,11 +1,15 @@
-//! Error type for status server handlers.
+//! Error types for the status server.
 //!
-//! Use when adding fallible handlers so that failures become consistent HTTP
-//! responses and can be logged in one place (e.g. via `log_error_chain`).
+//! Two distinct concerns live here:
 //!
-//! This module is intentionally unused until fallible handlers are added; the type
-//! is kept so new handlers can return `Result<T, StatusServerError>` without
-//! adding new code in this file.
+//! * `StatusServerError` — what fallible HTTP handlers return so they become
+//!   consistent HTTP responses via [`axum::response::IntoResponse`]. Currently
+//!   no handler is fallible; the type is kept so future endpoints can adopt
+//!   `Result<T, StatusServerError>` without changes here.
+//! * `StatusServerLifecycleError` — typed error returned by
+//!   [`super::spawn_status_server`] and [`super::StatusServerHandle::shutdown`]
+//!   so callers can branch on bind / serve / background-task failures
+//!   without resorting to string matching against an opaque `anyhow::Error`.
 #![allow(dead_code)]
 
 use axum::{
@@ -13,6 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::fmt;
+use thiserror::Error;
 
 /// Error returned by status server handlers that can fail.
 ///
@@ -59,4 +64,34 @@ impl StatusServerError {
             message: msg.into(),
         }
     }
+}
+
+/// Lifecycle errors for [`super::spawn_status_server`] and
+/// [`super::StatusServerHandle::shutdown`].
+///
+/// Typed (rather than `anyhow::Error`) so library callers can branch on the
+/// failure mode (port already bound, server-loop crash, background-task
+/// panic) without parsing error messages.
+///
+/// Marked `#[non_exhaustive]` so adding new failure modes is not breaking.
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum StatusServerLifecycleError {
+    /// Failed to bind to the configured TCP port.
+    #[error("Failed to bind status server to port {port}")]
+    Bind {
+        /// The port that was being bound.
+        port: u16,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Axum's `serve` loop returned an error after the server started.
+    #[error("Status server error during serve")]
+    Serve(#[source] std::io::Error),
+
+    /// The background `tokio::spawn` task panicked or was cancelled.
+    #[error("Status server background task panicked")]
+    BackgroundTask(#[from] tokio::task::JoinError),
 }

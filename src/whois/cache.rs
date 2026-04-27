@@ -238,11 +238,8 @@ mod tests {
             registrar: Some("Test Registrar".to_string()),
             registrant_country: Some("US".to_string()),
             registrant_org: Some("Test Org".to_string()),
-            status: Some(vec!["clientTransferProhibited".to_string()]),
-            nameservers: Some(vec![
-                "ns1.example.com".to_string(),
-                "ns2.example.com".to_string(),
-            ]),
+            status: vec!["clientTransferProhibited".to_string()],
+            nameservers: vec!["ns1.example.com".to_string(), "ns2.example.com".to_string()],
             raw_text: Some("Raw WHOIS text".to_string()),
         }
     }

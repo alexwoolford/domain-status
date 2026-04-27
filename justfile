@@ -32,8 +32,8 @@ test:
 
 # Validate Rustdoc examples and doc warning cleanliness
 docs-check:
-    cargo test --doc --locked
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+    cargo test --doc --all-features --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 
 # Run end-to-end tests (requires network)
 test-e2e:

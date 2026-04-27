@@ -28,4 +28,11 @@ pub use record::insert_batch_record;
 pub use run::{
     insert_run_metadata, query_run_history, update_run_stats, RunMetadata, RunStats, RunSummary,
 };
-pub use url::{insert_url_record, UrlRecordInsertParams};
+// Crate-internal re-export: `insert_url_record` is called from
+// `record.rs::insert_batch_record` via `insert::insert_url_record`, so it
+// must be visible at this module path — but only inside the crate. The
+// external (downstream-visible) re-export of both `insert_url_record` and
+// `UrlRecordInsertParams` lives in `src/lib.rs` behind the `test-utils`
+// feature; that path goes directly to `storage::insert::url::*` so this
+// module doesn't need its own gated `pub use`.
+pub(crate) use url::insert_url_record;

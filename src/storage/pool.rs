@@ -53,8 +53,12 @@ pub async fn init_db_pool_with_path(
     let db_path_str = db_path.to_string_lossy().to_string();
 
     // Ensure parent directory exists with secure permissions (0o700 on Unix) before creating DB file.
-    ensure_parent_dir_secure(db_path).map_err(|e| {
-        DatabaseError::FileCreationError(format!("Failed to create database directory: {e}"))
+    ensure_parent_dir_secure(db_path).map_err(|e| DatabaseError::FileCreationError {
+        context: format!(
+            "Failed to create database directory for {}",
+            db_path.display()
+        ),
+        source: Box::new(e),
     })?;
 
     // Wrap blocking filesystem operation in spawn_blocking to avoid blocking tokio runtime.
@@ -72,7 +76,10 @@ pub async fn init_db_pool_with_path(
     .await
     .map_err(|e| {
         error!("Task panicked while creating database file: {e}");
-        DatabaseError::FileCreationError(format!("Task join error: {e}"))
+        DatabaseError::FileCreationError {
+            context: format!("Background task panicked while creating database file {db_path_str}"),
+            source: Box::new(e),
+        }
     })?;
 
     match file_creation_result {
@@ -82,7 +89,10 @@ pub async fn init_db_pool_with_path(
         }
         Err(e) => {
             error!("Failed to create database file: {e}");
-            return Err(DatabaseError::FileCreationError(e.to_string()));
+            return Err(DatabaseError::FileCreationError {
+                context: format!("Failed to open database file {db_path_str}"),
+                source: Box::new(e),
+            });
         }
     }
 
@@ -94,7 +104,10 @@ pub async fn init_db_pool_with_path(
     let options = SqliteConnectOptions::from_str(&db_url)
         .map_err(|e| {
             error!("Failed to parse database URL: {e}");
-            DatabaseError::FileCreationError(format!("Invalid database path: {e}"))
+            DatabaseError::FileCreationError {
+                context: format!("Invalid database path: {db_path_str}"),
+                source: Box::new(e),
+            }
         })?
         .create_if_missing(true)
         .pragma("foreign_keys", "ON")
