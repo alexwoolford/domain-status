@@ -184,7 +184,7 @@ httptest = "^0.16"
 proptest = "^1.11"          # Property-based testing
 insta = { version = "^1.38", features = ["yaml"] }  # Snapshot/golden testing
 pretty_assertions = "^1.4"  # Better test output
-assert_cmd = "^2.0"         # CLI testing
+assert_cmd = "^2.2"         # CLI testing
 assert_fs = "^1.1"           # Temp dirs and file layout for tests
 rstest = "^0.21"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
