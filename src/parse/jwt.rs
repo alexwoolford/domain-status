@@ -85,11 +85,25 @@ pub fn decode_jwt(token: &str) -> Option<DecodedJwt> {
 
 /// Attempt to decode a base64-encoded JWT (`jwt-base64` secret type).
 ///
-/// First base64-decodes the outer wrapper, then decodes the inner JWT.
+/// Two-stage decode:
+/// 1. **Canonical case**: base64url-decode the outer wrapper, then decode the
+///    inner JWT (e.g. a JWT embedded inside a base64-wrapped config blob, like
+///    Wix's `<script> var scc = { embed : "ZXlKaGJHY2..." }`).
+/// 2. **Fallback**: the gitleaks `jwt-base64` regex sometimes matches a value
+///    that is itself already a plain JWT (`header.payload.signature`) rather
+///    than a base64-wrapped one. JWT segments are themselves base64url, so
+///    gitleaks's pattern can't structurally distinguish the two cases. Try
+///    plain `decode_jwt` before giving up.
 pub fn decode_jwt_base64(encoded: &str) -> Option<DecodedJwt> {
-    let inner_bytes = base64url_decode(encoded.trim())?;
-    let inner_str = String::from_utf8(inner_bytes).ok()?;
-    decode_jwt(&inner_str)
+    let trimmed = encoded.trim();
+    if let Some(inner_bytes) = base64url_decode(trimmed) {
+        if let Ok(inner_str) = String::from_utf8(inner_bytes) {
+            if let Some(jwt) = decode_jwt(&inner_str) {
+                return Some(jwt);
+            }
+        }
+    }
+    decode_jwt(trimmed)
 }
 
 /// Base64url decode with fallback for padding variations.
@@ -230,9 +244,38 @@ mod tests {
         assert_eq!(jwt.audience.as_deref(), Some(r#"["app1","app2"]"#));
     }
 
+    /// Regression test for the M-5 fix: gitleaks's `jwt-base64` regex
+    /// sometimes matches a value that is itself already a plain JWT
+    /// (`header.payload.signature`) rather than a base64-wrapped one. The
+    /// fallback path in `decode_jwt_base64` must recover claims for that
+    /// case so the `url_jwt_claims` table stays consistent with the
+    /// detected secret rows.
     #[test]
-    fn test_decode_jwt_base64_returns_none_for_plain_jwt() {
-        // decode_jwt_base64 expects a base64-wrapped JWT, not a plain one
-        assert!(decode_jwt_base64(NETLIFY_JWT).is_none());
+    fn test_decode_jwt_base64_falls_back_to_plain_jwt() {
+        let jwt = decode_jwt_base64(NETLIFY_JWT).expect("plain JWT must decode via fallback");
+        assert_eq!(jwt.algorithm.as_deref(), Some("HS256"));
+        assert_eq!(jwt.token_type.as_deref(), Some("JWT"));
+        assert_eq!(jwt.issuer.as_deref(), Some("netlify"));
+    }
+
+    /// The canonical case for `decode_jwt_base64`: a JWT that has been
+    /// base64url-wrapped a second time (e.g. embedded inside a config blob)
+    /// must still decode via the primary path. Guards against a regression
+    /// in which the M-5 fallback short-circuits the wrapped case.
+    #[test]
+    fn test_decode_jwt_base64_decodes_wrapped_jwt() {
+        let wrapped = URL_SAFE_NO_PAD.encode(NETLIFY_JWT.as_bytes());
+        let jwt = decode_jwt_base64(&wrapped).expect("wrapped JWT must decode via primary path");
+        assert_eq!(jwt.algorithm.as_deref(), Some("HS256"));
+        assert_eq!(jwt.issuer.as_deref(), Some("netlify"));
+    }
+
+    /// Negative case: garbage input that is neither a wrapped nor a plain JWT
+    /// must still return None (no panic, no false positive in `url_jwt_claims`).
+    #[test]
+    fn test_decode_jwt_base64_returns_none_for_garbage() {
+        assert!(decode_jwt_base64("aGJHY2lPaU").is_none());
+        assert!(decode_jwt_base64("not-a-jwt-at-all").is_none());
+        assert!(decode_jwt_base64("").is_none());
     }
 }
