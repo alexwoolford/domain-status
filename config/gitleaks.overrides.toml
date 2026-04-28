@@ -199,8 +199,11 @@ keywords = ["mailchimp", "-us"]
 #   "31fff8fc-ea95-43ac-95c5-902497125b90":
 #                            Wix recaptcha library hardcoded UUID (12 sites)
 #   "QUl6YVN5Q0JUUk9xNkx1dkZfSUUxcjQ2LVQ0QWVUU1YtMGQ3bXk4":
-#                            base64(`AIzaSyCBTROq6LuvF_IE1r46-T4AeTSV-0d7my8`)
-#                            shared by the same library across 22 sites
+#                            base64-encoded form of a Google Maps API key
+#                            shared by the same JS library across 22 sites
+#                            (raw key intentionally not inlined here so the
+#                            gitleaks self-scan doesn't flag this comment;
+#                            base64-decode the entry above to see the value)
 [[append]]
 rule_id = "generic-api-key"
 regexTarget = "match"
