@@ -10,6 +10,7 @@ use crate::fetch::ProcessingContext;
 use crate::fetch::UrlProcessOutcome;
 use crate::storage::insert::insert_batch_record;
 use crate::utils::{duration_to_us, UrlTimingMetrics};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
@@ -84,7 +85,11 @@ pub async fn handle_response(
     // Parse HTML content on a blocking thread to avoid starving Tokio worker threads.
     // parse_html_content is CPU-bound (DOM parsing, regex, selectors); spawn_blocking
     // keeps the async runtime responsive under high concurrency.
-    let body = resp_data.body.clone();
+    //
+    // body is `Arc<str>`; `Arc::clone` is cheap (pointer + atomic refcount bump),
+    // so neither the spawn nor the later technology detector pays for a
+    // 2-MB-class memcpy.
+    let body = Arc::clone(&resp_data.body);
     let final_domain = resp_data.final_domain.clone();
     let error_stats = ctx.config.error_stats.clone();
     let html_data =

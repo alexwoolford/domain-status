@@ -255,7 +255,7 @@ mod tests {
             headers: reqwest::header::HeaderMap::new(),
             security_headers: std::collections::HashMap::new(),
             http_headers: std::collections::HashMap::new(),
-            body: "<html><body>Test</body></html>".to_string(),
+            body: std::sync::Arc::<str>::from("<html><body>Test</body></html>"),
             body_sha256: None,
             content_length: None,
             http_version: None,

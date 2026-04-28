@@ -380,7 +380,7 @@ mod tests {
             headers,
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
-            body: "<html><head><title>Test</title></head></html>".to_string(),
+            body: std::sync::Arc::<str>::from("<html><head><title>Test</title></head></html>"),
             body_sha256: None,
             content_length: None,
             http_version: Some("HTTP/2".to_string()),
