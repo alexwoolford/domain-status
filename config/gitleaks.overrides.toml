@@ -61,25 +61,74 @@ regexes = [
     '''sumoSiteId''',
 ]
 
+# ── Placeholder filtering for the database-connection-uri rule (L-4) ──
+#
+# After M-4, the rule's `matched_value` is the full URI (not just the
+# password). The previous placeholder filtering relied on gitleaks' global
+# allowlist regexes (e.g. `^x+$`, `^\$VAR$`) matching the bare password.
+# Those regexes are anchored to start/end of `matched_value`, so they no
+# longer fire on a full URI.
+#
+# These per-rule allowlist regexes match URI shapes that contain obvious
+# placeholder passwords between `:` and `@`. `regexTarget = "match"` runs
+# them against the full match (the URI), which is what we want.
+[[append]]
+rule_id = "database-connection-uri"
+regexTarget = "match"
+regexes = [
+    # Single-character repeating password: xxxxxx, aaaaa, *****
+    '''://[^:@/]+:[xX]{3,}@''',
+    '''://[^:@/]+:[*]{3,}@''',
+    # Env-var-ish placeholders: $PASSWORD, ${PASSWORD}, %PASSWORD%
+    '''://[^:@/]+:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?@''',
+    '''://[^:@/]+:%[A-Za-z_][A-Za-z0-9_]*%@''',
+    # Template-token wraps: <password>, {password}, [REDACTED]
+    '''://[^:@/]+:[<\[\{][^>\]\}@]+[>\]\}]@''',
+    # Literal common placeholder names
+    '''(?i)://[^:@/]+:(?:password|passwd|pass|secret|placeholder|redacted|your[_-]?password|todo|changeme)@''',
+]
+
+# Same placeholder filtering for JDBC connection strings.
+[[append]]
+rule_id = "jdbc-connection-string"
+regexTarget = "match"
+regexes = [
+    '''(?i)(?:password|passwd)=[xX]{3,}(?:[&;"'<>\s]|$)''',
+    '''(?i)(?:password|passwd)=[*]{3,}(?:[&;"'<>\s]|$)''',
+    '''(?i)(?:password|passwd)=\$\{?[A-Za-z_][A-Za-z0-9_]*\}?(?:[&;"'<>\s]|$)''',
+    '''(?i)(?:password|passwd)=%[A-Za-z_][A-Za-z0-9_]*%(?:[&;"'<>\s]|$)''',
+    '''(?i)(?:password|passwd)=[<\[\{][^>\]\}]+[>\]\}](?:[&;"'<>\s]|$)''',
+    '''(?i)(?:password|passwd)=(?:password|passwd|pass|secret|placeholder|redacted|your[_-]?password|todo|changeme)(?:[&;"'<>\s]|$)''',
+]
+
 # ── Additional rules: database connection URIs with embedded credentials ──
 
 # Detects database connection strings with embedded passwords in standard URI format.
 # Covers MongoDB, PostgreSQL, MySQL, Redis, RabbitMQ (AMQP), and Elasticsearch.
-# secretGroup = 2 extracts only the password portion (not the full URI).
+#
+# The outer capture group (group 1) wraps the entire URI so that the
+# extracted `matched_value` is the full URI, not just the password. This
+# preserves provenance for analysts: they can see what host/db a leaked
+# credential refers to, and identical passwords used against different
+# hosts dedupe as different rows.
+#
+# An inner non-capturing group `(?:...)` (the password portion) still
+# requires a 3+ char password so URIs without credentials don't fire.
 [[rules]]
 id = "database-connection-uri"
-description = "Database connection string with embedded credentials (password in URI)"
-regex = '''(?i)(mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis(?:s)?|amqps?|elasticsearch)://[^\s:@"'<>]+:([^\s@"'<>]{3,})@[^\s"'<>]+'''
-secretGroup = 2
+description = "Database connection string with embedded credentials (full URI captured for analyst context)"
+regex = '''(?i)((?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis(?:s)?|amqps?|elasticsearch)://[^\s:@"'<>]+:(?:[^\s@"'<>]{3,})@[^\s"'<>]+)'''
 keywords = ["mongodb", "postgres", "postgresql", "mysql", "redis", "rediss", "amqp", "amqps", "elasticsearch"]
 
 # Detects JDBC connection strings with embedded credentials.
 # Format: jdbc:driver://host/db?user=X&password=Y or jdbc:driver://user:pass@host/db
+#
+# Same shape: outer capture group covers the full JDBC string so analysts
+# can see the host/db the password belongs to.
 [[rules]]
 id = "jdbc-connection-string"
-description = "JDBC connection string with embedded credentials"
-regex = '''(?i)jdbc:(?:mysql|postgresql|oracle|sqlserver|mariadb|h2|sqlite):[^\s"'<>]*(?:password|passwd)=([^\s&;"'<>]{3,})'''
-secretGroup = 1
+description = "JDBC connection string with embedded credentials (full URI captured for analyst context)"
+regex = '''(?i)(jdbc:(?:mysql|postgresql|oracle|sqlserver|mariadb|h2|sqlite):[^\s"'<>]*(?:password|passwd)=(?:[^\s&;"'<>]{3,})[^\s"'<>]*)'''
 keywords = ["jdbc"]
 
 # ── HTTP Basic Auth (from Noseyparker np.http.1) ──

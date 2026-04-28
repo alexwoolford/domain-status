@@ -1298,7 +1298,12 @@ mod tests {
             .find(|s| s.secret_type == "database-connection-uri");
         assert!(db.is_some(), "should detect MongoDB URI; got {:?}", secrets);
         let db = db.unwrap();
-        assert_eq!(db.matched_value, "s3cretP4ss");
+        // M-4: matched_value is now the full URI so analysts see host/db,
+        // not just the bare password.
+        assert_eq!(
+            db.matched_value,
+            "mongodb+srv://admin:s3cretP4ss@cluster0.mongodb.net/mydb"
+        );
         assert_eq!(db.severity, SecretSeverity::Critical);
     }
 
@@ -1314,7 +1319,10 @@ mod tests {
             "should detect PostgreSQL URI; got {:?}",
             secrets
         );
-        assert_eq!(db.unwrap().matched_value, "hunter2");
+        assert_eq!(
+            db.unwrap().matched_value,
+            "postgres://appuser:hunter2@db.example.com:5432/production"
+        );
     }
 
     #[test]
@@ -1325,7 +1333,10 @@ mod tests {
             .iter()
             .find(|s| s.secret_type == "database-connection-uri");
         assert!(db.is_some(), "should detect Redis URI; got {:?}", secrets);
-        assert_eq!(db.unwrap().matched_value, "myP4ssword");
+        assert_eq!(
+            db.unwrap().matched_value,
+            "redis://default:myP4ssword@cache.example.com:6379/0"
+        );
     }
 
     #[test]
@@ -1464,6 +1475,51 @@ mod tests {
         assert!(
             db.is_none(),
             "redacted xxxxxxxx should not be flagged; got {:?}",
+            secrets
+        );
+    }
+
+    #[test]
+    fn test_no_detect_placeholder_template_token_in_db_uri() {
+        // `<password>` template token between : and @ should be allowlisted.
+        let body = r#"<script>db = "mongodb://admin:<password>@cluster.local/db";</script>"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(
+            db.is_none(),
+            "<password> template token should be allowlisted; got {:?}",
+            secrets
+        );
+    }
+
+    #[test]
+    fn test_no_detect_placeholder_literal_password_in_db_uri() {
+        // Literal `password` as the password value should be allowlisted.
+        let body = r#"redis://default:password@cache.example.com:6379/0"#;
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "database-connection-uri");
+        assert!(
+            db.is_none(),
+            "literal 'password' value should be allowlisted; got {:?}",
+            secrets
+        );
+    }
+
+    #[test]
+    fn test_no_detect_placeholder_in_jdbc_connection_string() {
+        // JDBC string with <password> template token must be allowlisted.
+        let body = "jdbc:mysql://localhost/db?user=admin&password=<password>";
+        let secrets = detect_exposed_secrets(body);
+        let db = secrets
+            .iter()
+            .find(|s| s.secret_type == "jdbc-connection-string");
+        assert!(
+            db.is_none(),
+            "<password> in JDBC string should be allowlisted; got {:?}",
             secrets
         );
     }
