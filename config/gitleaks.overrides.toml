@@ -162,3 +162,142 @@ id = "mailchimp-api-key"
 description = "Mailchimp API key with datacenter suffix"
 regex = '''[0-9a-f]{32}-us[0-9]{1,2}'''
 keywords = ["mailchimp", "-us"]
+
+# ============================================================================
+# FP-reduction allowlists for the catch-all `generic-api-key` rule and a
+# couple of related rules whose upstream regex is too broad.
+#
+# Derived from a 500-URL --scan-external-scripts study cross-validated
+# against 23,901 historical findings in the analyst MCP DB. Each pattern
+# below was checked against the high-value rule types
+#   (aws-access-token, private-key, database-connection-uri, openai-api-key,
+#    github-pat, github-fine-grained-pat, gitlab-pat, slack-bot-token,
+#    vault-batch-token, vault-service-token, credential-bearing-url,
+#    jdbc-connection-string, grafana-api-key, mailchimp-api-key)
+# in the historical DB and confirmed to skip ZERO of those rows.
+# ============================================================================
+
+# `generic-api-key` match-target stopwords: substrings that ONLY appear in
+# JS module-export syntax or recurring i18n / shared-library constants.
+# `match` target means the literal string is checked against the matched
+# value (the secret-shaped string), so a real credential value that
+# happens to contain `=void` or `_CONTEXT=` is impossible (those substrings
+# are JS syntax, not credential bytes).
+#
+# Each entry's provenance:
+#   "=void"                : `t.X=void` / `n.timingsTargetKeys=void` JS exports
+#   "_CONTEXT="            : `t.V2_CONTEXT=t.UX2_CONTEXT=...`
+#   "isFlushing"           : Vue.js scheduler internals (`r=e.isFlushing`)
+#   "AtomicTagToken"       : parse5 (`t.AtomicTagToken=t.StartTagToken=...`)
+#   "EndTagToken"          : parse5 sibling export
+#   "walkTokens"           : `marked` markdown parser internals
+#   "RUM_SESSION_KEY"      : DataDog RUM SDK constants
+#   "OLD_LOGS_COOKIE_NAME" : DataDog RUM SDK constants
+#   "addGlobalErrorA11y"   : jQuery accessibility plugin
+#   "Object.defineProperty": JS module-export prologue
+#   "PLATFORM_Viewer_Builder_": Wix builder i18n keys
+#   "31fff8fc-ea95-43ac-95c5-902497125b90":
+#                            Wix recaptcha library hardcoded UUID (12 sites)
+#   "QUl6YVN5Q0JUUk9xNkx1dkZfSUUxcjQ2LVQ0QWVUU1YtMGQ3bXk4":
+#                            base64(`AIzaSyCBTROq6LuvF_IE1r46-T4AeTSV-0d7my8`)
+#                            shared by the same library across 22 sites
+[[append]]
+rule_id = "generic-api-key"
+regexTarget = "match"
+stopwords = [
+    "=void",
+    "_CONTEXT=",
+    "isFlushing",
+    "AtomicTagToken",
+    "EndTagToken",
+    "walkTokens",
+    "RUM_SESSION_KEY",
+    "OLD_LOGS_COOKIE_NAME",
+    "addGlobalErrorA11y",
+    "Object.defineProperty",
+    "PLATFORM_Viewer_Builder_",
+    "31fff8fc-ea95-43ac-95c5-902497125b90",
+    "QUl6YVN5Q0JUUk9xNkx1dkZfSUUxcjQ2LVQ0QWVUU1YtMGQ3bXk4",
+]
+
+# `generic-api-key` line-target regexes: match the LINE the value sits on,
+# skipping when it's recognisably a public-by-design widget context
+# (Zendesk widget snippets, Mixpanel browser SDK, DataDog browser RUM,
+# Brightcove player policies, etc.). These keys are by design embedded in
+# client-side JS and shouldn't be flagged as "leaked" credentials.
+[[append]]
+rule_id = "generic-api-key"
+regexTarget = "line"
+regexes = [
+    # Zendesk widget snippet URL - the key is the widget's public ID
+    '''zdassets\.com/ekr/snippet\.js\?key=''',
+    # Mixpanel browser SDK token (publicly bundled)
+    '''(?i)mixPanelToken\s*[:=]''',
+    # Q4 Inc IR widget public key
+    '''(?i)\bQ4ApiKey\s*[=:]''',
+    # HubSpot form widget key (deploy ID, not API key)
+    '''(?i)\bhsFormKey\s*[:=]''',
+    # Rollbar browser SDK access token
+    '''WIDGET_ROLLBAR_TOKEN''',
+    # Brightcove player policy keys (`BCpkA...`, public-by-design)
+    '''BCpkA[A-Za-z0-9_-]+''',
+    # DataDog browser RUM client tokens (`pub` prefix is literal)
+    '''(?i)ddClientToken\s*[:=]\s*['"`]?pub''',
+    # Wix shared SuperCheckout / Rigor library tokens
+    '''(?i)\b(sccApiKey|rigorApiKey)\s*[:=]''',
+    # Algolia search-only key paired with appId on the same line
+    # (admin keys never appear paired with appId in client-side code)
+    '''(?i)algoliaApiKey.*algoliaAppId|algoliaAppId.*algoliaApiKey''',
+]
+
+# `algolia-api-key` line-target allowlist: same Algolia search-key/appId
+# pairing logic, applied to the dedicated Algolia rule. Search keys are
+# safe-by-design when shipped client-side; admin keys would never appear
+# paired with `algoliaAppId`.
+[[append]]
+rule_id = "algolia-api-key"
+regexTarget = "line"
+regexes = ['''(?i)algoliaApiKey.*algoliaAppId|algoliaAppId.*algoliaApiKey''']
+
+# `linkedin-client-secret` match-target stopwords: the upstream rule fires
+# on any 16-char `[a-zA-Z0-9_]{16}` near the literal "linkedin", which
+# matches a lot of lowerCamelCase JS-identifier names that happen to
+# appear in JSON-config blocks alongside "linkedin" strings.
+#
+# Each entry below is a JS-identifier name observed at multiple unrelated
+# domains in the historical 23k DB. The single real positive seen so far
+# (`JyfEshraeC5oURfN` on tempus600.com) starts with uppercase and looks
+# random - none of the stopwords below would falsely match it.
+#
+# This is item-specific (each entry is an exact JS identifier name) but
+# very targeted: cross-checked against the 29 historical
+# `linkedin-client-secret` findings, eliminates 27 of them, preserves the
+# 2 plausible real positives.
+[[append]]
+rule_id = "linkedin-client-secret"
+regexTarget = "match"
+stopwords = [
+    "socialMediaIcon",
+    "internalLinkType",
+    "internalLinkName",
+    "shortDescription",
+    "longDescription",
+    "mainEntityOfPage",
+    "eventInteraction",
+    "heateorSlSiteUrl",
+    "marketingLinkUrl",
+    "utmLinkedInFatId",
+    "sitemapLocations",
+    "imageRedirectUrl",
+    "propertyDataType",
+    "socialNetworkUrl",
+    "alternativeLabel",
+    "privacyPolicyUrl",
+    "shouldOpenNewTab",
+    "footerSocialLink",
+    "umbracoExtension",
+    "slideDefaultName",
+    "descriptiveTitle",
+    "linkedinmyWindow",
+    "socialIdentifier",
+]
