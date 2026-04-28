@@ -1225,6 +1225,7 @@ dependencies = [
  "csv",
  "domain_status_cli",
  "dotenvy",
+ "encoding_rs",
  "enum-map",
  "env_logger",
  "flate2",

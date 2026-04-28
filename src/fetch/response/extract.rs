@@ -43,11 +43,14 @@ fn compute_body_metrics(body: &str) -> (Option<i64>, Option<i64>) {
 use crate::domain::extract_domain;
 use crate::fetch::request::{extract_http_headers, extract_security_headers};
 
-/// Streams response body with a size limit to prevent OOM attacks.
+/// Streams response body bytes with a size limit to prevent OOM attacks.
 ///
-/// Unlike `response.text().await` which downloads the entire body into memory first,
+/// Unlike `response.bytes().await` which downloads the entire body into memory first,
 /// this function streams bytes incrementally and aborts early if the limit is exceeded.
 /// This prevents malicious servers from causing OOM by streaming infinite content.
+///
+/// Returns raw bytes; charset decoding is the caller's responsibility (see
+/// [`decode_body_with_charset`]).
 ///
 /// # Arguments
 ///
@@ -57,14 +60,14 @@ use crate::fetch::request::{extract_http_headers, extract_security_headers};
 ///
 /// # Returns
 ///
-/// * `Ok(Some(String))` - Body text if within size limit
+/// * `Ok(Some(Vec<u8>))` - Raw body bytes if within size limit
 /// * `Ok(None)` - Body exceeded size limit (safely aborted)
 /// * `Err(_)` - Stream read error
 async fn stream_body_with_limit(
     response: reqwest::Response,
     max_size: usize,
     domain: &str,
-) -> Result<Option<String>, Error> {
+) -> Result<Option<Vec<u8>>, Error> {
     let mut stream = response.bytes_stream();
     let mut accumulated = Vec::with_capacity(max_size.min(64 * 1024)); // Pre-allocate up to 64KB
 
@@ -85,9 +88,133 @@ async fn stream_body_with_limit(
         accumulated.extend_from_slice(&chunk);
     }
 
-    // Convert bytes to UTF-8 string (lossy conversion for non-UTF-8 content)
-    let body = String::from_utf8_lossy(&accumulated).into_owned();
-    Ok(Some(body))
+    Ok(Some(accumulated))
+}
+
+/// Decodes raw body bytes into a `String` using charset detection.
+///
+/// Picks the encoding by trying, in order:
+/// 1. `charset=` parameter from the Content-Type header (RFC 7231 §3.1.1).
+/// 2. Byte-Order-Mark sniffing (UTF-8 BOM `EF BB BF`, UTF-16 BE/LE).
+/// 3. `<meta charset="…">` or `<meta http-equiv="Content-Type" content="…">`
+///    inside the first 1024 bytes (HTML-spec sniffing window).
+/// 4. UTF-8 default.
+///
+/// Why this matters for secret detection: pages routinely declare or default
+/// to UTF-8 while serving Windows-1252, ISO-8859-1, GBK, `Shift_JIS`, etc.
+/// `String::from_utf8_lossy` replaces every non-UTF-8 byte with `U+FFFD`
+/// (3 bytes), which can corrupt long base64/hex secrets that span those
+/// bytes. Charset-aware decoding via `encoding_rs` produces faithful
+/// round-tripped UTF-8 the regex engine can reason about.
+///
+/// `encoding_rs::Encoding::for_label` recognises every label in the WHATWG
+/// Encoding Standard, including all the legacy Windows / ISO-8859-* / Asian
+/// encodings real production sites still serve.
+fn decode_body_with_charset(bytes: &[u8], content_type: Option<&str>) -> String {
+    use encoding_rs::{Encoding, UTF_8};
+
+    // 1. Content-Type charset
+    let ct_charset = content_type.and_then(charset_from_content_type);
+    if let Some(label) = ct_charset.as_deref() {
+        if let Some(enc) = Encoding::for_label(label.as_bytes()) {
+            let (cow, _, _) = enc.decode(bytes);
+            return cow.into_owned();
+        }
+    }
+
+    // 2. BOM
+    if let Some(enc) = Encoding::for_bom(bytes).map(|(e, _bom_len)| e) {
+        let (cow, _, _) = enc.decode(bytes);
+        return cow.into_owned();
+    }
+
+    // 3. <meta charset> sniffing in first 1024 bytes (HTML living standard).
+    let prefix = &bytes[..bytes.len().min(1024)];
+    if let Some(label) = sniff_meta_charset(prefix) {
+        if let Some(enc) = Encoding::for_label(label.as_bytes()) {
+            let (cow, _, _) = enc.decode(bytes);
+            return cow.into_owned();
+        }
+    }
+
+    // 4. UTF-8 default.
+    let (cow, _, _) = UTF_8.decode(bytes);
+    cow.into_owned()
+}
+
+/// Returns true if the Content-Type (lowercased, with optional `;` parameters)
+/// is one we want to scan for secrets and extract metadata from.
+///
+/// Goal: catch text-shaped payloads that may carry exposed credentials —
+/// JS bundles, JSON config endpoints, PWA manifests — without dragging in
+/// binary or media types where the secret-detection regex set is meaningless.
+fn is_scannable_content_type(ct_lower: &str) -> bool {
+    // Strip any parameters (`text/html; charset=utf-8` -> `text/html`).
+    let mime = ct_lower.split(';').next().unwrap_or("").trim();
+    // text/* (covers text/html, text/plain, text/javascript, text/xml, text/css, ...)
+    if mime.starts_with("text/") {
+        return true;
+    }
+    // Specific application/* types
+    matches!(
+        mime,
+        "application/xhtml+xml"
+            | "application/javascript"
+            | "application/ecmascript"
+            | "application/x-javascript"
+            | "application/json"
+            | "application/manifest+json"
+            | "application/ld+json"
+            | "application/xml"
+            | "application/atom+xml"
+            | "application/rss+xml"
+            | "application/soap+xml"
+    ) || mime.ends_with("+json")
+        || mime.ends_with("+xml")
+}
+
+/// Parses the `charset` parameter out of a Content-Type header, if present.
+fn charset_from_content_type(ct: &str) -> Option<String> {
+    for part in ct.split(';').map(str::trim) {
+        if let Some(rest) = part.strip_prefix("charset=").or_else(|| {
+            // Case-insensitive match
+            if part.len() >= 8 && part[..8].eq_ignore_ascii_case("charset=") {
+                Some(&part[8..])
+            } else {
+                None
+            }
+        }) {
+            // Strip surrounding quotes and any trailing `;` debris
+            let trimmed = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Sniffs the charset declared via `<meta charset="…">` or
+/// `<meta http-equiv="content-type" content="…; charset=…">` in the supplied
+/// byte prefix. Treats the input as ASCII for matching purposes; non-ASCII
+/// bytes can't form a valid meta-tag declaration.
+fn sniff_meta_charset(prefix: &[u8]) -> Option<String> {
+    use std::sync::LazyLock;
+    static META_CHARSET_RE: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
+        // Match either `<meta charset="…">` or `<meta http-equiv=… content="…charset=…">`.
+        regex::bytes::RegexBuilder::new(
+            r#"(?i)<meta[^>]+(?:charset\s*=\s*["']?([a-z0-9._:+-]+)|content\s*=\s*["'][^"'>]*?charset\s*=\s*([a-z0-9._:+-]+))"#,
+        )
+        .build()
+        .expect("hardcoded meta charset regex")
+    });
+
+    META_CHARSET_RE.captures(prefix).and_then(|caps| {
+        caps.get(1)
+            .or_else(|| caps.get(2))
+            .and_then(|m| std::str::from_utf8(m.as_bytes()).ok())
+            .map(str::to_string)
+    })
 }
 
 /// Extracts and validates response data from an HTTP response.
@@ -144,16 +271,29 @@ pub(crate) async fn extract_response_data(
     let security_headers = extract_security_headers(&headers);
     let http_headers = extract_http_headers(&headers);
 
-    // Enforce HTML content-type, else skip
-    // Note: If Content-Type header is missing, we continue processing (some servers don't send it)
+    // Accept any text-shaped Content-Type for downstream secret detection +
+    // metadata extraction. HTML-DOM extractors (title, meta, structured-data)
+    // gracefully return empty on non-HTML bodies, so it's safe to run them on
+    // JS/JSON/manifest payloads; the regex-based extractors (analytics IDs,
+    // exposed secrets) genuinely benefit from being run there.
+    //
+    // Allowed (case-insensitive prefix match):
+    //   text/*                            html, plain, css, csv, javascript, xml, ...
+    //   application/xhtml+xml             XHTML
+    //   application/javascript            JS bundles served correctly
+    //   application/ecmascript            (rare) ECMAScript
+    //   application/json + */*+json       config endpoints, manifests, JSON-LD
+    //   application/manifest+json         PWA manifest
+    //   application/xml                   XML feeds, soap, RSS
+    //
+    // Missing Content-Type: continue (servers sometimes omit it).
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
-        let ct = ct.to_str().unwrap_or("").to_lowercase();
-        if !ct.starts_with("text/html") {
-            log::info!("Skipping {final_domain} - non-HTML content-type: {ct}");
+        let ct_lc = ct.to_str().unwrap_or("").to_lowercase();
+        if !is_scannable_content_type(&ct_lc) {
+            log::info!("Skipping {final_domain} - non-scannable content-type: {ct_lc}");
             return Ok(None);
         }
     } else {
-        // No Content-Type header - log at debug level but continue processing
         debug!("No Content-Type header for {final_domain}, continuing anyway");
     }
 
@@ -172,7 +312,7 @@ pub(crate) async fn extract_response_data(
     )
     .await
     {
-        Ok(Some(text)) => text,
+        Ok(Some(bytes)) => decode_body_with_charset(&bytes, content_type.as_deref()),
         Ok(None) => {
             // Body exceeded limit: return partial data (metadata only) so status, headers,
             // TLS, DNS, etc. are still recorded; HTML parsing is skipped.
@@ -269,6 +409,196 @@ mod tests {
 
     fn create_test_extractor() -> psl::List {
         psl::List
+    }
+
+    // === charset decoding ===
+
+    #[test]
+    fn test_charset_from_content_type_utf8() {
+        assert_eq!(
+            charset_from_content_type("text/html; charset=utf-8"),
+            Some("utf-8".to_string())
+        );
+        assert_eq!(
+            charset_from_content_type("text/html;charset=Windows-1252"),
+            Some("Windows-1252".to_string())
+        );
+    }
+
+    #[test]
+    fn test_charset_from_content_type_quoted() {
+        assert_eq!(
+            charset_from_content_type(r#"text/html; charset="iso-8859-1""#),
+            Some("iso-8859-1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_charset_from_content_type_case_insensitive() {
+        assert_eq!(
+            charset_from_content_type("text/html; CHARSET=UTF-8"),
+            Some("UTF-8".to_string())
+        );
+    }
+
+    #[test]
+    fn test_charset_from_content_type_missing() {
+        assert_eq!(charset_from_content_type("text/html"), None);
+        assert_eq!(charset_from_content_type(""), None);
+    }
+
+    #[test]
+    fn test_decode_body_with_charset_uses_content_type_label() {
+        // Windows-1252 byte 0x93 ("smart quote ") is INVALID utf-8 — lossy
+        // decode would replace it with U+FFFD; charset-aware decode must
+        // produce U+201C ().
+        let bytes = b"\x93hello\x94";
+        let decoded = decode_body_with_charset(bytes, Some("text/html; charset=windows-1252"));
+        assert!(decoded.contains('\u{201C}'), "got {decoded:?}");
+        assert!(!decoded.contains('\u{FFFD}'), "got {decoded:?}");
+    }
+
+    #[test]
+    fn test_decode_body_with_charset_falls_back_to_meta_tag() {
+        // No Content-Type charset, but HTML declares Windows-1252 in meta.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(
+            b"<html><head><meta charset=\"windows-1252\"><title>x</title></head><body>",
+        );
+        bytes.push(0x93);
+        bytes.extend_from_slice(b"text");
+        bytes.push(0x94);
+        bytes.extend_from_slice(b"</body></html>");
+        let decoded = decode_body_with_charset(&bytes, Some("text/html"));
+        assert!(decoded.contains('\u{201C}'), "got {decoded:?}");
+    }
+
+    #[test]
+    fn test_decode_body_with_charset_meta_http_equiv() {
+        // <meta http-equiv="Content-Type" content="text/html; charset=…">
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(
+            b"<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1252\"></head><body>",
+        );
+        bytes.push(0x93);
+        bytes.extend_from_slice(b"</body></html>");
+        let decoded = decode_body_with_charset(&bytes, None);
+        assert!(decoded.contains('\u{201C}'), "got {decoded:?}");
+    }
+
+    #[test]
+    fn test_decode_body_with_charset_bom_utf16() {
+        // UTF-16 LE BOM + "hi"
+        let bytes: &[u8] = &[0xFF, 0xFE, b'h', 0x00, b'i', 0x00];
+        let decoded = decode_body_with_charset(bytes, Some("text/html"));
+        assert_eq!(decoded, "hi");
+    }
+
+    #[test]
+    fn test_decode_body_with_charset_default_utf8() {
+        let bytes = "hello world".as_bytes();
+        let decoded = decode_body_with_charset(bytes, None);
+        assert_eq!(decoded, "hello world");
+    }
+
+    #[test]
+    fn test_decode_body_with_charset_unknown_label_falls_through() {
+        // Bogus charset label (not in WHATWG): we must fall through, not panic.
+        let bytes = "hello".as_bytes();
+        let decoded = decode_body_with_charset(bytes, Some("text/html; charset=not-a-real-thing"));
+        assert_eq!(decoded, "hello");
+    }
+
+    /// Regression: a Windows-1252-encoded API key wrapped in `'…'` would
+    /// previously have been corrupted by `from_utf8_lossy` because
+    /// 0x91 / 0x92 (smart quotes) are not valid UTF-8 lead bytes. With
+    /// charset-aware decoding the 32 hex chars survive intact.
+    #[test]
+    fn test_decode_body_with_charset_preserves_secret_through_smart_quotes() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"var key = ");
+        bytes.push(0x91);
+        bytes.extend_from_slice(b"abcdef0123456789abcdef0123456789");
+        bytes.push(0x92);
+        bytes.extend_from_slice(b";");
+        let decoded = decode_body_with_charset(&bytes, Some("text/html; charset=windows-1252"));
+        assert!(decoded.contains("abcdef0123456789abcdef0123456789"));
+    }
+
+    #[test]
+    fn test_sniff_meta_charset_finds_meta_charset_attr() {
+        let body = b"<html><head><meta charset=\"shift_jis\"></head>";
+        assert_eq!(sniff_meta_charset(body), Some("shift_jis".to_string()));
+    }
+
+    #[test]
+    fn test_sniff_meta_charset_finds_http_equiv() {
+        let body = b"<meta http-equiv=Content-Type content='text/html; charset=gb2312'>";
+        assert_eq!(sniff_meta_charset(body), Some("gb2312".to_string()));
+    }
+
+    #[test]
+    fn test_sniff_meta_charset_returns_none_when_absent() {
+        let body = b"<html><head><title>x</title></head>";
+        assert_eq!(sniff_meta_charset(body), None);
+    }
+
+    // === content-type allowlist ===
+
+    #[test]
+    fn test_is_scannable_content_type_text_family() {
+        assert!(is_scannable_content_type("text/html"));
+        assert!(is_scannable_content_type("text/html; charset=utf-8"));
+        assert!(is_scannable_content_type("text/plain"));
+        assert!(is_scannable_content_type("text/javascript"));
+        assert!(is_scannable_content_type("text/xml"));
+        assert!(is_scannable_content_type("text/css"));
+        assert!(is_scannable_content_type("text/csv"));
+    }
+
+    #[test]
+    fn test_is_scannable_content_type_application_specific() {
+        assert!(is_scannable_content_type("application/javascript"));
+        assert!(is_scannable_content_type("application/x-javascript"));
+        assert!(is_scannable_content_type("application/ecmascript"));
+        assert!(is_scannable_content_type("application/xhtml+xml"));
+        assert!(is_scannable_content_type("application/json"));
+        assert!(is_scannable_content_type("application/manifest+json"));
+        assert!(is_scannable_content_type("application/ld+json"));
+        assert!(is_scannable_content_type("application/xml"));
+        assert!(is_scannable_content_type("application/atom+xml"));
+    }
+
+    #[test]
+    fn test_is_scannable_content_type_plus_suffix_match() {
+        // RFC 6839 +json / +xml structured-syntax suffixes
+        assert!(is_scannable_content_type("application/vnd.api+json"));
+        assert!(is_scannable_content_type("application/hal+json"));
+        assert!(is_scannable_content_type("application/problem+json"));
+        assert!(is_scannable_content_type("application/vnd.opc.cmdb+xml"));
+    }
+
+    #[test]
+    fn test_is_scannable_content_type_rejects_binary() {
+        assert!(!is_scannable_content_type("image/png"));
+        assert!(!is_scannable_content_type("image/jpeg"));
+        assert!(!is_scannable_content_type("application/pdf"));
+        assert!(!is_scannable_content_type("application/zip"));
+        assert!(!is_scannable_content_type("application/octet-stream"));
+        assert!(!is_scannable_content_type("video/mp4"));
+        assert!(!is_scannable_content_type("audio/mpeg"));
+        assert!(!is_scannable_content_type("font/woff2"));
+    }
+
+    #[test]
+    fn test_is_scannable_content_type_handles_parameters() {
+        // Goofy whitespace and parameter ordering must not break recognition
+        assert!(is_scannable_content_type(
+            "application/json   ;   charset=utf-8"
+        ));
+        assert!(is_scannable_content_type(
+            "text/html; charset=windows-1252; boundary=foo"
+        ));
     }
 
     #[tokio::test]
@@ -966,7 +1296,9 @@ mod tests {
         let result = super::stream_body_with_limit(response, 1024, "test.com").await;
 
         assert!(result.is_ok());
-        let body = result.unwrap();
+        let body = result
+            .unwrap()
+            .map(|bytes| String::from_utf8(bytes).unwrap());
         assert!(body.is_some());
         assert_eq!(body.unwrap(), body_content);
     }
@@ -1018,7 +1350,7 @@ mod tests {
         assert!(result.is_ok());
         let body = result.unwrap();
         assert!(body.is_some(), "Bodies exactly at limit should be accepted");
-        assert_eq!(body.unwrap().len(), 1000);
+        assert_eq!(body.unwrap().len(), 1000); // Vec<u8> length, same as char count for ASCII body
     }
 
     #[tokio::test]
@@ -1040,7 +1372,7 @@ mod tests {
         assert!(result.is_ok());
         let body = result.unwrap();
         assert!(body.is_some());
-        assert_eq!(body.unwrap(), "");
+        assert!(body.unwrap().is_empty());
     }
 
     #[test]
