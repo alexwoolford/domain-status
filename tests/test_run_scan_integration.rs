@@ -56,6 +56,7 @@ fn create_test_config(
         geoip: None,
         status_port: None,
         enable_whois: false,
+        scan_external_scripts: false,
         fail_on: FailOn::Never,
         fail_on_pct_threshold: 10,
         log_file: None,

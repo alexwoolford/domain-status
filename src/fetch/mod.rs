@@ -12,6 +12,7 @@
 
 mod context;
 mod dns;
+pub(crate) mod external_scripts;
 pub(crate) mod favicon;
 mod handler;
 mod record;

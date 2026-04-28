@@ -238,6 +238,7 @@ mod tests {
                 timing_stats,
                 run_id,
                 enable_whois,
+                false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),

@@ -103,7 +103,7 @@ pub async fn handle_response(
     let timestamp = chrono::Utc::now().timestamp_millis();
     let redirect_chain_vec = redirect_chain.unwrap_or_default();
 
-    let (tech_result, dns_result, favicon_result) = tokio::join!(
+    let (tech_result, dns_result, favicon_result, external_secrets) = tokio::join!(
         // Technology detection (only needs HTML data and headers)
         async {
             use crate::fetch::record::detect_technologies_safely;
@@ -131,7 +131,23 @@ pub async fn handle_response(
             &ctx.network.client,
             html_data.favicon_url.as_deref(),
             final_url_str,
-        )
+        ),
+        // Optional external <script src> secret scanning. Off by default;
+        // produces an empty Vec when disabled so this branch is essentially
+        // free in production scans.
+        async {
+            if ctx.config.scan_external_scripts {
+                crate::fetch::external_scripts::scan_external_scripts(
+                    &ctx.network.client,
+                    &resp_data.final_url,
+                    &html_data.script_sources,
+                    ctx.config.allow_localhost_for_tests,
+                )
+                .await
+            } else {
+                Vec::new()
+            }
+        }
     );
 
     let (technologies_vec, tech_detection_us) = tech_result;
@@ -147,6 +163,19 @@ pub async fn handle_response(
     metrics.dns_additional_us = dns_additional_us;
     metrics.tls_handshake_us = tls_handshake_us;
     metrics.tech_detection_us = tech_detection_us;
+
+    // Merge external-script secret findings into the page's exposed_secrets list.
+    // Each finding is already tagged with `location = "external_script:<url>"`
+    // so analysts can distinguish in-HTML matches from JS-bundle matches.
+    let mut html_data = html_data;
+    if !external_secrets.is_empty() {
+        log::info!(
+            "Detected {} additional secret(s) in external scripts for {}",
+            external_secrets.len(),
+            resp_data.final_domain
+        );
+        html_data.exposed_secrets.extend(external_secrets);
+    }
 
     debug!(
         "Preparing to insert record for URL: {}",
@@ -251,6 +280,7 @@ mod tests {
                 timing_stats,
                 None,
                 false,
+                false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
@@ -300,6 +330,7 @@ mod tests {
                 error_stats,
                 timing_stats,
                 Some("test-run".to_string()),
+                false,
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
@@ -1098,6 +1129,7 @@ mod tests {
                 error_stats,
                 timing_stats,
                 Some("test-run".to_string()),
+                false,
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,

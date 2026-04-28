@@ -228,6 +228,7 @@ pub async fn init_scan_resources(
             Arc::clone(&timing_stats),
             Some(run_id.clone()),
             config.enable_whois,
+            config.scan_external_scripts,
             Arc::clone(&runtime_metrics),
             config.allow_localhost_for_tests,
         ),

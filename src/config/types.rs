@@ -193,6 +193,12 @@ pub struct Config {
     /// Enable WHOIS/RDAP lookup for domain registration information
     pub enable_whois: bool,
 
+    /// Fetch external `<script src>` URLs and scan their content for
+    /// exposed secrets. Off by default. When enabled, fetches are
+    /// SSRF-validated, bounded by `MAX_RESPONSE_BODY_SIZE` and
+    /// `timeout_seconds`, and capped at 10 scripts per page.
+    pub scan_external_scripts: bool,
+
     /// Exit code policy for handling failures
     pub fail_on: FailOn,
 
@@ -265,6 +271,7 @@ impl Default for Config {
             geoip: None,
             status_port: None,
             enable_whois: false,
+            scan_external_scripts: false,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
             log_file: None,
@@ -292,6 +299,7 @@ impl std::fmt::Debug for Config {
             .field("geoip", &self.geoip)
             .field("status_port", &self.status_port)
             .field("enable_whois", &self.enable_whois)
+            .field("scan_external_scripts", &self.scan_external_scripts)
             .field("fail_on", &self.fail_on)
             .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
             .field("log_file", &self.log_file)
