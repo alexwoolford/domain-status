@@ -10,10 +10,20 @@
 //! - **location**: heuristic for where in the HTML the secret was found
 //! - **context**: ~80 chars before + match + ~80 chars after for analyst triage
 
+use std::borrow::Cow;
 use std::fmt;
 
 /// Number of context characters to capture before and after a match.
 const CONTEXT_CHARS: usize = 80;
+
+/// Maximum total bytes stored in the per-secret `context` column.
+///
+/// Without a cap, a private-key match (~3-10 KB) plus 160 chars of context
+/// produces a row that essentially duplicates the full secret in two columns.
+/// Pages with many such matches bloat the `SQLite` WAL file. 1 KB is comfortable
+/// for analyst triage (line of code + ~40 chars on each side of a typical
+/// secret) while bounded enough to keep row sizes predictable.
+const MAX_CONTEXT_BYTES: usize = 1024;
 
 /// Severity levels for exposed secrets.
 ///
@@ -61,7 +71,12 @@ pub struct ExposedSecret {
     /// Severity classification (critical / high / medium / low).
     pub severity: SecretSeverity,
     /// Heuristic location hint (`inline_script`, `html_comment`, `url_parameter`, etc.).
-    pub location: String,
+    ///
+    /// Stored as `Cow<'static, str>` so the heuristic can return `&'static str`
+    /// literals without allocating per match. `Cow<'static, str>` derefs to
+    /// `&str` and implements `PartialEq<&str>` and `Display`, so most
+    /// downstream usages don't notice the difference.
+    pub location: Cow<'static, str>,
     /// Decoded JWT claims (populated only for `secret_type` "jwt" or "jwt-base64").
     pub decoded_jwt: Option<crate::parse::jwt::DecodedJwt>,
 }
@@ -89,8 +104,22 @@ fn shannon_entropy(s: &str) -> f64 {
     entropy
 }
 
-/// Severity for a gitleaks rule id. Uses a small mapping for known types; default High.
-#[allow(clippy::match_same_arms)] // Explicit High arm documents known rule IDs; wildcard is the default
+/// Severity for a gitleaks rule id.
+///
+/// Three-step classification:
+/// 1. Explicit allowlists for rules we've manually triaged (Critical/High/Medium/Low).
+/// 2. Heuristic classification for unknown rule IDs based on naming conventions
+///    (`-secret*` => High, `-token*`/`-key*`/`-pat*`/`-cred*` => Medium, else Low).
+/// 3. Default Low for anything else (e.g. very generic patterns whose impact
+///    can't be inferred from the rule ID alone).
+///
+/// Why default `Low` rather than `High`: gitleaks ships ~250 rules and most are
+/// not in our explicit allowlist. The previous "default High" choice meant
+/// every unclassified rule produced a High-severity row, which both inflated
+/// apparent risk and degraded the signal value of "true" High findings (a
+/// real `aws-access-token` looked the same as `generic-api-key` matching a
+/// random hex blob). Conservative-by-default makes High mean "we deliberately
+/// said this is High."
 fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
     match rule_id {
         // Critical: direct compromise or financial
@@ -143,10 +172,42 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         | "grafana-api-key"
         | "grafana-cloud-api-token"
         | "sentry-access-token"
-        | "linear-api-key" => SecretSeverity::Medium,
+        | "linear-api-key"
+        // Generic catch-all rule: matches a wide pattern with low specificity,
+        // so we treat it as Medium-by-default to keep High meaningful.
+        | "generic-api-key" => SecretSeverity::Medium,
         // Low
         "mapbox-api-token" => SecretSeverity::Low,
-        _ => SecretSeverity::High,
+        _ => severity_for_unknown_rule_id(rule_id),
+    }
+}
+
+/// Heuristic classification for gitleaks rule IDs we haven't explicitly mapped.
+///
+/// The rule-id naming convention in gitleaks is consistent enough to give us a
+/// reasonable guess: anything containing `secret`/`password`/`private-key`
+/// indicates direct compromise, whereas tokens/keys/credentials are usually
+/// scoped or rate-limited. Anything else falls to Low.
+fn severity_for_unknown_rule_id(rule_id: &str) -> SecretSeverity {
+    let lower = rule_id;
+    if lower.contains("private-key")
+        || lower.contains("password")
+        || lower.contains("client-secret")
+        || lower.contains("client_secret")
+    {
+        SecretSeverity::High
+    } else if lower.contains("token")
+        || lower.contains("api-key")
+        || lower.contains("api_key")
+        || lower.contains("access-key")
+        || lower.contains("access_key")
+        || lower.contains("secret")
+        || lower.contains("pat")
+        || lower.contains("cred")
+    {
+        SecretSeverity::Medium
+    } else {
+        SecretSeverity::Low
     }
 }
 
@@ -176,7 +237,26 @@ fn line_containing(body: &str, start: usize, end: usize) -> &str {
     &body[line_start..line_end]
 }
 
-/// Extracts the secret from a regex match per Gitleaks: `SecretGroup` (1-based) if set, else first non-empty capture group, else full match.
+/// Extracts the secret from a regex match.
+///
+/// Order of preference:
+/// 1. If `secretGroup` (1-based) is set and the capture exists, use it. This is
+///    the upstream Gitleaks-recommended way to point at the secret precisely.
+/// 2. Otherwise, return the **first non-empty capture group**. Most bundled
+///    Gitleaks rules wrap the secret in a single capture group with surrounding
+///    anchoring text (e.g. `(?i)hubspot.*=\s*"([0-9A-F-]{36})"`). The full
+///    match includes the keyword and quotes; group 1 is the clean secret.
+/// 3. Fallback: full match.
+///
+/// Note on Gitleaks parity: Gitleaks v8 (Go) defaults to `matches[0]` (full
+/// match) when `secretGroup` is unset. We deliberately differ because the
+/// rules shipped in `config/gitleaks.toml` rarely declare `secretGroup` even
+/// when the regex has anchoring context, and returning the full match would
+/// store `window.API_KEY="<uuid>"` instead of `<uuid>`. The `(rule_id,
+/// matched_value)` dedupe and the analyst-facing report both want the clean
+/// secret. If a future rule needs the literal full match, it must declare
+/// `secretGroup = 0` explicitly (we treat 0 as "unset" today; that's the
+/// only edge worth flagging in a future change).
 fn extract_secret(
     captures: Option<regex::Captures>,
     full_match: &str,
@@ -246,6 +326,13 @@ pub(crate) fn rule_allowlist_skips(
 }
 
 /// Extracts surrounding context for a match within the body text.
+///
+/// The full window is `[match_start - CONTEXT_CHARS, match_end + CONTEXT_CHARS]`,
+/// snapped to valid UTF-8 char boundaries. If the result would exceed
+/// [`MAX_CONTEXT_BYTES`] (a private-key match alone can be ~3-10 KB), the
+/// long match in the middle is replaced with `<head>...<tail>` so the
+/// context still reflects the surrounding code without duplicating the full
+/// secret value in this column.
 fn extract_context(body: &str, start: usize, end: usize) -> String {
     let ctx_start = start.saturating_sub(CONTEXT_CHARS);
     let ctx_end = (end + CONTEXT_CHARS).min(body.len());
@@ -261,7 +348,68 @@ fn extract_context(body: &str, start: usize, end: usize) -> String {
         .find(|&i| body.is_char_boundary(i))
         .unwrap_or(body.len());
 
-    body[safe_start..safe_end].to_string()
+    let raw = &body[safe_start..safe_end];
+    if raw.len() <= MAX_CONTEXT_BYTES {
+        return raw.to_string();
+    }
+
+    // Long: keep the surrounding code by truncating the match in the middle.
+    // Allocate the budget as: prefix-context + head-of-match + ELLIPSIS + tail-of-match + suffix-context.
+    const ELLIPSIS: &str = "...[truncated]...";
+    let prefix = match_safe_slice(body, safe_start, start);
+    let suffix = match_safe_slice(body, end, safe_end);
+    let prefix_len = prefix.len();
+    let suffix_len = suffix.len();
+
+    // Reserve characters for ellipsis + prefix/suffix; remaining budget split between match-head and match-tail.
+    let overhead = prefix_len + suffix_len + ELLIPSIS.len();
+    if overhead >= MAX_CONTEXT_BYTES {
+        // Pathological: even the surrounding context exceeds the cap.
+        // Fall back to the raw window truncated to MAX_CONTEXT_BYTES at the
+        // nearest char boundary.
+        return truncate_at_char_boundary(raw, MAX_CONTEXT_BYTES);
+    }
+    let match_budget = MAX_CONTEXT_BYTES - overhead;
+    let half = match_budget / 2;
+    let match_text = &body[start..end];
+    let head = truncate_at_char_boundary(match_text, half);
+    let tail_start = match_text
+        .len()
+        .saturating_sub(match_budget - head.len())
+        .max(head.len());
+    // Snap tail_start to a char boundary going forward.
+    let tail_start = (tail_start..=match_text.len())
+        .find(|&i| match_text.is_char_boundary(i))
+        .unwrap_or(match_text.len());
+    let tail = &match_text[tail_start..];
+
+    format!("{prefix}{head}{ELLIPSIS}{tail}{suffix}")
+}
+
+/// Slice safely between two byte indices that are already on char boundaries.
+fn match_safe_slice(body: &str, start: usize, end: usize) -> &str {
+    if start <= end
+        && end <= body.len()
+        && body.is_char_boundary(start)
+        && body.is_char_boundary(end)
+    {
+        &body[start..end]
+    } else {
+        ""
+    }
+}
+
+/// Truncate a `&str` to at most `max_bytes`, snapping back to the nearest
+/// preceding char boundary so the returned slice is always valid UTF-8.
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut idx = max_bytes;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    s[..idx].to_string()
 }
 
 /// Infers location hint from the surrounding context string.
@@ -291,26 +439,59 @@ fn infer_location(context: &str) -> &'static str {
 /// Loads rules from the bundled `config/gitleaks.toml`, runs each regex over the body,
 /// applies entropy and allowlist filters, and returns findings with gitleaks rule id
 /// as `secret_type` and derived severity.
+///
+/// The keyword prefilter (Aho-Corasick automaton built once at config-load
+/// time) runs once over the body and produces the set of pattern IDs that
+/// appear in it. Each rule then checks that set in `O(rule_keywords)` instead
+/// of re-scanning the body — making total work `O(body_len + sum(rule_keywords))`
+/// rather than `O(body_len * sum(rule_keywords))`.
 pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
+    detect_exposed_secrets_inner(body, true)
+}
+
+/// Test-only variant that bypasses the Aho-Corasick keyword prefilter.
+///
+/// Used by the prefilter-equivalence regression test: the prefilter is meant
+/// to be a pure perf shortcut, so for any body its findings must match the
+/// findings produced when every rule's regex runs unconditionally. Any
+/// divergence is a correctness bug in the prefilter (a missing keyword for
+/// some rule, an automaton that doesn't see a substring, etc.).
+#[cfg(test)]
+pub(crate) fn detect_exposed_secrets_unfiltered(body: &str) -> Vec<ExposedSecret> {
+    detect_exposed_secrets_inner(body, false)
+}
+
+fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedSecret> {
     let config = crate::parse::gitleaks::gitleaks();
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
+
+    // One-pass keyword scan. Rules without keywords skip this gate entirely
+    // and always run their regex. The unfiltered variant ignores this set
+    // entirely (use_prefilter == false) so every rule's regex runs.
+    let matched_keyword_ids = if use_prefilter {
+        config
+            .keyword_prefilter
+            .as_ref()
+            .map(|p| p.matched_pattern_ids(body))
+    } else {
+        None
+    };
 
     for rule in &config.rules {
         // Rules restricted to specific file paths (e.g. .tf, .hcl) are for repo scanning; skip when scanning a single blob (HTML) with no path.
         if rule.path.is_some() {
             continue;
         }
-        // Gitleaks prefilter: if rule has keywords, run regex only when at least one keyword
-        // appears in body (case-insensitive). Use eq_ignore_ascii_case byte search to avoid
-        // allocating a full lowercase copy of the body.
-        if let Some(ref kws) = rule.keywords {
-            if !kws.is_empty()
-                && !kws.iter().any(|kw| {
-                    body.as_bytes()
-                        .windows(kw.len())
-                        .any(|w| w.eq_ignore_ascii_case(kw.as_bytes()))
-                })
+        // Aho-Corasick prefilter: skip the rule if it has keywords AND none of
+        // them were observed in the body. Rules without `keyword_pattern_ids`
+        // run unconditionally (matches gitleaks "no keywords -> always run").
+        if let (Some(ids), Some(matched)) = (
+            rule.keyword_pattern_ids.as_ref(),
+            matched_keyword_ids.as_ref(),
+        ) {
+            if !ids.is_empty()
+                && !crate::parse::gitleaks::KeywordPrefilter::any_id_present(ids, matched)
             {
                 continue;
             }
@@ -342,7 +523,7 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
                 continue;
             }
 
-            let location = infer_location(&context).to_string();
+            let location: Cow<'static, str> = Cow::Borrowed(infer_location(&context));
             let severity = severity_for_rule_id(&rule.id);
             let decoded_jwt = match rule.id.as_str() {
                 "jwt" => crate::parse::jwt::decode_jwt(&matched_value),
@@ -521,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn test_severity_for_rule_id() {
+    fn test_severity_for_rule_id_explicit_classifications() {
         assert_eq!(
             severity_for_rule_id("private-key"),
             SecretSeverity::Critical
@@ -532,10 +713,128 @@ mod tests {
         );
         assert_eq!(severity_for_rule_id("gcp-api-key"), SecretSeverity::Medium);
         assert_eq!(
+            severity_for_rule_id("generic-api-key"),
+            SecretSeverity::Medium,
+            "catch-all generic rule must not be High by default"
+        );
+        assert_eq!(
             severity_for_rule_id("mapbox-api-token"),
             SecretSeverity::Low
         );
-        assert_eq!(severity_for_rule_id("unknown-rule"), SecretSeverity::High);
+    }
+
+    /// Walk every rule id shipped in the bundled gitleaks config and assert
+    /// the severity classifier returns a sensible value for each. This is a
+    /// no-panic / no-default-High guarantee: when upstream gitleaks adds a
+    /// new rule, our M-1 classifier must place it somewhere reasonable.
+    ///
+    /// The guarantee being tested:
+    /// - No rule id collapses to `High` *unless* it's in the explicit map
+    ///   or its name contains a credential keyword (the regression is the
+    ///   pre-M-1 default of "anything unknown -> High" producing noise).
+    /// - The classifier never panics on any production rule id.
+    /// - Every classification is reproducible (calling twice on the same
+    ///   id returns the same severity).
+    #[test]
+    fn test_severity_classifies_every_shipped_rule_id() {
+        let cfg = crate::parse::gitleaks::try_gitleaks().expect("config loads");
+
+        // The explicit High allowlist - hardcoded here so a future
+        // refactor of severity_for_rule_id can't silently change which
+        // ids are blessed.
+        let explicit_high: std::collections::HashSet<&str> = [
+            "aws-access-token",
+            "http-basic-auth",
+            "mailchimp-api-key",
+            "openai-api-key",
+            "anthropic-api-key",
+            "anthropic-admin-api-key",
+            "sendgrid-api-token",
+            "twilio-api-key",
+            "npm-access-token",
+            "pypi-upload-token",
+            "digitalocean-access-token",
+            "digitalocean-pat",
+            "heroku-api-key",
+            "heroku-api-key-v2",
+            "flyio-access-token",
+            "shopify-access-token",
+            "shopify-private-app-access-token",
+            "shopify-shared-secret",
+            "bitbucket-client-secret",
+            "mailgun-private-api-token",
+            "cloudflare-api-key",
+            "doppler-api-token",
+            "plaid-secret-key",
+            "plaid-api-token",
+            "fastly-api-token",
+        ]
+        .into_iter()
+        .collect();
+
+        for rule in &cfg.rules {
+            let sev = severity_for_rule_id(&rule.id);
+
+            // 1. Determinism: calling twice is identical.
+            assert_eq!(
+                sev,
+                severity_for_rule_id(&rule.id),
+                "non-deterministic for {}",
+                rule.id
+            );
+
+            // 2. Anything that's `High` must either be in the explicit map
+            //    OR have a name containing a "this is dangerous" keyword.
+            //    Catches the "default High" regression: a rule id we don't
+            //    recognise must NOT be High.
+            if matches!(sev, SecretSeverity::High) {
+                let id = &rule.id;
+                let allowed_high = explicit_high.contains(id.as_str())
+                    || id.contains("private-key")
+                    || id.contains("password")
+                    || id.contains("client-secret")
+                    || id.contains("client_secret");
+                assert!(
+                    allowed_high,
+                    "rule '{id}' classified as High but not in the explicit map and \
+                     doesn't contain a 'high-impact' substring; either add it to the \
+                     explicit list or rethink the heuristic so it lands at Medium"
+                );
+            }
+        }
+    }
+
+    /// Heuristic for unknown rule IDs: sensitive-sounding ID -> Medium/High,
+    /// nothing recognisable -> Low.
+    #[test]
+    fn test_severity_for_unknown_rule_id_heuristic() {
+        // password / private-key / client-secret -> High
+        assert_eq!(
+            severity_for_rule_id("acme-private-key"),
+            SecretSeverity::High
+        );
+        assert_eq!(
+            severity_for_rule_id("foobar-password"),
+            SecretSeverity::High
+        );
+        assert_eq!(
+            severity_for_rule_id("zilch-client-secret"),
+            SecretSeverity::High
+        );
+        // token/api-key/access-key/secret/pat/cred -> Medium
+        assert_eq!(
+            severity_for_rule_id("acme-access-token"),
+            SecretSeverity::Medium
+        );
+        assert_eq!(severity_for_rule_id("foo-api-key"), SecretSeverity::Medium);
+        assert_eq!(severity_for_rule_id("foo-pat"), SecretSeverity::Medium);
+        assert_eq!(
+            severity_for_rule_id("foo-credentials"),
+            SecretSeverity::Medium
+        );
+        // Anything else -> Low (the new conservative default)
+        assert_eq!(severity_for_rule_id("nonsense-rule"), SecretSeverity::Low);
+        assert_eq!(severity_for_rule_id("totally-random"), SecretSeverity::Low);
     }
 
     #[test]
@@ -608,6 +907,50 @@ mod tests {
         assert!(secrets[0].context.contains("BBBB"));
     }
 
+    /// L-6 regression: when the match itself is longer than [`MAX_CONTEXT_BYTES`]
+    /// (e.g. a 4 KB private key), the context column stays bounded by replacing
+    /// the middle of the match with `...[truncated]...`. The surrounding code
+    /// context is preserved.
+    #[test]
+    fn test_context_cap_truncates_long_matches() {
+        let huge_key = format!(
+            "-----BEGIN RSA PRIVATE KEY-----\n{}\n-----END RSA PRIVATE KEY-----",
+            "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7".repeat(80)
+        );
+        let body = format!("// before\n{huge_key}\n// after");
+        let secrets = detect_exposed_secrets(&body);
+        assert_eq!(secrets.len(), 1);
+        let ctx = &secrets[0].context;
+        assert!(
+            ctx.len() <= MAX_CONTEXT_BYTES,
+            "context len {} must be <= MAX_CONTEXT_BYTES {}",
+            ctx.len(),
+            MAX_CONTEXT_BYTES
+        );
+        assert!(
+            ctx.contains("...[truncated]..."),
+            "context should mark truncation; got: {ctx:?}"
+        );
+        // Keep the surrounding signal even though the middle is gone.
+        assert!(ctx.contains("BEGIN RSA PRIVATE KEY"));
+        assert!(ctx.contains("END RSA PRIVATE KEY"));
+    }
+
+    /// Sanity: short matches still get the full surrounding context (no
+    /// truncation marker, full match preserved).
+    #[test]
+    fn test_context_cap_preserves_short_matches() {
+        let body = format!(r#"var key = "{AWS_KEY}";"#);
+        let secrets = detect_exposed_secrets(&body);
+        let aws = secrets
+            .iter()
+            .find(|s| s.secret_type == "aws-access-token")
+            .unwrap();
+        assert!(!aws.context.contains("...[truncated]..."));
+        assert!(aws.context.contains(AWS_KEY));
+        assert!(aws.context.len() < MAX_CONTEXT_BYTES);
+    }
+
     /// Regression test: `extract_context` must not panic when the context window
     /// (start - 80 bytes or end + 80 bytes) lands inside a multi-byte UTF-8
     /// character. This reproduces the crash from a Polish page containing 'ę'
@@ -637,6 +980,72 @@ mod tests {
         let config = crate::parse::gitleaks::gitleaks();
         assert!(config.rules.len() > 200, "expected 200+ gitleaks rules");
         assert!(!config.global_allowlist.regexes.is_empty());
+    }
+
+    /// Helper: reduce findings to the dedupe-relevant (`rule_id`, `matched_value`) tuples.
+    fn finding_keys(secrets: &[ExposedSecret]) -> std::collections::BTreeSet<(String, String)> {
+        secrets
+            .iter()
+            .map(|s| (s.secret_type.clone(), s.matched_value.clone()))
+            .collect()
+    }
+
+    /// Critical regression: the Aho-Corasick keyword prefilter is meant to be
+    /// a pure perf shortcut. For any input body, the filtered detector and
+    /// the unfiltered detector must produce the **same** set of
+    /// `(rule_id, matched_value)` tuples. Any divergence is a correctness bug
+    /// in the prefilter (a missing keyword for some rule, an automaton that
+    /// doesn't see a substring, ASCII-only matching when the regex would
+    /// match non-ASCII, etc.).
+    ///
+    /// The body distribution intentionally includes:
+    /// - All printable ASCII (the dominant content type on the public web)
+    /// - Strings with `=void`, `=t.`, key-like prefixes that exercise our
+    ///   stopwords / overlay rules
+    /// - Plausible AWS / Google / Stripe shapes so the regexes actually fire
+    ///   often enough to find a divergence if one exists
+    ///
+    /// 256 cases gives high confidence at minor compile-time cost.
+    #[test]
+    fn test_prefilter_equivalence_on_random_bodies() {
+        use proptest::prelude::*;
+
+        // Make sure the bundled config is loaded once before proptest spins
+        // up its iterations - avoids races on the lazy OnceLock under -j.
+        let _ = crate::parse::gitleaks::try_gitleaks().expect("gitleaks loads");
+
+        let body_strategy = prop_oneof![
+            // Pure printable ASCII: the dominant production case.
+            "[\\x20-\\x7e]{0,2048}",
+            // Non-ASCII bytes embedded in HTML (charset edge cases).
+            "[\\x20-\\xff]{0,1024}",
+            // Realistic gitleaks-shaped strings - ensures we exercise the
+            // actual rules, not just the prefilter on noise.
+            r#"var (key|token|api_key|apiKey) ?= ?"[A-Za-z0-9_-]{20,80}";"#,
+            r#"AKIA[A-Z2-7]{16}"#,
+            r#"AIzaSy[A-Za-z0-9_-]{33}"#,
+            r#"sk-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20}"#,
+            // Edge: stopword-ish patterns that should NOT fire either way.
+            r#"[a-z][a-zA-Z]+\.[a-z]+=void"#,
+        ];
+
+        proptest!(ProptestConfig::with_cases(256), |(body in body_strategy)| {
+            let with_prefilter = detect_exposed_secrets(&body);
+            let without_prefilter = detect_exposed_secrets_unfiltered(&body);
+            let with_keys = finding_keys(&with_prefilter);
+            let without_keys = finding_keys(&without_prefilter);
+            prop_assert_eq!(
+                with_keys.clone(),
+                without_keys.clone(),
+                "Prefilter divergence!\n\
+                 body (first 200 chars): {}\n\
+                 with_prefilter:    {:?}\n\
+                 without_prefilter: {:?}",
+                body.chars().take(200).collect::<String>(),
+                with_keys,
+                without_keys
+            );
+        });
     }
 
     /// Gitleaks keyword prefilter: sourcegraph-access-token has keywords ["sgp_", "sourcegraph"].

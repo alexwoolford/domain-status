@@ -23,7 +23,7 @@ pub use analytics::insert_analytics_ids;
 pub use contact::insert_contact_links;
 pub use favicon::insert_favicon_data;
 pub use geoip::insert_geoip_data;
-pub use jwt_claims::insert_jwt_claims;
+pub use jwt_claims::insert_jwt_claims_batch;
 pub use secrets::insert_exposed_secrets;
 pub use security::insert_security_warnings;
 pub use social::insert_social_media_links;

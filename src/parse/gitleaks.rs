@@ -114,8 +114,15 @@ pub struct CompiledRule {
     pub id: String,
     pub regex: Regex,
     pub entropy: Option<f64>,
-    /// Lowercased at load time; if Some and non-empty, rule runs only when at least one keyword appears in fragment (Gitleaks prefilter).
+    /// Lowercased at load time. Kept for human inspection / overlay edits; the
+    /// hot-path prefilter uses [`Self::keyword_pattern_ids`] instead.
     pub keywords: Option<Vec<String>>,
+    /// Indices into [`KeywordPrefilter::pattern_to_id`] (the global Aho-Corasick
+    /// automaton) for this rule's keywords. If `Some(non-empty)`, the rule is
+    /// gated on at least one of these IDs being present in the body's matched
+    /// keyword set; if `None` or empty, the rule has no keyword prefilter and
+    /// always runs.
+    pub keyword_pattern_ids: Option<Vec<u32>>,
     /// 1-based capture group index for secret extraction; None = first non-empty group.
     pub secret_group: Option<u32>,
     pub allowlists: Vec<CompiledRuleAllowlist>,
@@ -123,10 +130,52 @@ pub struct CompiledRule {
     pub path: Option<String>,
 }
 
-/// Full compiled config: global allowlist + rules.
+/// Single shared Aho-Corasick automaton over every distinct keyword in every
+/// rule. Built once at config-load; used to compute the set of keyword IDs
+/// that appear in a body in a single linear pass over the body bytes.
+///
+/// Why: Gitleaks rules use keyword prefilters (e.g. `["sgp_", "sourcegraph"]`)
+/// to skip expensive regex evaluation on bodies that obviously can't match.
+/// Naively, that's `O(rules x keywords x body_len)` per body. The shared
+/// automaton collapses it to `O(body_len)` independent of rule count.
+pub struct KeywordPrefilter {
+    automaton: aho_corasick::AhoCorasick,
+    /// Lowercased keyword -> automaton pattern ID. Used by tests and a future
+    /// diagnostic helper; intentionally `pub` so external callers (e.g. a
+    /// future `--explain-rule` CLI) can introspect.
+    #[allow(dead_code)] // exposed for diagnostics; not yet read on the hot path
+    pub pattern_to_id: std::collections::HashMap<String, u32>,
+}
+
+impl KeywordPrefilter {
+    /// Returns the set of pattern IDs that appear (case-insensitively) in
+    /// `body`. Caller passes this set to [`Self::any_id_present`] for each
+    /// rule, avoiding any per-rule body scan.
+    pub fn matched_pattern_ids(&self, body: &str) -> std::collections::HashSet<u32> {
+        let mut found = std::collections::HashSet::new();
+        for m in self.automaton.find_overlapping_iter(body) {
+            // pattern_id() is u32 in aho-corasick 1.x and the cast is lossless;
+            // this allow is only for the `as` (no truncation given u32 -> u32).
+            #[allow(clippy::cast_possible_truncation)]
+            let pid = m.pattern().as_u32();
+            found.insert(pid);
+        }
+        found
+    }
+
+    /// Returns true if any of `rule_ids` is contained in `matched`.
+    pub fn any_id_present(rule_ids: &[u32], matched: &std::collections::HashSet<u32>) -> bool {
+        rule_ids.iter().any(|id| matched.contains(id))
+    }
+}
+
+/// Full compiled config: global allowlist + rules + shared keyword prefilter.
 pub struct GitleaksCompiled {
     pub global_allowlist: CompiledGlobalAllowlist,
     pub rules: Vec<CompiledRule>,
+    /// `None` if there are no keywords across any rule (degenerate test
+    /// fixtures). Production config always populates this.
+    pub keyword_prefilter: Option<KeywordPrefilter>,
 }
 
 fn compile_allowlist_regexes(regexes: Option<Vec<String>>) -> Vec<Regex> {
@@ -278,6 +327,7 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
                 regex,
                 entropy: r.entropy,
                 keywords,
+                keyword_pattern_ids: None, // assigned in build_keyword_prefilter
                 secret_group: r.secret_group,
                 allowlists,
                 path: r.path.clone(),
@@ -373,6 +423,7 @@ fn load_compiled() -> Result<GitleaksCompiled> {
                 regex,
                 entropy: r.entropy,
                 keywords,
+                keyword_pattern_ids: None, // assigned in build_keyword_prefilter
                 secret_group: r.secret_group,
                 allowlists,
                 path: r.path.clone(),
@@ -388,14 +439,98 @@ fn load_compiled() -> Result<GitleaksCompiled> {
     let overlay_toml = include_str!("../../config/gitleaks.overrides.toml");
     merge_overrides_into_rules(&mut rules, overlay_toml);
 
+    let keyword_prefilter = build_keyword_prefilter(&mut rules);
+
     Ok(GitleaksCompiled {
         global_allowlist,
         rules,
+        keyword_prefilter,
     })
 }
 
-/// Compiled gitleaks config. Populated by [`init_gitleaks`] during scan init.
-static GITLEAKS: OnceLock<GitleaksCompiled> = OnceLock::new();
+/// Builds the shared keyword Aho-Corasick automaton from the union of every
+/// rule's lowercased keywords, populating each rule's `keyword_pattern_ids`
+/// in lock-step with the automaton's pattern indices.
+///
+/// Returns `None` if no rule has any keywords (degenerate / test-only).
+fn build_keyword_prefilter(rules: &mut [CompiledRule]) -> Option<KeywordPrefilter> {
+    use std::collections::HashMap;
+
+    // Stable iteration order: rules already iterated in source order, and within
+    // each rule the keyword list is the source order. Resulting pattern IDs are
+    // therefore deterministic across builds.
+    let mut pattern_to_id: HashMap<String, u32> = HashMap::new();
+    let mut patterns: Vec<String> = Vec::new();
+
+    for rule in rules.iter_mut() {
+        let Some(kws) = rule.keywords.as_ref() else {
+            continue;
+        };
+        let mut ids: Vec<u32> = Vec::with_capacity(kws.len());
+        for kw in kws {
+            if kw.is_empty() {
+                continue;
+            }
+            let id = match pattern_to_id.get(kw) {
+                Some(&id) => id,
+                None => {
+                    let id_usize = patterns.len();
+                    let Ok(id) = u32::try_from(id_usize) else {
+                        log::warn!("gitleaks keyword count exceeded u32; skipping prefilter");
+                        return None;
+                    };
+                    patterns.push(kw.clone());
+                    pattern_to_id.insert(kw.clone(), id);
+                    id
+                }
+            };
+            ids.push(id);
+        }
+        if !ids.is_empty() {
+            ids.sort_unstable();
+            ids.dedup();
+            rule.keyword_pattern_ids = Some(ids);
+        }
+    }
+
+    if patterns.is_empty() {
+        return None;
+    }
+
+    let automaton = match aho_corasick::AhoCorasickBuilder::new()
+        .ascii_case_insensitive(true)
+        .match_kind(aho_corasick::MatchKind::Standard)
+        .build(&patterns)
+    {
+        Ok(a) => a,
+        Err(e) => {
+            // If we can't build the automaton, every rule must fall back to
+            // running its regex unconditionally. Clear the pattern_ids so the
+            // detector knows there's no prefilter to consult.
+            log::warn!("Failed to build gitleaks keyword automaton: {e}; prefilter disabled");
+            for rule in rules.iter_mut() {
+                rule.keyword_pattern_ids = None;
+            }
+            return None;
+        }
+    };
+
+    Some(KeywordPrefilter {
+        automaton,
+        pattern_to_id,
+    })
+}
+
+/// Cached result of loading the bundled gitleaks config. Populated lazily by
+/// [`gitleaks`] (or eagerly by [`init_gitleaks`] during scan init). The error
+/// is held as a `String` because `anyhow::Error` is not directly storable in a
+/// `OnceLock<Result<...>>` (it's neither `Clone` nor `Sync`-safe in the usual
+/// way).
+static GITLEAKS_RESULT: OnceLock<std::result::Result<GitleaksCompiled, String>> = OnceLock::new();
+
+fn ensure_loaded() -> &'static std::result::Result<GitleaksCompiled, String> {
+    GITLEAKS_RESULT.get_or_init(|| load_compiled().map_err(|e| format!("{e:?}")))
+}
 
 /// Eagerly load and validate the bundled gitleaks config.
 ///
@@ -407,32 +542,44 @@ static GITLEAKS: OnceLock<GitleaksCompiled> = OnceLock::new();
 /// produces no compilable rules. Surface this from scan startup so any error
 /// is reported as a clean failure rather than as a panic on first use.
 pub fn init_gitleaks() -> Result<()> {
-    if GITLEAKS.get().is_some() {
-        return Ok(());
+    match ensure_loaded() {
+        Ok(_) => Ok(()),
+        Err(s) => Err(anyhow!("{}", s)),
     }
-    let compiled = load_compiled()?;
-    let _ = GITLEAKS.set(compiled);
-    Ok(())
 }
 
-/// Get the loaded gitleaks ruleset.
+/// Returns the loaded gitleaks ruleset, or an error string if loading failed.
 ///
-/// Lazily initializes the ruleset on first call (so unit tests that do not run
-/// through scan init still work). The lazy fallback panics with a clear message
-/// only if the bundled `config/gitleaks.toml` is malformed — that is a
-/// developer-introduced bug, not a runtime input. Production callers go through
-/// [`init_gitleaks`] in scan init, which surfaces the same failure as a clean
-/// startup error before any scanning starts.
+/// Production callers should invoke [`init_gitleaks`] eagerly during scan
+/// startup so any error surfaces as a clean startup failure. The lazy
+/// fallback here exists for unit tests that exercise [`crate::parse::secrets`]
+/// directly and never call `init_gitleaks`. Either way, the result is cached.
+pub fn try_gitleaks() -> std::result::Result<&'static GitleaksCompiled, &'static str> {
+    match ensure_loaded() {
+        Ok(c) => Ok(c),
+        Err(s) => Err(s.as_str()),
+    }
+}
+
+/// Convenience accessor that panics if loading failed.
+///
+/// Useful for unit tests where setup-time failure is preferable to threading
+/// `Result` through every test. Production code should prefer [`try_gitleaks`]
+/// (or, better, gate scan startup on [`init_gitleaks`]).
+///
+/// # Panics
+///
+/// Panics if the bundled `config/gitleaks.toml` is malformed or compiles to
+/// no valid rules. This indicates a developer-introduced bug, not runtime
+/// input.
 pub fn gitleaks() -> &'static GitleaksCompiled {
-    GITLEAKS.get_or_init(|| {
-        load_compiled().unwrap_or_else(|e| {
-            panic!(
-                "BUG: bundled config/gitleaks.toml failed to load: {e:?}. \
-                 This indicates a malformed bundled config; callers should use init_gitleaks() \
-                 during scan startup to receive this error as a Result instead."
-            )
-        })
-    })
+    match try_gitleaks() {
+        Ok(c) => c,
+        Err(e) => panic!(
+            "BUG: bundled config/gitleaks.toml failed to load: {e}. \
+             Use init_gitleaks() during scan startup to receive this as a Result."
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -503,6 +650,124 @@ mod tests {
                  see REGEX_SIZE_LIMIT in src/parse/gitleaks.rs)"
             );
         }
+    }
+
+    /// Regression: every loaded rule with non-empty keywords must have its
+    /// `keyword_pattern_ids` populated. Without this, the prefilter would silently
+    /// run every regex against every body even when keywords are present.
+    #[test]
+    fn test_keyword_prefilter_populated_for_keyworded_rules() {
+        let config = gitleaks();
+        let prefilter = config
+            .keyword_prefilter
+            .as_ref()
+            .expect("production config must have a keyword prefilter");
+        assert!(
+            !prefilter.pattern_to_id.is_empty(),
+            "prefilter should have populated patterns"
+        );
+        for rule in &config.rules {
+            if let Some(kws) = &rule.keywords {
+                if kws.iter().any(|k| !k.is_empty()) {
+                    let ids = rule
+                        .keyword_pattern_ids
+                        .as_ref()
+                        .unwrap_or_else(|| panic!("rule '{}' has keywords but no IDs", rule.id));
+                    assert!(
+                        !ids.is_empty(),
+                        "rule '{}' has keywords but its IDs vec is empty",
+                        rule.id
+                    );
+                    for id in ids {
+                        assert!(
+                            (*id as usize) < prefilter.pattern_to_id.len(),
+                            "rule '{}' has out-of-range pattern id {id}",
+                            rule.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Concurrency regression for the L-1 OnceLock-backed `try_gitleaks()`
+    /// API: many threads calling it simultaneously before any prior call must
+    /// all return `Ok` and observe the **same** `&'static GitleaksCompiled`
+    /// (as compared by pointer identity). A race condition that double-built
+    /// the config would either panic in `OnceLock::set` or hand out two
+    /// distinct values - both would manifest as occasional flakes in
+    /// production scan startup under high concurrency.
+    ///
+    /// Spawns 16 OS threads and joins. The `OnceLock` must serialise the first
+    /// call deterministically.
+    #[test]
+    fn test_try_gitleaks_concurrent_first_call_returns_same_pointer() {
+        use std::sync::Arc;
+        use std::sync::Barrier;
+
+        // Use 16 threads + a barrier so they all release simultaneously
+        // (maximises the chance of catching a race).
+        let n = 16usize;
+        let barrier = Arc::new(Barrier::new(n));
+        let mut handles = Vec::with_capacity(n);
+
+        for _ in 0..n {
+            let b = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                b.wait();
+                let cfg = try_gitleaks().expect("config must load on every thread");
+                std::ptr::from_ref(cfg) as usize
+            }));
+        }
+
+        let pointers: Vec<usize> = handles
+            .into_iter()
+            .map(|h| h.join().expect("thread panicked"))
+            .collect();
+
+        let first = pointers[0];
+        for (i, p) in pointers.iter().enumerate() {
+            assert_eq!(
+                *p, first,
+                "thread {i} observed a different GitleaksCompiled pointer ({p:#x} vs first {first:#x}); \
+                 OnceLock did not serialise the first call as expected"
+            );
+        }
+    }
+
+    /// Aho-Corasick produces the same set of pattern IDs regardless of casing
+    /// in the body (gitleaks keywords are case-insensitive).
+    #[test]
+    fn test_keyword_prefilter_case_insensitive_match() {
+        let config = gitleaks();
+        let prefilter = config.keyword_prefilter.as_ref().expect("prefilter");
+        // "akia" is a keyword on aws-access-token (gitleaks lowercases all keywords).
+        // Build the AWS-shaped sample at runtime so the pre-commit gitleaks hook
+        // doesn't flag a hard-coded credential-shaped literal in the source tree.
+        let sample = format!("AKIA{}", "IOSFODNN7EXAMPL2");
+        let upper_body = format!("blah {sample} trailing");
+        let lower_body = format!("blah {} trailing", sample.to_ascii_lowercase());
+        let upper = prefilter.matched_pattern_ids(&upper_body);
+        let lower = prefilter.matched_pattern_ids(&lower_body);
+        // Mixed-case variant: just lower-case the alpha chars in the suffix.
+        let mixed_suffix: String = sample
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        let mixed = prefilter.matched_pattern_ids(&format!("blah {mixed_suffix} trailing"));
+        assert_eq!(upper, lower, "casing must not change matched id set");
+        assert_eq!(lower, mixed);
+        assert!(
+            !upper.is_empty(),
+            "the 'akia' keyword should fire on AKIA-prefixed strings"
+        );
     }
 
     /// Overlay merge: gitleaks.overrides.toml appends allowlists to rules by `rule_id`. sourcegraph-access-token gets overlay allowlists.

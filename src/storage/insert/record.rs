@@ -384,14 +384,21 @@ async fn insert_exposed_secrets_enrichment(
         match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
             Ok(ids) => {
                 summary.exposed_secrets_inserted = true;
-                // Insert decoded JWT claims for secrets that have them
-                for (secret, &secret_id) in exposed_secrets.iter().zip(&ids) {
-                    if let Some(ref jwt) = secret.decoded_jwt {
-                        if let Err(e) = insert::insert_jwt_claims(pool, secret_id, jwt).await {
-                            log::warn!(
-                                "Failed to insert JWT claims for exposed_secret_id {secret_id}: {e}"
-                            );
-                        }
+                // Collect (secret_id, &DecodedJwt) for any decoded JWTs and
+                // insert them in a single batch transaction. This replaces the
+                // previous per-JWT path that opened/committed once per row.
+                let jwt_items: Vec<(i64, &crate::parse::jwt::DecodedJwt)> = exposed_secrets
+                    .iter()
+                    .zip(&ids)
+                    .filter_map(|(secret, &secret_id)| {
+                        secret.decoded_jwt.as_ref().map(|jwt| (secret_id, jwt))
+                    })
+                    .collect();
+                if !jwt_items.is_empty() {
+                    if let Err(e) = insert::insert_jwt_claims_batch(pool, &jwt_items).await {
+                        log::warn!(
+                            "Failed to insert JWT claims batch for url_status_id {url_status_id}: {e}"
+                        );
                     }
                 }
             }

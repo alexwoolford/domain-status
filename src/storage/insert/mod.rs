@@ -20,8 +20,8 @@ mod utils;
 // Re-export public API
 pub use enrichment::{
     insert_analytics_ids, insert_contact_links, insert_exposed_secrets, insert_favicon_data,
-    insert_geoip_data, insert_jwt_claims, insert_security_warnings, insert_social_media_links,
-    insert_structured_data, insert_whois_data,
+    insert_geoip_data, insert_jwt_claims_batch, insert_security_warnings,
+    insert_social_media_links, insert_structured_data, insert_whois_data,
 };
 pub use failure::{insert_url_failure, insert_url_partial_failure};
 pub use record::insert_batch_record;
