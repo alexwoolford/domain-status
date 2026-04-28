@@ -4,6 +4,7 @@ use anyhow::{Error, Result};
 use futures::StreamExt;
 use log::debug;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use super::types::ResponseData;
 
@@ -329,7 +330,7 @@ pub(crate) async fn extract_response_data(
                 headers,
                 security_headers,
                 http_headers,
-                body: String::new(),
+                body: Arc::<str>::from(""),
                 body_sha256: None,
                 content_length: None,
                 http_version: http_version.clone(),
@@ -357,7 +358,7 @@ pub(crate) async fn extract_response_data(
             headers,
             security_headers,
             http_headers,
-            body: String::new(),
+            body: Arc::<str>::from(""),
             body_sha256: None,
             content_length: None,
             http_version: http_version.clone(),
@@ -392,7 +393,7 @@ pub(crate) async fn extract_response_data(
         headers,
         security_headers,
         http_headers,
-        body,
+        body: Arc::<str>::from(body),
         body_sha256,
         content_length,
         http_version,

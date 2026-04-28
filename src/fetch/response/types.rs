@@ -1,8 +1,15 @@
 //! Response data structures.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Extracted response data from HTTP response.
+///
+/// `body` is `Arc<str>` because the body is consumed by both the
+/// (CPU-bound, `spawn_blocking`-wrapped) HTML parser and the technology
+/// detector. With `String` the runtime had to perform a 2 MB-class clone
+/// before the spawn; with `Arc<str>` both consumers cheaply share a
+/// reference-counted view (clone is a pointer + atomic refcount bump).
 #[derive(Debug)]
 pub(crate) struct ResponseData {
     pub(crate) final_url: String,
@@ -14,7 +21,7 @@ pub(crate) struct ResponseData {
     pub(crate) headers: reqwest::header::HeaderMap,
     pub(crate) security_headers: HashMap<String, String>,
     pub(crate) http_headers: HashMap<String, String>,
-    pub(crate) body: String,
+    pub(crate) body: Arc<str>,
     pub(crate) body_sha256: Option<String>,
     pub(crate) content_length: Option<i64>,
     pub(crate) http_version: Option<String>,
