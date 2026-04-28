@@ -92,6 +92,9 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
             "enable_whois" => {
                 config.enable_whois = parse_bool(value).unwrap_or(false);
             }
+            "scan_external_scripts" => {
+                config.scan_external_scripts = parse_bool(value).unwrap_or(false);
+            }
             "fail_on" => {
                 if let Some(f) = parse_fail_on(value) {
                     config.fail_on = f;
@@ -168,6 +171,9 @@ pub fn merge_file_env_and_cli(
     }
     if overwrite("enable_whois") {
         config.enable_whois = cli_config.enable_whois;
+    }
+    if overwrite("scan_external_scripts") {
+        config.scan_external_scripts = cli_config.scan_external_scripts;
     }
     if overwrite("fail_on") {
         config.fail_on = cli_config.fail_on;

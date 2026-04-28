@@ -145,8 +145,9 @@ mod tests {
             file: input_file,
             db_path: temp_dir.path().join("test.db"),
             max_concurrency: 1,
-            rate_limit_rps: 0,   // Disable rate limiting for test
-            enable_whois: false, // Disable WHOIS for faster tests
+            rate_limit_rps: 0, // Disable rate limiting for test
+            enable_whois: false,
+            scan_external_scripts: false, // Disable WHOIS for faster tests
             log_level: domain_status::LogLevel::Error, // Reduce log noise in tests
             log_level_filter_override: None,
             log_format: domain_status::LogFormat::Plain,

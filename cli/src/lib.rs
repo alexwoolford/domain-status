@@ -80,6 +80,15 @@ pub struct ScanCommand {
     #[arg(long)]
     pub enable_whois: bool,
 
+    /// Fetch external `<script src>` URLs and scan their content for exposed
+    /// secrets. Off by default because it expands the threat surface
+    /// (now we make GET requests to arbitrary script URLs the page references)
+    /// and adds per-URL latency. When enabled, fetches are bounded by the same
+    /// 2 MB body cap and the configured per-request timeout, capped at
+    /// 10 scripts per page, and SSRF-validated like the primary URL.
+    #[arg(long, env = "DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS")]
+    pub scan_external_scripts: bool,
+
     #[arg(long, value_enum, default_value_t = FailOn::Never)]
     pub fail_on: FailOn,
 

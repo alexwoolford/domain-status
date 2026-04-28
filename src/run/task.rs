@@ -282,6 +282,7 @@ mod tests {
                 Arc::new(TimingStats::new()),
                 Some("run-1".to_string()),
                 false,
+                false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),

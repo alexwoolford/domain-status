@@ -42,6 +42,9 @@ pub struct ConfigContext {
     pub run_id: Option<String>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
+    /// Whether external `<script src>` URLs should be fetched and scanned for
+    /// secrets. Mirrors `Config::scan_external_scripts`. Off by default.
+    pub scan_external_scripts: bool,
     /// Live runtime counters for retries and degradation paths
     pub runtime_metrics: Arc<RuntimeMetrics>,
     /// If true, redirect resolution allows loopback URLs (`127.0.0.1`, `::1`) so
@@ -90,11 +93,14 @@ impl DatabaseContext {
 
 impl ConfigContext {
     /// Creates a new `ConfigContext` with the given resources.
+    #[allow(clippy::too_many_arguments)] // small per-feature flags; refactor would
+                                         // produce more boilerplate than it saves
     pub fn new(
         error_stats: Arc<ProcessingStats>,
         timing_stats: Arc<TimingStats>,
         run_id: Option<String>,
         enable_whois: bool,
+        scan_external_scripts: bool,
         runtime_metrics: Arc<RuntimeMetrics>,
         allow_localhost_for_tests: bool,
     ) -> Self {
@@ -103,6 +109,7 @@ impl ConfigContext {
             timing_stats,
             run_id,
             enable_whois,
+            scan_external_scripts,
             runtime_metrics,
             allow_localhost_for_tests,
         }
@@ -182,6 +189,7 @@ mod tests {
                 timing_stats.clone(),
                 run_id.clone(),
                 enable_whois,
+                false,
                 Arc::new(RuntimeMetrics::default()),
                 true,
             ),
@@ -248,6 +256,7 @@ mod tests {
                 timing_stats,
                 run_id,
                 enable_whois,
+                false,
                 Arc::new(RuntimeMetrics::default()),
                 true,
             ),

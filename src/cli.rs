@@ -74,6 +74,7 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         geoip: cli.geoip,
         status_port: cli.status_port,
         enable_whois: cli.enable_whois,
+        scan_external_scripts: cli.scan_external_scripts,
         fail_on: fail_on_cli_to_config(&cli.fail_on),
         fail_on_pct_threshold: cli.fail_on_pct_threshold,
         log_file: Some(cli.log_file),
@@ -149,6 +150,7 @@ const SCAN_CONFIG_ARG_IDS: &[&str] = &[
     "geoip",
     "status_port",
     "enable_whois",
+    "scan_external_scripts",
     "fail_on",
     "fail_on_pct_threshold",
     "log_file",
@@ -577,6 +579,7 @@ mod tests {
             geoip: Some("/path/to/geoip.mmdb".to_string()),
             status_port: Some(8080),
             enable_whois: true,
+            scan_external_scripts: true,
             fail_on: CliFailOn::AnyFailure,
             fail_on_pct_threshold: 15,
             log_file: PathBuf::from("domain_status.log"),
@@ -597,6 +600,7 @@ mod tests {
         assert_eq!(config.geoip, Some("/path/to/geoip.mmdb".to_string()));
         assert_eq!(config.status_port, Some(8080));
         assert!(config.enable_whois);
+        assert!(config.scan_external_scripts);
         assert_eq!(config.fail_on, FailOn::AnyFailure);
         assert_eq!(config.fail_on_pct_threshold, 15);
     }
