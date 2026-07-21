@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "domain_status"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -1294,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "domain_status_cli"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "clap",
  "clap-verbosity-flag",

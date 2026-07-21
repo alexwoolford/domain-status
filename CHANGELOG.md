@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-07-21
+
+### Fixed
+- **Secret detection false negatives (global allowlist)**: the global allowlist pattern `(?i)^true|false|null$` was mis-anchored — the `false` alternative was unanchored — and was tested against the surrounding context window, not just the matched value. Any secret near the token `false` (i.e. most JS/JSON) was silently suppressed for every rule. Fixed the pattern to `^(?i:true|false|null)$` and restricted the global allowlist to the matched value only.
+- **Secret detection false negatives (minified pages)**: `line_containing` returned the entire body for newline-free (minified) documents, so a single benign `regexTarget="line"` allowlist token (e.g. a Cloudflare `data-cfemail=` widget) suppressed every real finding of that rule page-wide. The line window is now capped to 512 bytes per side of the match.
+- **Secret detection false negatives (trailing boundary)**: ~150 bundled rules required the character after the secret to be a quote/space/semicolon/newline/EOL, missing keys embedded in URLs (`?key=AIza...&`) and JWTs in query strings. The trailing boundary is now relaxed at load time to also accept web delimiters (`& , ) ] } > < / ? #`).
+- **Secret detection coverage (oversized content)**: pages larger than 2 MB and external scripts larger than 1 MB had their entire body discarded before scanning. The buffered prefix is now scanned instead.
+- **Secret detection coverage (response headers)**: HTTP response headers and `Set-Cookie` values (e.g. `Authorization: Bearer <jwt>`, session/JWT cookies) were never scanned. They are now scanned and tagged `location=response_header`.
+- **CI Security Audit**: resolved the dependency advisories that failed the audit job on every run (RUSTSEC-2026-0118/0119 via `hickory-resolver` 0.25→0.26, plus `quinn-proto`, `crossbeam-epoch`, `anyhow`, and the yanked `spin`), migrating to the hickory 0.26 API.
+- **CI Code Coverage flake**: replaced the wall-clock timing assertion in `test_get_or_compile_regex_caching` (flaked under tarpaulin instrumentation) with a cache-state assertion.
+
+### Added
+- FP/FN regression corpus (`src/parse/secrets_corpus.rs`): fixtures asserting detection in the awkward web contexts that previously caused false negatives, and zero detections on benign markup (Cloudflare email-protection, `wp-content` hashes, UUIDs, SRI integrity hashes, placeholder/example keys).
+
+### Removed
+- Orphan `src/test_secret_detection.rs` (an unreferenced one-line file holding a stray fake key).
+
 ## [0.1.21] - 2026-03-13
 
 ### Fixed
