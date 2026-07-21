@@ -139,8 +139,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn retriable_error() -> anyhow::Error {
-        // Use typed ResolveError so is_retriable_error recognizes it (no string matching)
-        hickory_resolver::ResolveError::from("DNS lookup failed").into()
+        // Use typed NetError so is_retriable_error recognizes it (no string matching)
+        hickory_resolver::net::NetError::from("DNS lookup failed").into()
     }
 
     fn non_retriable_error() -> anyhow::Error {

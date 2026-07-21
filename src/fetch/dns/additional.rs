@@ -241,6 +241,7 @@ mod tests {
             .unwrap()
             .with_options(opts)
             .build()
+            .expect("resolver builds with default config")
     }
 
     #[tokio::test]

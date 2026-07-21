@@ -44,11 +44,24 @@ fn compute_body_metrics(body: &str) -> (Option<i64>, Option<i64>) {
 use crate::domain::extract_domain;
 use crate::fetch::request::{extract_http_headers, extract_security_headers};
 
+/// Outcome of streaming a response body under a size cap.
+#[derive(Debug)]
+enum StreamedBody {
+    /// Whole body received within the cap.
+    Complete(Vec<u8>),
+    /// Body exceeded the cap; carries exactly `max_size` bytes of prefix.
+    /// The prefix is still parsed and scanned for secrets — discarding it
+    /// would leave anything on a large page (SPA bundles, inlined app
+    /// shells) entirely unexamined.
+    Truncated(Vec<u8>),
+}
+
 /// Streams response body bytes with a size limit to prevent OOM attacks.
 ///
 /// Unlike `response.bytes().await` which downloads the entire body into memory first,
-/// this function streams bytes incrementally and aborts early if the limit is exceeded.
-/// This prevents malicious servers from causing OOM by streaming infinite content.
+/// this function streams bytes incrementally and stops reading once the limit is
+/// reached. This prevents malicious servers from causing OOM by streaming infinite
+/// content, while retaining the buffered prefix for parsing and secret scanning.
 ///
 /// Returns raw bytes; charset decoding is the caller's responsibility (see
 /// [`decode_body_with_charset`]).
@@ -61,14 +74,14 @@ use crate::fetch::request::{extract_http_headers, extract_security_headers};
 ///
 /// # Returns
 ///
-/// * `Ok(Some(Vec<u8>))` - Raw body bytes if within size limit
-/// * `Ok(None)` - Body exceeded size limit (safely aborted)
+/// * `Ok(StreamedBody::Complete(_))` - Full body within size limit
+/// * `Ok(StreamedBody::Truncated(_))` - First `max_size` bytes; rest discarded
 /// * `Err(_)` - Stream read error
 async fn stream_body_with_limit(
     response: reqwest::Response,
     max_size: usize,
     domain: &str,
-) -> Result<Option<Vec<u8>>, Error> {
+) -> Result<StreamedBody, Error> {
     let mut stream = response.bytes_stream();
     let mut accumulated = Vec::with_capacity(max_size.min(64 * 1024)); // Pre-allocate up to 64KB
 
@@ -78,18 +91,20 @@ async fn stream_body_with_limit(
         // Check if adding this chunk would exceed the limit
         if accumulated.len() + chunk.len() > max_size {
             log::debug!(
-                "Aborting body stream for {} at {} bytes (limit: {} bytes) - potential OOM attack",
+                "Truncating body stream for {} at {} bytes (limit: {} bytes)",
                 domain,
                 accumulated.len() + chunk.len(),
                 max_size
             );
-            return Ok(None);
+            let room = max_size - accumulated.len();
+            accumulated.extend_from_slice(&chunk[..room]);
+            return Ok(StreamedBody::Truncated(accumulated));
         }
 
         accumulated.extend_from_slice(&chunk);
     }
 
-    Ok(Some(accumulated))
+    Ok(StreamedBody::Complete(accumulated))
 }
 
 /// Decodes raw body bytes into a `String` using charset detection.
@@ -305,7 +320,7 @@ pub(crate) async fn extract_response_data(
 
     // SECURITY: Stream body with running size check to prevent OOM attacks.
     // Unlike response.text().await which downloads the entire body into memory first,
-    // this approach aborts early when MAX_RESPONSE_BODY_SIZE is exceeded.
+    // this approach stops reading at MAX_RESPONSE_BODY_SIZE and keeps the prefix.
     let body = match stream_body_with_limit(
         response,
         crate::config::MAX_RESPONSE_BODY_SIZE,
@@ -313,31 +328,15 @@ pub(crate) async fn extract_response_data(
     )
     .await
     {
-        Ok(Some(bytes)) => decode_body_with_charset(&bytes, content_type.as_deref()),
-        Ok(None) => {
-            // Body exceeded limit: return partial data (metadata only) so status, headers,
-            // TLS, DNS, etc. are still recorded; HTML parsing is skipped.
-            debug!(
-                "Body exceeded limit for {final_domain}, recording metadata only (no HTML parse)"
-            );
-            return Ok(Some(ResponseData {
-                final_url,
-                initial_domain,
-                final_domain,
-                host,
-                status: status.as_u16(),
-                status_desc,
-                headers,
-                security_headers,
-                http_headers,
-                body: Arc::<str>::from(""),
-                body_sha256: None,
-                content_length: None,
-                http_version: http_version.clone(),
-                body_word_count: None,
-                body_line_count: None,
-                content_type: content_type.clone(),
-            }));
+        Ok(StreamedBody::Complete(bytes)) => {
+            decode_body_with_charset(&bytes, content_type.as_deref())
+        }
+        Ok(StreamedBody::Truncated(bytes)) => {
+            // Body exceeded the cap: parse and secret-scan the buffered prefix
+            // rather than discarding it. Large SPA bundles routinely exceed the
+            // cap, and a secret in the first 2MB would otherwise never be seen.
+            debug!("Body exceeded limit for {final_domain}, parsing truncated prefix");
+            decode_body_with_charset(&bytes, content_type.as_deref())
         }
         Err(e) => {
             log::warn!("Failed to read response body for {final_domain}: {e}");
@@ -882,7 +881,7 @@ mod tests {
         assert_eq!(body_over_limit.len(), MAX_SIZE + 1);
         assert!(body_over_limit.len() > MAX_SIZE);
 
-        // Empty body should be handled separately (returns Ok(None))
+        // Empty body streams as Complete(vec![]) and is handled by the caller
         assert_eq!("".len(), 0);
     }
 
@@ -1296,17 +1295,17 @@ mod tests {
 
         let result = super::stream_body_with_limit(response, 1024, "test.com").await;
 
-        assert!(result.is_ok());
-        let body = result
-            .unwrap()
-            .map(|bytes| String::from_utf8(bytes).unwrap());
-        assert!(body.is_some());
-        assert_eq!(body.unwrap(), body_content);
+        match result.unwrap() {
+            super::StreamedBody::Complete(bytes) => {
+                assert_eq!(String::from_utf8(bytes).unwrap(), body_content);
+            }
+            super::StreamedBody::Truncated(_) => panic!("small body must not be truncated"),
+        }
     }
 
     #[tokio::test]
     async fn test_stream_body_with_limit_exceeds_limit() {
-        // Test that bodies exceeding the limit return None (safely aborted)
+        // Bodies exceeding the limit are truncated to exactly the limit and kept
         let server = Server::run();
         let server_url = server.url("/stream-large").to_string();
 
@@ -1323,12 +1322,15 @@ mod tests {
         // Use a limit smaller than the body
         let result = super::stream_body_with_limit(response, 1000, "test.com").await;
 
-        assert!(result.is_ok());
-        let body = result.unwrap();
-        assert!(
-            body.is_none(),
-            "Should return None for bodies exceeding limit"
-        );
+        match result.unwrap() {
+            super::StreamedBody::Truncated(bytes) => {
+                assert_eq!(bytes.len(), 1000, "prefix must be exactly the cap");
+                assert!(bytes.iter().all(|&b| b == b'x'));
+            }
+            super::StreamedBody::Complete(_) => {
+                panic!("oversized body must be reported as truncated")
+            }
+        }
     }
 
     #[tokio::test]
@@ -1348,10 +1350,12 @@ mod tests {
 
         let result = super::stream_body_with_limit(response, 1000, "test.com").await;
 
-        assert!(result.is_ok());
-        let body = result.unwrap();
-        assert!(body.is_some(), "Bodies exactly at limit should be accepted");
-        assert_eq!(body.unwrap().len(), 1000); // Vec<u8> length, same as char count for ASCII body
+        match result.unwrap() {
+            super::StreamedBody::Complete(bytes) => assert_eq!(bytes.len(), 1000),
+            super::StreamedBody::Truncated(_) => {
+                panic!("body exactly at limit should be complete")
+            }
+        }
     }
 
     #[tokio::test]
@@ -1370,17 +1374,17 @@ mod tests {
 
         let result = super::stream_body_with_limit(response, 1000, "test.com").await;
 
-        assert!(result.is_ok());
-        let body = result.unwrap();
-        assert!(body.is_some());
-        assert!(body.unwrap().is_empty());
+        match result.unwrap() {
+            super::StreamedBody::Complete(bytes) => assert!(bytes.is_empty()),
+            super::StreamedBody::Truncated(_) => panic!("empty body must not be truncated"),
+        }
     }
 
     #[test]
     fn test_stream_body_prevents_oom_attack() {
         // Verify the streaming approach prevents OOM attacks by documenting the behavior:
         // - Old approach (response.text().await): Downloads entire body into memory BEFORE checking size
-        // - New approach (stream_body_with_limit): Aborts DURING streaming when limit exceeded
+        // - New approach (stream_body_with_limit): Stops reading at the limit, keeps the prefix
         //
         // This test verifies the constants and logic are correctly set up for OOM protection
         use crate::config::MAX_RESPONSE_BODY_SIZE;

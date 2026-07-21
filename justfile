@@ -77,6 +77,21 @@ ci: fmt-check lint docs-check test audit deny
 clean:
     cargo clean
 
+# Show current cargo cache sizes (project target/ + global ~/.cargo)
+cache-status:
+    @echo "Project target/:"
+    @du -sh target/ 2>/dev/null || echo "  (none)"
+    @echo "Global ~/.cargo/registry/:"
+    @du -sh ~/.cargo/registry/ 2>/dev/null || echo "  (none)"
+    @echo "Global ~/.cargo/git/:"
+    @du -sh ~/.cargo/git/ 2>/dev/null || echo "  (none)"
+
+# Remove only incremental compilation cache (keeps compiled deps + binaries)
+# Useful if CARGO_INCREMENTAL=1 was used for a session and bloated.
+trim-incremental:
+    rm -rf target/debug/incremental target/release/incremental
+    @echo "Removed target/*/incremental"
+
 # Check for outdated dependencies
 outdated:
     cargo outdated

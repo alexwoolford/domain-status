@@ -6,3 +6,16 @@
 # Override for debugging: RUST_LOG=debug cargo test
 # Note: force = false allows override via command line or environment variable
 RUST_LOG = { value = "off", force = false }
+
+[build]
+# Disable incremental compilation locally to match CI behaviour and prevent
+# `target/debug/incremental/` and `target/release/incremental/` from
+# accumulating into hundreds of GB across many edit-rebuild cycles. CI
+# already runs with CARGO_INCREMENTAL=0. The trade-off is slightly slower
+# edit-rebuild cycles for non-trivial changes; for a workspace this size
+# with the all-features all-targets clippy/test matrix, the incremental
+# cache is the dominant disk-bloat source.
+#
+# Override for an interactive session if desired:
+#   CARGO_INCREMENTAL=1 cargo build
+incremental = false

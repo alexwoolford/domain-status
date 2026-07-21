@@ -96,7 +96,7 @@ pub(crate) fn is_retriable_error(error: &Error) -> bool {
         // Check for DNS resolution errors (retriable) via structured type, not string matching.
         // String matching (e.g. msg.contains("dns")) is fragile and can misclassify.
         if cause
-            .downcast_ref::<hickory_resolver::ResolveError>()
+            .downcast_ref::<hickory_resolver::net::NetError>()
             .is_some()
         {
             return true;
@@ -164,8 +164,8 @@ mod tests {
 
     #[test]
     fn test_is_retriable_error_dns_typed() {
-        // Only ResolveError (structured) is retriable; plain strings are not
-        let resolve_err = hickory_resolver::ResolveError::from("lookup failed");
+        // Only NetError (structured) is retriable; plain strings are not
+        let resolve_err = hickory_resolver::net::NetError::from("lookup failed");
         let err: anyhow::Error = resolve_err.into();
         assert!(is_retriable_error(&err));
     }
@@ -302,13 +302,13 @@ mod tests {
 
         assert!(!is_retriable_error(&err1)); // unknown → false
         assert!(!is_retriable_error(&err2)); // unknown → false
-        assert!(!is_retriable_error(&err3)); // no ResolveError type → false
+        assert!(!is_retriable_error(&err3)); // no NetError type → false
     }
 
     #[test]
     fn test_is_retriable_error_nested_context_resolve_error() {
-        // ResolveError in chain (even with context) is retriable
-        let resolve_err = hickory_resolver::ResolveError::from("lookup failed");
+        // NetError in chain (even with context) is retriable
+        let resolve_err = hickory_resolver::net::NetError::from("lookup failed");
         let err: anyhow::Error = resolve_err.into();
         let err = err.context("First context").context("Second context");
 
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_is_retriable_error_message_no_string_matching() {
-        // Plain strings are not retriable; only typed ResolveError is
+        // Plain strings are not retriable; only typed NetError is
         let dns_error = anyhow::anyhow!("DNS resolution failed");
         let resolve_error = anyhow::anyhow!("Failed to resolve hostname");
         let lookup_error = anyhow::anyhow!("DNS lookup failed");

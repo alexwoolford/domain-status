@@ -4,7 +4,7 @@
 //! from error chains for failure categorization.
 
 use anyhow::Error;
-use hickory_resolver::ResolveError;
+use hickory_resolver::net::NetError;
 use reqwest::Error as ReqwestError;
 
 use crate::error_handling::{
@@ -12,7 +12,7 @@ use crate::error_handling::{
 };
 
 /// Picks `DnsNsLookupError` / `DnsTxtLookupError` / `DnsMxLookupError` from message (used when we
-/// already know the error is DNS-related, e.g. from `ResolveError`).
+/// already know the error is DNS-related, e.g. from `NetError`).
 fn dns_error_type_from_message(msg: &str) -> ErrorType {
     if msg.contains("txt") {
         ErrorType::DnsTxtLookupError
@@ -27,12 +27,12 @@ fn dns_error_type_from_message(msg: &str) -> ErrorType {
 ///
 /// Uses the shared `categorize_reqwest_error` function for consistency,
 /// but also enhances categorization by checking error messages for DNS/TLS patterns.
-/// When a `ResolveError` is found in the chain, uses predicate-based categorization
+/// When a `NetError` is found in the chain, uses predicate-based categorization
 /// instead of string matching.
 pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
     // Check error chain for DNS resolver errors (predicate-based, no string matching)
     for cause in error.chain() {
-        if let Some(resolve_err) = cause.downcast_ref::<ResolveError>() {
+        if let Some(resolve_err) = cause.downcast_ref::<NetError>() {
             let kind = categorize_resolve_error(resolve_err);
             return match kind {
                 DnsResolveErrorKind::Timeout => ErrorType::ProcessUrlTimeout,

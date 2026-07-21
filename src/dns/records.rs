@@ -6,8 +6,8 @@
 //! - Mail exchanger records (MX)
 
 use anyhow::{Error, Result};
+use hickory_resolver::net::NetError;
 use hickory_resolver::proto::rr::{RData, RecordType};
-use hickory_resolver::proto::ProtoErrorKind;
 use hickory_resolver::TokioResolver;
 
 /// Queries NS (nameserver) records for a domain.
@@ -28,9 +28,10 @@ pub async fn lookup_ns_records(
     match resolver.lookup(domain, RecordType::NS).await {
         Ok(lookup) => {
             let nameservers: Vec<String> = lookup
+                .answers()
                 .iter()
-                .filter_map(|rdata| {
-                    if let RData::NS(ns) = rdata {
+                .filter_map(|record| {
+                    if let RData::NS(ns) = &record.data {
                         Some(ns.to_utf8())
                     } else {
                         None
@@ -44,9 +45,7 @@ pub async fn lookup_ns_records(
             if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                let is_timeout = e
-                    .proto()
-                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                let is_timeout = matches!(e, NetError::Timeout);
                 if is_timeout {
                     log::warn!("NS record lookup timed out for {domain}: {e}");
                 } else {
@@ -75,7 +74,11 @@ pub async fn lookup_txt_records(
     match resolver.lookup(domain, RecordType::TXT).await {
         Ok(lookup) => {
             // Count total TXT records for logging
-            let total_count = lookup.iter().filter(|r| matches!(r, RData::TXT(_))).count();
+            let total_count = lookup
+                .answers()
+                .iter()
+                .filter(|r| matches!(&r.data, RData::TXT(_)))
+                .count();
             if total_count > crate::config::MAX_TXT_RECORD_COUNT {
                 log::warn!(
                     "Domain {} has {} TXT records (limit: {}), capping (potential DNS abuse)",
@@ -86,13 +89,15 @@ pub async fn lookup_txt_records(
             }
 
             let txt_records: Vec<String> = lookup
+                .answers()
                 .iter()
                 // Cap the number of TXT records to prevent memory/storage exhaustion
                 .take(crate::config::MAX_TXT_RECORD_COUNT)
-                .filter_map(|rdata| {
-                    if let RData::TXT(txt) = rdata {
+                .filter_map(|record| {
+                    if let RData::TXT(txt) = &record.data {
                         // TXT records can contain multiple strings - join them
                         let concatenated: String = txt
+                            .txt_data
                             .iter()
                             .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                             .collect::<String>();
@@ -128,9 +133,7 @@ pub async fn lookup_txt_records(
             if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                let is_timeout = e
-                    .proto()
-                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                let is_timeout = matches!(e, NetError::Timeout);
                 if is_timeout {
                     log::warn!("TXT record lookup timed out for {domain}: {e}");
                 } else {
@@ -160,10 +163,11 @@ pub async fn lookup_mx_records(
     match resolver.lookup(domain, RecordType::MX).await {
         Ok(lookup) => {
             let mut mx_records: Vec<(u16, String)> = lookup
+                .answers()
                 .iter()
-                .filter_map(|rdata| {
-                    if let RData::MX(mx) = rdata {
-                        Some((mx.preference(), mx.exchange().to_utf8()))
+                .filter_map(|record| {
+                    if let RData::MX(mx) = &record.data {
+                        Some((mx.preference, mx.exchange.to_utf8()))
                     } else {
                         None
                     }
@@ -177,9 +181,7 @@ pub async fn lookup_mx_records(
             if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                let is_timeout = e
-                    .proto()
-                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                let is_timeout = matches!(e, NetError::Timeout);
                 if is_timeout {
                     log::warn!("MX record lookup timed out for {domain}: {e}");
                 } else {
@@ -202,9 +204,10 @@ pub async fn lookup_cname_records(
     match resolver.lookup(domain, RecordType::CNAME).await {
         Ok(lookup) => {
             let cnames: Vec<String> = lookup
+                .answers()
                 .iter()
-                .filter_map(|rdata| {
-                    if let RData::CNAME(name) = rdata {
+                .filter_map(|record| {
+                    if let RData::CNAME(name) = &record.data {
                         Some(name.to_utf8())
                     } else {
                         None
@@ -217,9 +220,7 @@ pub async fn lookup_cname_records(
             if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                let is_timeout = e
-                    .proto()
-                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                let is_timeout = matches!(e, NetError::Timeout);
                 if is_timeout {
                     log::warn!("CNAME record lookup timed out for {domain}: {e}");
                 } else {
@@ -241,9 +242,10 @@ pub async fn lookup_aaaa_records(
     match resolver.lookup(domain, RecordType::AAAA).await {
         Ok(lookup) => {
             let addresses: Vec<String> = lookup
+                .answers()
                 .iter()
-                .filter_map(|rdata| {
-                    if let RData::AAAA(addr) = rdata {
+                .filter_map(|record| {
+                    if let RData::AAAA(addr) = &record.data {
                         Some(addr.0.to_string())
                     } else {
                         None
@@ -256,9 +258,7 @@ pub async fn lookup_aaaa_records(
             if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                let is_timeout = e
-                    .proto()
-                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                let is_timeout = matches!(e, NetError::Timeout);
                 if is_timeout {
                     log::warn!("AAAA record lookup timed out for {domain}: {e}");
                 } else {
@@ -283,12 +283,13 @@ pub async fn lookup_caa_records(
     match resolver.lookup(domain, RecordType::CAA).await {
         Ok(lookup) => {
             let records: Vec<(u8, String, String)> = lookup
+                .answers()
                 .iter()
-                .filter_map(|rdata| {
-                    if let RData::CAA(caa) = rdata {
-                        let flag = if caa.issuer_critical() { 128u8 } else { 0u8 };
-                        let tag = caa.tag().as_str().to_string();
-                        let value = String::from_utf8_lossy(caa.raw_value()).to_string();
+                .filter_map(|record| {
+                    if let RData::CAA(caa) = &record.data {
+                        let flag = if caa.issuer_critical { 128u8 } else { 0u8 };
+                        let tag = caa.tag.clone();
+                        let value = String::from_utf8_lossy(&caa.value).to_string();
                         Some((flag, tag, value))
                     } else {
                         None
@@ -301,9 +302,7 @@ pub async fn lookup_caa_records(
             if e.is_no_records_found() || e.is_nx_domain() {
                 Ok(Vec::new())
             } else {
-                let is_timeout = e
-                    .proto()
-                    .is_some_and(|p| matches!(p.kind(), ProtoErrorKind::Timeout));
+                let is_timeout = matches!(e, NetError::Timeout);
                 if is_timeout {
                     log::warn!("CAA record lookup timed out for {domain}: {e}");
                 } else {

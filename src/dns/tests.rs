@@ -14,6 +14,7 @@ fn create_test_resolver() -> hickory_resolver::TokioResolver {
         .unwrap()
         .with_options(opts)
         .build()
+        .expect("resolver builds with default config")
 }
 
 #[tokio::test]

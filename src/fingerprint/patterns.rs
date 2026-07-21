@@ -1137,26 +1137,24 @@ mod tests {
 
     #[test]
     fn test_get_or_compile_regex_caching() {
-        // Test regex caching through matches_pattern
+        // Test regex caching through matches_pattern. Asserts on cache state,
+        // not wall-clock timing — timing assertions flake under coverage
+        // instrumentation (tarpaulin) and CI load.
         clear_regex_cache();
-
-        // First call should compile
-        let start = std::time::Instant::now();
-        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
-        let first_time = start.elapsed();
-
-        // Second call should use cache (much faster)
-        let start = std::time::Instant::now();
-        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
-        let second_time = start.elapsed();
-
-        // Cached call should be faster (or at least not slower due to system load)
         assert!(
-            second_time <= first_time || second_time.as_nanos() < 1_000_000,
-            "Cached regex should be faster or similar. First: {:?}, Second: {:?}",
-            first_time,
-            second_time
+            REGEX_CACHE.get("^test_pattern").is_none(),
+            "Cache should not contain the pattern before first use"
         );
+
+        // First call compiles and populates the cache
+        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
+        assert!(
+            REGEX_CACHE.get("^test_pattern").is_some(),
+            "Cache should contain compiled regex after first use"
+        );
+
+        // Second call still matches (served from cache)
+        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
     }
 
     #[test]
