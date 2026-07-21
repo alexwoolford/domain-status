@@ -56,7 +56,10 @@ pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
             InitializationError::DnsResolverError(format!("Failed to create resolver builder: {e}"))
         })?
         .with_options(opts)
-        .build();
+        .build()
+        .map_err(|e| {
+            InitializationError::DnsResolverError(format!("Failed to build resolver: {e}"))
+        })?;
 
     Ok(Arc::new(resolver))
 }

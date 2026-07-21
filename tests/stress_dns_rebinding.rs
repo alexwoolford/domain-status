@@ -98,7 +98,8 @@ async fn test_dns_rebinding_timing_window() {
     let resolver = Arc::new(
         TokioResolver::builder_tokio()
             .expect("Failed to create resolver builder")
-            .build(),
+            .build()
+            .expect("resolver builds with default config"),
     );
 
     // Simulate what happens during URL processing
@@ -245,7 +246,8 @@ async fn test_dns_rebinding_mitigation_pinning() {
     let resolver = Arc::new(
         TokioResolver::builder_tokio()
             .expect("Failed to create resolver builder")
-            .build(),
+            .build()
+            .expect("resolver builds with default config"),
     );
 
     let domain = "example.com";

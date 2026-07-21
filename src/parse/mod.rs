@@ -27,7 +27,9 @@ pub use html::{
     extract_meta_description, extract_meta_keywords, extract_title, is_mobile_friendly,
 };
 #[allow(unused_imports)] // Public API re-export
-pub use secrets::{detect_exposed_secrets, ExposedSecret, SecretSeverity};
+pub use secrets::{
+    detect_exposed_secrets, detect_exposed_secrets_in_headers, ExposedSecret, SecretSeverity,
+};
 #[allow(unused_imports)] // Public API re-export
 pub use social::{extract_social_media_links, SocialMediaLink, SocialPlatform};
 pub use structured::{extract_structured_data, StructuredData};
@@ -36,3 +38,7 @@ pub use structured::{extract_structured_data, StructuredData};
 mod tests {
     include!("tests.rs");
 }
+
+#[cfg(test)]
+#[path = "secrets_corpus.rs"]
+mod secrets_corpus;

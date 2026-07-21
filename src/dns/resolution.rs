@@ -52,9 +52,18 @@ pub async fn reverse_dns_lookup(
     ip: &str,
     resolver: &TokioResolver,
 ) -> Result<Option<String>, Error> {
-    match resolver.reverse_lookup(ip.parse()?).await {
+    use hickory_resolver::proto::rr::Name;
+    let addr: std::net::IpAddr = ip.parse()?;
+    match resolver.reverse_lookup(Name::from(addr)).await {
         Ok(response) => {
-            let name = response.iter().next().map(|name| name.to_utf8());
+            use hickory_resolver::proto::rr::RData;
+            let name = response.answers().iter().find_map(|record| {
+                if let RData::PTR(ptr) = &record.data {
+                    Some(ptr.to_utf8())
+                } else {
+                    None
+                }
+            });
             Ok(name)
         }
         Err(e) => {
@@ -81,6 +90,7 @@ mod tests {
             .unwrap()
             .with_options(opts)
             .build()
+            .unwrap()
     }
 
     #[tokio::test]

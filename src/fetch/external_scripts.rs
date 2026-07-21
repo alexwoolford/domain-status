@@ -150,7 +150,10 @@ async fn fetch_script_body(client: &reqwest::Client, url: &str) -> Option<String
         .and_then(|v| v.to_str().ok())
         .map(std::string::ToString::to_string);
 
-    // Stream the body up to MAX_SCRIPT_BODY_BYTES.
+    // Stream the body up to MAX_SCRIPT_BODY_BYTES. Oversized bundles are
+    // truncated to the cap and the prefix is still scanned — production JS
+    // bundles routinely exceed 1MB, and a secret in the first megabyte would
+    // otherwise never be seen.
     let mut accumulated: Vec<u8> = Vec::new();
     use futures::StreamExt;
     let mut stream = resp.bytes_stream();
@@ -163,8 +166,10 @@ async fn fetch_script_body(client: &reqwest::Client, url: &str) -> Option<String
             }
         };
         if accumulated.len() + chunk.len() > MAX_SCRIPT_BODY_BYTES {
-            log::debug!("external_script: aborting {url} at size cap");
-            return None;
+            log::debug!("external_script: truncating {url} at size cap");
+            let room = MAX_SCRIPT_BODY_BYTES - accumulated.len();
+            accumulated.extend_from_slice(&chunk[..room]);
+            break;
         }
         accumulated.extend_from_slice(&chunk);
     }

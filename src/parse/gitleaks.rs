@@ -26,10 +26,31 @@ use toml::Value;
 /// (largest seen so far is ~24 MB compiled) while still bounding memory.
 const REGEX_SIZE_LIMIT: usize = 64 * 1024 * 1024;
 
+/// Trailing-boundary group used by ~150 upstream gitleaks rules: the character
+/// after the secret must be a backtick/quote/whitespace/semicolon, a literal
+/// `\n`/`\r`, or end-of-input. Upstream scans source code; this scanner runs
+/// over web content, where a secret is routinely followed by URL, JSON, or HTML
+/// delimiters instead (`&libraries=` after a Google Maps key, `,`/`}` after an
+/// unquoted JSON value, `</script>` after an inline assignment). Those
+/// occurrences would never match with the upstream boundary.
+const UPSTREAM_TRAILING_BOUNDARY: &str = r#"(?:[\x60'"\s;]|\\[nr]|$)"#;
+
+/// The upstream boundary widened with web delimiters: `& , ) ] } > < / ? #`.
+/// Only the allowed *terminator* set changes; the captured secret is unaffected.
+const RELAXED_TRAILING_BOUNDARY: &str = r#"(?:[\x60'"\s;&,)\]}></?#]|\\[nr]|$)"#;
+
+/// Rewrites the upstream trailing-boundary group to the web-relaxed variant.
+/// Applied at load time so upstream `gitleaks.toml` refreshes keep working
+/// without hand-editing ~150 rules.
+fn relax_trailing_boundary(pattern: &str) -> String {
+    pattern.replace(UPSTREAM_TRAILING_BOUNDARY, RELAXED_TRAILING_BOUNDARY)
+}
+
 /// Compile a gitleaks-rule regex with a raised size limit so large alternation
-/// patterns (`generic-api-key`, etc.) are not silently dropped.
+/// patterns (`generic-api-key`, etc.) are not silently dropped, relaxing the
+/// upstream trailing boundary for web content first.
 fn compile_rule_regex(pattern: &str) -> Result<Regex, regex::Error> {
-    RegexBuilder::new(pattern)
+    RegexBuilder::new(&relax_trailing_boundary(pattern))
         .size_limit(REGEX_SIZE_LIMIT)
         .build()
 }

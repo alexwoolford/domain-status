@@ -85,6 +85,7 @@ mod tests {
             .unwrap()
             .with_options(opts)
             .build()
+            .expect("resolver builds with default config")
     }
 
     fn create_test_response_data() -> ResponseData {

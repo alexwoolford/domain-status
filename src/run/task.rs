@@ -273,7 +273,8 @@ mod tests {
                     TokioResolver::builder_tokio()
                         .unwrap()
                         .with_options(ResolverOpts::default())
-                        .build(),
+                        .build()
+                        .expect("resolver builds with default config"),
                 ),
             ),
             DatabaseContext::new(pool),

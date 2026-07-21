@@ -212,28 +212,53 @@ fn severity_for_unknown_rule_id(rule_id: &str) -> SecretSeverity {
 }
 
 /// Returns true if the match should be skipped by the global allowlist (regex or stopword).
+///
+/// Tests only the matched secret value, matching upstream gitleaks semantics for the
+/// global allowlist (default `regexTarget` = secret). Testing the surrounding context
+/// window would let benign nearby tokens (e.g. `debug:false` next to a real API key)
+/// suppress genuine findings for every rule.
 fn global_allowlist_skips(
     global: &crate::parse::gitleaks::CompiledGlobalAllowlist,
     matched_value: &str,
-    context: &str,
 ) -> bool {
     for re in &global.regexes {
-        if re.is_match(matched_value) || re.is_match(context) {
+        if re.is_match(matched_value) {
             return true;
         }
     }
     for word in &global.stopwords {
-        if matched_value.contains(word) || context.contains(word) {
+        if matched_value.contains(word) {
             return true;
         }
     }
     false
 }
 
-/// Returns the line containing the byte range [start, end) in body. Line = span between \\n or start/end of body.
+/// Maximum bytes of "line" kept on each side of a match for `regexTarget = "line"`
+/// allowlists. Minified HTML/JS often has no newlines at all; without this cap the
+/// "line" would be the entire document, and one benign allowlist token anywhere on
+/// the page (e.g. a Cloudflare `data-cfemail=` widget) would suppress every real
+/// finding of that rule across the whole body.
+const MAX_LINE_WINDOW_BYTES: usize = 512;
+
+/// Returns the line containing the byte range [start, end) in body, capped to
+/// [`MAX_LINE_WINDOW_BYTES`] on each side of the match. Line = span between \n
+/// (or start/end of body), truncated to the window when the physical line is longer.
 fn line_containing(body: &str, start: usize, end: usize) -> &str {
-    let line_start = body[..start].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = body[end..].find('\n').map_or(body.len(), |i| end + i);
+    let mut window_start = start.saturating_sub(MAX_LINE_WINDOW_BYTES);
+    while !body.is_char_boundary(window_start) {
+        window_start += 1;
+    }
+    let mut window_end = (end + MAX_LINE_WINDOW_BYTES).min(body.len());
+    while !body.is_char_boundary(window_end) {
+        window_end -= 1;
+    }
+    let line_start = body[window_start..start]
+        .rfind('\n')
+        .map_or(window_start, |i| window_start + i + 1);
+    let line_end = body[end..window_end]
+        .find('\n')
+        .map_or(window_end, |i| end + i);
     &body[line_start..line_end]
 }
 
@@ -449,6 +474,22 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
     detect_exposed_secrets_inner(body, true)
 }
 
+/// Detects exposed secrets in serialized HTTP response headers.
+///
+/// `header_block` is expected to be newline-separated `Name: value` lines
+/// (including `Set-Cookie` values). Real secrets routinely appear in
+/// `Authorization`, `X-Api-Key`, `X-Amz-Security-Token`, and `Set-Cookie`
+/// (session/JWT) headers, which the HTML-body scan never sees. Findings are
+/// retagged with `location = "response_header"` so analysts can distinguish
+/// them from in-body matches.
+pub fn detect_exposed_secrets_in_headers(header_block: &str) -> Vec<ExposedSecret> {
+    let mut found = detect_exposed_secrets_inner(header_block, true);
+    for secret in &mut found {
+        secret.location = Cow::Borrowed("response_header");
+    }
+    found
+}
+
 /// Test-only variant that bypasses the Aho-Corasick keyword prefilter.
 ///
 /// Used by the prefilter-equivalence regression test: the prefilter is meant
@@ -509,10 +550,10 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
                 }
             }
 
-            let context = extract_context(body, mat.start(), mat.end());
-            if global_allowlist_skips(&config.global_allowlist, &matched_value, &context) {
+            if global_allowlist_skips(&config.global_allowlist, &matched_value) {
                 continue;
             }
+            let context = extract_context(body, mat.start(), mat.end());
             let line_content = line_containing(body, mat.start(), mat.end());
             if rule_allowlist_skips(&rule.allowlists, &matched_value, line_content, full_match) {
                 continue;
@@ -628,6 +669,66 @@ mod tests {
     }
 
     #[test]
+    fn test_secret_detected_next_to_boolean_literal() {
+        // Regression: the global allowlist regex `^(?i:true|false|null)$` used to be
+        // mis-anchored (`(?i)^true|false|null$`) AND tested against the context window,
+        // so any secret near the token `false` was silently suppressed.
+        let body = format!(r#"<script>var c={{apiKey:"{AWS_KEY}",debug:false}};</script>"#);
+        let secrets = detect_exposed_secrets(&body);
+        assert!(
+            secrets.iter().any(|s| s.secret_type == "aws-access-token"),
+            "AWS key next to `debug:false` must still be detected; got {secrets:?}"
+        );
+    }
+
+    #[test]
+    fn test_minified_page_allowlist_does_not_suppress_whole_body() {
+        // Regression: on newline-free (minified) pages, `line_containing` returned the
+        // entire body, so a benign line-target allowlist token anywhere on the page
+        // (e.g. Cloudflare's `data-cfemail=`) suppressed real findings of that rule.
+        let body = format!(
+            r#"<span data-cfemail="a1b2c3"></span>{}<script>var k="{AWS_KEY}";</script>"#,
+            " ".repeat(2000)
+        );
+        assert!(!body.contains('\n'), "test body must be newline-free");
+        let secrets = detect_exposed_secrets(&body);
+        assert!(
+            secrets.iter().any(|s| s.secret_type == "aws-access-token"),
+            "secret on a minified page with a distant allowlist token must be detected; got {secrets:?}"
+        );
+    }
+
+    #[test]
+    fn test_line_containing_capped_on_minified_body() {
+        let body = "x".repeat(5000);
+        let line = line_containing(&body, 2500, 2520);
+        assert!(
+            line.len() <= 2 * MAX_LINE_WINDOW_BYTES + 20,
+            "line window must be capped, got {} bytes",
+            line.len()
+        );
+    }
+
+    #[test]
+    fn test_detect_secret_in_response_header_block() {
+        // Regression: JWTs/keys in response headers (incl. Set-Cookie) were never
+        // scanned. A JWT in a Set-Cookie line must be detected and tagged.
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.\
+                   eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.\
+                   dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let header_block = format!("Content-Type: text/html\nSet-Cookie: session={jwt}; Path=/\n");
+        let secrets = detect_exposed_secrets_in_headers(&header_block);
+        assert!(
+            secrets.iter().any(|s| s.secret_type == "jwt"),
+            "JWT in Set-Cookie must be detected; got {secrets:?}"
+        );
+        assert!(
+            secrets.iter().all(|s| s.location == "response_header"),
+            "header findings must be tagged response_header"
+        );
+    }
+
+    #[test]
     fn test_detect_aws_session_token() {
         // ASIA + 16 chars from [A-Z2-7]; may be filtered by entropy
         let body = "token=ASIA2BCDEF34567ZYXW";
@@ -644,6 +745,25 @@ mod tests {
         let secrets = detect_exposed_secrets(body);
         assert!(!secrets.is_empty());
         assert!(secrets.iter().any(|s| s.secret_type == "gcp-api-key"));
+    }
+
+    #[test]
+    fn test_detect_google_api_key_in_url_with_trailing_param() {
+        // Regression: upstream rules require quote/space/semicolon/EOL after the
+        // secret, so a Maps key followed by `&` in a script URL was never matched.
+        // The load-time boundary relaxation must catch it.
+        let body = r#"<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA1234567890abcdefghijklmnopqrstuv&libraries=places"></script>"#;
+        let secrets = detect_exposed_secrets(body);
+        let gcp = secrets.iter().find(|s| s.secret_type == "gcp-api-key");
+        assert!(
+            gcp.is_some(),
+            "GCP key followed by `&` in a URL must be detected; got {secrets:?}"
+        );
+        assert_eq!(
+            gcp.map(|s| s.matched_value.as_str()),
+            Some("AIzaSyA1234567890abcdefghijklmnopqrstuv"),
+            "capture must be the key alone, not include the delimiter"
+        );
     }
 
     #[test]
