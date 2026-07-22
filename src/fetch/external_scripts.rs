@@ -3,17 +3,23 @@
 //! Off by default; enabled by [`crate::config::Config::scan_external_scripts`].
 //!
 //! When enabled, after the primary HTML body has been parsed, the scanner
-//! resolves each `<script src>` URL against the page's final URL,
-//! SSRF-validates it, fetches up to [`MAX_SCRIPT_FETCH_PER_PAGE`] scripts in
-//! parallel under tight size/timeout caps, decodes each with charset
-//! detection, and runs [`crate::parse::detect_exposed_secrets`] over each
-//! body. Findings are tagged with a `location` of the form
-//! `external_script:<url>` so analysts can see which bundle leaked.
+//! resolves each `<script src>` URL against the page's final URL, keeps only
+//! **first-party** bundles (same registrable domain / eTLD+1 as the page,
+//! minus a denylist of known third-party CDN hosts), SSRF-validates them,
+//! fetches up to [`MAX_SCRIPT_FETCH_PER_PAGE`] scripts in parallel under tight
+//! size/timeout caps, decodes each with charset detection, and runs
+//! [`crate::parse::detect_exposed_secrets`] over each body. Findings are tagged
+//! with a `location` of the form `external_script:<url>` so analysts can see
+//! which bundle leaked.
+//!
+//! Third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped
+//! because they dominate false positives while almost never containing the
+//! site's own credentials. Real leaks show up in first-party SPA bundles.
 //!
 //! Why a separate module: the operation is opt-in and dramatically widens
-//! the threat surface (we make GET requests to arbitrary script URLs the
-//! page references), so isolating it makes the behaviour easy to audit
-//! and to test in isolation.
+//! the threat surface (we make GET requests to script URLs the page
+//! references), so isolating it makes the behaviour easy to audit and to
+//! test in isolation.
 
 use std::time::Duration;
 
@@ -24,8 +30,8 @@ use crate::security::validate_url_safe;
 ///
 /// Pages can reference dozens of scripts; fetching them all serialises
 /// scanning latency and pushes the page-level timing past anything useful.
-/// 10 covers the common case (analytics + 1-2 SPA bundles + a handful of
-/// tracking scripts) without exploding the per-URL budget.
+/// 10 covers the common case (1-2 SPA bundles + a handful of first-party
+/// helpers) without exploding the per-URL budget.
 pub const MAX_SCRIPT_FETCH_PER_PAGE: usize = 10;
 
 /// Per-script body size cap. Far below the 2 MB cap on the primary page
@@ -37,12 +43,35 @@ pub const MAX_SCRIPT_BODY_BYTES: usize = 1024 * 1024;
 /// so an unusually slow CDN doesn't blow up the page-level budget.
 pub const SCRIPT_FETCH_TIMEOUT_SECS: u64 = 5;
 
+/// Host suffixes (and exact hosts) that are never treated as first-party,
+/// even when somehow served under a matching eTLD+1 via a reverse proxy.
+const KNOWN_THIRD_PARTY_SCRIPT_HOST_SUFFIXES: &[&str] = &[
+    "js.stripe.com",
+    "consent.cookiebot.com",
+    "assets.squarespace.com",
+    "www.google-analytics.com",
+    "www.googletagmanager.com",
+    "connect.facebook.net",
+    "maps.googleapis.com",
+    "cdn.jsdelivr.net",
+    "cdnjs.cloudflare.com",
+    "unpkg.com",
+    "ajax.googleapis.com",
+    "fast.wistia.com",
+    "hcaptcha.com",
+    "www.google.com",
+    "imasdk.googleapis.com",
+    "static.cloudflareinsights.com",
+    "cdn.weglot.com",
+];
+
 /// Fetches external scripts referenced by a page and returns secrets found
 /// in their bodies, each tagged with `location = "external_script:<url>"`.
 ///
-/// Errors during individual fetches are logged at debug and silently
-/// skipped — the goal is best-effort coverage, not full-fidelity error
-/// reporting.
+/// Only first-party scripts (same registrable domain as `page_url`) are
+/// fetched. Errors during individual fetches are logged at debug and
+/// silently skipped — the goal is best-effort coverage, not full-fidelity
+/// error reporting.
 pub async fn scan_external_scripts(
     client: &reqwest::Client,
     page_url: &str,
@@ -61,6 +90,7 @@ pub async fn scan_external_scripts(
             abs.starts_with("http://") || abs.starts_with("https://")
         })
         .filter(|abs| allow_localhost || validate_url_safe(abs).is_ok())
+        .filter(|abs| is_first_party_script(page_url, abs))
         .take(MAX_SCRIPT_FETCH_PER_PAGE)
         .collect();
 
@@ -98,6 +128,64 @@ pub async fn scan_external_scripts(
     }
 
     all_secrets
+}
+
+/// Returns true when `script_url` is a first-party bundle of `page_url`.
+///
+/// Same PSL registrable domain (eTLD+1), and not on the known third-party
+/// CDN denylist. Relative same-origin scripts always pass.
+fn is_first_party_script(page_url: &str, script_url: &str) -> bool {
+    let Some(page_host) = url_host(page_url) else {
+        return false;
+    };
+    let Some(script_host) = url_host(script_url) else {
+        return false;
+    };
+
+    if is_known_third_party_script_host(&script_host) {
+        return false;
+    }
+
+    // Exact host match covers loopback IPs (tests) and same-host absolute URLs.
+    if page_host == script_host {
+        return true;
+    }
+
+    let Some(page_root) = registrable_domain(&page_host) else {
+        return false;
+    };
+    let Some(script_root) = registrable_domain(&script_host) else {
+        return false;
+    };
+    page_root.eq_ignore_ascii_case(&script_root)
+}
+
+fn url_host(url: &str) -> Option<String> {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_lowercase))
+}
+
+fn registrable_domain(host: &str) -> Option<String> {
+    psl::domain_str(host)
+        .map(std::string::ToString::to_string)
+        .or_else(|| {
+            if psl::suffix_str(host).is_some() {
+                Some(host.to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn is_known_third_party_script_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    KNOWN_THIRD_PARTY_SCRIPT_HOST_SUFFIXES.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
 }
 
 /// Resolves a `<script src>` value against the page's final URL.
@@ -270,6 +358,43 @@ mod tests {
         assert!(!decoded.contains('\u{FFFD}'));
     }
 
+    #[test]
+    fn test_is_first_party_script_same_etld() {
+        assert!(is_first_party_script(
+            "https://www.example.com/page",
+            "https://static.example.com/app.js"
+        ));
+        assert!(is_first_party_script(
+            "https://example.co.uk/page",
+            "https://cdn.example.co.uk/main.js"
+        ));
+    }
+
+    #[test]
+    fn test_is_first_party_script_rejects_third_party() {
+        assert!(!is_first_party_script(
+            "https://www.example.com/page",
+            "https://js.stripe.com/v3/"
+        ));
+        assert!(!is_first_party_script(
+            "https://www.example.com/page",
+            "https://consent.cookiebot.com/uc.js"
+        ));
+        assert!(!is_first_party_script(
+            "https://www.example.com/page",
+            "https://cdn.other.com/lib.js"
+        ));
+    }
+
+    #[test]
+    fn test_is_first_party_script_rejects_cdn_even_on_matching_suffix() {
+        // Belt-and-suspenders: denylisted hosts never count as first-party.
+        assert!(!is_first_party_script(
+            "https://stripe.com/docs",
+            "https://js.stripe.com/v3/"
+        ));
+    }
+
     #[tokio::test]
     async fn test_scan_external_scripts_finds_secret_and_tags_location() {
         let server = Server::run();
@@ -289,10 +414,12 @@ mod tests {
 
         let client = reqwest::Client::new();
         let server_url = server.url("/main.js").to_string();
+        // Page URL must share the httptest host so first-party filtering allows it.
+        let page_url = server.url("/page").to_string();
         // SSRF check rejects loopback by default; bypass for this test.
         let secrets = scan_external_scripts(
             &client,
-            "https://example.com/page", // page URL
+            &page_url,
             std::slice::from_ref(&server_url),
             true, // allow_localhost
         )
@@ -312,14 +439,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scan_external_scripts_skips_third_party_cdn() {
+        let client = reqwest::Client::new();
+        let secrets = scan_external_scripts(
+            &client,
+            "https://example.com/page",
+            &["https://js.stripe.com/v3/".to_string()],
+            false,
+        )
+        .await;
+        assert!(
+            secrets.is_empty(),
+            "third-party CDN scripts must not be fetched"
+        );
+    }
+
+    #[tokio::test]
     async fn test_scan_external_scripts_skips_loopback_when_disallowed() {
         let server = Server::run();
         // Server expects no requests since SSRF should reject before fetching.
         let client = reqwest::Client::new();
         let server_url = server.url("/main.js").to_string();
+        let page_url = server.url("/page").to_string();
         let secrets = scan_external_scripts(
             &client,
-            "https://example.com/page",
+            &page_url,
             &[server_url],
             false, // allow_localhost = false (production)
         )
@@ -331,6 +475,7 @@ mod tests {
     async fn test_scan_external_scripts_caps_at_max_per_page() {
         // Build MAX+5 candidate URLs but only register handlers for the first MAX.
         let server = Server::run();
+        let page_url = server.url("/page").to_string();
         let mut urls = Vec::new();
         for i in 0..(MAX_SCRIPT_FETCH_PER_PAGE + 5) {
             let path = format!("/s{i}.js");
@@ -345,7 +490,7 @@ mod tests {
             }
         }
         let client = reqwest::Client::new();
-        let _ = scan_external_scripts(&client, "https://example.com/page", &urls, true).await;
+        let _ = scan_external_scripts(&client, &page_url, &urls, true).await;
         // No assertion on `secrets` beyond emptiness; the cap is verified by
         // observing the test doesn't panic on the unmocked /s10..s14 paths.
     }

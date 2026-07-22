@@ -179,3 +179,140 @@ fn fp_corpus_aws_example_key() {
         r#"<pre>AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE</pre>"#,
     );
 }
+
+// ---------------------------------------------------------------------------
+// FP corpus additions from live scan.db triage (2026-07).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fp_corpus_generic_js_expression_noise() {
+    // Cookiebot / consent managers: `key` keyword near `tabIndex=-1`.
+    assert_no_secrets(
+        "Cookiebot iframe.tabIndex=-1",
+        r#"iframe.classList.add(HIDDEN_IFRAME_CLASS),iframe.name="__uspapiLocator",iframe.tabIndex=-1,iframe.setAttribute("role","presentation")"#,
+    );
+    assert_no_secrets(
+        "JS keyContents===0 expression",
+        r#"else if(this.keyContents||this.keyContents===0){var n=i.defaults({create:this.options.createModels},e);"#,
+    );
+}
+
+#[test]
+fn fp_corpus_sanity_cms_key() {
+    assert_no_secrets(
+        "Sanity Portable Text _key",
+        r#"{"_key":"7de3cf854a21","_type":"span","marks":[],"text":"Hello"}"#,
+    );
+}
+
+#[test]
+fn fp_corpus_sourcegraph_bare_hex() {
+    // Bare 40-hex must not match even when "sourcegraph" appears nearby.
+    let hex40 = "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4";
+    let body =
+        format!(r#"<!-- powered by sourcegraph --><img src="/assets/{hex40}.png" alt="logo">"#);
+    assert_no_secrets("sourcegraph keyword + bare 40-hex asset hash", &body);
+}
+
+#[test]
+fn fp_corpus_jsencrypt_private_key_template() {
+    assert_no_secrets(
+        "jsencrypt PEM template",
+        r#"RSAKey.prototype.getPrivateKey = function () { var a = "-----BEGIN RSA PRIVATE KEY-----\n"; return a += this.wordwrap(this.getPrivateBaseKeyB64()) + "\n", a += "-----END RSA PRIVATE KEY-----"; };"#,
+    );
+}
+
+#[test]
+fn fp_corpus_angular_basic_auth_docs() {
+    assert_no_secrets(
+        "Angular $http Basic auth docs example",
+        r#"*   $http.defaults.headers.common.Authorization = 'Basic YmVlcDpib29w';"#,
+    );
+}
+
+#[test]
+fn fp_corpus_vault_camelcase_css_token() {
+    assert_no_secrets(
+        "vault s. camelCase design token",
+        r#"var h=(0,c.css)({fontWeight:s.typographyH300FontWeight})"#,
+    );
+}
+
+#[test]
+fn fp_corpus_db_uri_template_literal() {
+    assert_no_secrets(
+        "postgresql template-literal builder",
+        r#"let s=`postgresql://${i(r.user)}:${i(r.password)}@${i(r.host)}/${o(r.database)}`,a="string"==typeof e?e:e.text;"#,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TP corpus: high-value secrets that must still detect.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tp_corpus_sendgrid_api_token() {
+    // Assembled at runtime so gitleaks pre-commit doesn't fire on this file.
+    let token = format!(
+        "SG.{}.{}",
+        "kxaZ6NLtSdCFrGqIjmrnJA", "AcUYJCeiEC1ritC8rfveYuYXGqXJNcRKzJ4367EHzs4"
+    );
+    let body = format!(r#"{{"sendgrid_api_key":"{token}"}}"#);
+    assert!(
+        has_rule(&body, "sendgrid-api-token"),
+        "missed SendGrid token"
+    );
+}
+
+#[test]
+fn tp_corpus_shopify_access_token() {
+    let token = format!("shpat_{}", "a0f50aa071076dce967553e8e5073b81");
+    let body = format!(r#"{{"password":"{token}"}}"#);
+    assert!(
+        has_rule(&body, "shopify-access-token"),
+        "missed Shopify shpat_ token"
+    );
+}
+
+#[test]
+fn tp_corpus_sourcegraph_sgp_prefix_still_detects() {
+    // Real Sourcegraph tokens use the sgp_ prefix; must still match.
+    let token = format!(
+        "sgp_{}_{}",
+        "0123456789abcdef", "0123456789abcdef0123456789abcdef01234567"
+    );
+    let body = format!(r#"const SOURCEGRAPH_TOKEN = "{token}";"#);
+    assert!(
+        has_rule(&body, "sourcegraph-access-token"),
+        "missed sgp_ Sourcegraph token"
+    );
+}
+
+#[test]
+fn tp_corpus_gcp_key_severity_is_low() {
+    let key = "AIza".to_string() + "SyA1234567890abcdefghijklmnopqrstuv";
+    let body = format!(
+        r#"<script src="https://maps.googleapis.com/maps/api/js?key={key}&libraries=places"></script>"#
+    );
+    let secrets = detect_exposed_secrets(&body);
+    let gcp = secrets
+        .iter()
+        .find(|s| s.secret_type == "gcp-api-key")
+        .expect("GCP key must still be detected");
+    assert_eq!(
+        gcp.severity.as_str(),
+        "low",
+        "Maps/Firebase client keys are public-by-design"
+    );
+}
+
+#[test]
+fn tp_corpus_opaque_generic_api_key_still_detects() {
+    // High-entropy opaque hex assigned to apiKey should still fire generic-api-key.
+    let value = "a7f3c9e2b81d4056f9e4a1c8b7d60352e1f90a4b";
+    let body = format!(r#"const config = {{ apiKey: "{value}" }};"#);
+    assert!(
+        has_rule(&body, "generic-api-key"),
+        "plausible opaque generic-api-key must still detect; body={body}"
+    );
+}

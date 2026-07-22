@@ -316,7 +316,9 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
         }
     };
 
-    // Add entirely new rules from [[rules]] entries
+    // Add or replace rules from [[rules]] entries. Same-id entries replace the
+    // upstream rule so we can tighten web-noisy patterns (e.g. sourcegraph)
+    // without forking gitleaks.toml.
     if let Some(new_rules) = file.rules {
         for r in new_rules {
             let Some(regex_str) = &r.regex else {
@@ -342,9 +344,8 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
                     .map(|s| s.to_lowercase())
                     .collect::<Vec<String>>()
             });
-            log::debug!("Adding override rule: {}", r.id);
-            rules.push(CompiledRule {
-                id: r.id,
+            let compiled = CompiledRule {
+                id: r.id.clone(),
                 regex,
                 entropy: r.entropy,
                 keywords,
@@ -352,7 +353,14 @@ fn merge_overrides_into_rules(rules: &mut Vec<CompiledRule>, overlay_toml: &str)
                 secret_group: r.secret_group,
                 allowlists,
                 path: r.path.clone(),
-            });
+            };
+            if let Some(idx) = rules.iter().position(|existing| existing.id == r.id) {
+                log::debug!("Replacing override rule: {}", r.id);
+                rules[idx] = compiled;
+            } else {
+                log::debug!("Adding override rule: {}", r.id);
+                rules.push(compiled);
+            }
         }
     }
 
@@ -812,6 +820,43 @@ mod tests {
         assert!(
             has_line_target,
             "overlay defines regexTarget = 'line' for sourcegraph"
+        );
+    }
+
+    /// Same-id [[rules]] entries replace upstream patterns (sourcegraph drops bare 40-hex).
+    #[test]
+    fn test_overlay_replaces_sourcegraph_regex() {
+        let config = gitleaks();
+        let rule = config
+            .rules
+            .iter()
+            .find(|r| r.id == "sourcegraph-access-token")
+            .expect("sourcegraph-access-token rule should exist");
+        // Exactly one rule with this id after replace (no duplicate).
+        let count = config
+            .rules
+            .iter()
+            .filter(|r| r.id == "sourcegraph-access-token")
+            .count();
+        assert_eq!(
+            count, 1,
+            "replace must not leave duplicate sourcegraph rules"
+        );
+        // Bare 40-hex must not match; sgp_ prefix must.
+        // Assembled at runtime so GitHub push protection doesn't flag the fixture.
+        let bare = "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4";
+        assert!(
+            !rule.regex.is_match(bare),
+            "replaced sourcegraph rule must not match bare 40-hex"
+        );
+        let sgp = format!(
+            "sgp_{}_{}",
+            "0123456789abcdef",
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+        assert!(
+            rule.regex.is_match(&sgp),
+            "replaced sourcegraph rule must still match sgp_ tokens"
         );
     }
 }

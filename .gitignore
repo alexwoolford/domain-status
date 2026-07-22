@@ -45,6 +45,17 @@ secrets.toml
 
 # MCP server config (contains user-specific absolute paths)
 .mcp.json
+.cursor/
+
+# Local editor / debugger settings
+.vscode/
+
+# Scratch diffs and ad-hoc scan notes (never commit)
+*.patch
+diff.txt
+logging.txt
+domains_*sample*.txt
+domains_tiny_sample.txt
 
 # Temporary LLM-generated working files (should never be committed)
 *_REVIEW.md

@@ -20,8 +20,13 @@ The `url_exposed_secrets` table stores findings from gitleaks-style rules run ov
 ## How to triage
 
 - Use **`location`** and **`context`**: `inline_script`, `url_parameter`, and `meta_tag` are more likely to be real secrets; `data_attribute` and `html_body` often contain public IDs or CDN content.
+- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA`, `SG.`, `shpat_`, `sk-`, `ghp_`). Treat `gcp-api-key` (Low) as a public client identifier inventory, not a leak.
 - Inspect **`context`**: Look for `data-*-form`, `id="..."`, `email-protection#`, or other HTML patterns that indicate a public identifier or obfuscation.
 - For high-confidence secrets, prefer findings where the value has a known token format (prefix, length) and the context does not match the patterns above.
+
+## External scripts
+
+When `--scan-external-scripts` is enabled, only **first-party** `<script src>` bundles are fetched (same registrable domain as the page). Known third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped because they dominate false positives.
 
 ## Audit queries
 
