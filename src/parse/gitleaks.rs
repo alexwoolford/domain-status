@@ -843,18 +843,15 @@ mod tests {
             "replace must not leave duplicate sourcegraph rules"
         );
         // Bare 40-hex must not match; sgp_ prefix must.
-        // Assembled at runtime so GitHub push protection / CI gitleaks don't
-        // flag fixtures as live secrets.
-        let bare = format!("{}{}", "a1b2c3d4e5f67890", "a1b2c3d4e5f67890a1b2c3d4");
+        // Assembled from fragments so GitHub push protection / CI gitleaks don't
+        // flag fixtures as live secrets (and avoid clippy::format_in_format_args).
+        let bare = concat!("a1b2c3d4e5f67890", "a1b2c3d4e5f67890a1b2c3d4");
         assert!(
-            !rule.regex.is_match(&bare),
+            !rule.regex.is_match(bare),
             "replaced sourcegraph rule must not match bare 40-hex"
         );
-        let sgp = format!(
-            "sgp_{}_{}",
-            "0123456789abcdef",
-            format!("{}{}", "0123456789abcdef01234567", "89abcdef01234567")
-        );
+        let sgp_suffix = concat!("0123456789abcdef01234567", "89abcdef01234567");
+        let sgp = format!("sgp_{}_{}", "0123456789abcdef", sgp_suffix);
         assert!(
             rule.regex.is_match(&sgp),
             "replaced sourcegraph rule must still match sgp_ tokens"
