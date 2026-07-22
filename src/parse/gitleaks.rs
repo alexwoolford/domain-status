@@ -843,16 +843,17 @@ mod tests {
             "replace must not leave duplicate sourcegraph rules"
         );
         // Bare 40-hex must not match; sgp_ prefix must.
-        // Assembled at runtime so GitHub push protection doesn't flag the fixture.
-        let bare = "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4";
+        // Assembled at runtime so GitHub push protection / CI gitleaks don't
+        // flag fixtures as live secrets.
+        let bare = format!("{}{}", "a1b2c3d4e5f67890", "a1b2c3d4e5f67890a1b2c3d4");
         assert!(
-            !rule.regex.is_match(bare),
+            !rule.regex.is_match(&bare),
             "replaced sourcegraph rule must not match bare 40-hex"
         );
         let sgp = format!(
             "sgp_{}_{}",
             "0123456789abcdef",
-            "0123456789abcdef0123456789abcdef01234567"
+            format!("{}{}", "0123456789abcdef01234567", "89abcdef01234567")
         );
         assert!(
             rule.regex.is_match(&sgp),
