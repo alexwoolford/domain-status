@@ -2,6 +2,19 @@
 # Do not overwrite this file when refreshing upstream gitleaks.toml.
 # See README for re-applying custom allowlists after upstream refresh.
 
+# Tighten sourcegraph-access-token: upstream also matches bare 40-hex whenever
+# the keyword "sourcegraph" appears nearby (image hashes, yarn integrity,
+# build salts). Same-id [[rules]] entries replace the upstream rule.
+[[rules]]
+id = "sourcegraph-access-token"
+description = "Sourcegraph access token (sgp_ prefix only; bare 40-hex dropped for web FP reduction)"
+regex = '''(?i)\b(sgp_(?:[a-fA-F0-9]{16}|local)_[a-fA-F0-9]{40}|sgp_[a-fA-F0-9]{40})\b'''
+entropy = 3
+keywords = [
+    "sgp_",
+    "sourcegraph",
+]
+
 [[append]]
 rule_id = "sourcegraph-access-token"
 regexTarget = "line"
@@ -303,4 +316,67 @@ stopwords = [
     "descriptiveTitle",
     "linkedinmyWindow",
     "socialIdentifier",
+    "GrapeshotCrawler",
+    "linkedinLikePost",
 ]
+
+# Sanity / Portable Text CMS document keys (`"_key":"hex"`) trip generic-api-key.
+# Squarespace (and similar) i18n catalogs use 32-hex digests as JSON object keys.
+[[append]]
+rule_id = "generic-api-key"
+regexTarget = "line"
+regexes = [
+    '''"_key"\s*:\s*"''',
+    '''"[0-9a-fA-F]{32}"\s*:''',
+]
+
+# jsencrypt and similar libraries embed PEM *templates* (BEGIN/END markers around
+# getPrivateBaseKeyB64() calls), not real private keys.
+[[append]]
+rule_id = "private-key"
+regexTarget = "line"
+regexes = [
+    '''getPrivateBaseKeyB64''',
+    '''getPrivateKey\s*=\s*function''',
+    '''jsencrypt''',
+    '''-----BEGIN PUBLIC KEY-----''',
+    '''importKey\s*\(\s*["']spki["']''',
+    '''must be PKCS#8 formatted string''',
+]
+
+# Angular $http docs use Authorization: Basic YmVlcDpib29w (bee:boop).
+[[append]]
+rule_id = "http-basic-auth"
+regexTarget = "match"
+stopwords = [
+    "YmVlcDpib29w",
+]
+
+# DB URI rule must not fire on template-literal builders in bundled JS.
+[[append]]
+rule_id = "database-connection-uri"
+regexTarget = "match"
+regexes = [
+    '''\$\{''',
+    '''encodeURIComponent''',
+]
+
+# Sentry browser DSNs embed a public key as user:pass@sentry.io — not a secret.
+# Broken concatenated hrefs (…comhttps://www.youtube.com/@…) also trip the rule.
+[[append]]
+rule_id = "credential-bearing-url"
+regexTarget = "line"
+regexes = [
+    '''sentry\.io/''',
+    '''sentryDsn''',
+    '''youtube\.com/''',
+]
+
+# Legacy vault `s.` tokens that are camelCase CSS/design-token identifiers.
+[[append]]
+rule_id = "vault-service-token"
+regexTarget = "match"
+regexes = [
+    '''^s\.[a-z]+[A-Z]''',
+]
+

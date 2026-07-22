@@ -42,8 +42,8 @@ pub struct ConfigContext {
     pub run_id: Option<String>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
-    /// Whether external `<script src>` URLs should be fetched and scanned for
-    /// secrets. Mirrors `Config::scan_external_scripts`. Off by default.
+    /// Whether first-party external `<script src>` URLs should be fetched and
+    /// scanned for secrets. Mirrors `Config::scan_external_scripts`. Off by default.
     pub scan_external_scripts: bool,
     /// Live runtime counters for retries and degradation paths
     pub runtime_metrics: Arc<RuntimeMetrics>,

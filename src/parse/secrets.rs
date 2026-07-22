@@ -104,6 +104,98 @@ fn shannon_entropy(s: &str) -> f64 {
     entropy
 }
 
+/// Minimum Shannon entropy required for non-hex `generic-api-key` matches.
+///
+/// Upstream gitleaks uses 3.5; that lets through short JS identifiers and
+/// low-variety CMS keys. 4.0 cuts most camelCase / dictionary noise while
+/// remaining reachable for mixed base64-ish tokens.
+const GENERIC_API_KEY_MIN_ENTROPY: f64 = 4.0;
+
+/// Hex-only tokens have an alphabet of 16 symbols, so Shannon entropy cannot
+/// exceed 4.0 and typically lands slightly under it. Use the upstream floor
+/// for long hex blobs instead of rejecting every Maps/CMS-style hex id.
+const GENERIC_API_KEY_HEX_MIN_ENTROPY: f64 = 3.5;
+
+/// Minimum length for a plausible `generic-api-key` match.
+const GENERIC_API_KEY_MIN_LEN: usize = 16;
+
+/// Minimum length for hex-only `generic-api-key` matches (CMS `_key`s are shorter).
+const GENERIC_API_KEY_HEX_MIN_LEN: usize = 32;
+
+/// Returns true if `s` looks like a `camelCase` / `PascalCase` JS identifier
+/// (has a lowercase→uppercase transition). Used to reject minified-JS noise.
+fn looks_like_camel_case_identifier(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    for window in bytes.windows(2) {
+        if window[0].is_ascii_lowercase() && window[1].is_ascii_uppercase() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Web-specific plausibility filter for the catch-all `generic-api-key` rule.
+///
+/// Upstream's regex captures `[\w.=-]{10,150}`, which matches JS expressions
+/// (`iframe.tabIndex=-1`), property names (`deprecatedApiDoNotUse`), and CMS
+/// document keys. This filter keeps only secret-shaped opaque tokens.
+fn generic_api_key_is_plausible(value: &str) -> bool {
+    if value.len() < GENERIC_API_KEY_MIN_LEN {
+        return false;
+    }
+    // Assignment / member-expression noise from minified JS.
+    if value.contains('.') || value.contains('=') {
+        return false;
+    }
+    if looks_like_camel_case_identifier(value) {
+        return false;
+    }
+    // Opaque tokens are hex/base64-ish; reject anything outside that charset.
+    if !value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'+' || b == b'/')
+    {
+        return false;
+    }
+    // Pure alphabetic strings are almost always dictionary / i18n keys.
+    if value.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
+
+    let hex_digits = value.bytes().filter(|b| b.is_ascii_hexdigit()).count();
+    let predominantly_hex = hex_digits * 5 >= value.len() * 4; // >= 80% hex
+    if predominantly_hex {
+        if value.len() < GENERIC_API_KEY_HEX_MIN_LEN {
+            return false;
+        }
+        return shannon_entropy(value) >= GENERIC_API_KEY_HEX_MIN_ENTROPY;
+    }
+
+    shannon_entropy(value) >= GENERIC_API_KEY_MIN_ENTROPY
+}
+
+/// Post-match filters for rules whose upstream patterns are too broad on HTML/JS.
+///
+/// Returns `true` when the finding should be **kept**.
+fn web_rule_match_is_plausible(rule_id: &str, matched_value: &str) -> bool {
+    match rule_id {
+        "generic-api-key" => generic_api_key_is_plausible(matched_value),
+        // Upstream also matches bare 40-hex when the keyword "sourcegraph" appears
+        // anywhere nearby; require the real `sgp_` token prefix.
+        "sourcegraph-access-token" => matched_value.starts_with("sgp_"),
+        // Legacy `s.` vault tokens are 24 random base62 chars. CamelCase identifiers
+        // like `s.typographyH300FontWeight` (CSS tokens in minified bundles) must go.
+        "vault-service-token" => {
+            if let Some(rest) = matched_value.strip_prefix("s.") {
+                !looks_like_camel_case_identifier(rest)
+            } else {
+                true
+            }
+        }
+        _ => true,
+    }
+}
+
 /// Severity for a gitleaks rule id.
 ///
 /// Three-step classification:
@@ -163,8 +255,7 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         | "plaid-api-token"
         | "fastly-api-token" => SecretSeverity::High,
         // Medium
-        "gcp-api-key"
-        | "azure-ad-client-secret"
+        "azure-ad-client-secret"
         | "slack-webhook-url"
         | "slack-app-token"
         | "algolia-api-key"
@@ -176,8 +267,9 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         // Generic catch-all rule: matches a wide pattern with low specificity,
         // so we treat it as Medium-by-default to keep High meaningful.
         | "generic-api-key" => SecretSeverity::Medium,
-        // Low
-        "mapbox-api-token" => SecretSeverity::Low,
+        // Low: intentionally public client identifiers (Maps/Firebase embeds,
+        // Mapbox public tokens). Still recorded for inventory, but not triage-urgent.
+        "gcp-api-key" | "mapbox-api-token" => SecretSeverity::Low,
         _ => severity_for_unknown_rule_id(rule_id),
     }
 }
@@ -553,6 +645,9 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
             if global_allowlist_skips(&config.global_allowlist, &matched_value) {
                 continue;
             }
+            if !web_rule_match_is_plausible(&rule.id, &matched_value) {
+                continue;
+            }
             let context = extract_context(body, mat.start(), mat.end());
             let line_content = line_containing(body, mat.start(), mat.end());
             if rule_allowlist_skips(&rule.allowlists, &matched_value, line_content, full_match) {
@@ -831,7 +926,11 @@ mod tests {
             severity_for_rule_id("aws-access-token"),
             SecretSeverity::High
         );
-        assert_eq!(severity_for_rule_id("gcp-api-key"), SecretSeverity::Medium);
+        assert_eq!(
+            severity_for_rule_id("gcp-api-key"),
+            SecretSeverity::Low,
+            "Maps/Firebase client keys are public-by-design"
+        );
         assert_eq!(
             severity_for_rule_id("generic-api-key"),
             SecretSeverity::Medium,
@@ -1188,18 +1287,21 @@ mod tests {
     /// With "sourcegraph" in the body, a 40-char hex can be reported as sourcegraph-access-token.
     #[test]
     fn test_sourcegraph_fires_with_keyword() {
-        let token_hex = "a1b2c3d4e5f6789012345678901234567890abcd";
-        let body = format!(r#"<script>window.SOURCEGRAPH = "{}";</script>"#, token_hex);
+        // Real tokens use the sgp_ prefix; bare 40-hex is intentionally rejected.
+        let token = format!(
+            "sgp_{}_{}",
+            "0123456789abcdef", "a1b2c3d4e5f6789012345678901234567890abcd"
+        );
+        let body = format!(r#"<script>window.SOURCEGRAPH = "{token}";</script>"#);
         let secrets = detect_exposed_secrets(&body);
         let sourcegraph = secrets
             .iter()
             .find(|s| s.secret_type == "sourcegraph-access-token");
         assert!(
             sourcegraph.is_some(),
-            "sourcegraph-access-token should fire when 'sourcegraph' (case-insensitive) in body; got {:?}",
-            secrets
+            "sourcegraph-access-token should fire for sgp_ tokens; got {secrets:?}"
         );
-        assert_eq!(sourcegraph.unwrap().matched_value, token_hex);
+        assert_eq!(sourcegraph.unwrap().matched_value, token);
     }
 
     /// Per-rule allowlist: 40-char hex in html id="..." (e.g. Wix build ID) must not be reported as sourcegraph-access-token.
