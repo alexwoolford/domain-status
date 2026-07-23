@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-07-23
+
+### Fixed
+- **GeoIP skipped when `--geoip` path is missing**: if `--geoip` points at a local file that does not exist and `MAXMIND_LICENSE_KEY` is set, fall back to the same GeoLite2-City auto-download/cache path used when `--geoip` is omitted (instead of disabling GeoIP).
+
+### Changed
+- README GeoIP troubleshooting notes the missing-path fallback and recommends omitting `--geoip` when relying on `MAXMIND_LICENSE_KEY`.
+
 ## [0.1.23] - 2026-07-23
 
 ### Fixed
@@ -251,7 +259,8 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.23...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.24...HEAD
+[0.1.24]: https://github.com/alexwoolford/domain_status/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/alexwoolford/domain_status/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/alexwoolford/domain_status/compare/v0.1.21...v0.1.22
 [0.1.11]: https://github.com/alexwoolford/domain_status/compare/v0.1.10...v0.1.11
