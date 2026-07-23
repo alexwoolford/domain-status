@@ -17,6 +17,87 @@ use crate::geoip::{self, GEOIP_CITY_READER};
 
 use loader::{geoip_cache_paths, load_from_file, load_from_url};
 
+/// Resolves a `MaxMind` download URL or cached `.mmdb` path when `MAXMIND_LICENSE_KEY` is set.
+///
+/// Returns `None` when the license key is unset or empty (caller decides how to disable).
+async fn resolve_from_license_key(cache_path: &Path) -> Option<String> {
+    let license_key = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV).ok()?;
+    if license_key.is_empty() {
+        return None;
+    }
+
+    let (cache_file, metadata_file) = geoip_cache_paths(cache_path, "GeoLite2-City");
+
+    let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await {
+        if let Ok(age) = metadata.last_updated.elapsed() {
+            age.as_secs() >= geoip::CACHE_TTL_SECS || !cache_file.exists()
+        } else {
+            true
+        }
+    } else {
+        true
+    };
+
+    if should_download {
+        log::info!("Auto-downloading GeoLite2-City database (cache expired or missing)");
+        let encoded_key =
+            form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
+        Some(format!(
+            "{}?edition_id=GeoLite2-City&license_key={}&suffix=tar.gz",
+            geoip::MAXMIND_DOWNLOAD_BASE,
+            encoded_key
+        ))
+    } else {
+        log::info!("Using cached GeoIP database");
+        Some(cache_file.to_string_lossy().to_string())
+    }
+}
+
+/// Chooses the `GeoIP` source: explicit path/URL, license-key auto-download, or disabled.
+///
+/// When `--geoip` is a local path that does not exist and a license key is available,
+/// falls back to the same auto-download/cache path used when `--geoip` is omitted.
+async fn resolve_geoip_source(
+    geoip_path: Option<&str>,
+    cache_path: &Path,
+) -> Result<Option<String>> {
+    match geoip_path {
+        Some(p) if p.starts_with("http://") || p.starts_with("https://") => Ok(Some(p.to_string())),
+        Some(p) if Path::new(p).exists() => Ok(Some(p.to_string())),
+        Some(p) => {
+            // Missing local path: fall back to license-key download when possible.
+            if let Some(auto) = resolve_from_license_key(cache_path).await {
+                log::warn!(
+                    "GeoIP path '{p}' not found; falling back to MaxMind auto-download/cache \
+                     (MAXMIND_LICENSE_KEY is set)"
+                );
+                Ok(Some(auto))
+            } else {
+                // Keep the path so load_from_file returns a clear not-found error.
+                Ok(Some(p.to_string()))
+            }
+        }
+        None => {
+            if let Some(auto) = resolve_from_license_key(cache_path).await {
+                Ok(Some(auto))
+            } else if std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV)
+                .map(|k| k.is_empty())
+                .unwrap_or(false)
+            {
+                log::info!(
+                    "GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY is empty)"
+                );
+                Ok(None)
+            } else {
+                log::info!(
+                    "GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY not set)"
+                );
+                Ok(None)
+            }
+        }
+    }
+}
+
 /// Initializes the `GeoIP` database from a local file path or automatic download.
 ///
 /// The database is cached in memory and can be refreshed by calling this function
@@ -26,6 +107,7 @@ use loader::{geoip_cache_paths, load_from_file, load_from_url};
 ///
 /// * `geoip_path` - Optional path to the `MaxMind` `GeoLite2` database file (.mmdb) or download URL.
 ///   If None, will attempt automatic download using `MAXMIND_LICENSE_KEY` env var.
+///   If a local path is missing and `MAXMIND_LICENSE_KEY` is set, falls back to auto-download.
 /// * `cache_dir` - Optional cache directory for downloaded databases
 ///
 /// # Returns
@@ -45,57 +127,8 @@ pub async fn init_geoip(
         std::path::Path::to_path_buf,
     );
 
-    // Determine the source path
-    let path = match geoip_path {
-        Some(p) => p.to_string(),
-        None => {
-            // Try automatic download if license key is available
-            if let Ok(license_key) = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV) {
-                if license_key.is_empty() {
-                    log::info!("GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY is empty)");
-                    return Ok(None);
-                }
-                {
-                    // Check cache first
-                    let (cache_file, metadata_file) =
-                        geoip_cache_paths(&cache_path, "GeoLite2-City");
-
-                    // Check if cached version exists and is fresh
-                    let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await
-                    {
-                        if let Ok(age) = metadata.last_updated.elapsed() {
-                            age.as_secs() >= geoip::CACHE_TTL_SECS || !cache_file.exists()
-                        } else {
-                            true
-                        }
-                    } else {
-                        true
-                    };
-
-                    if should_download {
-                        log::info!(
-                            "Auto-downloading GeoLite2-City database (cache expired or missing)"
-                        );
-                        // URL-encode the license key to handle special characters
-                        let encoded_key = form_urlencoded::byte_serialize(license_key.as_bytes())
-                            .collect::<String>();
-                        let download_url = format!(
-                            "{}?edition_id=GeoLite2-City&license_key={}&suffix=tar.gz",
-                            geoip::MAXMIND_DOWNLOAD_BASE,
-                            encoded_key
-                        );
-                        download_url
-                    } else {
-                        // Use cached file
-                        log::info!("Using cached GeoIP database");
-                        cache_file.to_string_lossy().to_string()
-                    }
-                }
-            } else {
-                log::info!("GeoIP lookup disabled (no database path provided and MAXMIND_LICENSE_KEY not set)");
-                return Ok(None);
-            }
-        }
+    let Some(path) = resolve_geoip_source(geoip_path, &cache_path).await? else {
+        return Ok(None);
     };
 
     // Check if City database already loaded
@@ -184,7 +217,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_geoip_invalid_path() {
-        // Test with invalid file path
+        // Without a license key, a missing local path must still fail (no silent disable).
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
         let result = init_geoip(Some("nonexistent/path/to/database.mmdb"), None).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -194,6 +228,49 @@ mod tests {
                 || error_msg.contains("not found"),
             "Expected file not found error, got: {}",
             error_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_missing_local_geoip_falls_back_to_license_key() {
+        // Missing --geoip path + license key → resolve to MaxMind download URL (not bare path).
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test-license-key");
+
+        let resolved =
+            resolve_geoip_source(Some("nonexistent/GeoLite2-City.mmdb"), temp_dir.path())
+                .await
+                .expect("resolve should succeed");
+        let path = resolved.expect("should fall back to license-key source");
+        assert!(
+            path.starts_with("https://"),
+            "expected MaxMind download URL, got: {path}"
+        );
+        assert!(
+            path.contains("edition_id=GeoLite2-City"),
+            "expected City edition in URL: {path}"
+        );
+        assert!(
+            !path.contains("nonexistent"),
+            "should not keep the missing local path when license key is set: {path}"
+        );
+
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn test_missing_local_geoip_without_license_keeps_path() {
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let missing = "nonexistent/GeoLite2-City.mmdb";
+
+        let resolved = resolve_geoip_source(Some(missing), temp_dir.path())
+            .await
+            .expect("resolve should succeed");
+        assert_eq!(
+            resolved.as_deref(),
+            Some(missing),
+            "without a license key, keep the path so load fails clearly"
         );
     }
 
