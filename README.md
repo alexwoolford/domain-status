@@ -795,7 +795,7 @@ export MAXMIND_LICENSE_KEY=your_license_key_here
 domain_status scan urls.txt
 ```
 
-The databases are cached in `.geoip_cache/` and reused for subsequent runs. Alternatively, download the `.mmdb` files yourself and use `--geoip` to point to them. GeoIP data is stored in the `url_geoip` table with fields for country, region, city, coordinates, and ASN.
+The databases are cached in `.geoip_cache/` and reused for subsequent runs. Alternatively, download the `.mmdb` files yourself and use `--geoip` to point to them. Do not pass `--geoip` until that file exists; with a license key set, omitting `--geoip` (or pointing at a missing local path) triggers auto-download. GeoIP data is stored in the `url_geoip` table with fields for country, region, city, coordinates, and ASN.
 
 If GeoIP fails or no key is provided, the tool safely skips GeoIP lookup with a warning and continues normally.
 
@@ -865,6 +865,7 @@ The tool automatically retries failed HTTP requests up to 2 additional times (3 
 - Probably the MaxMind license key wasn't set or the download failed.
 - Ensure internet access for the first run or provide the `.mmdb` files manually with `--geoip`.
 - Check that the license key is valid and has GeoLite2 access enabled.
+- If `--geoip` points at a missing file, GeoIP is skipped unless a license key is available (then it falls back to auto-download into `.geoip_cache/`). Prefer omitting `--geoip` when using `MAXMIND_LICENSE_KEY`.
 
 **Compilation fails (for users building from source):**
 - Make sure Rust is updated to latest stable (1.85 or newer required).
