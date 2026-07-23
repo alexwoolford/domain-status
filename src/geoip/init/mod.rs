@@ -584,15 +584,23 @@ mod tests {
         // The code at line 134 spawns a background task, which should be non-blocking
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
 
-        // Use an invalid path that will fail quickly
-        // The important thing is that init_geoip returns immediately, not waiting for ASN
+        // Clear license key and use an *existing* invalid file so parallel tests that set
+        // MAXMIND_LICENSE_KEY cannot trigger the missing-path MaxMind download fallback
+        // (which would make this timing assertion flake/fail).
+        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let bad_db = temp_dir.path().join("not-a-database.mmdb");
+        std::fs::write(&bad_db, b"not-a-valid-mmdb")
+            .expect("Failed to write invalid GeoIP fixture");
+        let bad_db_path = bad_db.to_str().expect("temp path should be UTF-8");
+
+        // Invalid local DB should fail quickly without waiting for ASN (or MaxMind download)
         let start = std::time::Instant::now();
-        let result = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
+        let result = init_geoip(Some(bad_db_path), Some(temp_dir.path())).await;
         let elapsed = start.elapsed();
 
-        // Should fail quickly (file not found), not hang waiting for background task
+        // Should fail quickly (invalid DB), not hang waiting for background task / download
         assert!(result.is_err());
-        // Should return in reasonable time (< 1 second for file not found)
+        // Should return in reasonable time (< 1 second for local file parse failure)
         assert!(
             elapsed.as_secs() < 1,
             "init_geoip should not block on background ASN task"
