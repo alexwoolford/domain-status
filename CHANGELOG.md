@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-07-23
+
+### Fixed
+- **Exposed-secret false positives (web)**: hardened `generic-api-key` for minified JS (reject expressions/identifiers; raise entropy/shape requirements), restricted `--scan-external-scripts` to first-party bundles (same eTLD+1, CDN denylist), tightened Sourcegraph to `sgp_`-prefixed tokens only, and added allowlists for jsencrypt PEM templates, Angular Basic-auth docs examples, vault camelCase CSS tokens, DB URI template literals, and Sentry/YouTube credential-URL noise.
+- **Public client key triage**: downgraded `gcp-api-key` severity from medium to low (Maps/Firebase client keys are public-by-design).
+- **CI**: allowlisted secret-detection fixtures in `src/parse/gitleaks.rs` and avoided clippy `format_in_format_args` in overlay tests.
+
+### Changed
+- `--scan-external-scripts` now means first-party script bundles only; third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped.
+
 ## [0.1.22] - 2026-07-21
 
 ### Fixed
@@ -241,7 +251,9 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.23...HEAD
+[0.1.23]: https://github.com/alexwoolford/domain_status/compare/v0.1.22...v0.1.23
+[0.1.22]: https://github.com/alexwoolford/domain_status/compare/v0.1.21...v0.1.22
 [0.1.11]: https://github.com/alexwoolford/domain_status/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/alexwoolford/domain_status/compare/v0.1.6...v0.1.10
 [0.1.6]: https://github.com/alexwoolford/domain_status/compare/v0.1.5...v0.1.6
