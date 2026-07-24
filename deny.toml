@@ -5,7 +5,7 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
-    # parquet still pulls paste transitively; remove once arrow/parquet drops or replaces it.
+    # parquet still pulls paste transitively (through 59.x); remove once arrow/parquet drops it.
     "RUSTSEC-2024-0436",
 ]
 

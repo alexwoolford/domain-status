@@ -65,6 +65,16 @@ const KNOWN_THIRD_PARTY_SCRIPT_HOST_SUFFIXES: &[&str] = &[
     "cdn.weglot.com",
 ];
 
+/// Result of an optional external-script secret scan, including coverage counts.
+#[derive(Debug, Default)]
+pub struct ExternalScriptScanResult {
+    pub secrets: Vec<ExposedSecret>,
+    /// First-party `<script src>` candidates after filtering (before per-page cap).
+    pub eligible: u32,
+    /// Scripts successfully fetched and scanned (may be less than eligible due to cap/errors).
+    pub scanned: u32,
+}
+
 /// Fetches external scripts referenced by a page and returns secrets found
 /// in their bodies, each tagged with `location = "external_script:<url>"`.
 ///
@@ -77,35 +87,39 @@ pub async fn scan_external_scripts(
     page_url: &str,
     script_sources: &[String],
     allow_localhost: bool,
-) -> Vec<ExposedSecret> {
+) -> ExternalScriptScanResult {
     if script_sources.is_empty() {
-        return Vec::new();
+        return ExternalScriptScanResult::default();
     }
-    let resolved: Vec<String> = script_sources
+    let eligible: Vec<String> = script_sources
         .iter()
         .filter_map(|src| resolve_script_url(page_url, src))
-        .filter(|abs| {
-            // Only http(s) URLs make sense here; data:, blob:, javascript:
-            // can't carry meaningful secrets in this scanner's threat model.
-            abs.starts_with("http://") || abs.starts_with("https://")
-        })
+        .filter(|abs| abs.starts_with("http://") || abs.starts_with("https://"))
         .filter(|abs| allow_localhost || validate_url_safe(abs).is_ok())
         .filter(|abs| is_first_party_script(page_url, abs))
+        .collect();
+
+    let eligible_count = u32::try_from(eligible.len()).unwrap_or(u32::MAX);
+    let resolved: Vec<String> = eligible
+        .into_iter()
         .take(MAX_SCRIPT_FETCH_PER_PAGE)
         .collect();
 
     if resolved.is_empty() {
-        return Vec::new();
+        return ExternalScriptScanResult {
+            secrets: Vec::new(),
+            eligible: eligible_count,
+            scanned: 0,
+        };
     }
 
     log::debug!(
-        "scan_external_scripts: page={} candidates={} fetching",
+        "scan_external_scripts: page={} eligible={} fetching={}",
         page_url,
+        eligible_count,
         resolved.len()
     );
 
-    // Fetch all candidates concurrently. Per-script timeout caps each one;
-    // join_all lets us collect whatever returns within those caps.
     let fetches = resolved.iter().map(|url| async move {
         let body_opt = fetch_script_body(client, url).await;
         body_opt.map(|body| (url.clone(), body))
@@ -113,7 +127,9 @@ pub async fn scan_external_scripts(
     let results = futures::future::join_all(fetches).await;
 
     let mut all_secrets: Vec<ExposedSecret> = Vec::new();
+    let mut scanned: u32 = 0;
     for fetched in results.into_iter().flatten() {
+        scanned = scanned.saturating_add(1);
         let (url, body) = fetched;
         let mut found = crate::parse::detect_exposed_secrets(&body);
         if found.is_empty() {
@@ -127,7 +143,11 @@ pub async fn scan_external_scripts(
         all_secrets.extend(found);
     }
 
-    all_secrets
+    ExternalScriptScanResult {
+        secrets: all_secrets,
+        eligible: eligible_count,
+        scanned,
+    }
 }
 
 /// Returns true when `script_url` is a first-party bundle of `page_url`.
@@ -417,7 +437,7 @@ mod tests {
         // Page URL must share the httptest host so first-party filtering allows it.
         let page_url = server.url("/page").to_string();
         // SSRF check rejects loopback by default; bypass for this test.
-        let secrets = scan_external_scripts(
+        let result = scan_external_scripts(
             &client,
             &page_url,
             std::slice::from_ref(&server_url),
@@ -425,10 +445,11 @@ mod tests {
         )
         .await;
 
-        let found = secrets
+        let found = result
+            .secrets
             .iter()
             .find(|s| s.secret_type == "aws-access-token")
-            .unwrap_or_else(|| panic!("expected aws-access-token; got {secrets:?}"));
+            .unwrap_or_else(|| panic!("expected aws-access-token; got {:?}", result.secrets));
         assert_eq!(found.matched_value, aws_key);
         assert!(
             found.location.starts_with("external_script:"),
@@ -436,12 +457,14 @@ mod tests {
             found.location
         );
         assert!(found.location.contains(&server_url));
+        assert_eq!(result.eligible, 1);
+        assert_eq!(result.scanned, 1);
     }
 
     #[tokio::test]
     async fn test_scan_external_scripts_skips_third_party_cdn() {
         let client = reqwest::Client::new();
-        let secrets = scan_external_scripts(
+        let result = scan_external_scripts(
             &client,
             "https://example.com/page",
             &["https://js.stripe.com/v3/".to_string()],
@@ -449,9 +472,11 @@ mod tests {
         )
         .await;
         assert!(
-            secrets.is_empty(),
+            result.secrets.is_empty(),
             "third-party CDN scripts must not be fetched"
         );
+        assert_eq!(result.eligible, 0);
+        assert_eq!(result.scanned, 0);
     }
 
     #[tokio::test]
@@ -461,14 +486,15 @@ mod tests {
         let client = reqwest::Client::new();
         let server_url = server.url("/main.js").to_string();
         let page_url = server.url("/page").to_string();
-        let secrets = scan_external_scripts(
+        let result = scan_external_scripts(
             &client,
             &page_url,
             &[server_url],
             false, // allow_localhost = false (production)
         )
         .await;
-        assert!(secrets.is_empty());
+        assert!(result.secrets.is_empty());
+        assert_eq!(result.eligible, 0);
     }
 
     #[tokio::test]
@@ -484,14 +510,22 @@ mod tests {
             if i < MAX_SCRIPT_FETCH_PER_PAGE {
                 server.expect(
                     Expectation::matching(request::method_path("GET", path))
-                        .times(0..=1)
+                        .times(1)
                         .respond_with(status_code(200).body("// no secrets")),
                 );
             }
         }
         let client = reqwest::Client::new();
-        let _ = scan_external_scripts(&client, &page_url, &urls, true).await;
-        // No assertion on `secrets` beyond emptiness; the cap is verified by
-        // observing the test doesn't panic on the unmocked /s10..s14 paths.
+        let result = scan_external_scripts(&client, &page_url, &urls, true).await;
+        assert_eq!(
+            result.eligible as usize,
+            MAX_SCRIPT_FETCH_PER_PAGE + 5,
+            "eligible counts all first-party candidates before the cap"
+        );
+        assert_eq!(
+            result.scanned as usize, MAX_SCRIPT_FETCH_PER_PAGE,
+            "scanned must equal per-page cap; got {}",
+            result.scanned
+        );
     }
 }

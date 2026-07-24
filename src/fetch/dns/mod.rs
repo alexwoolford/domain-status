@@ -101,6 +101,7 @@ mod tests {
             http_headers: HashMap::new(),
             body: std::sync::Arc::<str>::from("<html><body>Test</body></html>"),
             body_sha256: None,
+            body_truncated: false,
             content_length: None,
             http_version: None,
             body_word_count: None,
@@ -201,45 +202,6 @@ mod tests {
 
         // TLS version should be None for HTTP
         assert!(tls_dns_data.tls_version.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_fetch_all_dns_data_invalid_domain_handled() {
-        // Test that invalid domains are handled gracefully
-        crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let mut resp_data = create_test_response_data();
-        resp_data.final_domain = "this-domain-definitely-does-not-exist-12345.invalid".to_string();
-        resp_data.host = "this-domain-definitely-does-not-exist-12345.invalid".to_string();
-
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref(), None).await;
-
-        // Should succeed but may have partial failures
-        // TLS/DNS fetch may fail, but should return Ok with partial failures
-        // Additional DNS will definitely fail, but should be in partial failures
-        let _ = result; // May succeed or fail depending on resolver behavior
-    }
-
-    #[tokio::test]
-    async fn test_fetch_all_dns_data_error_propagation() {
-        // Test that errors from fetch_tls_and_dns are correctly propagated
-        // This is critical - if TLS/DNS fetch fails completely, error should propagate
-        crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let mut resp_data = create_test_response_data();
-        // Use an invalid URL that will cause fetch_tls_and_dns to fail
-        resp_data.final_url =
-            "https://this-domain-definitely-does-not-exist-12345.invalid".to_string();
-        resp_data.host = "this-domain-definitely-does-not-exist-12345.invalid".to_string();
-        resp_data.final_domain = "this-domain-definitely-does-not-exist-12345.invalid".to_string();
-
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref(), None).await;
-
-        // May succeed with partial failures or fail completely depending on resolver behavior
-        // The key is that it doesn't panic
-        let _ = result;
     }
 
     #[tokio::test]

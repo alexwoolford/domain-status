@@ -58,7 +58,7 @@ SQLite with WAL mode. Schema in `migrations/` (8 migration files). Main tables: 
 
 ### Workspace Structure
 
-Cargo workspace with a `cli/` member (`domain_status_cli`) for CLI argument definitions. `vendor/whois-service` is a patched dependency to eliminate a RUSTSEC advisory.
+Cargo workspace with a `cli/` member (`domain_status_cli`) for CLI argument definitions.
 
 ## Code Conventions
 

@@ -93,6 +93,9 @@ fn create_test_record(domain: &str, run_id: &str) -> UrlRecord {
         cert_is_wildcard: None,
         cert_is_mismatched: None,
         meta_refresh_url: None,
+        body_truncated: false,
+        external_scripts_eligible: 0,
+        external_scripts_scanned: 0,
     }
 }
 

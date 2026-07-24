@@ -74,6 +74,12 @@ pub struct UrlRecord {
     pub run_id: Option<String>,
     /// SHA-256 hash of the response body
     pub body_sha256: Option<String>,
+    /// Whether the response body was truncated at the scan size cap
+    pub body_truncated: bool,
+    /// First-party external `<script src>` candidates when script scanning is on
+    pub external_scripts_eligible: u32,
+    /// External scripts successfully fetched and scanned for secrets
+    pub external_scripts_scanned: u32,
     /// Response body length in bytes
     pub content_length: Option<i64>,
     /// HTTP protocol version (e.g., "HTTP/1.1", "HTTP/2")

@@ -192,6 +192,16 @@ fn web_rule_match_is_plausible(rule_id: &str, matched_value: &str) -> bool {
                 true
             }
         }
+        // LinkedIn client id/secret rules match short alnum near "linkedin".
+        // JS property names (thumbnailWidth) start lowercase and camelCase;
+        // random opaque secrets typically do not.
+        "linkedin-client-id" | "linkedin-client-secret" => {
+            let starts_lower = matched_value
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase());
+            !(starts_lower && looks_like_camel_case_identifier(matched_value))
+        }
         _ => true,
     }
 }
@@ -270,8 +280,27 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         // Low: intentionally public client identifiers (Maps/Firebase embeds,
         // Mapbox public tokens). Still recorded for inventory, but not triage-urgent.
         "gcp-api-key" | "mapbox-api-token" => SecretSeverity::Low,
+        // Low: JWTs on the web are usually CDN/session/buyer tokens, not private
+        // API credentials. Keep for inventory; do not treat as triage-urgent.
+        "jwt" | "jwt-base64" => SecretSeverity::Low,
         _ => severity_for_unknown_rule_id(rule_id),
     }
+}
+
+/// Severity for a finding, with context-aware demotion for known public-temp shapes.
+///
+/// AWS access key IDs embedded in `X-Amz-Credential=` pre-signed URL query params
+/// are real IDs but temporary/public URL material — record as Low, not High.
+fn severity_for_finding(rule_id: &str, line_content: &str) -> SecretSeverity {
+    let severity = severity_for_rule_id(rule_id);
+    if rule_id == "aws-access-token"
+        && line_content
+            .to_ascii_lowercase()
+            .contains("x-amz-credential=")
+    {
+        return SecretSeverity::Low;
+    }
+    severity
 }
 
 /// Heuristic classification for gitleaks rule IDs we haven't explicitly mapped.
@@ -551,6 +580,35 @@ fn infer_location(context: &str) -> &'static str {
     }
 }
 
+/// Returns true when `pos` lies inside a `<script type="application/ld+json">` block.
+///
+/// Walks backward from `pos` to the nearest preceding `<script` (ASCII tag, so
+/// byte indices on a lowercased prefix align) and requires `application/ld+json`
+/// in the opening tag with no intervening `</script>`.
+fn is_inside_json_ld_script(body: &str, pos: usize) -> bool {
+    let before = &body[..pos.min(body.len())];
+    let lower_before = before.to_ascii_lowercase();
+    let Some(script_start) = lower_before.rfind("<script") else {
+        return false;
+    };
+    let region = &lower_before[script_start..];
+    if let Some(close) = region.find("</script") {
+        if script_start + close < pos {
+            return false;
+        }
+    }
+    let tag_end = region.find('>').unwrap_or(region.len().min(200));
+    region[..tag_end].contains("application/ld+json")
+}
+
+/// Location for a body match: prefer `json_ld` when inside LD+JSON script.
+fn infer_location_for_body_match(body: &str, match_start: usize, context: &str) -> &'static str {
+    if is_inside_json_ld_script(body, match_start) {
+        return "json_ld";
+    }
+    infer_location(context)
+}
+
 /// Detects exposed secrets in raw HTML body text using gitleaks rules.
 ///
 /// Loads rules from the bundled `config/gitleaks.toml`, runs each regex over the body,
@@ -572,12 +630,18 @@ pub fn detect_exposed_secrets(body: &str) -> Vec<ExposedSecret> {
 /// (including `Set-Cookie` values). Real secrets routinely appear in
 /// `Authorization`, `X-Api-Key`, `X-Amz-Security-Token`, and `Set-Cookie`
 /// (session/JWT) headers, which the HTML-body scan never sees. Findings are
-/// retagged with `location = "response_header"` so analysts can distinguish
-/// them from in-body matches.
+/// retagged with `location = "set_cookie"` when on a Set-Cookie line, otherwise
+/// `response_header`.
 pub fn detect_exposed_secrets_in_headers(header_block: &str) -> Vec<ExposedSecret> {
     let mut found = detect_exposed_secrets_inner(header_block, true);
     for secret in &mut found {
-        secret.location = Cow::Borrowed("response_header");
+        let ctx_lc = secret.context.to_ascii_lowercase();
+        // Prefer the header line around the match (context includes nearby lines).
+        if ctx_lc.contains("set-cookie:") {
+            secret.location = Cow::Borrowed("set_cookie");
+        } else {
+            secret.location = Cow::Borrowed("response_header");
+        }
     }
     found
 }
@@ -659,8 +723,9 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
                 continue;
             }
 
-            let location: Cow<'static, str> = Cow::Borrowed(infer_location(&context));
-            let severity = severity_for_rule_id(&rule.id);
+            let location: Cow<'static, str> =
+                Cow::Borrowed(infer_location_for_body_match(body, mat.start(), &context));
+            let severity = severity_for_finding(&rule.id, line_content);
             let decoded_jwt = match rule.id.as_str() {
                 "jwt" => crate::parse::jwt::decode_jwt(&matched_value),
                 "jwt-base64" => crate::parse::jwt::decode_jwt_base64(&matched_value),
@@ -818,8 +883,8 @@ mod tests {
             "JWT in Set-Cookie must be detected; got {secrets:?}"
         );
         assert!(
-            secrets.iter().all(|s| s.location == "response_header"),
-            "header findings must be tagged response_header"
+            secrets.iter().all(|s| s.location == "set_cookie"),
+            "header findings must be tagged set_cookie"
         );
     }
 
@@ -1090,6 +1155,38 @@ mod tests {
         let body = format!("just plain text {} in body", AWS_KEY);
         let secrets = detect_exposed_secrets(&body);
         assert_eq!(secrets[0].location, "html_body");
+    }
+
+    #[test]
+    fn test_location_json_ld() {
+        let body = format!(
+            r#"<html><script type="application/ld+json">{{"apiKey":"{}"}}</script></html>"#,
+            AWS_KEY
+        );
+        let secrets = detect_exposed_secrets(&body);
+        assert!(
+            !secrets.is_empty(),
+            "expected secret in json-ld; got {secrets:?}"
+        );
+        assert_eq!(secrets[0].location, "json_ld");
+    }
+
+    #[test]
+    fn test_location_set_cookie_vs_other_header() {
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let set_cookie = format!("Set-Cookie: session={jwt}; Path=/\n");
+        let sc = detect_exposed_secrets_in_headers(&set_cookie);
+        assert!(
+            sc.iter().any(|s| s.location == "set_cookie"),
+            "Set-Cookie must be set_cookie; got {sc:?}"
+        );
+
+        let auth = format!("Authorization: Bearer {jwt}\n");
+        let ah = detect_exposed_secrets_in_headers(&auth);
+        assert!(
+            ah.iter().any(|s| s.location == "response_header"),
+            "Authorization must stay response_header; got {ah:?}"
+        );
     }
 
     #[test]
@@ -1386,6 +1483,354 @@ mod tests {
             secrets
         );
         assert_eq!(hubspot.unwrap().matched_value, uuid);
+    }
+
+    /// Response-header correlation IDs must not be reported as `HubSpot` API keys.
+    #[test]
+    fn test_hubspot_correlation_id_header_skipped() {
+        let uuid = "019F9044-75EC-7F8C-9A70-F99ED4ECC4BD";
+        let headers = format!("x-hubspot-correlation-id: {uuid}\nserver: cloudflare\n");
+        let secrets = detect_exposed_secrets_in_headers(&headers);
+        let hubspot = secrets.iter().find(|s| s.secret_type == "hubspot-api-key");
+        assert!(
+            hubspot.is_none(),
+            "x-hubspot-correlation-id should be allowlisted; got {:?}",
+            secrets
+        );
+    }
+
+    /// Public `HubSpot` form widget IDs in env/config blobs must be skipped.
+    #[test]
+    fn test_hubspot_form_id_config_skipped() {
+        let form_id = "7EA134CD-6DBC-482C-B7C2-576FBF09725E";
+        let cases = [
+            format!(r#"PUBLIC_HUBSPOT_CONTACT_FORM_ID:"{form_id}""#),
+            format!(r#""hubspotFormIdProd":"{form_id}""#),
+            format!(r#"REACT_APP_HUBSPOT_FORM_ID_EN:"{form_id}""#),
+        ];
+        for body in cases {
+            let secrets = detect_exposed_secrets(&body);
+            let hubspot = secrets.iter().find(|s| s.secret_type == "hubspot-api-key");
+            assert!(
+                hubspot.is_none(),
+                "HubSpot form ID config should be allowlisted; body={body:?} got={secrets:?}"
+            );
+        }
+    }
+
+    /// Power BI embed tokens share Grafana's eyJrIjoi prefix and must be skipped.
+    #[test]
+    fn test_grafana_api_key_powerbi_embed_skipped() {
+        let token = "eyJrIjoiNTc5MmJjODMtYTM1NS00MWZlLWE1N2EtN2IyNThiOTk3MjI1IiwidCI6IjlkZjk0OWY4LWE2ZWItNDE5ZC05Y2FhLTFmOGM4M2RiNjc0ZiJ9";
+        let body = format!(r#"href="https://app.powerbi.com/view?r={token}" target="_blank""#);
+        let secrets = detect_exposed_secrets(&body);
+        let grafana = secrets.iter().find(|s| s.secret_type == "grafana-api-key");
+        assert!(
+            grafana.is_none(),
+            "Power BI embed token should not be grafana-api-key; got {:?}",
+            secrets
+        );
+    }
+
+    /// A bare Grafana-shaped eyJrIjoi token (no Power BI host) must still be reported.
+    #[test]
+    fn test_grafana_api_key_without_powerbi_still_reported() {
+        let token = "eyJrIjoiNTc5MmJjODMtYTM1NS00MWZlLWE1N2EtN2IyNThiOTk3MjI1IiwidCI6IjlkZjk0OWY4LWE2ZWItNDE5ZC05Y2FhLTFmOGM4M2RiNjc0ZiJ9";
+        let body = format!(r#"const grafanaApiKey = "{token}";"#);
+        let secrets = detect_exposed_secrets(&body);
+        let grafana = secrets.iter().find(|s| s.secret_type == "grafana-api-key");
+        assert!(
+            grafana.is_some(),
+            "Grafana eyJrIjoi token without powerbi.com should still be reported; got {:?}",
+            secrets
+        );
+        assert_eq!(grafana.unwrap().matched_value, token);
+    }
+
+    /// Upstream dropbox-api-token (15-char near "dropbox") is disabled for web.
+    #[test]
+    fn test_dropbox_short_identifier_near_dropbox_skipped() {
+        let body = r#"{"dropbox":true,"theChampSiteUrl":"abcde1234567890"}"#;
+        let secrets = detect_exposed_secrets(body);
+        let dropbox = secrets
+            .iter()
+            .find(|s| s.secret_type == "dropbox-api-token");
+        assert!(
+            dropbox.is_none(),
+            "15-char near dropbox must not fire dropbox-api-token; got {:?}",
+            secrets
+        );
+    }
+
+    /// Disabling dropbox-api-token must not break distinctive long/short-lived rules.
+    #[test]
+    fn test_dropbox_long_and_short_lived_still_detected() {
+        // Long-lived: [a-z0-9]{11}AAAAAAAAAA[a-z0-9\-_=]{43} (letters must be lowercase).
+        let prefix11 = "abcdefghijk";
+        let mid = "AAAAAAAAAA";
+        let suffix43 = "0123456789_-x7km2pq9vl4nr8wy1st6ua3bc5de0fg";
+        assert_eq!(suffix43.len(), 43);
+        let long_tok = format!("{prefix11}{mid}{suffix43}");
+        let body_long = format!(r#"dropbox_token = "{long_tok}""#);
+        let secrets_long = detect_exposed_secrets(&body_long);
+        assert!(
+            secrets_long
+                .iter()
+                .any(|s| s.secret_type == "dropbox-long-lived-api-token"),
+            "long-lived Dropbox token must still match; got {secrets_long:?}"
+        );
+
+        // Short-lived: sl.[a-z0-9\-=_]{135} (letters must be lowercase).
+        let short_rest = "x7km2pq9vl4nr8wy1st6ua3bc5de0fg2hj4km6np8qs0tv2wx4yz6ab8cd0ef2gh4jx7km2pq9vl4nr8wy1st6ua3bc5de0fg2hj4km6np8qs0tv2wx4yz6ab8cd0ef2gh4jxxx";
+        assert_eq!(short_rest.len(), 135);
+        let short_tok = format!("sl.{short_rest}");
+        let body_short = format!(r#"dropbox_api = "{short_tok}""#);
+        let secrets_short = detect_exposed_secrets(&body_short);
+        assert!(
+            secrets_short
+                .iter()
+                .any(|s| s.secret_type == "dropbox-short-lived-api-token"),
+            "short-lived Dropbox token must still match; got {secrets_short:?}"
+        );
+    }
+
+    /// Square EAAA… (binary collision) must not match; sq0atp- still does.
+    #[test]
+    fn test_square_eaaa_skipped_sq0atp_kept() {
+        let eaaa = "EAAA".to_string() + &"A".repeat(40);
+        let body_eaaa = format!(r#"binary blob {eaaa} noise"#);
+        let secrets_eaaa = detect_exposed_secrets(&body_eaaa);
+        assert!(
+            secrets_eaaa
+                .iter()
+                .all(|s| s.secret_type != "square-access-token"),
+            "EAAA must not match square-access-token; got {:?}",
+            secrets_eaaa
+        );
+
+        // Avoid global allowlist stopwords like "abcdefghijklmnopqrstuvwxyz".
+        let sq = "sq0atp-9fK2mP7xQ4nR8wL1sT6uA3bC5dE0";
+        let body_sq = format!(r#"const token = "{sq}";"#);
+        let secrets_sq = detect_exposed_secrets(&body_sq);
+        let square = secrets_sq
+            .iter()
+            .find(|s| s.secret_type == "square-access-token");
+        assert!(
+            square.is_some(),
+            "sq0atp- Square PAT should still be reported; got {:?}",
+            secrets_sq
+        );
+        assert_eq!(square.unwrap().matched_value, sq);
+    }
+
+    /// datadogVersion build hash must not match; `DD_API_KEY` assignment must.
+    #[test]
+    fn test_datadog_version_skipped_api_key_kept() {
+        let hash = "e561f43f1a2b3c4d5e6f708192a3b4c5d6e7f809";
+        let body_ver = format!(r#"{{"datadogVersion":"{hash}"}}"#);
+        let secrets_ver = detect_exposed_secrets(&body_ver);
+        assert!(
+            secrets_ver
+                .iter()
+                .all(|s| s.secret_type != "datadog-access-token"),
+            "datadogVersion hash must not match; got {:?}",
+            secrets_ver
+        );
+
+        let body_key = format!(r#"DD_API_KEY={hash}"#);
+        let secrets_key = detect_exposed_secrets(&body_key);
+        let dd = secrets_key
+            .iter()
+            .find(|s| s.secret_type == "datadog-access-token");
+        assert!(
+            dd.is_some(),
+            "DD_API_KEY assignment should still be reported; got {:?}",
+            secrets_key
+        );
+        assert_eq!(dd.unwrap().matched_value, hash);
+    }
+
+    /// Bare EAAC… without `access_token` assignment must not match; assignment must.
+    #[test]
+    fn test_facebook_page_token_requires_assignment() {
+        // High-entropy EAAC token; need ≥100 chars after EAAC for the rule.
+        let token = format!(
+            "EAAC{}",
+            "x7Km2pQ9vL4nR8wY1sT6uA3bC5dE0fG2hJ4kM6nP8qS0tV2wX4yZ6aB8cD0eF2gH4j".repeat(2)
+        );
+        assert!(token.len() >= 104);
+        let body_bare = format!(r#"noise {token} more"#);
+        let secrets_bare = detect_exposed_secrets(&body_bare);
+        assert!(
+            secrets_bare
+                .iter()
+                .all(|s| s.secret_type != "facebook-page-access-token"),
+            "bare EAAC must not match facebook-page-access-token; got {:?}",
+            secrets_bare
+        );
+
+        let body_assign = format!(r#"access_token="{token}""#);
+        let secrets_assign = detect_exposed_secrets(&body_assign);
+        let fb = secrets_assign
+            .iter()
+            .find(|s| s.secret_type == "facebook-page-access-token");
+        assert!(
+            fb.is_some(),
+            "access_token= EAAC should still be reported; got {:?}",
+            secrets_assign
+        );
+        assert_eq!(fb.unwrap().matched_value, token);
+    }
+
+    /// Lowercase camelCase near linkedin (JS property) must be skipped.
+    #[test]
+    fn test_linkedin_camelcase_property_skipped() {
+        let body = r#"{"linkedin":"share","thumbnailWidth":"abcdefghijklmn"}"#;
+        let secrets = detect_exposed_secrets(body);
+        assert!(
+            secrets
+                .iter()
+                .all(|s| s.secret_type != "linkedin-client-id"),
+            "thumbnailWidth must not match linkedin-client-id; got {:?}",
+            secrets
+        );
+    }
+
+    /// Lowercase camelCase 16-char property must not match linkedin-client-secret.
+    #[test]
+    fn test_linkedin_client_secret_camelcase_skipped() {
+        let body = r#"linkedin_client_secret = "thumbnailWidthab""#;
+        let secrets = detect_exposed_secrets(body);
+        assert!(
+            secrets
+                .iter()
+                .all(|s| s.secret_type != "linkedin-client-secret"),
+            "camelCase property must not be reported as linkedin-client-secret; got {secrets:?}"
+        );
+    }
+
+    /// Opaque non-camel `LinkedIn` client id assignment must still be reported.
+    #[test]
+    fn test_linkedin_opaque_client_id_still_reported() {
+        // 14-char opaque token: no lowercase→uppercase camelCase transition.
+        let client_id = "ab12cd34ef56gh";
+        let body = format!(r#"linkedin_client_id = "{client_id}""#);
+        let secrets = detect_exposed_secrets(&body);
+        let linkedin = secrets
+            .iter()
+            .find(|s| s.secret_type == "linkedin-client-id");
+        assert!(
+            linkedin.is_some(),
+            "opaque linkedin client id should still be reported; got {:?}",
+            secrets
+        );
+        assert_eq!(linkedin.unwrap().matched_value, client_id);
+    }
+
+    /// Opaque 16-char `LinkedIn` client secret must still be reported.
+    #[test]
+    fn test_linkedin_opaque_client_secret_still_reported() {
+        let secret = "a1b2c3d4e5f6g7h8";
+        assert_eq!(secret.len(), 16);
+        let body = format!(r#"linkedin_client_secret = "{secret}""#);
+        let secrets = detect_exposed_secrets(&body);
+        let linkedin = secrets
+            .iter()
+            .find(|s| s.secret_type == "linkedin-client-secret");
+        assert!(
+            linkedin.is_some(),
+            "opaque linkedin client secret should still be reported; got {:?}",
+            secrets
+        );
+        assert_eq!(linkedin.unwrap().matched_value, secret);
+    }
+
+    /// X-Amz-Credential= AWS key IDs are Low; bare AKIA in HTML remains High.
+    #[test]
+    fn test_aws_amz_credential_severity_demoted() {
+        // AKIA + 16 chars from [A-Z2-7] (no 0/1/8/9); must not end in EXAMPLE.
+        let akia = "AKIAYCQ2ABCD2EFGHJKL";
+        assert_eq!(akia.len(), 20);
+
+        let signed = format!(
+            r#"href="https://bucket.s3.amazonaws.com/x?X-Amz-Credential={akia}%2F20260101%2Fus-east-1%2Fs3%2Faws4_request""#
+        );
+        let secrets_signed = detect_exposed_secrets(&signed);
+        let aws_signed = secrets_signed
+            .iter()
+            .find(|s| s.secret_type == "aws-access-token");
+        assert!(
+            aws_signed.is_some(),
+            "Amz-Credential AKIA should still be recorded; got {:?}",
+            secrets_signed
+        );
+        assert_eq!(
+            aws_signed.unwrap().severity,
+            SecretSeverity::Low,
+            "Amz-Credential should be Low severity"
+        );
+
+        let comment = format!(r#"<!-- {akia} VFvFrZXsecretlooking -->"#);
+        let secrets_comment = detect_exposed_secrets(&comment);
+        let aws_comment = secrets_comment
+            .iter()
+            .find(|s| s.secret_type == "aws-access-token");
+        assert!(
+            aws_comment.is_some(),
+            "bare AKIA in comment should still be reported; got {:?}",
+            secrets_comment
+        );
+        assert_eq!(
+            aws_comment.unwrap().severity,
+            SecretSeverity::High,
+            "bare AKIA should remain High"
+        );
+    }
+
+    /// Weglot / App Insights / Prismic public IDs must not fire generic-api-key.
+    #[test]
+    fn test_generic_public_product_ids_skipped() {
+        let weglot_key = "wg_0123456789abcdef0123456789abcdef";
+        let body_wg = format!(r#"Weglot.initialize({{ api_key: '{weglot_key}' }});"#);
+        let secrets_wg = detect_exposed_secrets(&body_wg);
+        assert!(
+            secrets_wg
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key"
+                    && s.matched_value.eq_ignore_ascii_case(weglot_key))),
+            "Weglot wg_ key should be allowlisted; got {:?}",
+            secrets_wg
+        );
+
+        let uuid = "12345678-1234-1234-1234-123456789abc";
+        let body_ai = format!(r#"instrumentationKey:'{uuid}'"#);
+        let secrets_ai = detect_exposed_secrets(&body_ai);
+        assert!(
+            secrets_ai
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == uuid)),
+            "App Insights instrumentationKey should be allowlisted; got {:?}",
+            secrets_ai
+        );
+
+        let body_prismic = format!(
+            r#"{{"link":{{"link_type":"Document","key":"{uuid}","url":"https://example.com"}}}}"#
+        );
+        let secrets_prismic = detect_exposed_secrets(&body_prismic);
+        assert!(
+            secrets_prismic
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == uuid)),
+            "Prismic link_type+key should be allowlisted; got {:?}",
+            secrets_prismic
+        );
+    }
+
+    /// JWT rule severity is explicitly Low (inventory, not triage-urgent).
+    #[test]
+    fn test_jwt_severity_is_low() {
+        assert_eq!(severity_for_rule_id("jwt"), SecretSeverity::Low);
+        assert_eq!(severity_for_rule_id("jwt-base64"), SecretSeverity::Low);
     }
 
     /// `LinkedIn` client-id rule: line with extensionPointId / pageJsonFileName (block IDs) must be allowlisted.

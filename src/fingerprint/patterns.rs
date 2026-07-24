@@ -586,8 +586,19 @@ fn evaluate_version_ternary(expression: &str, captures: &regex::Captures) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
 
-    /// Clears the regex cache (useful for testing).
+    /// Serializes tests that clear or assert on the global `REGEX_CACHE`.
+    /// Without this, `invalidate_all` in one test races with cache lookups in others
+    /// (observed flake: `test_regex_cache_works` on macOS CI).
+    fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Clears the regex cache (useful for testing). Caller must hold [`cache_test_lock`].
     fn clear_regex_cache() {
         REGEX_CACHE.invalidate_all();
     }
@@ -775,23 +786,27 @@ mod tests {
 
     #[test]
     fn test_regex_cache_works() {
-        clear_regex_cache();
+        let _guard = cache_test_lock();
+        // Unique key as defense in depth against any unlocked clear paths.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pattern = format!("^nginx_cache_works_{stamp}");
+        let text = format!("nginx_cache_works_{stamp}/1.18.0");
 
-        // First call should compile and cache
-        assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
-
-        // Second call should use cache
-        assert!(matches_pattern("^nginx", "nginx/1.18.0").matched);
-
-        // Verify cache is populated (the real test — timing assertions are flaky on CI)
+        assert!(matches_pattern(&pattern, &text).matched);
+        assert!(matches_pattern(&pattern, &text).matched);
         assert!(
-            REGEX_CACHE.get("^nginx").is_some(),
-            "Cache should contain compiled regex for '^nginx'"
+            REGEX_CACHE.get(&pattern).is_some(),
+            "Cache should contain compiled regex for '{pattern}'"
         );
     }
 
     #[test]
     fn test_regex_cache_thread_safety() {
+        let _guard = cache_test_lock();
         // Use unique patterns with a test-specific prefix and timestamp to avoid conflicts
         // with other tests running in parallel. This ensures the test is deterministic.
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -859,6 +874,7 @@ mod tests {
 
     #[test]
     fn test_regex_cache_benchmark() {
+        let _guard = cache_test_lock();
         clear_regex_cache();
 
         // Benchmark: compile same regex 1000 times
@@ -1137,28 +1153,33 @@ mod tests {
 
     #[test]
     fn test_get_or_compile_regex_caching() {
-        // Test regex caching through matches_pattern. Asserts on cache state,
-        // not wall-clock timing — timing assertions flake under coverage
-        // instrumentation (tarpaulin) and CI load.
-        clear_regex_cache();
+        let _guard = cache_test_lock();
+        // Unique key — lock prevents parallel invalidate_all races.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pattern = format!("^test_pattern_cache_{stamp}");
+        let text = format!("test_pattern_cache_{stamp}_value");
+
         assert!(
-            REGEX_CACHE.get("^test_pattern").is_none(),
-            "Cache should not contain the pattern before first use"
+            REGEX_CACHE.get(&pattern).is_none(),
+            "Cache should not contain the unique pattern before first use"
         );
 
-        // First call compiles and populates the cache
-        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
+        assert!(matches_pattern(&pattern, &text).matched);
         assert!(
-            REGEX_CACHE.get("^test_pattern").is_some(),
+            REGEX_CACHE.get(&pattern).is_some(),
             "Cache should contain compiled regex after first use"
         );
 
-        // Second call still matches (served from cache)
-        assert!(matches_pattern("^test_pattern", "test_pattern_value").matched);
+        assert!(matches_pattern(&pattern, &text).matched);
     }
 
     #[test]
     fn test_regex_cache_eviction() {
+        let _guard = cache_test_lock();
         // Test that LRU caching works correctly
         // Note: With 10k cache size, filling to capacity is impractical for unit tests.
         // This test verifies the cache stores and retrieves patterns correctly.

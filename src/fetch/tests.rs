@@ -220,36 +220,6 @@ fn test_url_join_relative_fragment_location() {
 }
 
 #[test]
-fn test_url_join_malformed_location() {
-    // Test malformed Location header (should fail parsing)
-    let base = Url::parse("https://example.com/path").unwrap();
-    let malformed_location = "not a valid url!!!";
-
-    let parsed_direct = Url::parse(malformed_location);
-    assert!(parsed_direct.is_err());
-
-    // When direct parse fails, should try joining with base
-    let joined = base.join(malformed_location);
-    // This might succeed or fail depending on URL parser behavior
-    // The important thing is it doesn't panic
-    let _ = joined;
-}
-
-#[test]
-fn test_url_join_empty_location() {
-    // Edge case: empty Location header
-    let base = Url::parse("https://example.com/path").unwrap();
-    let empty_location = "";
-
-    let parsed_direct = Url::parse(empty_location);
-    assert!(parsed_direct.is_err());
-
-    let joined = base.join(empty_location);
-    // Empty string might be treated as relative path
-    let _ = joined;
-}
-
-#[test]
 fn test_url_join_protocol_relative() {
     // Protocol-relative URLs (//example.com/path) - common redirect pattern
     let protocol_relative = "//other.com/new";

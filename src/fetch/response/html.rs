@@ -355,6 +355,8 @@ pub(crate) fn parse_html_content(
         script_sources,
         script_content,
         script_tag_ids,
+        external_scripts_eligible: 0,
+        external_scripts_scanned: 0,
         favicon_url,
         canonical_url,
         meta_refresh_url,

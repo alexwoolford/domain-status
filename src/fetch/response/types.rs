@@ -23,6 +23,8 @@ pub(crate) struct ResponseData {
     pub(crate) http_headers: HashMap<String, String>,
     pub(crate) body: Arc<str>,
     pub(crate) body_sha256: Option<String>,
+    /// True when the response body hit `MAX_RESPONSE_BODY_SIZE` and only a prefix was kept.
+    pub(crate) body_truncated: bool,
     pub(crate) content_length: Option<i64>,
     pub(crate) http_version: Option<String>,
     pub(crate) body_word_count: Option<i64>,
@@ -46,6 +48,10 @@ pub(crate) struct HtmlData {
     pub(crate) script_sources: Vec<String>,
     pub(crate) script_content: String, // Inline script content for js field detection
     pub(crate) script_tag_ids: HashSet<String>, // Script tag IDs (for __NEXT_DATA__ etc.)
+    /// First-party external script candidates considered when scanning is enabled.
+    pub(crate) external_scripts_eligible: u32,
+    /// External scripts successfully fetched/scanned (0 when flag off).
+    pub(crate) external_scripts_scanned: u32,
     pub(crate) favicon_url: Option<String>, // Favicon URL extracted from <link rel="icon"> tags
     pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
     pub(crate) meta_refresh_url: Option<String>, // Meta refresh redirect URL

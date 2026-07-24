@@ -124,7 +124,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::TempDir;
-    use whois_service::{ParsedWhoisData, WhoisResponse};
+    use whois_service::{LookupStatus, ParsedWhoisData, WhoisResponse};
 
     fn fake_response() -> WhoisResponse {
         WhoisResponse {
@@ -147,6 +147,7 @@ mod tests {
                 updated_ago: None,
                 expires_in: None,
             }),
+            lookup_status: LookupStatus::Found,
             cached: false,
             query_time_ms: 25,
             parsing_analysis: None,
