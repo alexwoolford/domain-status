@@ -79,5 +79,3 @@ LIMIT 50;
 ## Overrides
 
 Web-specific rule replaces and allowlists live in `config/gitleaks.overrides.toml` and are merged at load time so they are not overwritten when refreshing upstream `config/gitleaks.toml`. Prefer same-id `[[rules]]` replaces and structural filters for broad FPs; add `[[append]]` allowlists only for clear product-format public IDs. Add unit tests in `src/parse/secrets.rs` for each new mitigation.
-
-For a full audit of secret types (legit vs false positive) and the fixes applied, see [SECRET_DETECTION_NOTES.md](SECRET_DETECTION_NOTES.md).

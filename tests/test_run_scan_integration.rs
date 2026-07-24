@@ -10,19 +10,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::NamedTempFile;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Helper function to create a temporary database file
 fn create_temp_db() -> NamedTempFile {
     NamedTempFile::new().expect("Failed to create temp database file")
-}
-
-/// Helper function to create a temporary directory for test artifacts
-#[allow(dead_code)]
-fn create_temp_dir() -> TempDir {
-    TempDir::new().expect("Failed to create temp directory")
 }
 
 /// Helper function to write URLs to a temporary file (sync I/O)

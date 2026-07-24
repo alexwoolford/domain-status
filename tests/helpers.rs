@@ -8,19 +8,6 @@ use std::path::PathBuf;
 
 use domain_status::run_migrations;
 
-/// Creates a test database pool with migrations applied.
-/// Uses an in-memory database for fast test execution.
-#[allow(dead_code)] // Used by other test files
-pub async fn create_test_pool() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("Failed to create test database pool");
-    run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
-    pool
-}
-
 /// Creates a test database pool from a file path.
 /// Useful for tests that need persistence or specific database files.
 /// If the database file already exists, it will be reused (not truncated).
@@ -94,24 +81,8 @@ pub async fn create_test_url_status(
     .get::<i64, _>(0)
 }
 
-/// Creates a test URL status record with default values.
-/// Convenience function for tests that don't need specific values.
-#[allow(dead_code)] // Used by other test files
-pub async fn create_test_url_status_default(pool: &SqlitePool) -> i64 {
-    create_test_url_status(
-        pool,
-        "example.com",
-        "example.com",
-        200,
-        None,
-        1704067200000i64,
-    )
-    .await
-}
-
 /// Creates a test run record and returns its `run_id`.
 /// Uses direct SQL insertion for simplicity in tests.
-#[allow(dead_code)] // Used by other test files
 pub async fn create_test_run(pool: &SqlitePool, run_id: &str, timestamp: i64) -> String {
     sqlx::query("INSERT INTO runs (run_id, start_time_ms, version, fingerprints_source, fingerprints_version, geoip_version) VALUES (?, ?, ?, ?, ?, ?)")
         .bind(run_id)

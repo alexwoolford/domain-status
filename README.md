@@ -579,7 +579,7 @@ The database uses a **star schema** design pattern with:
 - Comprehensive indexes for fast queries
 - Normalized structure for efficient storage and analytics
 
-For complete database schema documentation including entity-relationship diagrams, table descriptions, indexes, constraints, and query examples, see [DATABASE.md](DATABASE.md).
+For complete database schema documentation including entity-relationship diagrams, table descriptions, indexes, constraints, and query examples, see [DATABASE.md](DATABASE.md). For a cookbook of common analysis queries, see [QUERIES.md](QUERIES.md).
 
 ### Database Capabilities Highlights
 
@@ -1018,7 +1018,7 @@ The scanner looks for accidentally exposed secrets in HTML (e.g. API keys, token
 
 ## 🔨 Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [docs/DEVELOPER_BOOTSTRAP.md](docs/DEVELOPER_BOOTSTRAP.md) for the full local setup path.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [docs/DEVELOPER_BOOTSTRAP.md](docs/DEVELOPER_BOOTSTRAP.md) for the full local setup path. See [RELEASES.md](RELEASES.md) for the release checklist.
 
 See [TESTING.md](TESTING.md) for detailed information about:
 - Test structure (unit, integration, e2e)

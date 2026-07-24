@@ -50,11 +50,11 @@ Uses `just` as the task runner (install: `cargo install just`).
 - **`src/config/`** — Config struct with file + env + CLI merging
 - **`src/parse/`** — JWT claims parsing, exposed secret detection
 - **`src/status_server/`** — Live monitoring HTTP endpoints
-- **`src/adaptive_rate_limiter/`** — Token bucket rate limiting
+- **`src/initialization/rate_limiter.rs`** — Token bucket rate limiting
 
 ### Database
 
-SQLite with WAL mode. Schema in `migrations/` (8 migration files). Main tables: `runs`, `url_status` (fact table), `url_failures`, plus ~25 satellite tables for DNS records, TLS certs, headers, technologies, WHOIS, GeoIP, secrets, etc. Full schema documented in `DATABASE.md`.
+SQLite with WAL mode. Schema in `migrations/` (9 migration files). Main tables: `runs`, `url_status` (fact table), `url_failures`, plus ~25 satellite tables for DNS records, TLS certs, headers, technologies, WHOIS, GeoIP, secrets, etc. Full schema documented in `DATABASE.md`.
 
 ### Workspace Structure
 

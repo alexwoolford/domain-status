@@ -139,52 +139,6 @@ async fn count_url_records(pool: &SqlitePool) -> i64 {
         .expect("Failed to count url_status records")
 }
 
-/// Counts satellite records for a specific `url_status_id`.
-///
-/// Returns tuple: (technologies, nameservers, `txt_records`, `mx_records`, headers)
-#[allow(dead_code)]
-async fn count_satellite_records(
-    pool: &SqlitePool,
-    url_status_id: i64,
-) -> (i64, i64, i64, i64, i64) {
-    let technologies: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM url_technologies WHERE url_status_id = ?")
-            .bind(url_status_id)
-            .fetch_one(pool)
-            .await
-            .expect("Failed to count technologies");
-
-    let nameservers: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM url_nameservers WHERE url_status_id = ?")
-            .bind(url_status_id)
-            .fetch_one(pool)
-            .await
-            .expect("Failed to count nameservers");
-
-    let txt_records: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM url_txt_records WHERE url_status_id = ?")
-            .bind(url_status_id)
-            .fetch_one(pool)
-            .await
-            .expect("Failed to count txt_records");
-
-    let mx_records: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM url_mx_records WHERE url_status_id = ?")
-            .bind(url_status_id)
-            .fetch_one(pool)
-            .await
-            .expect("Failed to count mx_records");
-
-    let headers: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM url_http_headers WHERE url_status_id = ?")
-            .bind(url_status_id)
-            .fetch_one(pool)
-            .await
-            .expect("Failed to count headers");
-
-    (technologies, nameservers, txt_records, mx_records, headers)
-}
-
 /// Checks for orphaned satellite records (records without parent `url_status`).
 ///
 /// Returns the count of orphaned records across all satellite tables.
