@@ -7,6 +7,7 @@ use hickory_resolver::TokioResolver;
 use std::sync::Arc;
 
 use crate::error_handling::ProcessingStats;
+use crate::fingerprint::FingerprintRuleset;
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
@@ -24,16 +25,12 @@ pub struct NetworkContext {
     pub resolver: Arc<TokioResolver>,
 }
 
-/// Database-related resources (connection pool).
+/// Runtime flags and statistics tracked during a scan.
+///
+/// Named `RuntimeContext` (not "config") because it holds live stats and
+/// per-run flags rather than static configuration file contents.
 #[derive(Clone)]
-pub struct DatabaseContext {
-    /// Database connection pool (for failure recording)
-    pub pool: DbPool,
-}
-
-/// Configuration and statistics tracking.
-#[derive(Clone)]
-pub struct ConfigContext {
+pub struct RuntimeContext {
     /// Error statistics tracker
     pub error_stats: Arc<ProcessingStats>,
     /// Timing statistics tracker (for performance analysis)
@@ -61,10 +58,12 @@ pub struct ConfigContext {
 pub struct ProcessingContext {
     /// Network-related resources
     pub network: NetworkContext,
-    /// Database-related resources
-    pub db: DatabaseContext,
-    /// Configuration and statistics
-    pub config: ConfigContext,
+    /// Database connection pool (for inserts and failure recording)
+    pub pool: DbPool,
+    /// Runtime flags and statistics
+    pub runtime: RuntimeContext,
+    /// Fingerprint ruleset used for technology detection (hot path; no global lookup)
+    pub ruleset: Arc<FingerprintRuleset>,
 }
 
 impl NetworkContext {
@@ -84,15 +83,8 @@ impl NetworkContext {
     }
 }
 
-impl DatabaseContext {
-    /// Creates a new `DatabaseContext` with the given pool.
-    pub fn new(pool: DbPool) -> Self {
-        Self { pool }
-    }
-}
-
-impl ConfigContext {
-    /// Creates a new `ConfigContext` with the given resources.
+impl RuntimeContext {
+    /// Creates a new `RuntimeContext` with the given resources.
     #[allow(clippy::too_many_arguments)] // small per-feature flags; refactor would
                                          // produce more boilerplate than it saves
     pub fn new(
@@ -117,15 +109,18 @@ impl ConfigContext {
 }
 
 impl ProcessingContext {
-    /// Creates a new `ProcessingContext` from pre-built sub-contexts.
-    ///
-    /// Accepts the three sub-structs directly, eliminating the 10-argument
-    /// constructor and the `clippy::too_many_arguments` suppression.
-    pub fn new(network: NetworkContext, db: DatabaseContext, config: ConfigContext) -> Self {
+    /// Creates a new `ProcessingContext` from pre-built sub-contexts and a ruleset.
+    pub fn new(
+        network: NetworkContext,
+        pool: DbPool,
+        runtime: RuntimeContext,
+        ruleset: Arc<FingerprintRuleset>,
+    ) -> Self {
         Self {
             network,
-            db,
-            config,
+            pool,
+            runtime,
+            ruleset,
         }
     }
 }
@@ -146,13 +141,15 @@ mod tests {
     }
 
     fn create_test_extractor() -> Arc<psl::List> {
-        // Create a domain extractor for testing
         Arc::new(psl::List)
+    }
+
+    fn empty_ruleset() -> Arc<FingerprintRuleset> {
+        Arc::new(FingerprintRuleset::empty_for_tests())
     }
 
     #[tokio::test]
     async fn test_processing_context_new() {
-        // Create test resources
         let client = Arc::new(
             reqwest::Client::builder()
                 .build()
@@ -175,8 +172,8 @@ mod tests {
                 .expect("Failed to create test pool"),
         );
         let timing_stats = Arc::new(TimingStats::new());
+        let ruleset = empty_ruleset();
 
-        // Create context
         let context = ProcessingContext::new(
             NetworkContext::new(
                 client.clone(),
@@ -184,8 +181,8 @@ mod tests {
                 extractor.clone(),
                 resolver.clone(),
             ),
-            DatabaseContext::new(pool.clone()),
-            ConfigContext::new(
+            pool.clone(),
+            RuntimeContext::new(
                 error_stats.clone(),
                 timing_stats.clone(),
                 run_id.clone(),
@@ -194,9 +191,9 @@ mod tests {
                 Arc::new(RuntimeMetrics::default()),
                 true,
             ),
+            Arc::clone(&ruleset),
         );
 
-        // Verify all fields are set correctly
         assert_eq!(Arc::as_ptr(&context.network.client), Arc::as_ptr(&client));
         assert_eq!(
             Arc::as_ptr(&context.network.redirect_client),
@@ -211,21 +208,21 @@ mod tests {
             Arc::as_ptr(&resolver)
         );
         assert_eq!(
-            Arc::as_ptr(&context.config.error_stats),
+            Arc::as_ptr(&context.runtime.error_stats),
             Arc::as_ptr(&error_stats)
         );
-        assert_eq!(context.config.run_id, run_id);
-        assert_eq!(context.config.enable_whois, enable_whois);
-        assert_eq!(Arc::as_ptr(&context.db.pool), Arc::as_ptr(&pool));
+        assert_eq!(context.runtime.run_id, run_id);
+        assert_eq!(context.runtime.enable_whois, enable_whois);
+        assert_eq!(Arc::as_ptr(&context.pool), Arc::as_ptr(&pool));
         assert_eq!(
-            Arc::as_ptr(&context.config.timing_stats),
+            Arc::as_ptr(&context.runtime.timing_stats),
             Arc::as_ptr(&timing_stats)
         );
+        assert_eq!(Arc::as_ptr(&context.ruleset), Arc::as_ptr(&ruleset));
     }
 
     #[tokio::test]
     async fn test_processing_context_without_run_id() {
-        // Test context creation without run_id
         let client = Arc::new(
             reqwest::Client::builder()
                 .build()
@@ -251,8 +248,8 @@ mod tests {
 
         let context = ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 error_stats,
                 timing_stats,
                 run_id,
@@ -261,8 +258,9 @@ mod tests {
                 Arc::new(RuntimeMetrics::default()),
                 true,
             ),
+            empty_ruleset(),
         );
 
-        assert_eq!(context.config.run_id, None);
+        assert_eq!(context.runtime.run_id, None);
     }
 }

@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::config::{Config, DEFAULT_USER_AGENT};
 use crate::error_handling::ProcessingStats;
-use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
 use crate::initialization::{
     init_client, init_extractor, init_rate_limiter, init_redirect_client, init_resolver,
     init_semaphore,
@@ -184,6 +184,12 @@ pub async fn init_scan_resources(
     let start_time_epoch = Utc::now().timestamp_millis();
     let run_id = format!("run_{start_time_epoch}");
     info!("Starting run: {run_id}");
+    info!(
+        "Timeouts: HTTP request={}s, per-URL processing={}s (hardcoded), drain={}s",
+        config.timeout_seconds,
+        crate::config::URL_PROCESSING_TIMEOUT.as_secs(),
+        config.drain_timeout_secs
+    );
 
     let meta = RunMetadata {
         run_id: &run_id,
@@ -222,8 +228,8 @@ pub async fn init_scan_resources(
             Arc::clone(&extractor),
             Arc::clone(&resolver),
         ),
-        DatabaseContext::new(Arc::clone(&pool)),
-        ConfigContext::new(
+        Arc::clone(&pool),
+        RuntimeContext::new(
             error_stats.clone(),
             Arc::clone(&timing_stats),
             Some(run_id.clone()),
@@ -232,17 +238,14 @@ pub async fn init_scan_resources(
             Arc::clone(&runtime_metrics),
             config.allow_localhost_for_tests,
         ),
+        Arc::clone(&ruleset),
     ));
 
     let resources = ScanResources {
-        pool,
         shared_ctx,
         semaphore,
         request_limiter,
         rate_limiter_shutdown,
-        error_stats,
-        timing_stats,
-        runtime_metrics,
         in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         completed_urls,
         successful_urls,
@@ -253,7 +256,6 @@ pub async fn init_scan_resources(
         run_id,
         start_time_epoch,
         start_time,
-        _ruleset: ruleset,
         _geoip_metadata: geoip_metadata,
         config,
     };

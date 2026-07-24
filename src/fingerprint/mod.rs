@@ -25,8 +25,6 @@ mod patterns;
 mod ruleset;
 
 // Re-export public API
-#[cfg(test)]
-pub use detection::detect_technologies;
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use detection::{get_technology_category, DetectedTechnology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
@@ -34,8 +32,10 @@ pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use ruleset::init_ruleset;
 
-// For spawn_blocking path (fetch layer): ruleset fetch + blocking detection
+// Blocking detection for the scan hot path (ruleset passed explicitly).
 pub(crate) use detection::detect_technologies_blocking;
+// Global getter retained for unit tests that call `init_ruleset` then exercise matchers.
+#[cfg(test)]
 pub(crate) use ruleset::get_ruleset;
 
 #[cfg(test)]
@@ -45,6 +45,7 @@ mod tests {
     use crate::fingerprint::patterns::matches_pattern;
     use reqwest::header::HeaderMap;
     use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_pattern_matching() {
@@ -77,42 +78,33 @@ mod tests {
         assert!(stripped3.contains("lz_chat_execute"));
     }
 
-    #[tokio::test]
-    async fn test_detect_technologies_empty() {
-        // This test verifies behavior with empty input
-        // In CI, the ruleset may be initialized by other tests
+    #[test]
+    fn test_detect_technologies_empty() {
         let meta_tags = HashMap::new();
         let script_sources = Vec::new();
         let script_content = "";
         let html_text = "";
         let headers = HeaderMap::new();
         let url = "https://example.com";
-
         let script_tag_ids = HashSet::new();
-        let normalized_body = html_text.to_lowercase(); // Normalize for HTML pattern matching
-        let result = detect_technologies(
+        let normalized_body = html_text.to_lowercase();
+        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
+
+        let detected = detect_technologies_blocking(
+            &ruleset,
+            &headers,
             &meta_tags,
             &script_sources,
             script_content,
-            &normalized_body, // Use normalized body
-            &headers,
+            &normalized_body,
             url,
             &script_tag_ids,
         )
-        .await;
+        .expect("empty ruleset detection should succeed");
 
-        // Ruleset may be initialized by other tests, so both success and error are valid
-        match result {
-            Ok(detected) => {
-                // Ruleset is initialized - should return empty set for empty input
-                assert!(
-                    detected.is_empty(),
-                    "Empty input should return empty detection"
-                );
-            }
-            Err(_) => {
-                // Ruleset not initialized - this is expected in unit test context
-            }
-        }
+        assert!(
+            detected.is_empty(),
+            "Empty input should return empty detection"
+        );
     }
 }

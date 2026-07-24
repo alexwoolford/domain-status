@@ -64,7 +64,7 @@ pub async fn prepare_record_for_insertion(
         &params.additional_dns,
         params.elapsed,
         params.timestamp,
-        params.ctx.config.run_id.as_ref(),
+        params.ctx.runtime.run_id.as_ref(),
     );
 
     // Perform enrichment lookups in parallel where possible
@@ -113,7 +113,7 @@ pub async fn prepare_record_for_insertion(
         },
         // WHOIS lookup (async, can be slow)
         async {
-            if params.ctx.config.enable_whois {
+            if params.ctx.runtime.enable_whois {
                 let whois_start = Instant::now();
                 log::debug!(
                     "Performing WHOIS lookup for domain: {}",
@@ -175,7 +175,7 @@ pub async fn prepare_record_for_insertion(
         security_warnings,
         whois_data,
         timestamp: params.timestamp,
-        run_id: params.ctx.config.run_id.clone(),
+        run_id: params.ctx.runtime.run_id.clone(),
         favicon: params.favicon,
         additional_dns: params.additional_dns,
     });
@@ -192,7 +192,7 @@ mod tests {
     use crate::error_handling::ProcessingStats;
     use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
     use crate::fetch::response::{HtmlData, ResponseData};
-    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+    use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
     use crate::utils::TimingStats;
     use hickory_resolver::config::ResolverOpts;
     use hickory_resolver::TokioResolver;
@@ -233,8 +233,8 @@ mod tests {
 
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 error_stats,
                 timing_stats,
                 run_id,
@@ -243,6 +243,7 @@ mod tests {
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(crate::fingerprint::FingerprintRuleset::empty_for_tests()),
         )
     }
 
@@ -480,10 +481,12 @@ mod tests {
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
+                category: None,
             },
         ];
 
@@ -547,7 +550,7 @@ mod tests {
         // This is critical - WHOIS is an expensive operation and should only run when enabled
         let mut ctx = create_test_context().await;
         // Enable WHOIS for this test
-        ctx.config.enable_whois = true;
+        ctx.runtime.enable_whois = true;
         let resp_data = create_minimal_resp_data();
         let html_data = create_minimal_html_data();
         let tls_dns_data = create_minimal_tls_dns_data();

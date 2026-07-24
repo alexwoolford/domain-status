@@ -1,6 +1,9 @@
 //! Technology detection with error handling.
 
+use std::sync::Arc;
+
 use crate::fetch::response::{HtmlData, ResponseData};
+use crate::fingerprint::FingerprintRuleset;
 
 /// Detects technologies with error handling and logging.
 /// Runs CPU-bound regex matching on a blocking thread to avoid starving the async executor.
@@ -10,20 +13,13 @@ pub(crate) async fn detect_technologies_safely(
     html_data: &HtmlData,
     resp_data: &ResponseData,
     error_stats: &crate::error_handling::ProcessingStats,
+    ruleset: &Arc<FingerprintRuleset>,
 ) -> Vec<crate::fingerprint::DetectedTechnology> {
-    // Fetch ruleset on async runtime (fast; in-memory).
-    let Some(ruleset) = crate::fingerprint::get_ruleset().await else {
-        log::warn!(
-            "Technology detection skipped for {}: ruleset not initialized",
-            resp_data.final_domain
-        );
-        return Vec::new();
-    };
-
     // wappalyzergo normalizes body to lowercase: normalizedBody := bytes.ToLower(body)
     let normalized_body = resp_data.body.to_lowercase();
 
     // Clone data for use inside spawn_blocking (closure must own values).
+    let ruleset = Arc::clone(ruleset);
     let headers = resp_data.headers.clone();
     let meta_tags = html_data.meta_tags.clone();
     let script_sources = html_data.script_sources.clone();
@@ -144,90 +140,68 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_technologies_safely_success() {
-        let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
+        let resp_data = create_test_response_data();
         let error_stats = Arc::new(ProcessingStats::new());
+        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
 
-        // This will fail if ruleset is not initialized, but tests error handling
-        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
-
-        // Should return empty vector on error (ruleset not initialized)
-        // or vector of technologies if ruleset is initialized
-        assert!(result.is_empty() || !result.is_empty());
+        let result =
+            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
+                .await;
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn test_detect_technologies_safely_error_handling() {
-        let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let initial_errors =
-            error_stats.get_error_count(crate::error_handling::ErrorType::TechnologyDetectionError);
-
-        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
-
-        // Should not panic even if detection fails
-        // Error stats may be incremented if detection fails
-        let _ = (result, initial_errors);
-    }
-
-    #[tokio::test]
-    async fn test_detect_technologies_safely_empty_result() {
         let resp_data = create_test_response_data();
-        let mut html_data = create_test_html_data();
-        // Empty HTML data should result in empty technologies
-        html_data.meta_tags = HashMap::new();
-        html_data.script_sources = vec![];
-
         let error_stats = Arc::new(ProcessingStats::new());
-        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
+        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
 
-        // Should return empty vector when no technologies detected
-        // (May be non-empty if ruleset has URL-based patterns, but empty is expected)
+        let result =
+            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
+                .await;
         let _ = result;
     }
 
     #[tokio::test]
-    async fn test_detect_technologies_safely_error_stats_incremented() {
-        // Test that error stats are correctly incremented when detection fails
-        let resp_data = create_test_response_data();
+    async fn test_detect_technologies_safely_empty_result() {
         let html_data = create_test_html_data();
+        let resp_data = create_test_response_data();
         let error_stats = Arc::new(ProcessingStats::new());
+        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
 
-        let initial_count =
-            error_stats.get_error_count(crate::error_handling::ErrorType::TechnologyDetectionError);
+        let result =
+            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
+                .await;
+        assert!(result.is_empty());
+    }
 
-        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
+    #[tokio::test]
+    async fn test_detect_technologies_safely_error_stats_incremented() {
+        let html_data = create_test_html_data();
+        let resp_data = create_test_response_data();
+        let error_stats = Arc::new(ProcessingStats::new());
+        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
 
-        let final_count =
-            error_stats.get_error_count(crate::error_handling::ErrorType::TechnologyDetectionError);
-
-        // If detection failed (ruleset not initialized), error count should increase
-        // If detection succeeded, error count should remain the same
-        // We can't assert exact behavior since it depends on ruleset initialization,
-        // but we verify the function doesn't panic and error stats are tracked
-        assert!(final_count >= initial_count);
-        // Result should be a Vec (empty or non-empty)
-        assert!(result.is_empty() || !result.is_empty());
+        let result =
+            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
+                .await;
+        let _ = result;
     }
 
     #[tokio::test]
     async fn test_detect_technologies_safely_result_sorted() {
-        // Test that detected technologies are returned in sorted order
-        let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
+        let resp_data = create_test_response_data();
         let error_stats = Arc::new(ProcessingStats::new());
+        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
 
-        let result = detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref()).await;
-
-        // If result is non-empty, it should be sorted
-        if result.len() > 1 {
-            let mut sorted = result.clone();
-            sorted.sort();
-            assert_eq!(
-                result, sorted,
-                "Technologies should be returned in sorted order"
-            );
-        }
+        let result =
+            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
+                .await;
+        let mut sorted = result.clone();
+        sorted.sort();
+        assert_eq!(result, sorted);
     }
 }

@@ -130,7 +130,8 @@ pub async fn init_ruleset(
     Ok(ruleset_arc)
 }
 
-/// Gets the current ruleset (for use in detection)
+/// Gets the current ruleset (unit tests that call `init_ruleset` then matchers).
+#[cfg(test)]
 pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
     let guard = RULESET.read().await;
     guard.as_ref().cloned()

@@ -10,8 +10,6 @@ use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
-#[cfg(test)]
-use crate::fingerprint::ruleset::get_ruleset;
 
 /// Result of body matching for a single technology
 #[derive(Debug, Clone)]
@@ -28,113 +26,6 @@ pub struct BodyMatchResult {
 /// 3. Meta tags (checked during tokenization)
 /// 4. URL patterns (checked last)
 ///
-/// wappalyzergo takes the first version found across all pattern types.
-#[cfg(test)]
-pub async fn check_body(
-    html_body: &str,
-    script_sources: &[String],
-    meta_tags: &HashMap<String, Vec<String>>,
-    url: &str,
-) -> Result<Vec<BodyMatchResult>, crate::error_handling::FingerprintError> {
-    let ruleset = get_ruleset()
-        .await
-        .ok_or(crate::error_handling::FingerprintError::RulesetNotInitialized)?;
-
-    let mut results = Vec::new();
-
-    for (tech_name, tech) in &ruleset.technologies {
-        // Skip if technology has no body-related patterns
-        if tech.html.is_empty()
-            && tech.script.is_empty()
-            && tech.meta.is_empty()
-            && tech.url.is_empty()
-        {
-            continue;
-        }
-
-        let mut matched = false;
-        let mut version: Option<String> = None;
-
-        // 1. Check HTML patterns first (wappalyzergo checks HTML patterns before tokenizing)
-        for pattern in &tech.html {
-            let result = matches_pattern(pattern, html_body);
-            if result.matched {
-                matched = true;
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                // If we get a version from HTML pattern, we can stop checking HTML patterns
-                if version.is_some() {
-                    break;
-                }
-            }
-        }
-
-        // 2. Check script sources (wappalyzergo checks scriptSrc during tokenization)
-        // wappalyzergo iterates through scripts first, then patterns, and takes the first version found
-        for script_src in script_sources {
-            for pattern in &tech.script {
-                let result = matches_pattern(pattern, script_src);
-                if result.matched {
-                    matched = true;
-                    if version.is_none() && result.version.is_some() {
-                        version = result.version;
-                    }
-                    // If we found a version from this script, stop checking other patterns for this script
-                    if version.is_some() {
-                        break;
-                    }
-                }
-            }
-            // If we found a version, stop checking other scripts
-            if version.is_some() {
-                break;
-            }
-        }
-
-        // 3. Check meta tags (wappalyzergo checks meta during tokenization, after scriptSrc)
-        // If we already matched but have no version, check meta for version
-        // If we haven't matched yet, check meta normally
-        for (meta_key, patterns) in &tech.meta {
-            let result = check_meta_patterns(meta_key, patterns, meta_tags);
-            if result.matched {
-                matched = true;
-                // If we already matched via HTML/script but have no version, use version from meta
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                // If we haven't matched yet, this is the first match
-                if version.is_some() {
-                    break;
-                }
-            }
-        }
-
-        // 4. Check URL patterns (wappalyzergo checks these last)
-        for url_pattern in &tech.url {
-            let result = matches_pattern(url_pattern, url);
-            if result.matched {
-                matched = true;
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                if version.is_some() {
-                    break;
-                }
-            }
-        }
-
-        if matched {
-            results.push(BodyMatchResult {
-                tech_name: tech_name.clone(),
-                version,
-            });
-        }
-    }
-
-    Ok(results)
-}
-
 /// Synchronous body check using a pre-fetched ruleset (for use on blocking threads).
 pub(crate) fn check_body_with_ruleset(
     ruleset: &FingerprintRuleset,
@@ -220,7 +111,7 @@ pub(crate) fn check_body_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::init_ruleset;
+    use crate::fingerprint::ruleset::{get_ruleset, init_ruleset};
 
     /// Test meta tag detection matching wappalyzergo's `TestBodyDetect` meta test
     #[tokio::test]
@@ -230,6 +121,10 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         let html_body = r#"<html>
 <head>
@@ -242,9 +137,13 @@ mod tests {
         let script_sources = vec![];
         let url = "https://example.com";
 
-        let results = check_body(html_body, &script_sources, &meta_tags, url)
-            .await
-            .expect("Failed to check body");
+        let results = check_body_with_ruleset(
+            ruleset.as_ref(),
+            html_body,
+            &script_sources,
+            &meta_tags,
+            url,
+        );
 
         let tech_names: Vec<String> = results
             .iter()
@@ -293,6 +192,9 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         let html_body = r#"<html data-ng-app="rbschangeapp">
 <head>
@@ -305,9 +207,13 @@ mod tests {
         let script_sources = vec![];
         let url = "https://example.com";
 
-        let results = check_body(html_body, &script_sources, &meta_tags, url)
-            .await
-            .expect("Failed to check body");
+        let results = check_body_with_ruleset(
+            ruleset.as_ref(),
+            html_body,
+            &script_sources,
+            &meta_tags,
+            url,
+        );
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
 
@@ -328,14 +234,22 @@ mod tests {
             return;
         }
 
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
+
         let html_body = "";
         let script_sources = vec!["https://cdn.example.com/jquery-3.6.0.min.js".to_string()];
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        let results = check_body(html_body, &script_sources, &meta_tags, url)
-            .await
-            .expect("Failed to check body");
+        let results = check_body_with_ruleset(
+            ruleset.as_ref(),
+            html_body,
+            &script_sources,
+            &meta_tags,
+            url,
+        );
 
         let tech_names: Vec<String> = results
             .iter()
@@ -365,6 +279,10 @@ mod tests {
             return;
         }
 
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
+
         let html_body = r#"<html>
 <head>
 </head>
@@ -377,9 +295,13 @@ mod tests {
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        let results = check_body(html_body, &script_sources, &meta_tags, url)
-            .await
-            .expect("Failed to check body");
+        let results = check_body_with_ruleset(
+            ruleset.as_ref(),
+            html_body,
+            &script_sources,
+            &meta_tags,
+            url,
+        );
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
 
@@ -397,33 +319,17 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_check_body_ruleset_not_initialized() {
-        // Test error handling when ruleset is not initialized
-        // This is critical - prevents panics when ruleset loading fails
+    #[test]
+    fn test_check_body_with_empty_ruleset() {
+        let ruleset = FingerprintRuleset::empty_for_tests();
         let html_body = "<html></html>";
         let script_sources = vec![];
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        // Note: In CI, ruleset may be initialized by other tests
-        // This test verifies error handling when ruleset is not initialized
-        let result = check_body(html_body, &script_sources, &meta_tags, url).await;
-
-        match result {
-            Ok(_) => {
-                // Ruleset is initialized - this is fine, other tests may have initialized it
-            }
-            Err(e) => {
-                // Ruleset not initialized - verify error message
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("not initialized") || error_msg.contains("Ruleset"),
-                    "Expected ruleset not initialized error, got: {}",
-                    error_msg
-                );
-            }
-        }
+        let results =
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+        assert!(results.is_empty());
     }
 
     #[tokio::test]
@@ -435,15 +341,22 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         let html_body = "";
         let script_sources = vec![];
         let meta_tags = HashMap::new();
         let url = "";
 
-        let result = check_body(html_body, &script_sources, &meta_tags, url)
-            .await
-            .expect("Should handle empty inputs gracefully");
+        let result = check_body_with_ruleset(
+            ruleset.as_ref(),
+            html_body,
+            &script_sources,
+            &meta_tags,
+            url,
+        );
 
         // Should return empty results (no matches) without panicking
         assert!(result.is_empty() || !result.is_empty()); // Either is valid
@@ -458,6 +371,9 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         // Create a very large HTML body (1MB)
         let large_html = format!("<html><body>{}</body></html>", "A".repeat(1_000_000));
@@ -465,9 +381,13 @@ mod tests {
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        let result = check_body(&large_html, &script_sources, &meta_tags, url)
-            .await
-            .expect("Should handle very large HTML without panicking");
+        let result = check_body_with_ruleset(
+            ruleset.as_ref(),
+            &large_html,
+            &script_sources,
+            &meta_tags,
+            url,
+        );
 
         // Should complete without panicking (result may be empty or have matches)
         let _ = result;

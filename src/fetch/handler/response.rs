@@ -5,9 +5,10 @@ use log::debug;
 
 use crate::fetch::dns::fetch_all_dns_data;
 use crate::fetch::record::prepare_record_for_insertion;
-use crate::fetch::response::{extract_response_data, parse_html_content};
+use crate::fetch::response::{extract_response_data, parse_html_content, HtmlData, ResponseData};
 use crate::fetch::ProcessingContext;
 use crate::fetch::UrlProcessOutcome;
+use crate::fingerprint::DetectedTechnology;
 use crate::storage::insert::insert_batch_record;
 use crate::utils::{duration_to_us, UrlTimingMetrics};
 use std::sync::Arc;
@@ -29,61 +30,19 @@ fn serialize_headers(headers: &reqwest::header::HeaderMap) -> String {
     out
 }
 
-/// Handles an HTTP response, extracting all relevant data and storing it in the database.
-///
-/// This function orchestrates domain extraction, TLS certificate retrieval, DNS lookups,
-/// HTML parsing, and database insertion.
-///
-/// # Arguments
-///
-/// * `response` - The HTTP response
-/// * `original_url` - The original URL before redirects
-/// * `final_url_str` - The final URL after redirects
-/// * `ctx` - Processing context containing all shared resources
-/// * `elapsed` - Response time in seconds (includes redirect resolution + HTTP request)
-/// * `redirect_chain` - Vector of redirect chain URLs (will be inserted into `url_redirect_chain` table)
-/// * `start_time` - Per-attempt start time (from start of this attempt, not before retry loop; for accurate `total_ms` and to avoid retry timing poisoning)
-///
-/// # Errors
-///
-/// Returns an error if domain extraction, DNS resolution, or database insertion fails.
-#[allow(clippy::too_many_lines)] // Orchestrates response extraction, DNS/TLS, fingerprinting, and record assembly
-pub async fn handle_response(
+struct ExtractedResponse {
+    resp_data: ResponseData,
+    html_data: HtmlData,
+    html_parsing_us: u64,
+}
+
+/// Extract response bytes/headers and parse HTML on a blocking thread.
+async fn extract_and_parse(
     response: reqwest::Response,
     original_url: &str,
     final_url_str: &str,
     ctx: &ProcessingContext,
-    elapsed: f64,
-    redirect_chain: Option<Vec<(String, u16)>>,
-    start_time: std::time::Instant,
-) -> Result<UrlProcessOutcome, Error> {
-    // Use start_time for total_us calculation to ensure accurate percentages
-    // This ensures http_request_us (which includes redirect resolution) is <= total_us
-    // since both are measured from the same start point
-    debug!("Started processing response for {final_url_str}");
-
-    let mut metrics = UrlTimingMetrics {
-        // elapsed is in seconds, convert to microseconds for internal storage
-        // Note: This includes redirect resolution time + HTTP request time
-        // Use saturating cast to prevent overflow if elapsed is very large
-        // Max safe value: ~18,446 seconds (u64::MAX microseconds) before overflow
-        // All timing fields store microseconds (μs) for precision
-        // Safe cast: value is clamped to [0.0, u64::MAX] range before conversion
-        // - .max(0.0) ensures no negative values (handles clock adjustments)
-        // - .min(u64::MAX as f64) prevents overflow during cast to u64
-        // - cast_possible_truncation: fractional part is intentionally discarded
-        // - cast_precision_loss: u64::MAX as f64 loses precision, but we're using it as upper bound
-        // - cast_sign_loss: handled by .max(0.0) check
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_precision_loss,
-            clippy::cast_sign_loss
-        )]
-        http_request_us: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
-        ..Default::default()
-    };
-
-    // Extract and validate response data
+) -> Result<Option<ExtractedResponse>, Error> {
     let html_parse_start = Instant::now();
     let Some(resp_data) = extract_response_data(
         response,
@@ -93,70 +52,83 @@ pub async fn handle_response(
     )
     .await?
     else {
-        // Non-HTML or empty response, skip silently
-        debug!("Skipping URL {final_url_str} (non-HTML content-type or empty body)");
-        return Ok(UrlProcessOutcome::Skipped);
+        return Ok(None);
     };
 
     // Parse HTML content on a blocking thread to avoid starving Tokio worker threads.
-    // parse_html_content is CPU-bound (DOM parsing, regex, selectors); spawn_blocking
-    // keeps the async runtime responsive under high concurrency.
-    //
-    // body is `Arc<str>`; `Arc::clone` is cheap (pointer + atomic refcount bump),
-    // so neither the spawn nor the later technology detector pays for a
-    // 2-MB-class memcpy.
+    // body is `Arc<str>`; `Arc::clone` is cheap (pointer + atomic refcount bump).
     let body = Arc::clone(&resp_data.body);
     let final_domain = resp_data.final_domain.clone();
-    let error_stats = ctx.config.error_stats.clone();
+    let error_stats = ctx.runtime.error_stats.clone();
     let html_data =
         tokio::task::spawn_blocking(move || parse_html_content(&body, &final_domain, &error_stats))
             .await
             .map_err(|e| anyhow::anyhow!("HTML parsing task failed: {e}"))?;
-    metrics.html_parsing_us = duration_to_us(html_parse_start.elapsed());
 
-    // Run tech detection and DNS/TLS in parallel (they're independent)
-    // Tech detection only needs HTML data and headers, DNS/TLS only needs domain
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let redirect_chain_vec = redirect_chain.unwrap_or_default();
+    Ok(Some(ExtractedResponse {
+        resp_data,
+        html_data,
+        html_parsing_us: duration_to_us(html_parse_start.elapsed()),
+    }))
+}
 
+struct EnrichmentResult {
+    technologies_vec: Vec<DetectedTechnology>,
+    tech_detection_us: u64,
+    tls_dns_data: crate::fetch::dns::TlsDnsData,
+    additional_dns: crate::fetch::dns::AdditionalDnsData,
+    partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
+    dns_forward_us: u64,
+    dns_reverse_us: u64,
+    dns_additional_us: u64,
+    tls_handshake_us: u64,
+    favicon_result: Option<crate::fetch::favicon::FaviconData>,
+    external_script_scan: crate::fetch::external_scripts::ExternalScriptScanResult,
+}
+
+/// Run independent enrichments in parallel: tech detection, DNS/TLS, favicon, scripts.
+async fn parallel_enrich(
+    html_data: &HtmlData,
+    resp_data: &ResponseData,
+    ctx: &ProcessingContext,
+    final_url_str: &str,
+) -> Result<EnrichmentResult, Error> {
     let (tech_result, dns_result, favicon_result, external_script_scan) = tokio::join!(
-        // Technology detection (only needs HTML data and headers)
         async {
             use crate::fetch::record::detect_technologies_safely;
-            use crate::utils::duration_to_us;
-            use std::time::Instant;
 
             let tech_start = Instant::now();
-            let technologies =
-                detect_technologies_safely(&html_data, &resp_data, &ctx.config.error_stats).await;
+            let technologies = detect_technologies_safely(
+                html_data,
+                resp_data,
+                &ctx.runtime.error_stats,
+                &ctx.ruleset,
+            )
+            .await;
             let tech_detection_us = duration_to_us(tech_start.elapsed());
             (technologies, tech_detection_us)
         },
-        // DNS/TLS fetching (only needs domain/hostname)
         async {
             fetch_all_dns_data(
-                &resp_data,
+                resp_data,
                 &ctx.network.resolver,
-                &ctx.config.error_stats,
-                ctx.config.run_id.as_deref(),
+                &ctx.runtime.error_stats,
+                ctx.runtime.run_id.as_deref(),
             )
             .await
         },
-        // Favicon fetching (only needs HTML favicon_url and HTTP client)
         crate::fetch::favicon::fetch_and_hash_favicon(
             &ctx.network.client,
             html_data.favicon_url.as_deref(),
             final_url_str,
         ),
-        // Optional external <script src> secret scanning. Off by default;
-        // returns empty ExternalScriptScanResult when disabled.
         async {
-            if ctx.config.scan_external_scripts {
+            if ctx.runtime.scan_external_scripts {
                 crate::fetch::external_scripts::scan_external_scripts(
                     &ctx.network.client,
                     &resp_data.final_url,
                     &html_data.script_sources,
-                    ctx.config.allow_localhost_for_tests,
+                    ctx.runtime.allow_localhost_for_tests,
                 )
                 .await
             } else {
@@ -173,16 +145,27 @@ pub async fn handle_response(
         (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us),
     ) = dns_result?;
 
-    metrics.dns_forward_us = dns_forward_us;
-    metrics.dns_reverse_us = dns_reverse_us;
-    metrics.dns_additional_us = dns_additional_us;
-    metrics.tls_handshake_us = tls_handshake_us;
-    metrics.tech_detection_us = tech_detection_us;
+    Ok(EnrichmentResult {
+        technologies_vec,
+        tech_detection_us,
+        tls_dns_data,
+        additional_dns,
+        partial_failures,
+        dns_forward_us,
+        dns_reverse_us,
+        dns_additional_us,
+        tls_handshake_us,
+        favicon_result,
+        external_script_scan,
+    })
+}
 
-    // Merge external-script secret findings into the page's exposed_secrets list.
-    // Each finding is already tagged with `location = "external_script:<url>"`
-    // so analysts can distinguish in-HTML matches from JS-bundle matches.
-    let mut html_data = html_data;
+/// Merge external-script and response-header secret findings into `html_data`.
+fn merge_secrets(
+    html_data: &mut HtmlData,
+    resp_data: &ResponseData,
+    external_script_scan: crate::fetch::external_scripts::ExternalScriptScanResult,
+) {
     html_data.external_scripts_eligible = external_script_scan.eligible;
     html_data.external_scripts_scanned = external_script_scan.scanned;
     if !external_script_scan.secrets.is_empty() {
@@ -196,8 +179,6 @@ pub async fn handle_response(
             .extend(external_script_scan.secrets);
     }
 
-    // Scan response headers (incl. Set-Cookie) for secrets that never appear in
-    // the HTML body — Authorization: Bearer <jwt>, X-Api-Key, session/JWT cookies.
     let header_secrets =
         crate::parse::detect_exposed_secrets_in_headers(&serialize_headers(&resp_data.headers));
     if !header_secrets.is_empty() {
@@ -208,7 +189,18 @@ pub async fn handle_response(
         );
         html_data.exposed_secrets.extend(header_secrets);
     }
+}
 
+/// Prepare and insert the scan record; returns enrichment timing micros.
+async fn persist(
+    resp_data: ResponseData,
+    html_data: HtmlData,
+    enrichment: EnrichmentResult,
+    redirect_chain_vec: Vec<(String, u16)>,
+    elapsed: f64,
+    timestamp: i64,
+    ctx: &ProcessingContext,
+) -> Result<(u64, u64, u64), Error> {
     debug!(
         "Preparing to insert record for URL: {}",
         resp_data.final_url
@@ -218,13 +210,16 @@ pub async fn handle_response(
         resp_data.initial_domain
     );
 
-    // Extract final_url for error logging before moving resp_data
-    // (we need this for error messages if database insert fails)
     let final_url_for_logging = resp_data.final_url.clone();
+    let EnrichmentResult {
+        technologies_vec,
+        tls_dns_data,
+        additional_dns,
+        partial_failures,
+        favicon_result,
+        ..
+    } = enrichment;
 
-    // Prepare record for insertion (enrichment lookups and batch record building)
-    // Takes ownership of resp_data, html_data, tls_dns_data, additional_dns to
-    // move large collections (HashMaps, Vecs) instead of cloning - saves ~5-10KB per URL
     let (batch_record, (geoip_lookup_us, whois_lookup_us, security_analysis_us)) =
         prepare_record_for_insertion(crate::fetch::record::RecordPreparationParams {
             resp_data,
@@ -241,26 +236,86 @@ pub async fn handle_response(
         })
         .await;
 
-    metrics.geoip_lookup_us = geoip_lookup_us;
-    metrics.whois_lookup_us = whois_lookup_us;
-    metrics.security_analysis_us = security_analysis_us;
-
-    // Insert record directly into database
-    // If write fails, return error so URL is not counted as successful
-    // Database errors are non-retriable, so this won't trigger retries
-    insert_batch_record(&ctx.db.pool, batch_record)
+    insert_batch_record(&ctx.pool, batch_record)
         .await
         .map_err(|e| {
             log::error!("Failed to insert record for URL {final_url_for_logging}: {e}");
             anyhow::anyhow!("Database write failed: {e}")
         })?;
 
-    // Calculate total_us from start_time (same baseline as http_request_us)
-    // This ensures percentages are accurate (http_request_us <= total_us)
-    metrics.total_us = duration_to_us(start_time.elapsed());
+    Ok((geoip_lookup_us, whois_lookup_us, security_analysis_us))
+}
 
-    // Record metrics (DNS and enrichment times are set inside their respective functions)
-    ctx.config.timing_stats.record(&metrics);
+/// Handles an HTTP response, extracting all relevant data and storing it in the database.
+///
+/// Stages: `extract_and_parse` → `parallel_enrich` → `merge_secrets` → `persist`.
+///
+/// # Errors
+///
+/// Returns an error if domain extraction, DNS resolution, or database insertion fails.
+pub async fn handle_response(
+    response: reqwest::Response,
+    original_url: &str,
+    final_url_str: &str,
+    ctx: &ProcessingContext,
+    elapsed: f64,
+    redirect_chain: Option<Vec<(String, u16)>>,
+    start_time: std::time::Instant,
+) -> Result<UrlProcessOutcome, Error> {
+    debug!("Started processing response for {final_url_str}");
+
+    let mut metrics = UrlTimingMetrics {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss
+        )]
+        http_request_us: (elapsed * 1_000_000.0).min(u64::MAX as f64).max(0.0) as u64,
+        ..Default::default()
+    };
+
+    let Some(extracted) = extract_and_parse(response, original_url, final_url_str, ctx).await?
+    else {
+        debug!("Skipping URL {final_url_str} (non-HTML content-type or empty body)");
+        return Ok(UrlProcessOutcome::Skipped);
+    };
+    metrics.html_parsing_us = extracted.html_parsing_us;
+
+    let ExtractedResponse {
+        resp_data,
+        mut html_data,
+        ..
+    } = extracted;
+
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let redirect_chain_vec = redirect_chain.unwrap_or_default();
+
+    let mut enrichment = parallel_enrich(&html_data, &resp_data, ctx, final_url_str).await?;
+    metrics.dns_forward_us = enrichment.dns_forward_us;
+    metrics.dns_reverse_us = enrichment.dns_reverse_us;
+    metrics.dns_additional_us = enrichment.dns_additional_us;
+    metrics.tls_handshake_us = enrichment.tls_handshake_us;
+    metrics.tech_detection_us = enrichment.tech_detection_us;
+
+    let external_script_scan = std::mem::take(&mut enrichment.external_script_scan);
+    merge_secrets(&mut html_data, &resp_data, external_script_scan);
+
+    let (geoip_lookup_us, whois_lookup_us, security_analysis_us) = persist(
+        resp_data,
+        html_data,
+        enrichment,
+        redirect_chain_vec,
+        elapsed,
+        timestamp,
+        ctx,
+    )
+    .await?;
+
+    metrics.geoip_lookup_us = geoip_lookup_us;
+    metrics.whois_lookup_us = whois_lookup_us;
+    metrics.security_analysis_us = security_analysis_us;
+    metrics.total_us = duration_to_us(start_time.elapsed());
+    ctx.runtime.timing_stats.record(&metrics);
 
     Ok(UrlProcessOutcome::Inserted)
 }
@@ -269,7 +324,7 @@ pub async fn handle_response(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+    use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
     use crate::utils::TimingStats;
     use hickory_resolver::{config::ResolverOpts, TokioResolver};
     use httptest::{matchers::*, responders::*, Expectation, Server};
@@ -307,8 +362,8 @@ mod tests {
 
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 error_stats,
                 timing_stats,
                 None,
@@ -317,6 +372,7 @@ mod tests {
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(crate::fingerprint::FingerprintRuleset::empty_for_tests()),
         )
     }
 
@@ -633,8 +689,8 @@ mod tests {
 
         let ctx = ProcessingContext::new(
             NetworkContext::new(client_arc, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 error_stats,
                 timing_stats,
                 Some("test-run".to_string()),
@@ -643,6 +699,7 @@ mod tests {
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(crate::fingerprint::FingerprintRuleset::empty_for_tests()),
         );
 
         let start_time = std::time::Instant::now();

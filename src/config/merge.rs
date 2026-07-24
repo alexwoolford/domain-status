@@ -76,6 +76,11 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
                     config.timeout_seconds = n;
                 }
             }
+            "drain_timeout_secs" => {
+                if let Ok(n) = value.parse::<u64>() {
+                    config.drain_timeout_secs = n;
+                }
+            }
             "user_agent" => config.user_agent.clone_from(value),
             "rate_limit_rps" => {
                 if let Ok(n) = value.parse::<u32>() {
@@ -184,6 +189,9 @@ pub fn merge_file_env_and_cli(
     if overwrite("log_file") {
         config.log_file = cli_config.log_file;
     }
+    if overwrite("drain_timeout_secs") {
+        config.drain_timeout_secs = cli_config.drain_timeout_secs;
+    }
 
     config.progress_callback = None;
     config.dependency_overrides = None;
@@ -236,5 +244,28 @@ mod tests {
         let merged3 = merge_file_env_and_cli(Some(&file_env), cli_config, None);
         assert!(matches!(merged3.log_level, LogLevel::Info));
         assert_eq!(merged3.max_concurrency, 30);
+    }
+
+    #[test]
+    fn test_merge_applies_explicit_drain_timeout_secs() {
+        let mut file_env = HashMap::new();
+        file_env.insert("drain_timeout_secs".to_string(), "45".to_string());
+
+        let cli_config = Config {
+            drain_timeout_secs: 90,
+            ..Default::default()
+        };
+
+        // Not explicit: file/env value wins
+        let merged = merge_file_env_and_cli(Some(&file_env), cli_config.clone(), Some(&[]));
+        assert_eq!(merged.drain_timeout_secs, 45);
+
+        // Explicit CLI flag wins
+        let merged2 = merge_file_env_and_cli(
+            Some(&file_env),
+            cli_config,
+            Some(&["drain_timeout_secs"]),
+        );
+        assert_eq!(merged2.drain_timeout_secs, 90);
     }
 }

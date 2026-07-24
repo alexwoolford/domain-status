@@ -554,10 +554,12 @@ mod tests {
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
+                category: None,
             },
         ];
         let redirect_chain = vec![("https://example.com".to_string(), 200)];

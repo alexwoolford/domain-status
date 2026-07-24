@@ -106,6 +106,59 @@ pub struct UrlRecord {
     pub meta_refresh_url: Option<String>,
 }
 
+impl UrlRecord {
+    /// Minimal `UrlRecord` for unit/integration tests.
+    ///
+    /// Callers override fields they care about (`initial_domain`, `run_id`, etc.)
+    /// instead of re-listing every schema column when columns are added.
+    #[must_use]
+    pub fn test_default() -> Self {
+        Self {
+            initial_domain: "example.com".to_string(),
+            final_domain: "example.com".to_string(),
+            ip_address: "93.184.216.34".to_string(),
+            reverse_dns_name: None,
+            status: 200,
+            status_desc: "OK".to_string(),
+            response_time: 0.1,
+            title: "Example".to_string(),
+            keywords: None,
+            description: None,
+            tls_version: None,
+            ssl_cert_subject: None,
+            ssl_cert_issuer: None,
+            ssl_cert_valid_from: None,
+            ssl_cert_valid_to: None,
+            is_mobile_friendly: false,
+            timestamp: 1_700_000_000_000,
+            nameservers: None,
+            txt_records: None,
+            mx_records: None,
+            spf_record: None,
+            dmarc_record: None,
+            cipher_suite: None,
+            key_algorithm: None,
+            run_id: None,
+            body_sha256: None,
+            body_truncated: false,
+            external_scripts_eligible: 0,
+            external_scripts_scanned: 0,
+            content_length: None,
+            http_version: None,
+            body_word_count: None,
+            body_line_count: None,
+            content_type: Some("text/html".to_string()),
+            canonical_url: None,
+            cert_fingerprint_sha256: None,
+            cert_serial_number: None,
+            cert_is_self_signed: None,
+            cert_is_wildcard: None,
+            cert_is_mismatched: None,
+            meta_refresh_url: None,
+        }
+    }
+}
+
 /// Represents a failed URL processing attempt for database insertion.
 ///
 /// Contains information about why a URL processing failed, including error type,

@@ -7,8 +7,6 @@ use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
-#[cfg(test)]
-use crate::fingerprint::ruleset::get_ruleset;
 
 /// Result of header matching for a single technology
 #[derive(Debug, Clone)]
@@ -19,58 +17,6 @@ pub struct HeaderMatchResult {
 
 /// Checks all technologies against headers and returns matches.
 ///
-/// This matches wappalyzergo's `checkHeaders()` → `matchMapString(headers, headersPart)` flow.
-#[cfg(test)]
-pub async fn check_headers(
-    headers: &HashMap<String, String>,
-) -> Result<Vec<HeaderMatchResult>, crate::error_handling::FingerprintError> {
-    let ruleset = get_ruleset()
-        .await
-        .ok_or(crate::error_handling::FingerprintError::RulesetNotInitialized)?;
-
-    let mut results = Vec::new();
-
-    for (tech_name, tech) in &ruleset.technologies {
-        if tech.headers.is_empty() {
-            continue;
-        }
-
-        let mut matched = false;
-        let mut version: Option<String> = None;
-
-        for (header_name, pattern) in &tech.headers {
-            if let Some(header_value) = headers.get(header_name) {
-                if pattern.is_empty() {
-                    // Empty pattern means header exists (value doesn't matter)
-                    matched = true;
-                    break;
-                }
-
-                let result = matches_pattern(pattern, header_value);
-                if result.matched {
-                    matched = true;
-                    if version.is_none() && result.version.is_some() {
-                        version.clone_from(&result.version);
-                    }
-                    // wappalyzergo breaks after first match with version
-                    if version.is_some() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if matched {
-            results.push(HeaderMatchResult {
-                tech_name: tech_name.clone(),
-                version,
-            });
-        }
-    }
-
-    Ok(results)
-}
-
 /// Synchronous header check using a pre-fetched ruleset (for use on blocking threads).
 pub(crate) fn check_headers_with_ruleset(
     ruleset: &FingerprintRuleset,
@@ -114,7 +60,7 @@ pub(crate) fn check_headers_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::init_ruleset;
+    use crate::fingerprint::ruleset::{get_ruleset, init_ruleset};
 
     /// Test header detection matching wappalyzergo's `TestHeadersDetect`
     #[tokio::test]
@@ -125,14 +71,15 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         // Test Vercel detection via Server header
         let mut headers = HashMap::new();
         headers.insert("server".to_string(), "now".to_string());
 
-        let results = check_headers(&headers)
-            .await
-            .expect("Failed to check headers");
+        let results = check_headers_with_ruleset(ruleset.as_ref(), &headers);
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
             tech_names.contains(&"Vercel".to_string()),
@@ -148,13 +95,14 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         let mut headers = HashMap::new();
         headers.insert("server".to_string(), "Apache/2.4.29".to_string());
 
-        let results = check_headers(&headers)
-            .await
-            .expect("Failed to check headers");
+        let results = check_headers_with_ruleset(ruleset.as_ref(), &headers);
         let tech_names: Vec<String> = results
             .iter()
             .map(|r| {
@@ -180,6 +128,9 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         // Test HSTS detection (strict-transport-security header with empty pattern)
         let mut headers = HashMap::new();
@@ -188,9 +139,7 @@ mod tests {
             "max-age=31536000".to_string(),
         );
 
-        let results = check_headers(&headers)
-            .await
-            .expect("Failed to check headers");
+        let results = check_headers_with_ruleset(ruleset.as_ref(), &headers);
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
             tech_names.contains(&"HSTS".to_string()),
