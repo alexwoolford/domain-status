@@ -171,9 +171,13 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      # gitleaks-action on pull_request scans base^..head from the event payload.
+      # After a squash-merge (or branch delete), refs/heads/* may only contain main,
+      # so those PR SHAs are missing unless we check out the PR head explicitly.
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # Full history needed for secret scanning
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
