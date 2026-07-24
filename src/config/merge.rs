@@ -261,11 +261,8 @@ mod tests {
         assert_eq!(merged.drain_timeout_secs, 45);
 
         // Explicit CLI flag wins
-        let merged2 = merge_file_env_and_cli(
-            Some(&file_env),
-            cli_config,
-            Some(&["drain_timeout_secs"]),
-        );
+        let merged2 =
+            merge_file_env_and_cli(Some(&file_env), cli_config, Some(&["drain_timeout_secs"]));
         assert_eq!(merged2.drain_timeout_secs, 90);
     }
 }
