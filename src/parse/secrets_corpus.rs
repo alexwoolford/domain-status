@@ -99,8 +99,8 @@ fn fn_corpus_jwt_in_set_cookie_header() {
         "missed JWT in Set-Cookie; got {secrets:?}"
     );
     assert!(
-        secrets.iter().all(|s| s.location == "response_header"),
-        "header findings must be tagged response_header"
+        secrets.iter().all(|s| s.location == "set_cookie"),
+        "header findings must be tagged set_cookie"
     );
 }
 

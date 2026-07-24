@@ -106,6 +106,9 @@ Important characteristics:
 | `spf_record` | `TEXT` | Convenience extraction from TXT records |
 | `dmarc_record` | `TEXT` | Convenience extraction from TXT records |
 | `body_sha256` | `TEXT` | SHA-256 hash of the response body (content fingerprinting) |
+| `body_truncated` | `INTEGER NOT NULL DEFAULT 0` | 1 if the body hit the 2 MB scan cap (prefix still scanned) |
+| `external_scripts_eligible` | `INTEGER NOT NULL DEFAULT 0` | First-party `<script src>` candidates when `--scan-external-scripts` is on |
+| `external_scripts_scanned` | `INTEGER NOT NULL DEFAULT 0` | Scripts successfully fetched/scanned for secrets (capped; 0 when flag off) |
 | `content_length` | `INTEGER` | Response body length in bytes |
 | `http_version` | `TEXT` | HTTP protocol version (`HTTP/1.1`, `HTTP/2`, etc.) |
 | `body_word_count` | `INTEGER` | Word count of the response body |
@@ -239,7 +242,8 @@ These names replace older or more ambiguous variants that may appear in stale do
 
 - `matched_value` stores the matched secret text
 - `severity` stores the classifier severity
-- `location` stores where it was found, such as `inline_script` or `html_comment`
+- `location` stores where it was found (`inline_script`, `json_ld`, `html_comment`, `data_attribute`, `url_parameter`, `meta_tag`, `html_body`, `response_header`, `set_cookie`, or `external_script:<url>`)
+- Join `url_status.body_truncated` / `external_scripts_*` when assessing whether a miss is possible due to size caps or script limits
 - `context` stores nearby source text for analyst review
 
 Uniqueness is enforced by:

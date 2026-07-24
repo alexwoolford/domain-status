@@ -13,7 +13,7 @@ use super::types::GeoIpMetadata;
 pub(crate) fn extract_metadata<T: AsRef<[u8]>>(reader: &Reader<T>, source: &str) -> GeoIpMetadata {
     // Try to get build epoch from database metadata
     // MaxMind databases have a build_epoch field in their metadata
-    let version = format!("build_{}", reader.metadata.build_epoch);
+    let version = format!("build_{}", reader.metadata().build_epoch);
 
     GeoIpMetadata {
         source: source.to_string(),

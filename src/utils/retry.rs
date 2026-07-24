@@ -412,60 +412,6 @@ mod tests {
         assert!(is_retriable_error(&error));
     }
 
-    #[tokio::test]
-    async fn test_is_retriable_error_reqwest_redirect_not_retriable() {
-        // Test that redirect errors are NOT retriable
-        // This is critical - redirect errors are handled separately
-        // Note: reqwest::Error doesn't have a direct way to create redirect errors
-        // but we can test the logic path exists
-        let error = anyhow::anyhow!("Redirect error");
-        // Default is true, but redirect-specific handling would make this false
-        // The code at line 78 checks is_redirect() which would return false
-        let result = is_retriable_error(&error);
-        // Default behavior for unknown errors is retriable
-        // The important thing is the code path exists and doesn't panic
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_is_retriable_error_reqwest_decode_not_retriable() {
-        // Test that decode errors are NOT retriable
-        // This is critical - decode errors are permanent (malformed response)
-        // Note: Hard to create actual decode errors, but we verify the logic path
-        let error = anyhow::anyhow!("Decode error");
-        // Default is true, but decode-specific handling would make this false
-        // The code at line 78 checks is_decode() which would return false
-        let result = is_retriable_error(&error);
-        // Default behavior for unknown errors is retriable
-        // The important thing is the code path exists
-        let _ = result;
-    }
-
-    #[test]
-    fn test_is_retriable_error_status_code_range_handling() {
-        // Test that status code range checks work correctly
-        // This is critical - status code ranges determine retriability
-        // The code uses (400..500) and (500..600) ranges
-
-        // Test 4xx range (should not be retriable except 429)
-        assert!((400..500).contains(&400));
-        assert!((400..500).contains(&404));
-        assert!((400..500).contains(&403));
-        assert!((400..500).contains(&429)); // But 429 is handled separately
-
-        // Test 5xx range (should be retriable)
-        assert!((500..600).contains(&500));
-        assert!((500..600).contains(&502));
-        assert!((500..600).contains(&503));
-        assert!((500..600).contains(&504));
-
-        // Test boundaries
-        assert!(!(400..500).contains(&399));
-        assert!(!(400..500).contains(&500));
-        assert!(!(500..600).contains(&499));
-        assert!(!(500..600).contains(&600));
-    }
-
     #[test]
     fn test_is_retriable_error_message_no_string_matching() {
         // Plain strings are not retriable; only typed NetError is

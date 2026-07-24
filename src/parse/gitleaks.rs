@@ -857,4 +857,38 @@ mod tests {
             "replaced sourcegraph rule must still match sgp_ tokens"
         );
     }
+
+    /// Same-id [[rules]] replaces must leave exactly one compiled rule per id.
+    #[test]
+    fn test_overlay_replaced_rules_are_unique() {
+        let config = gitleaks();
+        let replaced = [
+            "sourcegraph-access-token",
+            "dropbox-api-token",
+            "square-access-token",
+            "datadog-access-token",
+            "facebook-page-access-token",
+        ];
+        for id in replaced {
+            let count = config.rules.iter().filter(|r| r.id == id).count();
+            assert_eq!(
+                count, 1,
+                "overlay replace must leave exactly one '{id}' rule, found {count}"
+            );
+        }
+        let dropbox = config
+            .rules
+            .iter()
+            .find(|r| r.id == "dropbox-api-token")
+            .expect("dropbox-api-token");
+        let kws = dropbox.keywords.as_ref().expect("keywords");
+        assert!(
+            kws.iter().any(|k| k.contains("disabled")),
+            "disabled dropbox catch-all should use inert keywords; got {kws:?}"
+        );
+        assert!(
+            !dropbox.regex.is_match("dropbox=abcdefghijklmno"),
+            "disabled dropbox-api-token must not match 15-char identifiers"
+        );
+    }
 }

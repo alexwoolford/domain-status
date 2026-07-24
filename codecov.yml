@@ -8,12 +8,18 @@ codecov:
     # Exclude test modules within source files
     - "**/#[cfg(test)]"
 
-  # Coverage settings
+  # Coverage settings — never fail PR checks on coverage (Dependabot / cleanup PRs
+  # were showing a red codecov/project X while Actions Test jobs were green).
   coverage:
-    # Don't fail CI on coverage drops (we use fail_ci_if_error: false in workflow)
     status:
-      project: false
-      patch: false
+      project:
+        default:
+          informational: true
+          target: auto
+      patch:
+        default:
+          informational: true
+          target: auto
 
   # Comment settings for PRs
   comment:

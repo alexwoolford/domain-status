@@ -15,6 +15,58 @@ keywords = [
     "sourcegraph",
 ]
 
+# Upstream dropbox-api-token is "(?:dropbox)…([a-z0-9]{15})" — any 15-char
+# identifier near "dropbox" (e.g. theChampSiteUrl). Real tokens use the
+# distinctive long-lived (…AAAAAAAAAA…) and short-lived (sl.…) Gitleaks rules.
+# Disable this catch-all for web; keep those two upstream rules.
+[[rules]]
+id = "dropbox-api-token"
+description = "Disabled for web scanning (use dropbox-long-lived / dropbox-short-lived)"
+regex = '''\b\B'''
+keywords = ["dropbox-api-token-disabled"]
+
+# Square EAAA… collides with binary/WebP noise on live pages. Keep only the
+# modern sq0atp- personal access token prefix from upstream.
+[[rules]]
+id = "square-access-token"
+description = "Square access token (sq0atp- only; EAAA dropped for web FP reduction)"
+regex = '''\b(sq0atp-[\w-]{22,60})(?:[\x60'"\s;]|\\[nr]|$)'''
+entropy = 3
+keywords = ["sq0atp-"]
+
+# Upstream datadog-access-token matches any 40-hex after "datadog", so
+# "datadogVersion":"<build hash>" fires. Require credential-shaped assignment.
+[[rules]]
+id = "datadog-access-token"
+description = "Datadog API/app key in credential assignment (not datadogVersion hashes)"
+regex = '''(?i)(?:(?:DD_)?(?:API|APP)_KEY|api[_-]?key|app[_-]?key|ddApiKey|ddAppKey)\s*[=:]\s*[\x60'"\s]{0,5}([a-f0-9]{32,40})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3
+keywords = [
+    "dd_api",
+    "dd_app",
+    "apikey",
+    "api_key",
+    "app_key",
+    "ddapikey",
+    "ddappkey",
+]
+
+# Upstream facebook-page-access-token matches bare EAA[MC]… anywhere, including
+# binary blobs. Require an access_token-style assignment context.
+[[rules]]
+id = "facebook-page-access-token"
+description = "Facebook page access token in access_token assignment context"
+regex = '''(?i)(?:access_token|pageAccessToken|page_access_token)\s*[=:]\s*[\x60'"\s]{0,5}(EAA[MC][a-z0-9]{100,})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 4
+keywords = [
+    "access_token",
+    "pageaccesstoken",
+    "eaac",
+    "eaam",
+]
+
 [[append]]
 rule_id = "sourcegraph-access-token"
 regexTarget = "line"
@@ -33,13 +85,31 @@ regexes = [
     '''alt="[^"]*[0-9a-fA-F]{40}''',
 ]
 
-# HubSpot form/embed IDs (data-hubspot-form, data-hubspot-form-id) are public identifiers, not API keys.
+# HubSpot form/embed IDs and request correlation UUIDs are public identifiers, not API keys.
+# The upstream rule is "hubspot" + UUID; that also matches form widget IDs and
+# x-hubspot-correlation-id response headers. Real private app tokens use pat-na1-…
+# (separate shape); keep HUBSPOT_API_KEY=uuid style assignments reportable.
 [[append]]
 rule_id = "hubspot-api-key"
 regexTarget = "line"
 regexes = [
     '''data-hubspot-form=''',
     '''data-hubspot-form-id=''',
+    '''(?i)x-hubspot-correlation-id''',
+    '''(?i)hubspotFormId''',
+    '''(?i)HUBSPOT_[A-Z0-9_]*FORM_ID''',
+]
+
+# Grafana API keys are base64 of {"k":…} and start with eyJrIjoi. Power BI
+# report-embed tokens use the same prefix in app.powerbi.com/view?r=… URLs.
+# Allowlist that host so embeds are not reported as Grafana credentials.
+# grafana-cloud-api-token (glc_) and grafana-service-account-token (glsa_) are
+# unaffected.
+[[append]]
+rule_id = "grafana-api-key"
+regexTarget = "line"
+regexes = [
+    '''(?i)powerbi\.com''',
 ]
 
 # LinkedIn rules match 14/16-char alphanumeric near "linkedin"; page structure (menu-item, form name, block ID) causes false positives.
@@ -264,6 +334,20 @@ regexes = [
     # Algolia search-only key paired with appId on the same line
     # (admin keys never appear paired with appId in client-side code)
     '''(?i)algoliaApiKey.*algoliaAppId|algoliaAppId.*algoliaApiKey''',
+    # Azure App Insights browser SDK — instrumentationKey is public-by-design
+    '''(?i)instrumentationKey\s*[:=]''',
+    # Prismic / CMS link objects — document UUID next to link_type, not a secret
+    '''"link_type"\s*:\s*"''',
+]
+
+# Product-format public client IDs that correctly match generic-api-key but are
+# not credentials (same threat model as gcp Maps keys). Default target = secret
+# capture (matched_value), not full regex match.
+[[append]]
+rule_id = "generic-api-key"
+regexes = [
+    # Weglot public widget key format
+    '''(?i)^wg_[0-9a-f]{32}$''',
 ]
 
 # `algolia-api-key` line-target allowlist: same Algolia search-key/appId

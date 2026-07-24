@@ -118,7 +118,7 @@ hickory-resolver = "^0.26"
 sqlx = { version = "^0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
 
 # Scraping and URL handling
-scraper = "^0.25"
+scraper = "^0.27"
 url = "^2.5"
 serde_json = "^1.0"
 
@@ -127,7 +127,7 @@ domain_status_cli = { path = "cli", version = "0.1.25" }
 clap = { version = "^4.6", features = ["derive", "env"] }
 clap_complete = "^4.6"
 clap_mangen = "^0.2"
-clap-verbosity-flag = "3.0"
+clap-verbosity-flag = "^3.0"
 anyhow = "^1.0"
 thiserror = "^2.0"
 
@@ -135,7 +135,7 @@ thiserror = "^2.0"
 log = "^0.4"
 env_logger = "^0.11"
 colored = "^3.0"
-indicatif = "0.18.4"
+indicatif = "^0.18"
 
 # Other
 toml = { version = "^0.8", features = ["preserve_order"] }
@@ -158,12 +158,14 @@ aho-corasick = "^1.1"
 encoding_rs = "^0.8"
 moka = { version = "^0.12", features = ["sync"] }
 tempfile = "^3.27"
-maxminddb = "^0.27"
+maxminddb = "^0.30"
 flate2 = "^1.1"
 tar = "^0.4"
 dotenvy = "^0.15"
-config = { version = "0.14", default-features = false, features = ["toml"] }
-whois-service = { version = "0.2.1", default-features = false }
+config = { version = "^0.14", default-features = false, features = ["toml"] }
+# 0.3.0 on crates.io uses reqwest 0.12 + rustls without rustls-pemfile (the reason
+# we previously vendored 0.2.1). Keep default-features off to avoid native-tls.
+whois-service = { version = "^0.3", default-features = false }
 axum = "^0.8"
 include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
@@ -171,16 +173,12 @@ include_dir = "^0.7"
 psl = "^2.1"
 sha2 = "^0.10"
 base64 = "^0.22"
+# Keep ^0.1 for Shodan-compatible favicon murmur3_32 hashes (do not bump to 0.5
+# without a golden-hash test proving bit-identical output).
 murmur3 = "^0.1"
-# Parquet export (columnar format for analytics)
-arrow = { version = "^58", default-features = false }
-parquet = { version = "^58", default-features = false, features = ["arrow", "snap"] }
-# Note: With rust-version = "1.85", edition 2024 is available
-# No need to constrain base64ct or home - newer versions will work
-
-# Pin whois-service to vendored build (reqwest 0.12) to eliminate rustls-pemfile (RUSTSEC-2025-0134)
-[patch.crates-io]
-whois-service = { path = "vendor/whois-service" }
+# Parquet export (columnar format for analytics). 59+ drops the thrift crate dep.
+arrow = { version = "^59", default-features = false }
+parquet = { version = "^59", default-features = false, features = ["arrow", "snap"] }
 
 [build-dependencies]
 clap = { version = "^4.6", features = ["derive"] }
@@ -196,7 +194,7 @@ insta = { version = "^1.38", features = ["yaml"] }  # Snapshot/golden testing
 pretty_assertions = "^1.4"  # Better test output
 assert_cmd = "^2.2"         # CLI testing
 assert_fs = "^1.1"           # Temp dirs and file layout for tests
-rstest = "^0.21"             # Parameterized tests and fixtures
+rstest = "^0.26"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
-tower = "0.5.3"
-rcgen = "0.14.7"
+tower = "^0.5"
+rcgen = "^0.14"

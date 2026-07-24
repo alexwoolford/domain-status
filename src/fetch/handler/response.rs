@@ -119,7 +119,7 @@ pub async fn handle_response(
     let timestamp = chrono::Utc::now().timestamp_millis();
     let redirect_chain_vec = redirect_chain.unwrap_or_default();
 
-    let (tech_result, dns_result, favicon_result, external_secrets) = tokio::join!(
+    let (tech_result, dns_result, favicon_result, external_script_scan) = tokio::join!(
         // Technology detection (only needs HTML data and headers)
         async {
             use crate::fetch::record::detect_technologies_safely;
@@ -149,8 +149,7 @@ pub async fn handle_response(
             final_url_str,
         ),
         // Optional external <script src> secret scanning. Off by default;
-        // produces an empty Vec when disabled so this branch is essentially
-        // free in production scans.
+        // returns empty ExternalScriptScanResult when disabled.
         async {
             if ctx.config.scan_external_scripts {
                 crate::fetch::external_scripts::scan_external_scripts(
@@ -161,7 +160,7 @@ pub async fn handle_response(
                 )
                 .await
             } else {
-                Vec::new()
+                crate::fetch::external_scripts::ExternalScriptScanResult::default()
             }
         }
     );
@@ -184,13 +183,17 @@ pub async fn handle_response(
     // Each finding is already tagged with `location = "external_script:<url>"`
     // so analysts can distinguish in-HTML matches from JS-bundle matches.
     let mut html_data = html_data;
-    if !external_secrets.is_empty() {
+    html_data.external_scripts_eligible = external_script_scan.eligible;
+    html_data.external_scripts_scanned = external_script_scan.scanned;
+    if !external_script_scan.secrets.is_empty() {
         log::info!(
             "Detected {} additional secret(s) in external scripts for {}",
-            external_secrets.len(),
+            external_script_scan.secrets.len(),
             resp_data.final_domain
         );
-        html_data.exposed_secrets.extend(external_secrets);
+        html_data
+            .exposed_secrets
+            .extend(external_script_scan.secrets);
     }
 
     // Scan response headers (incl. Set-Cookie) for secrets that never appear in
@@ -309,58 +312,6 @@ mod tests {
                 error_stats,
                 timing_stats,
                 None,
-                false,
-                false,
-                Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-                true,
-            ),
-        )
-    }
-
-    async fn create_test_context_with_migrations(_server: &Server) -> ProcessingContext {
-        // Create context with database migrations applied
-        // This allows testing the full response handling path including database insertion
-        let client = Arc::new(
-            reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .expect("Failed to create HTTP client"),
-        );
-        let redirect_client = Arc::new(
-            reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .expect("Failed to create redirect client"),
-        );
-        let extractor = Arc::new(psl::List);
-        let resolver = Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build()
-                .expect("resolver builds with default config"),
-        );
-        let error_stats = Arc::new(ProcessingStats::new());
-        let timing_stats = Arc::new(TimingStats::new());
-        let pool = Arc::new(
-            sqlx::SqlitePool::connect("sqlite::memory:")
-                .await
-                .expect("Failed to create test pool"),
-        );
-
-        // Run migrations to enable database insertion
-        crate::storage::migrations::run_migrations(pool.as_ref())
-            .await
-            .expect("Failed to run migrations");
-
-        ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
-                error_stats,
-                timing_stats,
-                Some("test-run".to_string()),
                 false,
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
@@ -530,198 +481,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_response_metrics_recorded() {
-        let server = Server::run();
-        let server_url = server.url("/metrics").to_string();
-        let original_url = "https://example.com/metrics";
-
-        // Return valid HTML
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/metrics")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // This will likely fail at database insertion (migrations not set up),
-        // but metrics should be calculated before that
-        let _result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            None,
-            start_time,
-        )
-        .await;
-
-        // Verify timing stats were accessed (even if insertion failed)
-        // The timing_stats.record() call should have been made
-        // We can't easily verify the internal state, but we can verify it didn't panic
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_redirect_chain_preserved() {
-        let server = Server::run();
-        let server_url = server.url("/redirected").to_string();
-        let original_url = "https://example.com/original";
-        let redirect_chain: Option<Vec<(String, u16)>> = Some(vec![
-            ("https://example.com/original".to_string(), 301),
-            ("https://example.com/intermediate".to_string(), 302),
-            (server_url.clone(), 200),
-        ]);
-
-        // Return valid HTML
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/redirected")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Redirect chain should be preserved through processing
-        let _result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            redirect_chain.clone(),
-            start_time,
-        )
-        .await;
-
-        // Verify redirect chain was passed through (will be in database if insertion succeeds)
-        // For now, just verify it doesn't panic
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_negative_elapsed_time() {
-        // Test that negative elapsed time is handled gracefully (should be clamped to 0)
-        let server = Server::run();
-        let server_url = server.url("/").to_string();
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Negative elapsed time should be clamped to 0
-        let result = handle_response(
-            response,
-            "https://example.com",
-            &server_url,
-            &ctx,
-            -1.0, // Negative elapsed time
-            None,
-            start_time,
-        )
-        .await;
-
-        // Should handle gracefully (may fail at domain extraction or succeed)
-        // The key is that negative elapsed is clamped to 0 in metrics calculation
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_very_large_elapsed_time() {
-        // Test that very large elapsed time doesn't cause overflow
-        let server = Server::run();
-        let server_url = server.url("/").to_string();
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Very large elapsed time (would overflow u64::MAX microseconds)
-        let very_large_elapsed = 20_000.0; // 20,000 seconds
-        let result = handle_response(
-            response,
-            "https://example.com",
-            &server_url,
-            &ctx,
-            very_large_elapsed,
-            None,
-            start_time,
-        )
-        .await;
-
-        // Should handle gracefully (clamped to u64::MAX)
-        // May fail at domain extraction, but shouldn't panic on overflow
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_timing_consistency() {
-        // Test that http_request_ms <= total_ms (critical for percentage accuracy)
-        let server = Server::run();
-        let server_url = server.url("/").to_string();
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Use a reasonable elapsed time
-        let elapsed = 0.5; // 500ms
-        let result = handle_response(
-            response,
-            "https://example.com",
-            &server_url,
-            &ctx,
-            elapsed,
-            None,
-            start_time,
-        )
-        .await;
-
-        // If successful, timing stats should have been recorded
-        // The key invariant: http_request_ms (from elapsed) should be <= total_ms (from start_time.elapsed())
-        // This is ensured by using the same start_time baseline
-        // We can't easily verify the exact values without accessing internal state,
-        // but we verify the function doesn't panic and handles timing correctly
-        let _ = result;
-    }
-
-    #[tokio::test]
     async fn test_handle_response_timing_metrics_overflow_protection() {
         // Test that very large elapsed times don't cause overflow
         // This is critical - elapsed * 1_000_000.0 could overflow u64
@@ -817,288 +576,6 @@ mod tests {
             "Expected database or domain error, got: {}",
             error_msg
         );
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_partial_failures_preserved() {
-        // Test that partial failures are correctly passed through to batch record
-        // This is critical - DNS/TLS failures should be recorded even if processing succeeds
-        let server = Server::run();
-        let server_url = server.url("/test").to_string();
-        let original_url = "https://example.com/test";
-
-        // Return valid HTML
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/test")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Partial failures are created in fetch_all_dns_data, which is called inside handle_response
-        // We can't easily inject partial failures, but we can verify the code path exists
-        // The key is that if fetch_all_dns_data returns partial_failures, they're passed through
-        let result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            None,
-            start_time,
-        )
-        .await;
-
-        // Will fail at database insertion, but partial failures would be in batch_record
-        // if fetch_all_dns_data returned them. The key is the code path exists and doesn't panic.
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_full_path_with_migrations() {
-        // Test the full response handling path with proper database setup
-        // This exercises the complete flow: extraction -> parsing -> DNS -> tech detection -> insertion
-        let server = Server::run();
-        let server_url = server.url("/full").to_string();
-        let original_url = "https://example.com/full";
-
-        // Return valid HTML with proper domain
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/full")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .insert_header("Server", "nginx/1.18.0")
-                    .body("<html><head><title>Test Page</title></head><body>Hello World</body></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context_with_migrations(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // This should succeed through the full path (may fail at DNS/TLS, but should get to insertion)
-        let result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            None,
-            start_time,
-        )
-        .await;
-
-        // May succeed or fail depending on DNS/TLS, but should not panic
-        // The key is that with migrations, database insertion can succeed
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_timing_metrics_calculation() {
-        // Test that timing metrics are correctly calculated and recorded
-        let server = Server::run();
-        let server_url = server.url("/timing").to_string();
-        let original_url = "https://example.com/timing";
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/timing")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context_with_migrations(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Use a known elapsed time
-        let elapsed = 0.5; // 500ms
-        let _result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            elapsed,
-            None,
-            start_time,
-        )
-        .await;
-
-        // Verify timing stats were accessed (even if insertion failed)
-        // The timing_stats.record() call should have been made
-        // We can't easily verify internal state, but we verify it didn't panic
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_error_stats_tracking() {
-        // Test that error stats are correctly tracked during processing
-        let server = Server::run();
-        let server_url = server.url("/errors").to_string();
-        let original_url = "https://example.com/errors";
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/errors")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context_with_migrations(&server).await;
-        let start_time = std::time::Instant::now();
-
-        let _result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            None,
-            start_time,
-        )
-        .await;
-
-        // Error stats should be accessible (may have been incremented for DNS/TLS failures)
-        // The key is that error_stats is used throughout the processing path
-        let _ = ctx.config.error_stats;
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_parallel_execution_path() {
-        // Test that tech detection and DNS/TLS run in parallel (tokio::join!)
-        // This is critical - parallel execution improves performance
-        let server = Server::run();
-        let server_url = server.url("/parallel").to_string();
-        let original_url = "https://example.com/parallel";
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/parallel")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .insert_header("Server", "nginx/1.18.0")
-                    .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context_with_migrations(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // This exercises the parallel execution path (tokio::join! at line 89)
-        // Tech detection and DNS/TLS should run concurrently
-        let result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            None,
-            start_time,
-        )
-        .await;
-
-        // May succeed or fail depending on DNS/TLS, but parallel execution should have occurred
-        // The key is that both paths were attempted (tech detection and DNS/TLS)
-        // We verify this by checking that the function didn't panic and completed
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_timing_metrics_accuracy() {
-        // Test that timing metrics are calculated accurately
-        // This is critical - timing metrics must be correct for performance analysis
-        let server = Server::run();
-        let server_url = server.url("/timing-accuracy").to_string();
-        let original_url = "https://example.com/timing-accuracy";
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/timing-accuracy")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context_with_migrations(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Use a known elapsed time
-        let elapsed = 0.25; // 250ms
-        let _result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            elapsed,
-            None,
-            start_time,
-        )
-        .await;
-
-        // Verify timing stats were recorded
-        // The key invariant: http_request_ms (from elapsed) should be <= total_ms (from start_time.elapsed())
-        // This is ensured by using the same start_time baseline (line 173)
-        // We can't easily verify exact values without accessing internal state,
-        // but we verify the function doesn't panic and timing calculation occurred
-    }
-
-    #[tokio::test]
-    async fn test_handle_response_redirect_chain_preserved_through_full_path() {
-        // Test that redirect chain is preserved through the entire processing path
-        // This is critical - redirect chains must be stored in the database
-        let server = Server::run();
-        let server_url = server.url("/redirected-full").to_string();
-        let original_url = "https://example.com/original";
-        let redirect_chain: Option<Vec<(String, u16)>> = Some(vec![
-            ("https://example.com/original".to_string(), 301),
-            ("https://example.com/intermediate".to_string(), 302),
-            (server_url.clone(), 200),
-        ]);
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/redirected-full")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
-            ),
-        );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let ctx = create_test_context_with_migrations(&server).await;
-        let start_time = std::time::Instant::now();
-
-        // Redirect chain should be preserved through prepare_record_for_insertion
-        // and inserted into the database via insert_batch_record
-        let result = handle_response(
-            response,
-            original_url,
-            &server_url,
-            &ctx,
-            0.1,
-            redirect_chain.clone(),
-            start_time,
-        )
-        .await;
-
-        // May succeed or fail depending on DNS/TLS, but redirect chain should be preserved
-        // The key is that redirect_chain is passed to prepare_record_for_insertion (line 146)
-        // and should be included in the batch_record
-        let _ = result;
     }
 
     #[tokio::test]

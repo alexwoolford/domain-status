@@ -152,11 +152,12 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             response_time_seconds, title, keywords, description, tls_version, ssl_cert_subject,
             ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
             spf_record, dmarc_record, cipher_suite, key_algorithm, run_id,
-            body_sha256, content_length, http_version, body_word_count, body_line_count,
+            body_sha256, body_truncated, external_scripts_eligible, external_scripts_scanned,
+            content_length, http_version, body_word_count, body_line_count,
             content_type, canonical_url, cert_fingerprint_sha256,
             cert_serial_number, cert_is_self_signed, cert_is_wildcard, cert_is_mismatched,
             meta_refresh_url
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, final_domain) DO UPDATE SET
             initial_domain=excluded.initial_domain,
             ip_address=excluded.ip_address,
@@ -180,6 +181,9 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
             key_algorithm=excluded.key_algorithm,
             run_id=excluded.run_id,
             body_sha256=excluded.body_sha256,
+            body_truncated=excluded.body_truncated,
+            external_scripts_eligible=excluded.external_scripts_eligible,
+            external_scripts_scanned=excluded.external_scripts_scanned,
             content_length=excluded.content_length,
             http_version=excluded.http_version,
             body_word_count=excluded.body_word_count,
@@ -217,6 +221,9 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(params.record.key_algorithm.as_ref().map(crate::models::KeyAlgorithm::as_str))
     .bind(&params.record.run_id)
     .bind(&params.record.body_sha256)
+    .bind(params.record.body_truncated)
+    .bind(params.record.external_scripts_eligible)
+    .bind(params.record.external_scripts_scanned)
     .bind(params.record.content_length)
     .bind(&params.record.http_version)
     .bind(params.record.body_word_count)
@@ -535,6 +542,9 @@ mod tests {
             key_algorithm: Some(crate::models::KeyAlgorithm::ECDSA),
             run_id: Some("test-run-1".to_string()),
             body_sha256: None,
+            body_truncated: false,
+            external_scripts_eligible: 0,
+            external_scripts_scanned: 0,
             content_length: None,
             http_version: None,
             body_word_count: None,
@@ -598,6 +608,89 @@ mod tests {
         assert_eq!(row.get::<String, _>("final_domain"), "example.com");
         assert_eq!(row.get::<i64, _>("http_status"), 200);
         assert_eq!(row.get::<String, _>("title"), "Example Domain");
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_record_scan_completeness_columns() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
+        let mut record = create_test_url_record();
+        record.body_truncated = true;
+        record.external_scripts_eligible = 5;
+        record.external_scripts_scanned = 3;
+
+        let id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &HashMap::new(),
+            http_headers: &HashMap::new(),
+            oids: &HashSet::new(),
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+        })
+        .await
+        .expect("insert");
+
+        let row = sqlx::query(
+            "SELECT body_truncated, external_scripts_eligible, external_scripts_scanned
+             FROM url_status WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("select");
+
+        assert_eq!(row.get::<i64, _>("body_truncated"), 1);
+        assert_eq!(row.get::<i64, _>("external_scripts_eligible"), 5);
+        assert_eq!(row.get::<i64, _>("external_scripts_scanned"), 3);
+
+        // Upsert flips completeness fields; excluded.* must win.
+        record.body_truncated = false;
+        record.external_scripts_eligible = 7;
+        record.external_scripts_scanned = 2;
+        record.title = "Rescan".to_string();
+        let id2 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &HashMap::new(),
+            http_headers: &HashMap::new(),
+            oids: &HashSet::new(),
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+        })
+        .await
+        .expect("upsert");
+        assert_eq!(id, id2);
+
+        let row2 = sqlx::query(
+            "SELECT body_truncated, external_scripts_eligible, external_scripts_scanned, title
+             FROM url_status WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("select after upsert");
+
+        assert_eq!(row2.get::<i64, _>("body_truncated"), 0);
+        assert_eq!(row2.get::<i64, _>("external_scripts_eligible"), 7);
+        assert_eq!(row2.get::<i64, _>("external_scripts_scanned"), 2);
+        assert_eq!(row2.get::<String, _>("title"), "Rescan");
     }
 
     #[tokio::test]

@@ -11,4 +11,4 @@ publish = true
 
 [dependencies]
 clap = { version = "^4.6", features = ["derive", "env"] }
-clap-verbosity-flag = "3.0"
+clap-verbosity-flag = "^3.0"

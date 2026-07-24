@@ -1,7 +1,6 @@
 # Pre-commit hooks configuration
-# Install: cargo install pre-commit-rs (or use pre-commit framework)
-# Or: brew install pre-commit
-# Then: pre-commit install
+# Install: brew install pre-commit  (or pipx/pip)
+# Then: just install-hooks   # or: pre-commit install
 
 repos:
   - repo: https://github.com/gitleaks/gitleaks
@@ -29,3 +28,19 @@ repos:
         description: "Remove trailing whitespace"
       - id: check-merge-conflict
         description: "Check for merge conflict markers"
+
+  # Mirror CI Lint: fail locally before push (same as `just fmt-check` / `just lint`).
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: cargo-clippy
+        name: cargo clippy -D warnings
+        entry: cargo clippy --all-targets --all-features --locked -- -D warnings
+        language: system
+        pass_filenames: false
+        always_run: true

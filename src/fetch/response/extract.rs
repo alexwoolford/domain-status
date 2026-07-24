@@ -158,6 +158,24 @@ fn decode_body_with_charset(bytes: &[u8], content_type: Option<&str>) -> String 
     cow.into_owned()
 }
 
+/// Decode a streamed body and set the scan-completeness truncation flag.
+///
+/// Truncated prefixes are still secret-scanned; `body_truncated` tells analysts
+/// that content past the cap was never seen.
+fn decode_streamed_body(
+    streamed: StreamedBody,
+    content_type: Option<&str>,
+    final_domain: &str,
+) -> (String, bool) {
+    match streamed {
+        StreamedBody::Complete(bytes) => (decode_body_with_charset(&bytes, content_type), false),
+        StreamedBody::Truncated(bytes) => {
+            debug!("Body exceeded limit for {final_domain}, parsing truncated prefix");
+            (decode_body_with_charset(&bytes, content_type), true)
+        }
+    }
+}
+
 /// Returns true if the Content-Type (lowercased, with optional `;` parameters)
 /// is one we want to scan for secrets and extract metadata from.
 ///
@@ -245,9 +263,10 @@ fn sniff_meta_charset(prefix: &[u8]) -> Option<String> {
 /// # Errors
 ///
 /// Returns an error if domain extraction fails or response body cannot be read.
-/// Returns `Ok(None)` if content-type is not HTML or body is empty.
-/// When body exceeds the size limit, returns `Ok(Some(ResponseData))` with metadata
-/// (status, headers, TLS-relevant URL/domain) and empty body so the record is still stored.
+/// Returns `Ok(None)` if content-type is not scannable.
+/// When body exceeds the size limit, returns `Ok(Some(ResponseData))` with the
+/// truncated prefix (`body_truncated = true`) so secrets in the first
+/// `MAX_RESPONSE_BODY_SIZE` bytes are still seen.
 #[allow(clippy::too_many_lines)] // Extracts headers, body, domain, and security data from HTTP response in sequence
 pub(crate) async fn extract_response_data(
     response: reqwest::Response,
@@ -321,26 +340,17 @@ pub(crate) async fn extract_response_data(
     // SECURITY: Stream body with running size check to prevent OOM attacks.
     // Unlike response.text().await which downloads the entire body into memory first,
     // this approach stops reading at MAX_RESPONSE_BODY_SIZE and keeps the prefix.
-    let body = match stream_body_with_limit(
+    let streamed = stream_body_with_limit(
         response,
         crate::config::MAX_RESPONSE_BODY_SIZE,
         &final_domain,
     )
-    .await
-    {
-        Ok(StreamedBody::Complete(bytes)) => {
-            decode_body_with_charset(&bytes, content_type.as_deref())
-        }
-        Ok(StreamedBody::Truncated(bytes)) => {
-            // Body exceeded the cap: parse and secret-scan the buffered prefix
-            // rather than discarding it. Large SPA bundles routinely exceed the
-            // cap, and a secret in the first 2MB would otherwise never be seen.
-            debug!("Body exceeded limit for {final_domain}, parsing truncated prefix");
-            decode_body_with_charset(&bytes, content_type.as_deref())
-        }
+    .await;
+    let (body, body_truncated) = match streamed {
+        Ok(s) => decode_streamed_body(s, content_type.as_deref(), &final_domain),
         Err(e) => {
             log::warn!("Failed to read response body for {final_domain}: {e}");
-            String::new()
+            (String::new(), false)
         }
     };
 
@@ -359,6 +369,7 @@ pub(crate) async fn extract_response_data(
             http_headers,
             body: Arc::<str>::from(""),
             body_sha256: None,
+            body_truncated,
             content_length: None,
             http_version: http_version.clone(),
             body_word_count: None,
@@ -394,6 +405,7 @@ pub(crate) async fn extract_response_data(
         http_headers,
         body: Arc::<str>::from(body),
         body_sha256,
+        body_truncated,
         content_length,
         http_version,
         body_word_count,
@@ -885,36 +897,20 @@ mod tests {
         assert_eq!("".len(), 0);
     }
 
-    #[tokio::test]
-    async fn test_extract_response_data_large_body_skipped() {
-        // When body exceeds limit and domain extraction succeeds, we return Ok(Some(ResponseData))
-        // with empty body (metadata only). This test uses IPv6 server URL so domain extraction
-        // fails before we hit that path; we only verify the function runs.
-        let server = Server::run();
-        let server_url = server.url("/large").to_string();
-        let test_url = "https://example.com/large";
+    #[test]
+    fn test_decode_streamed_body_sets_truncated_flag() {
+        let complete = StreamedBody::Complete(b"<html>ok</html>".to_vec());
+        let (body, truncated) = decode_streamed_body(complete, Some("text/html"), "example.com");
+        assert!(!truncated);
+        assert!(body.contains("ok"));
 
-        // Create a body that exceeds MAX_RESPONSE_BODY_SIZE (2MB)
-        // For testing, we'll use a smaller but still large body to avoid memory issues
-        // In practice, the limit is 2MB, but for testing we'll verify the check exists
-        let large_body = "x".repeat(1024 * 1024); // 1MB for testing
-
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/large")).respond_with(
-                status_code(200)
-                    .insert_header("Content-Type", "text/html; charset=utf-8")
-                    .body(large_body),
-            ),
+        let over = StreamedBody::Truncated(b"x".repeat(100));
+        let (body2, truncated2) = decode_streamed_body(over, Some("text/html"), "example.com");
+        assert!(
+            truncated2,
+            "Truncated stream must set body_truncated for FN awareness"
         );
-
-        let client = reqwest::Client::new();
-        let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
-
-        // Domain extraction fails (IPv6), so we expect an error
-        // But the body size check logic is verified to exist in the code
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert_eq!(body2.len(), 100);
     }
 
     #[tokio::test]

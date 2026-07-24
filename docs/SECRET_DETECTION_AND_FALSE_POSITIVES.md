@@ -2,25 +2,48 @@
 
 The `url_exposed_secrets` table stores findings from gitleaks-style rules run over live HTML. Because we scan **web pages** (not just source files), some findings are **public identifiers** or **anti-crawling artifacts**, not real credentials. This doc describes known false-positive patterns and how to triage.
 
+## Mitigation principles
+
+Prefer maintainable fixes over growing per-site exception lists:
+
+1. **Upstream distinctive shapes** — keep well-scoped Gitleaks rules (e.g. Dropbox `sl.…` / long-lived); disable catch-alls that only match “provider name + short alnum”.
+2. **Same-id rule replace** in `config/gitleaks.overrides.toml` when the upstream regex is the bug (see `sourcegraph-access-token`, `square-access-token`, `datadog-access-token`).
+3. **Structural plausibility** in `web_rule_match_is_plausible` (entropy/length for `generic-api-key`, camelCase reject for LinkedIn ids, etc.).
+4. **Severity demotion** when the match is real but public/temporary (e.g. `X-Amz-Credential=` → Low), still stored for inventory.
+5. **Allowlists** only for product-format public-by-design IDs (Weglot `wg_…`, App Insights `instrumentationKey`, HubSpot form UUIDs) — not site names or one-off URL trivia.
+
 ## What can be false positives
 
 - **Public identifiers**: Form/embed IDs (e.g. `data-hubspot-form="uuid"`), build IDs, CSRF tokens in HTML attributes, analytics or tag-manager IDs that are meant to be public.
 - **Anti-crawling / CDN**: Content injected by Cloudflare (email obfuscation, challenge pages) or similar that contains provider names and hex/UUID patterns in non-secret contexts.
 - **Location + rule**: `location = 'data_attribute'` with a rule that matches “provider name + UUID” often indicates a form/embed ID, not an API key.
+- **Binary noise**: Prefixes like `EAAA` / `EAAC` inside WebP or other binary can look like Square/Facebook tokens; we require distinctive prefixes or assignment context.
 
 ## Known rule + context patterns
 
 | Pattern | Rule(s) | Why it’s a false positive | Mitigation |
 |--------|---------|---------------------------|------------|
-| `data-hubspot-form="uuid"` | hubspot-api-key | Form/embed ID, not API key | Allowlisted in `config/gitleaks.overrides.toml` (line contains `data-hubspot-form=` or `data-hubspot-form-id=`) |
+| `data-hubspot-form="uuid"` | hubspot-api-key | Form/embed ID, not API key | Allowlisted (`data-hubspot-form=`, `data-hubspot-form-id=`) |
+| `x-hubspot-correlation-id: uuid` | hubspot-api-key | Request correlation header, not API key | Allowlisted (`x-hubspot-correlation-id`) |
+| `hubspotFormId*` / `*_HUBSPOT_*FORM_ID*` | hubspot-api-key | Public form/widget UUID | Allowlisted (`hubspotFormId`, `HUBSPOT_*FORM_ID`) |
+| `app.powerbi.com/view?r=eyJrIjoi…` | grafana-api-key | Power BI embed token shares Grafana's `eyJrIjoi` prefix | Allowlisted (`powerbi.com`) |
+| `wg_<32 hex>` | generic-api-key | Weglot public widget key | Allowlisted (`^wg_[0-9a-f]{32}$`) |
+| `instrumentationKey:` / `InstrumentationKey=` | generic-api-key | Azure App Insights browser SDK public key | Allowlisted |
+| `"link_type":"…"` + `"key":"<uuid>"` | generic-api-key | Prismic/CMS document UUID | Allowlisted (`"link_type"`) |
+| `X-Amz-Credential=AKIA\|ASIA…` | aws-access-token | Pre-signed URL temporary credential ID | Severity demoted to **Low** (still stored) |
+| `"datadogVersion":"<40 hex>"` | datadog-access-token | Build hash, not API key | Rule replaced: credential assignment only |
+| `EAAA…` in binary | square-access-token | WebP/binary collision | Rule replaced: `sq0atp-` only |
+| Bare `EAA[MC]…` in binary | facebook-page-access-token | Binary collision | Rule replaced: `access_token=` context |
+| 15-char near “dropbox” | dropbox-api-token | JS identifier (e.g. `theChampSiteUrl`) | Rule disabled; use long/short-lived Dropbox rules |
+| camelCase near “linkedin” (e.g. `thumbnailWidth`) | linkedin-client-id/secret | JS property name | Plausibility: reject lowercase-starting camelCase |
 | Cloudflare email obfuscation (40-char hex) | sourcegraph-access-token | `email-protection#`, `data-cfemail=`, `__cf_email__` | Allowlisted in overrides |
 | HTML `id="[40 hex]"` (e.g. Wix build) | sourcegraph-access-token | Build/instance ID | Allowlisted in overrides |
-| Other anti-crawling / bot pages | sourcegraph-access-token, etc. | Bot/challenge HTML can contain “sourcegraph” + hex | Partial; add narrow allowlist regexes if a pattern recurs |
 
 ## How to triage
 
-- Use **`location`** and **`context`**: `inline_script`, `url_parameter`, and `meta_tag` are more likely to be real secrets; `data_attribute` and `html_body` often contain public IDs or CDN content.
-- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA`, `SG.`, `shpat_`, `sk-`, `ghp_`). Treat `gcp-api-key` (Low) as a public client identifier inventory, not a leak.
+- Use **`location`** and **`context`**: `inline_script`, `json_ld`, `url_parameter`, `set_cookie`, and `external_script:…` are more likely to be real secrets; `data_attribute` and `html_body` often contain public IDs or CDN content.
+- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`). Treat `gcp-api-key`, `jwt`, and Amz-Credential AWS IDs as **Low** inventory, not urgent leaks.
+- When assessing possible misses, join `url_status.body_truncated` and `external_scripts_eligible` / `external_scripts_scanned` (incomplete scan when truncated or eligible > scanned).
 - Inspect **`context`**: Look for `data-*-form`, `id="..."`, `email-protection#`, or other HTML patterns that indicate a public identifier or obfuscation.
 - For high-confidence secrets, prefer findings where the value has a known token format (prefix, length) and the context does not match the patterns above.
 
@@ -55,6 +78,6 @@ LIMIT 50;
 
 ## Overrides
 
-Web-specific allowlists live in `config/gitleaks.overrides.toml` and are merged at load time so they are not overwritten when refreshing upstream `config/gitleaks.toml`. Add new allowlists there for clear, semantic patterns (e.g. form/embed ID attributes), and add unit tests in `src/parse/secrets.rs` for each new allowlist.
+Web-specific rule replaces and allowlists live in `config/gitleaks.overrides.toml` and are merged at load time so they are not overwritten when refreshing upstream `config/gitleaks.toml`. Prefer same-id `[[rules]]` replaces and structural filters for broad FPs; add `[[append]]` allowlists only for clear product-format public IDs. Add unit tests in `src/parse/secrets.rs` for each new mitigation.
 
 For a full audit of secret types (legit vs false positive) and the fixes applied, see [SECRET_DETECTION_NOTES.md](SECRET_DETECTION_NOTES.md).

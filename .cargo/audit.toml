@@ -1,10 +1,8 @@
 [advisories]
 ignore = [
-  # rsa 0.9.10 lands in Cargo.lock via sqlx -> sqlx-mysql -> num-bigint-dig -> rsa,
-  # even though we only enable sqlx's `sqlite` feature so rsa is never actually
-  # compiled or linked into our binary. There is no patched version of rsa
-  # (Marvin attack mitigation work is still upstream).
-  # Remove once sqlx no longer pulls sqlx-mysql into the resolution graph or
-  # rsa ships a constant-time fix.
+  # rsa 0.9.10 lands in Cargo.lock via sqlx -> sqlx-mysql -> … -> rsa even though
+  # we only enable sqlx's `sqlite` feature (rsa is not linked into our binary).
+  # No patched rsa release exists yet. Remove once sqlx stops resolving sqlx-mysql
+  # into the lockfile for sqlite-only builds, or rsa ships a fix.
   "RUSTSEC-2023-0071",
 ]

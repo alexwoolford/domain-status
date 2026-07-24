@@ -180,6 +180,7 @@ fn parse_date_string(date_str: &str) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use whois_service::LookupStatus;
 
     #[test]
     fn test_parse_date_string_iso8601_with_millis() {
@@ -465,6 +466,7 @@ mod tests {
                 updated_ago: None,
                 expires_in: None,
             }),
+            lookup_status: LookupStatus::Found,
             cached: false,
             query_time_ms: 123,
             parsing_analysis: None,
@@ -498,6 +500,7 @@ mod tests {
             whois_server: "whois.example.com".to_string(),
             raw_data: oversized,
             parsed_data: None,
+            lookup_status: LookupStatus::Found,
             cached: false,
             query_time_ms: 10,
             parsing_analysis: None,

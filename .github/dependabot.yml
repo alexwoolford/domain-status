@@ -28,12 +28,9 @@ updates:
           - "*"
         update-types:
           - "minor"
-    # Ignore major version updates (review manually)
+    # Ignore major version updates (review manually). Arrow/parquet majors
+    # are handled in intentional cleanup PRs (e.g. 58→59 dropped thrift).
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
-      # Transitive via parquet (^0.17). Dependabot tries 0.23+/0.24 and fails
-      # because nothing newer is compatible; that surfaces as a red "Dependabot
-      # Updates" run on main (including after releases) without an actionable PR.
-      - dependency-name: "thrift"
