@@ -28,6 +28,10 @@ pub enum CliCommand {
     /// Export data from SQLite database to various formats.
     #[command(name = "export")]
     Export(ExportCommand),
+
+    /// Print a summary of the last (or a selected) scan run.
+    #[command(name = "summary")]
+    Summary(SummaryCommand),
 }
 
 /// Scan command arguments.
@@ -39,6 +43,7 @@ pub struct ScanCommand {
     #[arg(value_parser)]
     pub file: PathBuf,
 
+    /// Baseline log level; overridden by -v / -q. Prefer verbosity flags for quick changes.
     #[arg(long, value_enum, default_value_t = LogLevel::Info, env = "DOMAIN_STATUS_LOG_LEVEL")]
     pub log_level: LogLevel,
 
@@ -141,32 +146,72 @@ pub struct ExportCommand {
     pub since: Option<i64>,
 }
 
+/// Summary command arguments.
+#[derive(Debug, Parser, Clone)]
+pub struct SummaryCommand {
+    #[arg(
+        long,
+        value_parser,
+        default_value = "./domain_status.db",
+        env = "DOMAIN_STATUS_DB_PATH"
+    )]
+    pub db_path: PathBuf,
+
+    /// Run id to summarize (default: most recent completed run).
+    #[arg(long)]
+    pub run_id: Option<String>,
+
+    /// How many top technologies to list (default: 15).
+    #[arg(long, default_value_t = 15)]
+    pub top: usize,
+}
+
+/// Exit code policy for handling failures.
+///
+/// Marked `#[non_exhaustive]` so adding new policies is not a breaking change.
 #[derive(Clone, Debug, Default, clap::ValueEnum, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FailOn {
+    /// Never exit with error code (always return 0).
     #[default]
     Never,
+    /// Exit with error if any URL failed.
     AnyFailure,
+    /// Exit with error if failure percentage exceeds threshold (`pct>`).
     #[value(name = "pct>")]
     PctGreaterThan,
 }
 
-#[derive(Clone, Debug, Default, clap::ValueEnum)]
+/// Logging level for the application.
+#[derive(Clone, Debug, Default, clap::ValueEnum, PartialEq, Eq)]
 pub enum LogLevel {
+    /// Only error messages.
     Error,
+    /// Error and warning messages.
     Warn,
+    /// Error, warning, and informational messages.
     #[default]
     Info,
+    /// All messages except trace.
     Debug,
+    /// All messages including trace.
     Trace,
 }
 
-#[derive(Copy, Clone, Debug, Default, clap::ValueEnum)]
+/// Log output format.
+///
+/// Marked `#[non_exhaustive]` so adding new formats is not a breaking change.
+#[derive(Copy, Clone, Debug, Default, clap::ValueEnum, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LogFormat {
+    /// Human-readable format with colors (default).
     #[default]
     Plain,
+    /// Structured JSON format for machine parsing.
     Json,
 }
 
+/// Export output format.
 #[derive(Debug, Clone, Default, clap::ValueEnum, PartialEq, Eq)]
 pub enum ExportFormat {
     #[default]

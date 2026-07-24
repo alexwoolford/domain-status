@@ -18,52 +18,26 @@ use std::time::Duration;
 
 use clap::parser::ValueSource;
 use clap::{FromArgMatches, Parser};
-use domain_status_cli::{
-    ExportFormat as CliExportFormat, FailOn as CliFailOn, LogFormat as CliLogFormat,
-    LogLevel as CliLogLevel,
-};
+use domain_status_cli::ExportFormat as CliExportFormat;
 
-use crate::config::{FailOn, LogFormat, LogLevel};
+use crate::config::{log_level_filter, FailOn, LogFormat, LogLevel};
 use crate::export::{export_csv, ExportOptions};
 use crate::initialization::{init_crypto_provider, init_logger_to_file, init_logger_with};
+use crate::summary::{format_scan_summary, query_scan_summary, SummaryOptions};
 use crate::utils::warn_if_world_readable;
 use crate::{run_scan, Config, ScanReport};
 
 // Re-export CLI types so existing tests and callers can use the same names.
-pub use domain_status_cli::{CliCommand, ExportCommand, ExportFormat, ScanCommand};
-
-fn log_level_cli_to_config(l: &CliLogLevel) -> LogLevel {
-    match l {
-        CliLogLevel::Error => LogLevel::Error,
-        CliLogLevel::Warn => LogLevel::Warn,
-        CliLogLevel::Info => LogLevel::Info,
-        CliLogLevel::Debug => LogLevel::Debug,
-        CliLogLevel::Trace => LogLevel::Trace,
-    }
-}
-
-fn log_format_cli_to_config(f: CliLogFormat) -> LogFormat {
-    match f {
-        CliLogFormat::Plain => LogFormat::Plain,
-        CliLogFormat::Json => LogFormat::Json,
-    }
-}
-
-fn fail_on_cli_to_config(f: &CliFailOn) -> FailOn {
-    match f {
-        CliFailOn::Never => FailOn::Never,
-        CliFailOn::AnyFailure => FailOn::AnyFailure,
-        CliFailOn::PctGreaterThan => FailOn::PctGreaterThan,
-    }
-}
+pub use domain_status_cli::{CliCommand, ExportCommand, ExportFormat, ScanCommand, SummaryCommand};
 
 fn config_from_scan_command(cli: ScanCommand) -> Config {
+    // Prefer -v/-q when they differ from the Info baseline; otherwise use --log-level.
     let log_level_filter_override =
         Some(cli.verbosity.log_level_filter()).filter(|f| *f != log::LevelFilter::Info);
     Config {
         file: cli.file,
-        log_level: log_level_cli_to_config(&cli.log_level),
-        log_format: log_format_cli_to_config(cli.log_format),
+        log_level: cli.log_level,
+        log_format: cli.log_format,
         log_level_filter_override,
         db_path: cli.db_path,
         max_concurrency: cli.max_concurrency,
@@ -75,7 +49,7 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         status_port: cli.status_port,
         enable_whois: cli.enable_whois,
         scan_external_scripts: cli.scan_external_scripts,
-        fail_on: fail_on_cli_to_config(&cli.fail_on),
+        fail_on: cli.fail_on,
         fail_on_pct_threshold: cli.fail_on_pct_threshold,
         log_file: Some(cli.log_file),
         progress_callback: None,
@@ -219,7 +193,7 @@ fn init_scan_logging(
     log_file: &Path,
     log_level_override: Option<log::LevelFilter>,
 ) -> Result<()> {
-    let level = log_level_override.unwrap_or_else(|| log_level.clone().into());
+    let level = log_level_override.unwrap_or_else(|| log_level_filter(log_level));
     init_logger_to_file(level, log_file).context("Failed to initialize file logger")?;
     eprintln!("📝 Logs: {}", log_file.display());
     log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
@@ -278,7 +252,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
     );
     println!("Results saved in {}", report.db_path.display());
     println!(
-        "💡 Tip: Use `domain_status export --format csv` to export data, or query the database directly."
+        "💡 Tip: Use `domain_status summary` for a quick report, `domain_status export --format csv` to export, or query the database directly."
     );
 
     Ok(evaluate_exit_code(
@@ -289,7 +263,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
 }
 
 async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
-    init_logger_with(LogLevel::Info.into(), LogFormat::Plain)
+    init_logger_with(log_level_filter(&LogLevel::Info), LogFormat::Plain)
         .context("Failed to initialize logger")?;
     log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
 
@@ -354,13 +328,35 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
     Ok(0)
 }
 
+async fn execute_summary_command(summary_cmd: SummaryCommand) -> Result<i32> {
+    init_logger_with(log_level_filter(&LogLevel::Info), LogFormat::Plain)
+        .context("Failed to initialize logger")?;
+
+    let pool = crate::storage::init_db_pool_with_path(&summary_cmd.db_path, 5)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to open database at {}",
+                summary_cmd.db_path.display()
+            )
+        })?;
+
+    let options = SummaryOptions {
+        run_id: summary_cmd.run_id.clone(),
+        top_technologies: summary_cmd.top,
+    };
+    let summary = query_scan_summary(&pool, &options).await?;
+    print!("{}", format_scan_summary(&summary));
+    Ok(0)
+}
+
 /// Execute a parsed CLI command and return the intended process exit code.
 ///
 /// When `scan_arg_matches` is `Some`, config merge only overwrites file/env for fields
 /// explicitly set by the user (CLI or env). When `None`, all CLI-derived values overwrite.
 ///
 /// # Errors
-/// Returns `Err` when scan or export execution fails (I/O, database, or runtime errors).
+/// Returns `Err` when scan, export, or summary execution fails (I/O, database, or runtime errors).
 pub async fn run_cli_command(
     cli_command: CliCommand,
     scan_arg_matches: Option<&clap::ArgMatches>,
@@ -371,6 +367,7 @@ pub async fn run_cli_command(
             execute_scan_with_reporting(config).await
         }
         CliCommand::Export(export_cmd) => execute_export_command(export_cmd).await,
+        CliCommand::Summary(summary_cmd) => execute_summary_command(summary_cmd).await,
     }
 }
 
@@ -428,7 +425,10 @@ where
         "export" => CliCommand::Export(
             ExportCommand::from_arg_matches(sub_matches).map_err(|e| anyhow::anyhow!("{e}"))?,
         ),
-        _ => unreachable!("only scan and export subcommands exist"),
+        "summary" => CliCommand::Summary(
+            SummaryCommand::from_arg_matches(sub_matches).map_err(|e| anyhow::anyhow!("{e}"))?,
+        ),
+        _ => unreachable!("only scan, export, and summary subcommands exist"),
     };
     let scan_matches = matches.subcommand_matches("scan");
     run_cli_command(cli_command, scan_matches).await
@@ -490,6 +490,8 @@ pub fn evaluate_exit_code(fail_on: &FailOn, pct_threshold: u8, report: &ScanRepo
                 EXIT_SUCCESS
             }
         }
+        // `FailOn` is non_exhaustive (defined in domain_status_cli).
+        _ => EXIT_SUCCESS,
     }
 }
 
@@ -523,7 +525,7 @@ mod tests {
                 assert_eq!(cmd.fail_on, CliFailOn::Never);
                 assert_eq!(cmd.db_path, PathBuf::from("./domain_status.db"));
             }
-            CliCommand::Export(_) => panic!("expected scan command"),
+            CliCommand::Export(_) | CliCommand::Summary(_) => panic!("expected scan command"),
         }
     }
 
@@ -555,7 +557,20 @@ mod tests {
                 assert_eq!(cmd.output.as_deref(), Some("out.jsonl"));
                 assert!(matches!(cmd.format, CliExportFormat::Jsonl));
             }
-            CliCommand::Scan(_) => panic!("expected export command"),
+            CliCommand::Scan(_) | CliCommand::Summary(_) => panic!("expected export command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_summary_command_defaults() {
+        let cli = parse_cli_command_from(["domain_status", "summary"]).unwrap();
+        match cli {
+            CliCommand::Summary(cmd) => {
+                assert_eq!(cmd.db_path, PathBuf::from("./domain_status.db"));
+                assert!(cmd.run_id.is_none());
+                assert_eq!(cmd.top, 15);
+            }
+            CliCommand::Scan(_) | CliCommand::Export(_) => panic!("expected summary command"),
         }
     }
 

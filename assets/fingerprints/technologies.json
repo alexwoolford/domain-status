@@ -1,0 +1,146 @@
+{
+  "Nginx": {
+    "cats": [6],
+    "website": "https://nginx.org",
+    "headers": {
+      "Server": "nginx(?:/([\\d.]+))?\\;version:\\1"
+    }
+  },
+  "Apache HTTP Server": {
+    "cats": [6],
+    "website": "https://httpd.apache.org",
+    "headers": {
+      "Server": "Apache(?:/([\\d.]+))?\\;version:\\1"
+    }
+  },
+  "Cloudflare": {
+    "cats": [31],
+    "website": "https://www.cloudflare.com",
+    "headers": {
+      "Server": "cloudflare",
+      "cf-ray": ""
+    }
+  },
+  "jQuery": {
+    "cats": [59],
+    "website": "https://jquery.com",
+    "scriptSrc": [
+      "jquery[.-]([\\d.]*\\d)[^/]*\\.js\\;version:\\1",
+      "/jquery(?:-?\\d\\.(?:\\d|x)(?:\\.\\d)?)*\\.(?:min\\.)?js"
+    ],
+    "html": [
+      "<(?:link|script)[^>]+jquery"
+    ]
+  },
+  "React": {
+    "cats": [5],
+    "website": "https://reactjs.org",
+    "html": [
+      "<[^>]+data-react(?:root|id|checksum)",
+      "<script[^>]*>[^<]*__NEXT_DATA__"
+    ],
+    "js": {
+      "React": "",
+      "ReactDOM": ""
+    },
+    "implies": ["Node.js"]
+  },
+  "Next.js": {
+    "cats": [18],
+    "website": "https://nextjs.org",
+    "html": [
+      "<(?:div|script)[^>]+id=[\"']__next[\"']",
+      "<script[^>]*>[^<]*__NEXT_DATA__"
+    ],
+    "js": {
+      "__NEXT_DATA__": ""
+    },
+    "headers": {
+      "x-powered-by": "Next\\.js"
+    },
+    "implies": ["React", "Node.js", "Webpack"]
+  },
+  "WordPress": {
+    "cats": [1],
+    "website": "https://wordpress.org",
+    "meta": {
+      "generator": "WordPress(?:\\s([\\d.]+))?\\;version:\\1"
+    },
+    "html": [
+      "<link[^>]+wp-(?:content|includes)",
+      "<(?:link|script)[^>]+/wp-content/"
+    ],
+    "implies": ["PHP", "MySQL"]
+  },
+  "PHP": {
+    "cats": [12],
+    "website": "https://php.net",
+    "headers": {
+      "X-Powered-By": "PHP(?:/([\\d.]+))?\\;version:\\1",
+      "Server": "php/?([\\d.]+)?\\;version:\\1"
+    },
+    "cookies": {
+      "PHPSESSID": ""
+    }
+  },
+  "MySQL": {
+    "cats": [47],
+    "website": "https://www.mysql.com"
+  },
+  "Node.js": {
+    "cats": [12],
+    "website": "https://nodejs.org",
+    "headers": {
+      "X-Powered-By": "Express"
+    }
+  },
+  "Webpack": {
+    "cats": [47],
+    "website": "https://webpack.js.org",
+    "html": [
+      "(?:<script[^>]+src=[\"'][^\"']*bundles?/|/static/js/)[^\"']+\\.[a-f0-9]+\\.chunk\\.js"
+    ]
+  },
+  "Google Tag Manager": {
+    "cats": [62],
+    "website": "https://tagmanager.google.com",
+    "html": [
+      "googletagmanager\\.com/gtm\\.js",
+      "googletagmanager\\.com/ns\\.html[^>]+></iframe>"
+    ],
+    "js": {
+      "google_tag_manager": "",
+      "googletag": ""
+    }
+  },
+  "Google Analytics": {
+    "cats": [36],
+    "website": "https://google.com/analytics",
+    "html": [
+      "google-analytics\\.com/(?:ga|urchin|analytics)\\.js",
+      "googletagmanager\\.com/gtag/js"
+    ],
+    "js": {
+      "GoogleAnalyticsObject": "",
+      "ga": "",
+      "gtag": ""
+    }
+  },
+  "Bootstrap": {
+    "cats": [59],
+    "website": "https://getbootstrap.com",
+    "html": [
+      "<link[^>]+href=[\"'][^\"']*bootstrap(?:\\.min)?\\.css",
+      "<script[^>]+src=[\"'][^\"']*bootstrap(?:\\.min)?\\.js"
+    ]
+  },
+  "Amazon Web Services": {
+    "cats": [83],
+    "website": "https://aws.amazon.com",
+    "headers": {
+      "Server": "AmazonS3|EC2WS|aws",
+      "x-amz-id-2": "",
+      "x-amz-request-id": ""
+    }
+  }
+}

@@ -76,6 +76,7 @@ mod runtime_metrics;
 mod security;
 mod status_server;
 mod storage;
+pub mod summary;
 mod tls;
 mod user_agent;
 mod utils;
@@ -98,6 +99,7 @@ pub use status_server::StatusServerLifecycleError;
 pub use storage::{
     init_db_pool_with_path, query_run_history, run_migrations, RunSummary, UrlRecord,
 };
+pub use summary::{format_scan_summary, query_scan_summary, ScanSummary, SummaryOptions};
 // Low-level insert helpers used by the crate's own integration tests under
 // `tests/`. These are NOT a stable public API — they expose internals of the
 // SQLite write pipeline, with all the surface that requires (column lists,

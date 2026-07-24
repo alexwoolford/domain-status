@@ -11,7 +11,7 @@
 
 **domain_status** is a fast, concurrent website scanner for bulk analysis of URLs and domains.
 
-Give it a list of URLs → it fetches HTTP status, TLS certificates, DNS records, WHOIS data, GeoIP information, and technology fingerprints in one pass → stores everything in SQLite for analysis.
+Give it a list of URLs → it fetches HTTP status, TLS certificates, DNS records, technology fingerprints, and related signals in one pass (GeoIP when a MaxMind key is set; WHOIS with `--enable-whois`) → stores everything in SQLite for analysis.
 
 **Who it's for:**
 - **DevOps/SRE teams**: Monitor uptime, certificate expiration, and site health across portfolios
@@ -53,13 +53,21 @@ brew tap alexwoolford/domain-status && brew install domain_status
 # 2. Create URLs file and run scan
 echo -e "https://example.com\nhttps://example.org" > urls.txt && domain_status scan urls.txt
 
-# 3. View results
+# 3. View a quick summary (no SQL required)
+domain_status summary
+
+# Or query SQLite directly
 sqlite3 domain_status.db "SELECT initial_domain, http_status, title FROM url_status;"
 ```
 
-**Optional: Enable GeoIP lookup**
+**First run / fingerprints:** The default scan downloads Wappalyzer-compatible rules
+into `.fingerprints_cache/` (needs network, or set `GITHUB_TOKEN` to avoid rate limits).
+Use `--fingerprints /path/to/rules` for a local file/directory, or rely on the built-in
+minimal fallback when remotes fail. See [Offline / CI](#offline--ci) below.
 
-If you want GeoIP data (country, city, etc.), create a `.env` file:
+**Optional: Enable GeoIP lookup** (disabled unless a MaxMind key is set)
+
+If you want GeoIP data (country, city, ASN), create a `.env` file:
 
 ```bash
 # Copy the example and add your MaxMind license key
@@ -68,6 +76,22 @@ cp .env.example .env
 ```
 
 Get a free MaxMind license key from: https://www.maxmind.com/en/accounts/current/license-key
+
+**WHOIS** is off by default; pass `--enable-whois` when you need registration data
+(slower; uses `.whois_cache/`).
+
+**Starter queries** (after a scan):
+
+```bash
+# HTTP status breakdown
+sqlite3 domain_status.db "SELECT http_status, COUNT(*) FROM url_status GROUP BY 1 ORDER BY 2 DESC;"
+
+# Top observed technologies (excludes ruleset 'implies', e.g. WordPress→MySQL)
+sqlite3 domain_status.db "SELECT technology_name, COUNT(*) AS n FROM url_technologies WHERE is_implied = 0 GROUP BY 1 ORDER BY n DESC LIMIT 20;"
+
+# Exposed secrets
+sqlite3 domain_status.db "SELECT secret_type, severity, COUNT(*) FROM url_exposed_secrets GROUP BY 1, 2 ORDER BY 3 DESC;"
+```
 
 **Example output:**
 ```
@@ -80,6 +104,28 @@ rust-lang.org     | 200         | Rust Programming Language
 **That's it!** The tool processes URLs concurrently (30 by default), stores all data in SQLite, and provides progress updates.
 
 **Alternative:** Download a pre-built binary from the [Releases page](https://github.com/alexwoolford/domain_status/releases) — see [Installation](#-installation) for details.
+
+### Offline / CI
+
+```bash
+# Vendor fingerprints once (online machine), then reuse offline:
+domain_status scan urls.txt --fingerprints ./.fingerprints_cache/<hash>/   # or your own JSON dir
+
+# Explicit paths so CI workspaces stay clean:
+domain_status scan urls.txt \
+  --db-path "$RUNNER_TEMP/domain_status.db" \
+  --log-file "$RUNNER_TEMP/domain_status.log" \
+  --fingerprints /path/to/vendored/technologies
+
+# Omit MAXMIND_LICENSE_KEY to skip GeoIP entirely (default).
+```
+
+Optional TOML config (see [`config_examples/domain_status.example.toml`](config_examples/domain_status.example.toml)):
+
+```bash
+domain_status scan urls.txt --config ./domain_status.toml
+# or place domain_status.toml in the cwd / set DOMAIN_STATUS_CONFIG_FILE
+```
 
 ## 📦 Installation
 
@@ -165,7 +211,11 @@ DOMAIN_STATUS_GEN_DIR=./completions cargo build --release
 
 Then install the man page (e.g. `man -l completions/domain_status.1` or copy to `$MANPATH`) and source the completion script for your shell (e.g. `source completions/domain_status.bash` for Bash).
 
-**Note:** SQLite is bundled in the binary - no system SQLite installation required. The tool is completely self-contained.
+**Note:** SQLite is bundled in the binary — no system SQLite installation required.
+The scanner binary itself has no native library dependencies. **First-run technology
+fingerprints** still need network access to GitHub (or a local `--fingerprints` path /
+cached `.fingerprints_cache/`); if remotes are unreachable, a built-in minimal ruleset
+is used as a fallback.
 
 ## 🌟 Features
 
@@ -177,7 +227,7 @@ Then install the man page (e.g. `man -l completions/domain_status.1` or copy to 
 - **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
 - **Enhanced TLS Analysis**: Captures cipher suite and key algorithm in addition to certificate details
 - **Favicon Hashing**: Captures Shodan-compatible MurmurHash3 favicon hashes for infrastructure correlation
-- **GeoIP Lookup**: Automatic geographic and network information lookup using MaxMind GeoLite2 databases (auto-downloads if license key provided)
+- **GeoIP Lookup** (optional): Geographic and ASN lookup via MaxMind GeoLite2 when `MAXMIND_LICENSE_KEY` is set (or `--geoip` points at a local `.mmdb`); skipped silently otherwise
 
 ### Performance
 - **Concurrent Processing**: Async/await with configurable concurrency limits (default: 30 concurrent requests, 15 RPS)
@@ -191,7 +241,8 @@ Then install the man page (e.g. `man -l completions/domain_status.1` or copy to 
 
 ### Integration
 - **Flexible Configuration**: Extensive CLI options for logging, output format, timeouts, concurrency, rate limits, database paths, and fingerprint rulesets
-- **Library API**: Use as a Rust library in your own projects
+- **WHOIS/RDAP** (opt-in): Domain registration data with `--enable-whois` (cached in `.whois_cache/`; slower)
+- **Library API**: Embed the full scan pipeline (`Config` + `run_scan` + export) — not a composable HTTP/fingerprint toolkit
 - **Status Server**: Optional HTTP server for monitoring long-running jobs with Prometheus metrics
 - **Security Features**: URL validation (http/https only), content-type filtering, response size limits, and redirect hop limits
 
@@ -261,6 +312,7 @@ The tool uses a subcommand-based interface:
 
 - **`domain_status scan <file>`** - Scan URLs and store results in SQLite database
   - Use `-` as filename to read URLs from stdin: `echo "https://example.com" | domain_status scan -`
+- **`domain_status summary`** - Print status counts, top technologies, and secret counts for the last (or a selected) run
 - **`domain_status export`** - Export data from SQLite database to various formats (CSV, JSONL, Parquet)
 
 ### Scan Command
@@ -271,7 +323,8 @@ domain_status scan <file> [OPTIONS]
 ```
 
 **Common Options:**
-- `--log-level <LEVEL>`: Log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
+- `-v` / `-vv` / `-q`: Preferred way to raise or lower log verbosity (overrides `--log-level`)
+- `--log-level <LEVEL>`: Baseline log level: `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
 - `--log-format <FORMAT>`: Log format: `plain` or `json` (default: `plain`)
 - `--log-file <PATH>`: Log file path (default: `domain_status.log`). Scan logs are written to this file.
 - `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
@@ -325,6 +378,24 @@ domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
 domain_status scan urls.txt --fail-on never
 ```
 
+### Summary Command
+
+**Usage:**
+```bash
+domain_status summary [OPTIONS]
+```
+
+**Options:**
+- `--db-path <PATH>`: SQLite database file path (default: `./domain_status.db`)
+- `--run-id <ID>`: Run to summarize (default: most recent completed run)
+- `--top <N>`: How many top technologies to list (default: `15`)
+
+**Example:**
+```bash
+domain_status summary
+domain_status summary --run-id run_1765150444953 --top 25
+```
+
 ### Export Command
 
 **Usage:**
@@ -372,17 +443,22 @@ domain_status export --format jsonl --output - 2>/dev/null | jq 'select(.technol
 Environment variables can be set in a `.env` file in the current working directory. If no `.env` is found there, the binary also checks for a `.env` file next to the executable. Shell-exported variables work as well.
 
 **Configuration Precedence** (highest to lowest):
-1. **Command-line arguments** - always take precedence
-2. **Environment variables** (for specific features like GeoIP, GitHub API) - used when CLI args not provided
-3. **Default values** - fallback when neither CLI args nor env vars are set
+1. **Command-line arguments** (`scan` flags) — always win
+2. **Environment variables** — `DOMAIN_STATUS_*` for scan options, plus API keys (`MAXMIND_LICENSE_KEY`, `GITHUB_TOKEN`) and optional `RUST_LOG`
+3. **Config file** — `--config PATH`, else `DOMAIN_STATUS_CONFIG_FILE`, else auto-discovered `domain_status.toml` in the current directory (see [`config_examples/domain_status.example.toml`](config_examples/domain_status.example.toml))
+4. **Defaults** — built-in values when nothing else is set
 
-Most configuration is done via CLI arguments. Environment variables are used for API keys and baseline log filtering.
+Most day-to-day options are CLI flags. Use a TOML config file for shared defaults in CI or team runs.
+
+**Logging:** Prefer `-v` / `-vv` / `-q` for quick verbosity changes. `--log-level` / `DOMAIN_STATUS_LOG_LEVEL` set the baseline; `-v`/`-q` override it. Optional `RUST_LOG` adds per-module filters (e.g. `domain_status=debug,reqwest=info`) and is applied together with that minimum level.
 
 **Available Environment Variables:**
 
 - `MAXMIND_LICENSE_KEY`: MaxMind license key for automatic GeoIP database downloads. Get a free key from [MaxMind](https://www.maxmind.com/en/accounts/current/license-key). If not set, GeoIP lookup is disabled and the application continues normally.
 - `GITHUB_TOKEN`: (Optional) GitHub personal access token for fingerprint ruleset downloads. Increases GitHub API rate limit from 60 to 5000 requests/hour. Only needed if using GitHub-hosted fingerprint rulesets.
-- `RUST_LOG`: (Optional) Advanced logging control. It is read first, then the CLI `--log-level` still sets the global minimum level. Use `RUST_LOG` for per-module filters such as `domain_status=debug,reqwest=info`.
+- `DOMAIN_STATUS_CONFIG_FILE`: Path to a TOML config file (alternative to `--config`).
+- `DOMAIN_STATUS_LOG_LEVEL` / `RUST_LOG`: Baseline and advanced logging (see above).
+- Many scan options also accept `DOMAIN_STATUS_*` env vars (run `domain_status scan --help`).
 
 **Sensitive environment variables:** `MAXMIND_LICENSE_KEY` and `GITHUB_TOKEN` are secrets. Never commit them to version control or log their values. Use a `.env` file (already in `.gitignore`) or your shell environment, and use CI secrets for automation.
 
@@ -391,6 +467,8 @@ Most configuration is done via CLI arguments. Environment variables are used for
 # Copy .env.example to .env and customize
 MAXMIND_LICENSE_KEY=your_license_key_here
 GITHUB_TOKEN=your_github_token_here
+# Optional: DOMAIN_STATUS_LOG_LEVEL=info
+# Optional advanced filters: RUST_LOG=domain_status=debug,reqwest=info
 ```
 
 **Other Configuration:**
@@ -425,7 +503,7 @@ https://staging.example.com
 
 ## 📊 Output & Results
 
-After a scan completes, all data is stored in the SQLite database. Use `domain_status export` to export data in CSV/JSON format, or query the database directly.
+After a scan completes, all data is stored in the SQLite database. Use `domain_status summary` for a quick report, `domain_status export` for CSV/JSONL/Parquet, or query the database directly.
 
 ### Duplicate Domain Handling
 
@@ -892,7 +970,10 @@ The tool automatically retries failed HTTP requests up to 2 additional times (3 
 
 ## 📚 Library Usage
 
-You can also use `domain_status` as a Rust library in your own projects. Add it to your `Cargo.toml`:
+The library API embeds the **same full scan pipeline** as the CLI (`Config` + `run_scan` + export helpers).
+It is not a lightweight composable HTTP/fingerprint toolkit — dependency weight matches the scanner binary.
+
+Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]

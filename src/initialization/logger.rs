@@ -167,6 +167,18 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
                 )
             });
         }
+        // `LogFormat` is non_exhaustive (defined in domain_status_cli).
+        _ => {
+            builder.format(|buf, record| {
+                writeln!(
+                    buf,
+                    "[{}] {} - {}",
+                    record.level(),
+                    record.target(),
+                    record.args()
+                )
+            });
+        }
     }
 
     // Use try_init() instead of init() to avoid panicking if logger is already initialized

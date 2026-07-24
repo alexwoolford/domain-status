@@ -1,14 +1,31 @@
-//! Configuration types and CLI options.
+//! Configuration types and library config struct.
 //!
-//! This module defines enums and structs used for command-line argument parsing
-//! and configuration.
+//! Shared enums (`FailOn`, `LogLevel`, `LogFormat`) live in `domain_status_cli`
+//! (single source for clap `ValueEnum` / completions) and are re-exported here.
 
 use std::path::PathBuf;
 
-use clap::ValueEnum;
 use reqwest::Client;
 
 use crate::config::constants::DEFAULT_USER_AGENT;
+
+// Single source of truth: CLI crate (clap ValueEnum + help text).
+pub use domain_status_cli::{FailOn, LogFormat, LogLevel};
+
+/// Convert [`LogLevel`] to [`log::LevelFilter`].
+///
+/// Kept as a free function (not `From`) because both types are foreign to this crate
+/// after re-exporting `LogLevel` from `domain_status_cli`.
+#[must_use]
+pub fn log_level_filter(level: &LogLevel) -> log::LevelFilter {
+    match level {
+        LogLevel::Error => log::LevelFilter::Error,
+        LogLevel::Warn => log::LevelFilter::Warn,
+        LogLevel::Info => log::LevelFilter::Info,
+        LogLevel::Debug => log::LevelFilter::Debug,
+        LogLevel::Trace => log::LevelFilter::Trace,
+    }
+}
 
 /// Optional dependency overrides for tests or custom environments.
 ///
@@ -34,84 +51,6 @@ pub struct ScanDependencyOverrides {
     pub http_client: Option<Client>,
 }
 
-/// Exit code policy for handling failures.
-///
-/// Controls when the CLI should exit with a non-zero code based on scan results.
-///
-/// Marked `#[non_exhaustive]` so adding new policies (e.g. `OnConsecutive`,
-/// `WhenAnyFailureMatches(...)`) is not a breaking change.
-#[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum FailOn {
-    /// Never exit with error code (always return 0)
-    ///
-    /// Useful for monitoring scenarios where you want to log failures but not
-    /// trigger alerts. The scan may have failures, but the command succeeds.
-    Never,
-
-    /// Exit with error if any URL failed
-    ///
-    /// Strict mode: any failure causes exit code 2. Useful for CI pipelines
-    /// where any failure should be treated as a build failure.
-    AnyFailure,
-
-    /// Exit with error if failure percentage exceeds threshold
-    ///
-    /// Format: `pct>X` where X is a number between 0 and 100.
-    /// Example: `pct>10` means exit with error if more than 10% of URLs failed.
-    /// Useful for large scans where some failures are expected but excessive
-    /// failures indicate a problem.
-    #[value(name = "pct>")]
-    PctGreaterThan,
-}
-
-/// Logging level for the application.
-///
-/// Controls the verbosity of log output, from most restrictive (Error) to most
-/// verbose (Trace).
-#[derive(Clone, Debug, ValueEnum)]
-pub enum LogLevel {
-    /// Only error messages
-    Error,
-    /// Error and warning messages
-    Warn,
-    /// Error, warning, and informational messages
-    Info,
-    /// All messages except trace
-    Debug,
-    /// All messages including trace
-    Trace,
-}
-
-impl From<LogLevel> for log::LevelFilter {
-    fn from(l: LogLevel) -> Self {
-        match l {
-            LogLevel::Error => log::LevelFilter::Error,
-            LogLevel::Warn => log::LevelFilter::Warn,
-            LogLevel::Info => log::LevelFilter::Info,
-            LogLevel::Debug => log::LevelFilter::Debug,
-            LogLevel::Trace => log::LevelFilter::Trace,
-        }
-    }
-}
-
-/// Log output format.
-///
-/// Controls how log messages are formatted:
-/// - `Plain`: Human-readable format with colors (default)
-/// - `Json`: Structured JSON format for machine parsing
-///
-/// Marked `#[non_exhaustive]` so adding new output formats (logfmt, OTLP, etc.)
-/// is not a breaking change.
-#[derive(Copy, Clone, Debug, ValueEnum)]
-#[non_exhaustive]
-pub enum LogFormat {
-    /// Human-readable format with colors (default)
-    Plain,
-    /// Structured JSON format for machine parsing
-    Json,
-}
-
 /// Configuration validation error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigValidationError {
@@ -129,10 +68,9 @@ impl std::fmt::Display for ConfigValidationError {
 
 impl std::error::Error for ConfigValidationError {}
 
-/// Library configuration (no CLI dependencies).
+/// Library configuration for [`crate::run_scan`].
 ///
-/// This is the core configuration struct used by the library. It can be
-/// constructed programmatically without any CLI dependencies.
+/// Construct programmatically; shared enums are re-exported from `domain_status_cli`.
 ///
 /// # Examples
 ///
@@ -410,23 +348,23 @@ mod tests {
     fn test_log_level_conversion() {
         // Test all LogLevel variants convert correctly to log::LevelFilter
         assert_eq!(
-            log::LevelFilter::from(LogLevel::Error),
+            crate::config::log_level_filter(&LogLevel::Error),
             log::LevelFilter::Error
         );
         assert_eq!(
-            log::LevelFilter::from(LogLevel::Warn),
+            crate::config::log_level_filter(&LogLevel::Warn),
             log::LevelFilter::Warn
         );
         assert_eq!(
-            log::LevelFilter::from(LogLevel::Info),
+            crate::config::log_level_filter(&LogLevel::Info),
             log::LevelFilter::Info
         );
         assert_eq!(
-            log::LevelFilter::from(LogLevel::Debug),
+            crate::config::log_level_filter(&LogLevel::Debug),
             log::LevelFilter::Debug
         );
         assert_eq!(
-            log::LevelFilter::from(LogLevel::Trace),
+            crate::config::log_level_filter(&LogLevel::Trace),
             log::LevelFilter::Trace
         );
     }
@@ -434,11 +372,11 @@ mod tests {
     #[test]
     fn test_log_level_ordering() {
         // Verify that log levels are ordered correctly (Error < Warn < Info < Debug < Trace)
-        let error = log::LevelFilter::from(LogLevel::Error);
-        let warn = log::LevelFilter::from(LogLevel::Warn);
-        let info = log::LevelFilter::from(LogLevel::Info);
-        let debug = log::LevelFilter::from(LogLevel::Debug);
-        let trace = log::LevelFilter::from(LogLevel::Trace);
+        let error = crate::config::log_level_filter(&LogLevel::Error);
+        let warn = crate::config::log_level_filter(&LogLevel::Warn);
+        let info = crate::config::log_level_filter(&LogLevel::Info);
+        let debug = crate::config::log_level_filter(&LogLevel::Debug);
+        let trace = crate::config::log_level_filter(&LogLevel::Trace);
 
         // Each level should be more restrictive than the next
         assert!(error < warn);
