@@ -11,6 +11,7 @@ mod categories;
 mod fetch;
 mod github;
 mod local;
+mod vendored;
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
@@ -27,6 +28,7 @@ use categories::{fetch_categories_from_url, load_categories_from_path};
 use fetch::fetch_from_url;
 use github::get_latest_commit_sha;
 use local::load_from_path;
+use vendored::load_vendored_ruleset;
 
 /// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then `HTTPArchive`).
 /// wappalyzergo uses the same two sources; we merge with later overwriting earlier for the same technology.
@@ -243,19 +245,20 @@ async fn fetch_ruleset_from_multiple_sources(
         }
     }
 
-    // Ensure we got at least one successful source
+    // Ensure we got at least one successful source; otherwise use the bundled
+    // minimal ruleset so offline/CI cold starts still work.
     if successful_sources == 0 {
-        return Err(anyhow::anyhow!(
-            "Failed to fetch ruleset from all {} source(s). \
-            This may be due to network issues or GitHub API rate limits. \
-            \
-            Solutions: \
-            1. Set GITHUB_TOKEN environment variable (increases rate limit from 60 to 5000/hour) \
-            2. Use a cached ruleset (if available) \
-            3. Wait before retrying (rate limits reset hourly) \
-            4. Use a local ruleset file instead of URLs",
+        log::warn!(
+            "Failed to fetch ruleset from all {} source(s); using bundled minimal fingerprints. \
+             Prefer setting GITHUB_TOKEN, using a local --fingerprints path, or retrying when network is available.",
             sources.len()
-        ));
+        );
+        let vendored = load_vendored_ruleset()?;
+        // Best-effort cache so subsequent runs reuse the fallback without re-parsing.
+        if let Err(e) = save_to_cache(&vendored, cache_dir, cache_key).await {
+            log::debug!("Failed to cache vendored fingerprint ruleset: {e}");
+        }
+        return Ok(vendored);
     }
 
     if successful_sources < sources.len() {
@@ -309,24 +312,26 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_fetch_ruleset_from_multiple_sources_all_fail() {
-        // Test error handling when all sources fail
-        // This is a critical path - should return a helpful error message
+    async fn test_fetch_ruleset_from_multiple_sources_all_fail_uses_vendored() {
+        // When remotes fail, fall back to the bundled minimal ruleset (offline/CI cold start).
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let invalid_sources = vec![
             "https://invalid-url-that-does-not-exist-12345.com/technologies".to_string(),
             "https://another-invalid-url-67890.com/technologies".to_string(),
         ];
-        let cache_key = "test-hash";
+        let cache_key = "test-hash-vendored-fallback";
 
         let result =
             fetch_ruleset_from_multiple_sources(&invalid_sources, temp_dir.path(), cache_key).await;
 
-        // Should return an error with helpful message
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Failed to fetch ruleset from all"));
-        assert!(error_msg.contains("source(s)"));
+        let ruleset = result.expect("vendored fallback should succeed when remotes fail");
+        assert!(
+            ruleset.metadata.source.contains("vendored"),
+            "expected vendored source, got {}",
+            ruleset.metadata.source
+        );
+        assert!(ruleset.technologies.contains_key("Nginx"));
+        assert!(!ruleset.technologies.is_empty());
     }
 
     #[tokio::test]

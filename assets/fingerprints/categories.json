@@ -1,0 +1,17 @@
+{
+  "1": { "name": "CMS", "priority": 1 },
+  "5": { "name": "JavaScript frameworks", "priority": 2 },
+  "6": { "name": "Web servers", "priority": 3 },
+  "11": { "name": "CDN", "priority": 4 },
+  "12": { "name": "Programming languages", "priority": 5 },
+  "18": { "name": "Web frameworks", "priority": 6 },
+  "22": { "name": "Webmail", "priority": 7 },
+  "27": { "name": "Font scripts", "priority": 8 },
+  "31": { "name": "CDN", "priority": 4 },
+  "36": { "name": "Advertising", "priority": 9 },
+  "41": { "name": "Payment processors", "priority": 10 },
+  "47": { "name": "Miscellaneous", "priority": 11 },
+  "59": { "name": "JavaScript libraries", "priority": 12 },
+  "62": { "name": "Tag managers", "priority": 13 },
+  "83": { "name": "IaaS", "priority": 14 }
+}

@@ -3,7 +3,7 @@
 //! This module provides:
 //! - Configuration constants (timeouts, limits, etc.)
 //! - HTTP header name constants
-//! - Configuration types (library-only, no CLI dependencies)
+//! - Configuration types (`Config`, plus shared enums re-exported from `domain_status_cli`)
 //! - Config construction (merge file+env with CLI overlay)
 
 mod constants;
@@ -16,5 +16,6 @@ pub use constants::*;
 pub use headers::*;
 pub use merge::{apply_file_env_map_to_config, merge_file_env_and_cli};
 pub use types::{
-    Config, ConfigValidationError, FailOn, LogFormat, LogLevel, ScanDependencyOverrides,
+    log_level_filter, Config, ConfigValidationError, FailOn, LogFormat, LogLevel,
+    ScanDependencyOverrides,
 };

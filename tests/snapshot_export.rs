@@ -127,6 +127,7 @@ fn cli_help_includes_must_have_flags() {
         "Commands:",
         "scan",
         "export",
+        "summary",
         "Options:",
         "--help",
         "--version",
