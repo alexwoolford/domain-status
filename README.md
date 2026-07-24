@@ -171,7 +171,7 @@ Then install the man page (e.g. `man -l completions/domain_status.1` or copy to 
 
 ### Data Collection
 - **Comprehensive URL Analysis**: Captures HTTP status, response times, HTML metadata, TLS certificates, DNS information, technology fingerprints, GeoIP location data, WHOIS registration data, structured data (JSON-LD, Open Graph, Twitter Cards), security warnings, and complete redirect chains
-- **Technology Fingerprinting**: Detects web technologies using community-maintained Wappalyzer rulesets via pattern matching (headers, cookies, HTML, script URLs). Does not execute JavaScript.
+- **Technology Fingerprinting**: Detects web technologies using community-maintained Wappalyzer rulesets via pattern matching (headers, cookies, HTML, script URLs, script tag IDs). Does not execute JavaScript. Some detections are **implied** by another match (e.g. WordPress implies PHP and MySQL) and are stored with `is_implied=1` so you can filter to observed-only evidence.
 - **Contact Extraction**: Extracts email addresses and phone numbers from `mailto:` and `tel:` links
 - **Exposed Secret Detection**: Scans HTML for ~57 credential patterns (AWS, OpenAI, Anthropic, Stripe, Slack, GitHub, database URLs, private keys, and 40+ more). Each finding includes severity (critical/high/medium/low), location (inline_script, html_comment, url_parameter, etc.), and surrounding context for analyst triage
 - **Enhanced DNS Analysis**: Queries NS, TXT, and MX records; automatically extracts SPF and DMARC policies
@@ -505,6 +505,15 @@ WHERE ut.technology_name = 'WordPress'
 ORDER BY us.initial_domain;
 ```
 
+**Observed-only technology matches** (exclude ruleset `implies`, e.g. WordPress→MySQL):
+```sql
+SELECT DISTINCT us.initial_domain, ut.technology_name, ut.technology_category
+FROM url_status us
+JOIN url_technologies ut ON us.id = ut.url_status_id
+WHERE ut.is_implied = 0
+ORDER BY us.initial_domain, ut.technology_name;
+```
+
 **Find sites with missing security headers:**
 ```sql
 SELECT DISTINCT us.initial_domain
@@ -824,7 +833,7 @@ Technology detection uses pattern matching against:
 
 **Important**: The tool does NOT execute JavaScript or fetch external scripts. It only analyzes the initial HTML response, matching WappalyzerGo's behavior. Technologies that are detectable only via JavaScript (e.g. some SPA frameworks) are not detected.
 
-**Wappalyzer parity**: Fingerprint sources match wappalyzergo (enthec/webappanalyzer and HTTPArchive/wappalyzer; later overwrites earlier). HTTP/3 detection relies on the `alt-svc` header; because reqwest does not expose it on the final response, we copy `alt-svc` from the redirect chain into the response used for fingerprinting. Technologies that depend only on JS pattern matching are skipped (no headless VM).
+**Wappalyzer parity**: Fingerprint sources match wappalyzergo (enthec/webappanalyzer and HTTPArchive/wappalyzer; later overwrites earlier). HTTP/3 detection relies on the `alt-svc` header; because reqwest does not expose it on the final response, we copy `alt-svc` from the redirect chain into the response used for fingerprinting. Technologies that depend only on JS object patterns are skipped (no headless VM), except when a ruleset `js` key matches a static HTML script `id` (e.g. `__NEXT_DATA__`). Ruleset `implies` entries (WordPress → PHP/MySQL, Next.js → React, etc.) are stored with `is_implied=1`; pattern matches are `is_implied=0`.
 
 The default fingerprint ruleset comes from the HTTP Archive Wappalyzer fork and is cached locally for 7 days. You can update to the latest by pointing `--fingerprints` to a new JSON file (e.g., the official Wappalyzer `technologies.json`). The tool prints the fingerprints source and version (commit hash) in the `runs` table.
 

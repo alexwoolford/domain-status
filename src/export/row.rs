@@ -161,6 +161,8 @@ pub struct WhoisData {
 pub struct TechnologyRecord {
     pub name: String,
     pub version: Option<String>,
+    pub category: Option<String>,
+    pub is_implied: bool,
 }
 
 /// Analytics ID record for export (avoids comma/colon delimiter corruption).
@@ -194,6 +196,8 @@ pub struct ExportRow {
 
     /// Technologies (as "name:version" strings — legacy, use `technologies` for structured access)
     pub technologies_str: String,
+    /// Categories for detected technologies (comma-separated, parallel to `technologies_str` order)
+    pub technology_categories_str: String,
     pub technology_count: usize,
     /// Technologies as structured data (safe from delimiter corruption)
     pub technologies: Vec<TechnologyRecord>,
@@ -535,7 +539,8 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     )
     .await?;
     let technologies: Vec<TechnologyRecord> = sqlx::query(
-        "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name LIMIT ?",
+        "SELECT technology_name, technology_version, technology_category, is_implied
+         FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name LIMIT ?",
     )
     .bind(url_status_id)
     .bind(EXPORT_LIMIT)
@@ -545,8 +550,15 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
     .map(|r| TechnologyRecord {
         name: r.get("technology_name"),
         version: r.get("technology_version"),
+        category: r.get("technology_category"),
+        is_implied: r.get::<i64, _>("is_implied") != 0,
     })
     .collect();
+    let technology_categories_str = technologies
+        .iter()
+        .filter_map(|t| t.category.as_deref())
+        .collect::<Vec<_>>()
+        .join(", ");
 
     // Fetch certificate SANs
     let (certificate_sans_str, certificate_san_count) = fetch_string_list(
@@ -820,6 +832,7 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         redirect_count,
         final_redirect_url,
         technologies_str,
+        technology_categories_str,
         technology_count,
         technologies,
         certificate_sans_str,

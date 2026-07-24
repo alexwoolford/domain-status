@@ -82,7 +82,6 @@ mod tests {
     fn test_detect_technologies_empty() {
         let meta_tags = HashMap::new();
         let script_sources = Vec::new();
-        let script_content = "";
         let html_text = "";
         let headers = HeaderMap::new();
         let url = "https://example.com";
@@ -95,7 +94,6 @@ mod tests {
             &headers,
             &meta_tags,
             &script_sources,
-            script_content,
             &normalized_body,
             url,
             &script_tag_ids,

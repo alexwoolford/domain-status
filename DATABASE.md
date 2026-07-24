@@ -200,7 +200,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_analytics_ids` | Analytics/tracking IDs | `provider`, `tracking_id` |
 | `url_contact_links` | `mailto:` and `tel:` links | `contact_type`, `contact_value`, `raw_href` |
 | `url_security_warnings` | Derived security findings | `warning_code`, `warning_description` |
-| `url_technologies` | Technology fingerprint matches | `technology_name`, `technology_version`, `technology_category` |
+| `url_technologies` | Technology fingerprint matches | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
 | `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `header_json`, `payload_json`, `algorithm`, `issuer`, `subject`, `expiration_ms` |
 

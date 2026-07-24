@@ -46,7 +46,6 @@ pub(crate) struct HtmlData {
     pub(crate) analytics_ids: Vec<crate::parse::AnalyticsId>, // Analytics/tracking IDs (GA, Facebook Pixel, GTM, AdSense)
     pub(crate) meta_tags: HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name (e.g., multiple generator tags)
     pub(crate) script_sources: Vec<String>,
-    pub(crate) script_content: String, // Inline script content for js field detection
     pub(crate) script_tag_ids: HashSet<String>, // Script tag IDs (for __NEXT_DATA__ etc.)
     /// First-party external script candidates considered when scanning is enabled.
     pub(crate) external_scripts_eligible: u32,

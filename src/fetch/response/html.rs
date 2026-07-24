@@ -118,9 +118,7 @@ pub(crate) fn parse_html_content(
     }
 
     let mut script_sources = Vec::new();
-    let mut script_content = String::new();
     let mut script_tag_ids = HashSet::new();
-    let mut inline_script_count = 0;
     let script_selector =
         crate::utils::parse_selector_with_fallback("script", "script tag extraction");
     for element in document.select(&script_selector) {
@@ -132,23 +130,6 @@ pub(crate) fn parse_html_content(
         if let Some(src) = element.value().attr("src") {
             if !src.is_empty() {
                 script_sources.push(src.to_string());
-            }
-        }
-        // Extract inline script content (limited per-script and cumulative for security)
-        if element.value().attr("src").is_none() {
-            let text = element.text().collect::<String>();
-            if !text.trim().is_empty()
-                && script_content.len() < crate::config::MAX_TOTAL_SCRIPT_CONTENT
-            {
-                inline_script_count += 1;
-                let chunk: String = text
-                    .chars()
-                    .take(crate::config::MAX_SCRIPT_CONTENT_SIZE)
-                    .collect();
-                // Reserve 1 char for newline so total never exceeds MAX_TOTAL_SCRIPT_CONTENT
-                let remaining = crate::config::MAX_TOTAL_SCRIPT_CONTENT - script_content.len() - 1;
-                script_content.push_str(&chunk.chars().take(remaining).collect::<String>());
-                script_content.push('\n'); // Separate scripts with newline
             }
         }
     }
@@ -178,9 +159,8 @@ pub(crate) fn parse_html_content(
     }
 
     log::debug!(
-        "Extracted {} inline scripts ({} bytes) and {} external script sources for {} ({} from scraper, {} added via regex fallback)",
-        inline_script_count,
-        script_content.len(),
+        "Extracted {} script tag ids and {} external script sources for {} ({} from scraper, {} added via regex fallback)",
+        script_tag_ids.len(),
         script_sources.len(),
         final_domain,
         scraper_count,
@@ -353,7 +333,6 @@ pub(crate) fn parse_html_content(
         analytics_ids,
         meta_tags,
         script_sources,
-        script_content,
         script_tag_ids,
         external_scripts_eligible: 0,
         external_scripts_scanned: 0,
@@ -452,9 +431,6 @@ mod tests {
 
         // Check script IDs
         assert!(result.script_tag_ids.contains("__NEXT_DATA__"));
-
-        // Check inline script content
-        assert!(result.script_content.contains("console.log"));
     }
 
     #[test]
@@ -586,8 +562,12 @@ mod tests {
         let result = parse_html_content(html, "example.com", &stats);
 
         assert_eq!(result.script_sources.len(), 2);
-        assert!(result.script_content.contains("var x"));
-        assert!(result.script_content.contains("var y"));
+        assert!(result
+            .script_sources
+            .contains(&"https://example.com/script1.js".to_string()));
+        assert!(result
+            .script_sources
+            .contains(&"https://example.com/script2.js".to_string()));
     }
 
     #[test]
@@ -607,29 +587,6 @@ mod tests {
         // Meta tag keys should be lowercased
         assert!(result.meta_tags.contains_key("name:keywords"));
         assert!(result.meta_tags.contains_key("property:og:title"));
-    }
-
-    #[test]
-    fn test_parse_html_content_script_size_limit() {
-        // Test that large inline scripts are truncated to MAX_SCRIPT_CONTENT_SIZE
-        let large_script = "x".repeat(crate::config::MAX_SCRIPT_CONTENT_SIZE + 10000);
-        let html = format!(
-            r#"
-            <html>
-                <head>
-                    <script>{}</script>
-                </head>
-                <body></body>
-            </html>
-            "#,
-            large_script
-        );
-        let stats = test_error_stats();
-        let result = parse_html_content(&html, "example.com", &stats);
-
-        // Script content should be truncated to MAX_SCRIPT_CONTENT_SIZE
-        assert!(result.script_content.len() <= crate::config::MAX_SCRIPT_CONTENT_SIZE + 1);
-        // +1 for newline
     }
 
     #[test]
@@ -748,46 +705,6 @@ mod tests {
         // The key is that error_stats is accessible to those functions
         // We can't easily trigger errors in those functions, but we verify the parameter is passed
         // by ensuring the function doesn't panic and completes successfully
-    }
-
-    #[test]
-    fn test_parse_html_content_script_content_size_limit_enforced() {
-        // Test that script content size limit is enforced per script
-        // This is critical - prevents DoS attacks via large scripts
-        let large_script_content = "x".repeat(crate::config::MAX_SCRIPT_CONTENT_SIZE + 5000);
-        let html = format!(
-            r#"
-            <html>
-                <head>
-                    <script>{}</script>
-                    <script>var y = 2;</script>
-                </head>
-                <body></body>
-            </html>
-            "#,
-            large_script_content
-        );
-        let stats = test_error_stats();
-        let result = parse_html_content(&html, "example.com", &stats);
-
-        // First script should be truncated to MAX_SCRIPT_CONTENT_SIZE
-        // Second script should be included fully
-        // Each script gets truncated individually, then newlines are added
-        // Total content should be <= MAX_SCRIPT_CONTENT_SIZE (first) + second_script_size + newlines
-        let second_script_size = "var y = 2;".len();
-        // Each script gets a newline separator, so: first_truncated + "\n" + second + "\n"
-        let expected_max = crate::config::MAX_SCRIPT_CONTENT_SIZE + second_script_size + 2; // +2 for newlines
-        assert!(
-            result.script_content.len() <= expected_max,
-            "Script content length {} exceeds expected max {}",
-            result.script_content.len(),
-            expected_max
-        );
-        // Should contain both scripts (first truncated, second full)
-        assert!(result.script_content.contains("var y"));
-        // First script should be truncated (not contain all the 'x' characters)
-        // The content should be less than the original large script size
-        assert!(result.script_content.len() < large_script_content.len());
     }
 
     #[test]

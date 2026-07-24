@@ -407,7 +407,6 @@ mod tests {
             analytics_ids: vec![],
             meta_tags: HashMap::new(),
             script_sources: vec![],
-            script_content: String::new(),
             script_tag_ids: HashSet::new(),
             external_scripts_eligible: 0,
             external_scripts_scanned: 0,
@@ -555,11 +554,13 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
         ];
         let redirect_chain = vec![("https://example.com".to_string(), 200)];

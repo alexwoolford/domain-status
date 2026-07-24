@@ -25,7 +25,7 @@ pub(crate) async fn insert_technologies(
 
     // Deduplicate technologies and pre-fetch categories in a single pass.
     let mut seen = std::collections::HashSet::new();
-    let mut deduped: Vec<(&DetectedTechnology, Option<String>)> = Vec::new();
+    let mut deduped: Vec<&DetectedTechnology> = Vec::new();
     for tech in technologies {
         let key = if let Some(ref version) = tech.version {
             format!("{}:{}", tech.name, version)
@@ -33,8 +33,7 @@ pub(crate) async fn insert_technologies(
             tech.name.clone()
         };
         if seen.insert(key) {
-            let category = tech.category.clone();
-            deduped.push((tech, category));
+            deduped.push(tech);
         }
     }
 
@@ -50,18 +49,20 @@ pub(crate) async fn insert_technologies(
             "technology_name",
             "technology_version",
             "technology_category",
+            "is_implied",
         ],
         deduped.len(),
         Some("ON CONFLICT DO NOTHING"),
     );
 
     let mut query = sqlx::query(&query_str);
-    for (tech, category) in &deduped {
+    for tech in &deduped {
         query = query
             .bind(url_status_id)
             .bind(&tech.name)
             .bind(&tech.version)
-            .bind(category);
+            .bind(&tech.category)
+            .bind(i64::from(tech.is_implied));
     }
 
     match query.execute(&mut **tx).await {
@@ -104,11 +105,13 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
         ];
 
@@ -140,11 +143,13 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
         ];
 
@@ -173,16 +178,19 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: Some("6.9".to_string()),
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: Some("8.1".to_string()),
                 category: None,
+                is_implied: false,
             },
         ];
 
@@ -233,5 +241,44 @@ mod tests {
                 .expect("Failed to count technologies");
 
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_insert_technologies_is_implied() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let technologies = vec![
+            crate::fingerprint::DetectedTechnology {
+                name: "WordPress".to_string(),
+                version: None,
+                category: Some("CMS".to_string()),
+                is_implied: false,
+            },
+            crate::fingerprint::DetectedTechnology {
+                name: "MySQL".to_string(),
+                version: None,
+                category: Some("Databases".to_string()),
+                is_implied: true,
+            },
+        ];
+
+        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        let rows = sqlx::query(
+            "SELECT technology_name, is_implied FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch technologies");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>("technology_name"), "MySQL");
+        assert_eq!(rows[0].get::<i64, _>("is_implied"), 1);
+        assert_eq!(rows[1].get::<String, _>("technology_name"), "WordPress");
+        assert_eq!(rows[1].get::<i64, _>("is_implied"), 0);
     }
 }

@@ -114,7 +114,9 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             .map(|t| {
                 json!({
                     "name": t.name,
-                    "version": t.version.clone().map_or(Value::Null, Value::String)
+                    "version": t.version.clone().map_or(Value::Null, Value::String),
+                    "category": t.category.clone().map_or(Value::Null, Value::String),
+                    "is_implied": t.is_implied,
                 })
             })
             .collect();

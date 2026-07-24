@@ -23,7 +23,6 @@ pub(crate) async fn detect_technologies_safely(
     let headers = resp_data.headers.clone();
     let meta_tags = html_data.meta_tags.clone();
     let script_sources = html_data.script_sources.clone();
-    let script_content = html_data.script_content.clone();
     let url = resp_data.final_url.clone();
     let script_tag_ids = html_data.script_tag_ids.clone();
 
@@ -34,7 +33,6 @@ pub(crate) async fn detect_technologies_safely(
             &headers,
             &meta_tags,
             &script_sources,
-            &script_content,
             &normalized_body,
             &url,
             &script_tag_ids,
@@ -126,7 +124,6 @@ mod tests {
             analytics_ids: vec![],
             meta_tags: HashMap::new(),
             script_sources: vec![],
-            script_content: String::new(),
             script_tag_ids: HashSet::new(),
             external_scripts_eligible: 0,
             external_scripts_scanned: 0,
