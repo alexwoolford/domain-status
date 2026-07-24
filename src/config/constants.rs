@@ -79,16 +79,6 @@ pub const MAX_FAVICON_SIZE: usize = 50 * 1024;
 /// Favicons are small files; 5s is generous for a single image download
 pub const FAVICON_FETCH_TIMEOUT_SECS: u64 = 5;
 
-// Script content size limits
-/// Maximum script content size in bytes (100KB per script)
-/// Limits the amount of inline JavaScript we extract per script tag
-/// This prevents `DoS` attacks via large inline scripts
-/// Enforced in src/fetch/response/html.rs when extracting inline script content
-pub const MAX_SCRIPT_CONTENT_SIZE: usize = 100 * 1024; // 100KB per script
-/// Maximum total inline script content across all scripts on a page (500KB)
-/// Prevents unbounded memory use when a page has many inline scripts
-pub const MAX_TOTAL_SCRIPT_CONTENT: usize = 500 * 1024; // 500KB total
-
 // HTML text extraction limits
 /// Maximum HTML preview length in characters for debugging (500 chars)
 /// Used when logging HTML previews for debugging purposes

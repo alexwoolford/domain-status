@@ -97,7 +97,7 @@ This document records risks from malformed, oversized, or maliciously crafted ex
 
 - `stream_body_with_limit()` aborts when body exceeds `MAX_RESPONSE_BODY_SIZE` (2 MB) during streaming (no full body load before check).
 - `MAX_HEADER_COUNT` (100), `MAX_HEADER_VALUE_LENGTH` (1000), `MAX_ERROR_MESSAGE_LENGTH` (2000).
-- `MAX_SCRIPT_CONTENT_SIZE` (100 KB) and `MAX_HTML_TEXT_EXTRACTION_CHARS` (50 KB) for extracted content.
+- `MAX_HTML_TEXT_EXTRACTION_CHARS` (50 KB) for extracted content.
 - `MAX_FAVICON_SIZE` (50 KB) and favicon fetch timeout for favicon bytes.
 
 **Recommendations:**

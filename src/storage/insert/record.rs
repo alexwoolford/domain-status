@@ -606,11 +606,13 @@ mod tests {
                     name: "WordPress".to_string(),
                     version: None,
                     category: None,
+                    is_implied: false,
                 },
                 crate::fingerprint::DetectedTechnology {
                     name: "PHP".to_string(),
                     version: None,
                     category: None,
+                    is_implied: false,
                 },
             ],
             subject_alternative_names: vec![
@@ -991,6 +993,7 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             }], // Should still be inserted even if GeoIP fails
             subject_alternative_names: vec![],
             analytics_ids: vec![],

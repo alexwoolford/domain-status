@@ -80,6 +80,8 @@ fn build_schema() -> Schema {
                     vec![
                         Field::new("name", DataType::Utf8, false),
                         Field::new("version", DataType::Utf8, true),
+                        Field::new("category", DataType::Utf8, true),
+                        Field::new("is_implied", DataType::Boolean, false),
                     ]
                     .into(),
                 ),
@@ -528,16 +530,20 @@ fn write_batch(
     );
     let mut redirect_chain_b = ListBuilder::new(redirect_struct_builder);
 
-    // technologies List<Struct{Utf8, Utf8 nullable}>
+    // technologies List<Struct{name, version, category, is_implied}>
     let tech_fields = vec![
         Field::new("name", DataType::Utf8, false),
         Field::new("version", DataType::Utf8, true),
+        Field::new("category", DataType::Utf8, true),
+        Field::new("is_implied", DataType::Boolean, false),
     ];
     let tech_struct_builder = StructBuilder::new(
         tech_fields,
         vec![
             Box::new(StringBuilder::new()),
             Box::new(StringBuilder::new()),
+            Box::new(StringBuilder::new()),
+            Box::new(BooleanBuilder::new()),
         ],
     );
     let mut technologies_b = ListBuilder::new(tech_struct_builder);
@@ -653,6 +659,18 @@ fn write_batch(
                     .unwrap(),
                 tech.version.as_ref(),
             );
+            append_opt_str(
+                technologies_b
+                    .values()
+                    .field_builder::<StringBuilder>(2)
+                    .unwrap(),
+                tech.category.as_ref(),
+            );
+            technologies_b
+                .values()
+                .field_builder::<BooleanBuilder>(3)
+                .unwrap()
+                .append_value(tech.is_implied);
             technologies_b.values().append(true);
         }
         technologies_b.append(true);

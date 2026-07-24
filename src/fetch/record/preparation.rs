@@ -282,7 +282,6 @@ mod tests {
             analytics_ids: Vec::new(),
             meta_tags: std::collections::HashMap::new(),
             script_sources: Vec::new(),
-            script_content: String::new(),
             script_tag_ids: std::collections::HashSet::new(),
             external_scripts_eligible: 0,
             external_scripts_scanned: 0,
@@ -482,11 +481,13 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
         ];
 

@@ -703,11 +703,13 @@ mod tests {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
+                is_implied: false,
             },
         ];
         let sans = Vec::new();

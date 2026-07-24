@@ -28,25 +28,25 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 
 /// Detects technologies from extracted HTML data, headers, and URL.
 ///
-/// This is a simplified matcher that only uses single-request fields:
+/// Static matcher using single-request fields only (no JavaScript execution):
 /// - Headers
 /// - Cookies (from `SET_COOKIE` and Cookie headers)
 /// - Meta tags (name, property, http-equiv)
-/// - Script sources
-/// - Script content (inline scripts for js field detection)
+/// - Script sources (`src` URLs)
+/// - Script tag IDs (static HTML `id` attributes, e.g. `__NEXT_DATA__`)
 /// - HTML text patterns
 /// - URL patterns
-/// - JavaScript object properties (js field)
+///
+/// Technologies with only runtime `js` object patterns (and no other signals) are not detected.
 ///
 /// # Arguments
 ///
-/// * `meta_tags` - Map of meta tag name/property/http-equiv -> Vec of content values (multiple tags with same name are stored as Vec)
+/// * `meta_tags` - Map of meta tag name/property/http-equiv -> Vec of content values
 /// * `script_sources` - Vector of script src URLs
-/// * `script_content` - Inline script content for js field detection
-/// * `html_body` - Full HTML body normalized to lowercase (for HTML pattern matching, matching wappalyzergo)
+/// * `html_body` - Full HTML body normalized to lowercase
 /// * `headers` - HTTP response headers
 /// * `url` - The URL being analyzed
-/// * `script_tag_ids` - Script tag IDs found in HTML (for __`NEXT_DATA`__ etc.)
+/// * `script_tag_ids` - Script tag IDs found in HTML (matched against ruleset `js` keys)
 ///
 /// Technology detection result with name and optional version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -55,12 +55,32 @@ pub struct DetectedTechnology {
     pub version: Option<String>,
     /// Category name from the ruleset (resolved at detection time).
     pub category: Option<String>,
+    /// True when this technology was added only via another tech's `implies` list.
+    pub is_implied: bool,
+}
+
+/// Drops version strings that look like content/git hashes rather than semver.
+///
+/// Upstream Bootstrap (and similar) patterns often capture hex digests from hashed
+/// asset filenames. Those pollute `technology_version` without being useful versions.
+#[must_use]
+pub(crate) fn sanitize_technology_version(version: Option<String>) -> Option<String> {
+    let version = version?;
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Pure hex digests of length >= 7 (common content-hash / git short-hash captures).
+    if trimmed.len() >= 7 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(version)
 }
 
 /// CPU-bound technology detection using a pre-fetched ruleset.
 /// Intended to be run on a blocking thread (e.g. via `tokio::task::spawn_blocking`)
 /// to avoid starving the async executor with regex work.
-#[allow(clippy::too_many_arguments)] // Each arg is a distinct input signal for detection (headers, meta, scripts, etc.)
+#[allow(clippy::too_many_arguments)] // Distinct input signals for detection
 #[allow(clippy::too_many_lines)] // Iterates over all technology rules checking multiple signal types
 #[allow(clippy::unnecessary_wraps)] // Caller expects Result for map_err/and_then chaining
 pub(crate) fn detect_technologies_blocking(
@@ -68,73 +88,75 @@ pub(crate) fn detect_technologies_blocking(
     headers: &HeaderMap,
     meta_tags: &HashMap<String, Vec<String>>,
     script_sources: &[String],
-    script_content: &str,
     html_body: &str,
     url: &str,
-    _script_tag_ids: &HashSet<String>,
+    script_tag_ids: &HashSet<String>,
 ) -> Result<Vec<DetectedTechnology>, FingerprintError> {
     let cookies = extract_cookies_from_headers(headers);
     let header_map = normalize_headers_to_map(headers);
 
     log::debug!(
-        "Technology detection (blocking) for {}: {} inline script bytes, {} external script sources",
+        "Technology detection (blocking) for {}: {} script tag ids, {} external script sources",
         url,
-        script_content.len(),
+        script_tag_ids.len(),
         script_sources.len()
     );
 
     #[derive(Clone)]
     struct TechInfo {
         version: Option<String>,
+        is_implied: bool,
     }
     let mut detected: HashMap<String, TechInfo> = HashMap::with_capacity(32);
 
+    let merge_observed =
+        |detected: &mut HashMap<String, TechInfo>, tech_name: String, version: Option<String>| {
+            let version = sanitize_technology_version(version);
+            detected
+                .entry(tech_name)
+                .and_modify(|existing| {
+                    existing.is_implied = false;
+                    if existing.version.is_none() && version.is_some() {
+                        existing.version.clone_from(&version);
+                    }
+                })
+                .or_insert(TechInfo {
+                    version,
+                    is_implied: false,
+                });
+        };
+
     let header_results = check_headers_with_ruleset(ruleset, &header_map);
     for result in header_results {
-        detected
-            .entry(result.tech_name.clone())
-            .and_modify(|existing| {
-                if existing.version.is_none() && result.version.is_some() {
-                    existing.version.clone_from(&result.version);
-                }
-            })
-            .or_insert(TechInfo {
-                version: result.version,
-            });
+        merge_observed(&mut detected, result.tech_name, result.version);
     }
 
     if !cookies.is_empty() {
         let cookie_results = check_cookies_with_ruleset(ruleset, &cookies);
         for result in cookie_results {
-            detected
-                .entry(result.tech_name.clone())
-                .and_modify(|existing| {
-                    if existing.version.is_none() && result.version.is_some() {
-                        existing.version.clone_from(&result.version);
-                    }
-                })
-                .or_insert(TechInfo {
-                    version: result.version,
-                });
+            merge_observed(&mut detected, result.tech_name, result.version);
         }
     }
 
     let body_results = check_body_with_ruleset(ruleset, html_body, script_sources, meta_tags, url);
     for result in body_results {
-        detected
-            .entry(result.tech_name.clone())
-            .and_modify(|existing| {
-                if existing.version.is_none() && result.version.is_some() {
-                    existing.version.clone_from(&result.version);
-                }
-            })
-            .or_insert(TechInfo {
-                version: result.version,
-            });
+        merge_observed(&mut detected, result.tech_name, result.version);
+    }
+
+    // Static script-tag ID match against ruleset `js` keys (e.g. id="__NEXT_DATA__").
+    // This is HTML attribute matching, not JavaScript execution.
+    if !script_tag_ids.is_empty() {
+        for (tech_name, tech) in &ruleset.technologies {
+            if tech.js.is_empty() {
+                continue;
+            }
+            if tech.js.keys().any(|js_key| script_tag_ids.contains(js_key)) {
+                merge_observed(&mut detected, tech_name.clone(), None);
+            }
+        }
     }
 
     // Add implied technologies (fixed-point: A→B, B→C must yield both B and C).
-    // Matches the async detect_technologies logic.
     const MAX_IMPLIES_DEPTH: u32 = 10;
     for _ in 0..MAX_IMPLIES_DEPTH {
         let mut implied_to_add = Vec::new();
@@ -146,15 +168,22 @@ pub(crate) fn detect_technologies_blocking(
             };
             if let Some(tech) = ruleset.technologies.get(base_tech_name) {
                 for implied in &tech.implies {
-                    implied_to_add.push((implied.clone(), TechInfo { version: None }));
+                    implied_to_add.push(implied.clone());
                 }
             }
         }
         let mut added_any = false;
-        for (implied_name, tech_info) in implied_to_add {
+        for implied_name in implied_to_add {
             if ruleset.technologies.contains_key(&implied_name)
-                && detected.insert(implied_name.clone(), tech_info).is_none()
+                && !detected.contains_key(&implied_name)
             {
+                detected.insert(
+                    implied_name,
+                    TechInfo {
+                        version: None,
+                        is_implied: true,
+                    },
+                );
                 added_any = true;
             }
         }
@@ -163,14 +192,14 @@ pub(crate) fn detect_technologies_blocking(
         }
     }
 
-    let detected_vec: Vec<(String, Option<String>)> = detected
+    let detected_vec: Vec<(String, Option<String>, bool)> = detected
         .iter()
-        .map(|(name, info)| (name.clone(), info.version.clone()))
+        .map(|(name, info)| (name.clone(), info.version.clone(), info.is_implied))
         .collect();
 
     let detected_formatted_for_exclusions: HashSet<String> = detected_vec
         .iter()
-        .map(|(name, version)| {
+        .map(|(name, version, _)| {
             if let Some(ref ver) = version {
                 format!("{name}:{ver}")
             } else {
@@ -181,9 +210,9 @@ pub(crate) fn detect_technologies_blocking(
     let final_detected_formatted =
         apply_technology_exclusions(&detected_formatted_for_exclusions, ruleset);
 
-    let final_detected: Vec<(String, Option<String>)> = detected_vec
+    let final_detected: Vec<(String, Option<String>, bool)> = detected_vec
         .into_iter()
-        .filter(|(name, version)| {
+        .filter(|(name, version, _)| {
             let formatted = if let Some(ref ver) = version {
                 format!("{name}:{ver}")
             } else {
@@ -202,10 +231,11 @@ pub(crate) fn detect_technologies_blocking(
 
     Ok(final_detected
         .into_iter()
-        .map(|(name, version)| DetectedTechnology {
+        .map(|(name, version, is_implied)| DetectedTechnology {
             category: get_technology_category(ruleset, &name),
             name,
             version,
+            is_implied,
         })
         .collect())
 }
@@ -220,11 +250,51 @@ pub fn get_technology_category(ruleset: &FingerprintRuleset, tech_name: &str) ->
     let first_cat_id = tech.cats.first()?;
     ruleset.categories.get(first_cat_id).cloned()
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use reqwest::header::HeaderMap;
     use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn test_sanitize_technology_version_keeps_semver() {
+        assert_eq!(
+            sanitize_technology_version(Some("3.6.0".to_string())),
+            Some("3.6.0".to_string())
+        );
+        assert_eq!(
+            sanitize_technology_version(Some("1.24.0".to_string())),
+            Some("1.24.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_sanitize_technology_version_drops_hex_hashes() {
+        assert_eq!(
+            sanitize_technology_version(Some(
+                "f0fe27bc311aec88752269bad7be520f4ccf4fe7".to_string()
+            )),
+            None
+        );
+        assert_eq!(
+            sanitize_technology_version(Some("87df60d54091cf1e8f8173c2e568260c".to_string())),
+            None
+        );
+        assert_eq!(
+            sanitize_technology_version(Some("749908d4a842".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn test_sanitize_technology_version_keeps_short_hex() {
+        // Short hex-looking strings that could be real version fragments stay.
+        assert_eq!(
+            sanitize_technology_version(Some("abc123".to_string())),
+            Some("abc123".to_string())
+        );
+    }
 
     #[test]
     fn test_detect_technologies_blocking_empty_ruleset() {
@@ -238,7 +308,6 @@ mod tests {
             &headers,
             &meta_tags,
             &script_sources,
-            "",
             "",
             "https://example.com",
             &HashSet::new(),
@@ -267,7 +336,6 @@ mod tests {
             &headers,
             &meta_tags,
             &script_sources,
-            "",
             "",
             "https://example.com",
             &HashSet::new(),
