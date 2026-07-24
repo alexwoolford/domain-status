@@ -152,7 +152,8 @@ domain_status export --format jsonl --output - 2>/dev/null | jq '.final_domain'
 Sample validation flow:
 
 ```bash
-./target/release/domain_status scan url-list.txt --db-path validation_scan.db
+# domains.txt: one URL or domain per line
+./target/release/domain_status scan domains.txt --db-path validation_scan.db
 sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status;"
 ./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
 ```

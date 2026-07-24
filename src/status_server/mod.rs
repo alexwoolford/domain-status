@@ -11,8 +11,6 @@ mod error;
 mod handlers;
 mod types;
 
-#[allow(unused_imports)] // Re-exported for use when fallible handlers are added
-pub use error::StatusServerError;
 pub use error::StatusServerLifecycleError;
 
 use axum::routing::get;

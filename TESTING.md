@@ -85,7 +85,8 @@ To sanity-check columns and `url_exposed_secrets` after changes, use the short r
 ### Quick sanity check
 
 ```bash
-./target/release/domain_status scan url-list.txt --db-path validation_scan.db
+# domains.txt: one URL or domain per line
+./target/release/domain_status scan domains.txt --db-path validation_scan.db
 sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status; SELECT secret_type, COUNT(*) FROM url_exposed_secrets GROUP BY secret_type;"
 ./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
 ```
@@ -99,12 +100,12 @@ Use this when you need to validate **everything**: database tables/columns, all 
 **Prerequisites**
 
 - Build: `cargo build --release --locked`
-- Input: `url-list.txt` (or another domain list)
+- Input: a domain list file (for example `domains.txt`)
 
 **1. Run scan**
 
 ```bash
-./target/release/domain_status scan url-list.txt --db-path validation_scan.db
+./target/release/domain_status scan domains.txt --db-path validation_scan.db
 ```
 
 Optional: add `--status-port 8080` to exercise the status server during the run (see step 5).

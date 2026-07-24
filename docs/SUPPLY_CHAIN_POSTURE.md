@@ -23,7 +23,7 @@ This document summarizes dependency and CI practices for supply chain security.
 - **Security job** (`.github/workflows/ci.yml`): Runs on push, pull_request, and weekly schedule.
   - `cargo audit` — checks dependencies against the RustSec advisory database (CVE and RUSTSEC).
   - `cargo deny check advisories bans sources` — enforces [deny.toml](deny.toml) (advisories, duplicate/wildcard bans, registry sources).
-- **Action pinning:** All workflow actions are pinned by full commit SHA (see Release Engineering and CI refactor). This avoids supply chain risk from tag movement or compromised action repos.
+- **Action pinning:** Workflow actions use version tags (for example `actions/checkout@v6`, `dtolnay/rust-toolchain@stable`). Prefer deliberate upgrades of those tags; full-commit SHA pinning is not currently required.
 
 ---
 
@@ -64,5 +64,5 @@ This document summarizes dependency and CI practices for supply chain security.
 1. **Keep** running `cargo audit` and `cargo deny` in CI on every push/PR and on a weekly schedule.
 2. **Review** deny/audit ignores when upgrading parquet or sqlx; remove ignores that no longer apply.
 3. **Do not** add wildcard dependencies or new registries without updating deny.toml and documenting the reason.
-4. **Preserve** action SHA pinning in all workflows; update SHAs deliberately when upgrading actions.
+4. **Upgrade** GitHub Actions tags deliberately (checkout, rust-toolchain, gitleaks-action, codecov); consider full-SHA pins only if threat model requires it.
 5. **Prefer** controlled cleanup PRs over stacking many Dependabot minors when changing version policy or dropping transitive crates (e.g. thrift).
