@@ -56,6 +56,33 @@ async fn snapshot_csv_export_minimal() {
     assert_eq!(count, 1);
     let contents = std::fs::read_to_string(&out_path).unwrap();
     let normalized = normalize_for_snapshot(&contents);
+    // #region agent log
+    {
+        use std::io::Write;
+        let header = normalized.lines().next().unwrap_or("");
+        let has_tech_categories = header.contains("technology_categories");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open({
+                let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                p.push(".cursor/debug-78eaba.log");
+                p
+            })
+        {
+            let _ = writeln!(
+                f,
+                r#"{{"sessionId":"78eaba","runId":"post-fix","hypothesisId":"A","location":"tests/snapshot_export.rs:csv","message":"csv snapshot header check","data":{{"has_technology_categories":{},"header_len":{}}},"timestamp":{}}}"#,
+                has_tech_categories,
+                header.len(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+        }
+    }
+    // #endregion
     insta::assert_snapshot!(normalized);
 }
 
