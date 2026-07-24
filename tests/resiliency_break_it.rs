@@ -42,55 +42,13 @@ async fn create_test_pool_with_limits(max_connections: u32) -> SqlitePool {
 }
 
 fn create_test_record(domain: &str) -> UrlRecord {
-    use chrono::NaiveDate;
-
-    UrlRecord {
-        initial_domain: domain.to_string(),
-        final_domain: domain.to_string(),
-        ip_address: "93.184.216.34".to_string(),
-        reverse_dns_name: Some("example.com".to_string()),
-        status: 200,
-        status_desc: "OK".to_string(),
-        response_time: 0.123,
-        title: format!("Test {}", domain),
-        keywords: Some("test".to_string()),
-        description: Some("Test record".to_string()),
-        tls_version: Some(domain_status::TlsVersion::Tls13),
-        ssl_cert_subject: Some(format!("CN={}", domain)),
-        ssl_cert_issuer: Some("CN=Test CA".to_string()),
-        ssl_cert_valid_from: NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0),
-        ssl_cert_valid_to: NaiveDate::from_ymd_opt(2025, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0),
-        is_mobile_friendly: true,
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        nameservers: Some(r#"["ns1.example.com"]"#.to_string()),
-        txt_records: Some(r#"["v=spf1 include:_spf.example.com ~all"]"#.to_string()),
-        mx_records: Some(r#"[{"priority": 10, "hostname": "mail.example.com"}]"#.to_string()),
-        spf_record: Some("v=spf1 include:_spf.example.com ~all".to_string()),
-        dmarc_record: Some("v=DMARC1; p=quarantine".to_string()),
-        cipher_suite: Some("TLS_AES_128_GCM_SHA256".to_string()),
-        key_algorithm: Some(domain_status::KeyAlgorithm::RSA),
-        run_id: Some("test-run-1".to_string()),
-        body_sha256: None,
-        content_length: None,
-        http_version: None,
-        body_word_count: None,
-        body_line_count: None,
-        content_type: None,
-        canonical_url: None,
-        cert_fingerprint_sha256: None,
-        cert_serial_number: None,
-        cert_is_self_signed: None,
-        cert_is_wildcard: None,
-        cert_is_mismatched: None,
-        meta_refresh_url: None,
-        body_truncated: false,
-        external_scripts_eligible: 0,
-        external_scripts_scanned: 0,
-    }
+    let mut record = UrlRecord::test_default();
+    record.initial_domain = domain.to_string();
+    record.final_domain = domain.to_string();
+    record.title = format!("Test {domain}");
+    record.timestamp = 1_704_067_200_000;
+    record.run_id = Some("test-run-1".to_string());
+    record
 }
 
 async fn create_test_run(pool: &SqlitePool, run_id: &str) {

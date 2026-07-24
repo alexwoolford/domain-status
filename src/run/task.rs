@@ -163,14 +163,14 @@ async fn handle_failure(
     let context = crate::storage::failure::extract_failure_context(&error);
 
     record_url_failure(crate::storage::failure::FailureRecordParams {
-        pool: &ctx.db.pool,
+        pool: &ctx.pool,
         extractor: &ctx.network.extractor,
         url: url.as_ref(),
         error: &error,
         context,
         retry_count,
         elapsed_time: elapsed,
-        run_id: ctx.config.run_id.as_deref(),
+        run_id: ctx.runtime.run_id.as_deref(),
     })
     .await;
 }
@@ -214,18 +214,18 @@ async fn handle_timeout(
     // the range of u32 (0 to 4,294,967,295).
     #[allow(clippy::cast_possible_truncation)]
     record_url_failure(crate::storage::failure::FailureRecordParams {
-        pool: &ctx.db.pool,
+        pool: &ctx.pool,
         extractor: &ctx.network.extractor,
         url: url.as_ref(),
         error: &timeout_error,
         context,
         retry_count: RETRY_MAX_ATTEMPTS as u32 - 1,
         elapsed_time: elapsed,
-        run_id: ctx.config.run_id.as_deref(),
+        run_id: ctx.runtime.run_id.as_deref(),
     })
     .await;
 
-    ctx.config
+    ctx.runtime
         .error_stats
         .increment_error(ErrorType::ProcessUrlTimeout);
 }
@@ -234,7 +234,7 @@ async fn handle_timeout(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+    use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
     use crate::utils::TimingStats;
     use hickory_resolver::config::ResolverOpts;
     use hickory_resolver::TokioResolver;
@@ -277,8 +277,8 @@ mod tests {
                         .expect("resolver builds with default config"),
                 ),
             ),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 Arc::new(ProcessingStats::new()),
                 Arc::new(TimingStats::new()),
                 Some("run-1".to_string()),
@@ -287,6 +287,7 @@ mod tests {
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(crate::fingerprint::FingerprintRuleset::empty_for_tests()),
         );
         Arc::new(ctx)
     }
@@ -473,7 +474,7 @@ mod tests {
         assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_error_count(crate::error_handling::ErrorType::ProcessUrlTimeout),
             1

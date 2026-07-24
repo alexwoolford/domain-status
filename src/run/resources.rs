@@ -15,27 +15,17 @@ use tokio::sync::OwnedSemaphorePermit;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::error_handling::ProcessingStats;
 use crate::fetch::ProcessingContext;
-use crate::fingerprint::FingerprintRuleset;
 use crate::geoip::GeoIpMetadata;
 use crate::initialization::RateLimiter;
-use crate::runtime_metrics::RuntimeMetrics;
-use crate::storage::DbPool;
-use crate::utils::TimingStats;
 
 /// All resources initialized for a scan operation.
 ///
-/// This struct holds ownership of all the resources needed to execute
-/// a URL scan, including database connections, HTTP clients, rate limiters,
-/// and various statistics trackers.
+/// Shared pool / stats / ruleset live on [`ProcessingContext`] (`shared_ctx`).
+/// This struct keeps loop-level state: concurrency controls, counters, and
+/// run metadata needed after the scan completes.
 pub struct ScanResources {
-    // Database
-    /// Database connection pool
-    pub pool: DbPool,
-
-    // Network clients (via ProcessingContext)
-    /// Shared processing context containing network clients and config
+    /// Shared processing context (pool, network, runtime stats, ruleset)
     pub shared_ctx: Arc<ProcessingContext>,
 
     // Rate limiting
@@ -45,14 +35,6 @@ pub struct ScanResources {
     pub request_limiter: Option<Arc<RateLimiter>>,
     /// Shutdown handle for the rate limiter background task
     pub rate_limiter_shutdown: Option<CancellationToken>,
-
-    // Statistics tracking
-    /// Error statistics tracker
-    pub error_stats: Arc<ProcessingStats>,
-    /// Timing statistics tracker
-    pub timing_stats: Arc<TimingStats>,
-    /// Live runtime counters for retries and degradation paths
-    pub runtime_metrics: Arc<RuntimeMetrics>,
 
     // In-flight URL registry — used by the drain phase to record a `url_failures`
     // row for every URL whose task is still running when the drain timeout fires,
@@ -87,9 +69,6 @@ pub struct ScanResources {
     /// Start time as Instant for elapsed time calculations
     pub start_time: std::time::Instant,
 
-    // Fingerprinting and GeoIP
-    /// Fingerprint detection ruleset (held to keep Arc alive during scan).
-    pub _ruleset: Arc<FingerprintRuleset>,
     /// Optional `GeoIP` database metadata (held to keep data alive during scan).
     pub _geoip_metadata: Option<GeoIpMetadata>,
 

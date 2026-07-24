@@ -3,7 +3,7 @@
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
-use crate::fingerprint::{self, DetectedTechnology};
+use crate::fingerprint::DetectedTechnology;
 
 use super::super::super::utils::build_batch_insert_query;
 
@@ -33,7 +33,7 @@ pub(crate) async fn insert_technologies(
             tech.name.clone()
         };
         if seen.insert(key) {
-            let category = fingerprint::get_technology_category(&tech.name).await;
+            let category = tech.category.clone();
             deduped.push((tech, category));
         }
     }
@@ -103,10 +103,12 @@ mod tests {
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
+                category: None,
             },
         ];
 
@@ -137,10 +139,12 @@ mod tests {
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
         ];
 
@@ -168,14 +172,17 @@ mod tests {
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: Some("6.9".to_string()),
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: Some("8.1".to_string()),
+                category: None,
             },
         ];
 

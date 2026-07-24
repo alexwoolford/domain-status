@@ -181,6 +181,23 @@ pub struct FingerprintRuleset {
     pub metadata: FingerprintMetadata,
 }
 
+impl FingerprintRuleset {
+    /// Empty ruleset for unit tests that do not exercise fingerprint matching.
+    #[cfg(test)]
+    #[must_use]
+    pub fn empty_for_tests() -> Self {
+        Self {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: SystemTime::now(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

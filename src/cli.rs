@@ -154,6 +154,7 @@ const SCAN_CONFIG_ARG_IDS: &[&str] = &[
     "fail_on",
     "fail_on_pct_threshold",
     "log_file",
+    "drain_timeout_secs",
 ];
 
 /// Returns config field names that were explicitly set (command line or env), not defaulted.

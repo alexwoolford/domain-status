@@ -89,28 +89,28 @@ pub async fn finalize_scan(
         skipped_urls: skipped_urls_count,
         elapsed_seconds,
     };
-    update_run_stats(&resources.pool, &stats)
+    update_run_stats(&resources.shared_ctx.pool, &stats)
         .await
         .context("Failed to update run statistics")?;
 
     // Checkpoint WAL file for clean database state
     if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(resources.pool.as_ref())
+        .execute(resources.shared_ctx.pool.as_ref())
         .await
     {
         log::warn!("Failed to checkpoint WAL file (this is non-critical): {e}");
     }
 
     // Close database pool
-    resources.pool.close().await;
+    resources.shared_ctx.pool.close().await;
     log::debug!("Database pool closed");
 
     // Print statistics
-    print_error_statistics(&resources.error_stats);
+    print_error_statistics(&resources.shared_ctx.runtime.error_stats);
 
     let geoip_enabled = crate::geoip::is_enabled();
     print_timing_statistics(
-        &resources.timing_stats,
+        &resources.shared_ctx.runtime.timing_stats,
         Some(geoip_enabled),
         Some(resources.config.enable_whois),
     );
@@ -135,10 +135,8 @@ pub async fn finalize_scan(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
-    use std::time::SystemTime;
 
     use hickory_resolver::config::ResolverOpts;
     use hickory_resolver::TokioResolver;
@@ -147,8 +145,8 @@ mod tests {
 
     use crate::config::Config;
     use crate::error_handling::ProcessingStats;
-    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
-    use crate::fingerprint::{FingerprintMetadata, FingerprintRuleset};
+    use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
+    use crate::fingerprint::FingerprintRuleset;
     use crate::runtime_metrics::RuntimeMetrics;
     use crate::storage::{insert_run_metadata, run_migrations, RunMetadata};
     use crate::utils::TimingStats;
@@ -209,8 +207,8 @@ mod tests {
 
         let shared_ctx = Arc::new(ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(Arc::clone(&pool)),
-            ConfigContext::new(
+            Arc::clone(&pool),
+            RuntimeContext::new(
                 Arc::clone(&error_stats),
                 Arc::clone(&timing_stats),
                 Some(run_id.to_string()),
@@ -219,17 +217,8 @@ mod tests {
                 Arc::new(RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(FingerprintRuleset::empty_for_tests()),
         ));
-
-        let ruleset = Arc::new(FingerprintRuleset {
-            technologies: HashMap::new(),
-            categories: HashMap::new(),
-            metadata: FingerprintMetadata {
-                source: "test".into(),
-                version: "0".into(),
-                last_updated: SystemTime::now(),
-            },
-        });
 
         let config = Config {
             db_path: std::path::PathBuf::from(":memory:"),
@@ -239,14 +228,10 @@ mod tests {
         };
 
         let resources = ScanResources {
-            pool,
             shared_ctx,
             semaphore: Arc::new(Semaphore::new(1)),
             request_limiter: None,
             rate_limiter_shutdown: None,
-            error_stats,
-            timing_stats,
-            runtime_metrics: Arc::new(RuntimeMetrics::default()),
             in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             completed_urls,
             successful_urls,
@@ -257,7 +242,6 @@ mod tests {
             run_id: run_id.to_string(),
             start_time_epoch: start_time_ms,
             start_time,
-            _ruleset: ruleset,
             _geoip_metadata: None,
             config,
         };

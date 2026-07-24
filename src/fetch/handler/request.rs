@@ -33,7 +33,7 @@ pub async fn handle_http_request(
             url,
             MAX_REDIRECT_HOPS,
             &ctx.network.redirect_client,
-            ctx.config.allow_localhost_for_tests,
+            ctx.runtime.allow_localhost_for_tests,
         )
         .await?;
 
@@ -44,7 +44,7 @@ pub async fn handle_http_request(
     // - len > 2: Multiple redirects (original + intermediate + final)
     if redirect_chain.len() > 1 {
         // Any redirect occurred (single or multiple)
-        ctx.config
+        ctx.runtime
             .error_stats
             .increment_info(crate::error_handling::InfoType::HttpRedirect);
 
@@ -59,14 +59,14 @@ pub async fn handle_http_request(
             .map(|u| u.scheme().to_string())
             .unwrap_or_default();
         if original_scheme == "http" && final_scheme == "https" {
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .increment_info(crate::error_handling::InfoType::HttpsRedirect);
         }
 
         // Multiple redirects (more than one redirect hop)
         if redirect_chain.len() > 2 {
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .increment_info(crate::error_handling::InfoType::MultipleRedirects);
         }
@@ -144,7 +144,7 @@ pub async fn handle_http_request(
             if failure_match {
                 match response.error_for_status() {
                     Err(e) => {
-                        update_error_stats(&ctx.config.error_stats, &e);
+                        update_error_stats(&ctx.runtime.error_stats, &e);
 
                         log::error!(
                             "HTTP request error for {}: {} (status: {:?})",
@@ -191,7 +191,7 @@ pub async fn handle_http_request(
             } else {
                 // Track 403 as info metric (bot detection) but still process the response
                 if status_code == 403 {
-                    ctx.config
+                    ctx.runtime
                         .error_stats
                         .increment_info(crate::error_handling::InfoType::BotDetection403);
                 }
@@ -209,7 +209,7 @@ pub async fn handle_http_request(
             }
         }
         Err(e) => {
-            update_error_stats(&ctx.config.error_stats, &e);
+            update_error_stats(&ctx.runtime.error_stats, &e);
             log::error!("HTTP request error for {}: {} (status: {:?}, is_timeout: {}, is_connect: {}, is_request: {})",
                 url, e, e.status(), e.is_timeout(), e.is_connect(), e.is_request());
 
@@ -234,7 +234,7 @@ pub async fn handle_http_request(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::fetch::{ConfigContext, DatabaseContext, NetworkContext, ProcessingContext};
+    use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
     use crate::utils::TimingStats;
     use hickory_resolver::{config::ResolverOpts, TokioResolver};
     use httptest::{matchers::*, responders::*, Expectation, Server};
@@ -272,8 +272,8 @@ mod tests {
 
         ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 error_stats,
                 timing_stats,
                 None,
@@ -282,6 +282,7 @@ mod tests {
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(crate::fingerprint::FingerprintRuleset::empty_for_tests()),
         )
     }
 
@@ -337,7 +338,7 @@ mod tests {
         // The key assertion: bot detection metric is tracked regardless.
 
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_info_count(crate::error_handling::InfoType::BotDetection403),
             1
@@ -362,7 +363,7 @@ mod tests {
         // 404 should NOT trigger bot detection metric.
 
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_info_count(crate::error_handling::InfoType::BotDetection403),
             0
@@ -454,8 +455,8 @@ mod tests {
 
         let ctx = ProcessingContext::new(
             NetworkContext::new(client, redirect_client, extractor, resolver),
-            DatabaseContext::new(pool),
-            ConfigContext::new(
+            pool,
+            RuntimeContext::new(
                 error_stats,
                 timing_stats,
                 None,
@@ -464,6 +465,7 @@ mod tests {
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
             ),
+            Arc::new(crate::fingerprint::FingerprintRuleset::empty_for_tests()),
         );
 
         let start_time = std::time::Instant::now();
@@ -515,7 +517,7 @@ mod tests {
 
         // Redirect should be tracked
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_info_count(crate::error_handling::InfoType::HttpRedirect),
             1
@@ -572,7 +574,7 @@ mod tests {
 
         assert!(result.is_err(), "redirect to 4xx must yield Err");
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_info_count(crate::error_handling::InfoType::HttpRedirect),
             1,
@@ -669,7 +671,7 @@ mod tests {
 
         // Multiple redirects (>2) should be tracked
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_info_count(crate::error_handling::InfoType::MultipleRedirects),
             1,
@@ -677,7 +679,7 @@ mod tests {
         );
         // HttpRedirect should also be tracked (any redirect)
         assert_eq!(
-            ctx.config
+            ctx.runtime
                 .error_stats
                 .get_info_count(crate::error_handling::InfoType::HttpRedirect),
             1,
@@ -730,7 +732,7 @@ mod tests {
         let start_time = std::time::Instant::now();
 
         let _initial_error_count = ctx
-            .config
+            .runtime
             .error_stats
             .get_error_count(crate::error_handling::ErrorType::HttpRequestOtherError);
 
@@ -743,7 +745,7 @@ mod tests {
         // We can't easily verify the exact count without accessing internal state,
         // but we verify the function doesn't panic and error handling works
         let _final_error_count = ctx
-            .config
+            .runtime
             .error_stats
             .get_error_count(crate::error_handling::ErrorType::HttpRequestOtherError);
 

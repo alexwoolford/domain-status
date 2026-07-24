@@ -7,8 +7,6 @@ use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
-#[cfg(test)]
-use crate::fingerprint::ruleset::get_ruleset;
 
 /// Result of cookie matching for a single technology
 #[derive(Debug, Clone)]
@@ -41,87 +39,6 @@ fn wildcard_cookie_regex(cookie_name: &str) -> Option<regex::Regex> {
 /// Checks all technologies against cookies and returns matches.
 ///
 /// This matches wappalyzergo's `checkCookies()` → `matchMapString(cookies, cookiesPart)` flow.
-/// Supports wildcard cookie names (e.g., `_ga_*` matches `_ga_123456`).
-#[cfg(test)]
-pub async fn check_cookies(
-    cookies: &HashMap<String, String>,
-) -> Result<Vec<CookieMatchResult>, crate::error_handling::FingerprintError> {
-    let ruleset = get_ruleset()
-        .await
-        .ok_or(crate::error_handling::FingerprintError::RulesetNotInitialized)?;
-
-    let mut results = Vec::new();
-
-    for (tech_name, tech) in &ruleset.technologies {
-        if tech.cookies.is_empty() {
-            continue;
-        }
-
-        let mut matched = false;
-        let mut version: Option<String> = None;
-
-        for (cookie_name, pattern) in &tech.cookies {
-            // Check if cookie_name contains wildcard (*)
-            if cookie_name.contains('*') {
-                let Some(cookie_regex) = wildcard_cookie_regex(cookie_name) else {
-                    continue;
-                };
-
-                // Check all cookies for a match
-                for (actual_cookie_name, cookie_value) in cookies {
-                    if cookie_regex.is_match(actual_cookie_name) {
-                        if pattern.is_empty() {
-                            matched = true;
-                            break;
-                        }
-                        let result = matches_pattern(pattern, cookie_value);
-                        if result.matched {
-                            matched = true;
-                            if version.is_none() && result.version.is_some() {
-                                version.clone_from(&result.version);
-                            }
-                            if version.is_some() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Exact match (no wildcard)
-                if let Some(cookie_value) = cookies.get(cookie_name) {
-                    if pattern.is_empty() {
-                        matched = true;
-                        break;
-                    }
-                    let result = matches_pattern(pattern, cookie_value);
-                    if result.matched {
-                        matched = true;
-                        if version.is_none() && result.version.is_some() {
-                            version.clone_from(&result.version);
-                        }
-                        if version.is_some() {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if matched && version.is_some() {
-                break; // Found version, stop checking other cookies
-            }
-        }
-
-        if matched {
-            results.push(CookieMatchResult {
-                tech_name: tech_name.clone(),
-                version,
-            });
-        }
-    }
-
-    Ok(results)
-}
-
 /// Synchronous cookie check using a pre-fetched ruleset (for use on blocking threads).
 pub(crate) fn check_cookies_with_ruleset(
     ruleset: &FingerprintRuleset,
@@ -196,7 +113,7 @@ pub(crate) fn check_cookies_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::init_ruleset;
+    use crate::fingerprint::ruleset::{get_ruleset, init_ruleset};
 
     /// Test cookie detection matching wappalyzergo's `TestCookiesDetect`
     #[tokio::test]
@@ -207,14 +124,15 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         // Test Microsoft Advertising detection via _uetsid cookie
         let mut cookies = HashMap::new();
         cookies.insert("_uetsid".to_string(), "ABCDEF".to_string());
 
-        let results = check_cookies(&cookies)
-            .await
-            .expect("Failed to check cookies");
+        let results = check_cookies_with_ruleset(ruleset.as_ref(), &cookies);
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
             tech_names.contains(&"Microsoft Advertising".to_string()),
@@ -230,14 +148,15 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         // Test Java detection via jsessionid cookie
         let mut cookies1 = HashMap::new();
         cookies1.insert("jsessionid".to_string(), "111".to_string());
 
-        let results1 = check_cookies(&cookies1)
-            .await
-            .expect("Failed to check cookies");
+        let results1 = check_cookies_with_ruleset(ruleset.as_ref(), &cookies1);
         let tech_names1: Vec<String> = results1.iter().map(|r| r.tech_name.clone()).collect();
         eprintln!("Detected technologies from jsessionid: {:?}", tech_names1);
         assert!(
@@ -252,9 +171,7 @@ mod tests {
         cookies2.insert("XSRF-TOKEN".to_string(), "test".to_string());
         cookies2.insert("laravel_session".to_string(), "eyJ*".to_string());
 
-        let results2 = check_cookies(&cookies2)
-            .await
-            .expect("Failed to check cookies");
+        let results2 = check_cookies_with_ruleset(ruleset.as_ref(), &cookies2);
         let tech_names2: Vec<String> = results2.iter().map(|r| r.tech_name.clone()).collect();
         eprintln!("Detected technologies: {:?}", tech_names2);
         // Verify Java and Laravel are detected (these should be reliable)
@@ -343,14 +260,15 @@ mod tests {
             eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
             return;
         }
+        let Some(ruleset) = get_ruleset().await else {
+            return;
+        };
 
         // Test Google Analytics _ga_* wildcard pattern
         let mut cookies = HashMap::new();
         cookies.insert("_ga_123456".to_string(), "test".to_string());
 
-        let results = check_cookies(&cookies)
-            .await
-            .expect("Failed to check cookies");
+        let results = check_cookies_with_ruleset(ruleset.as_ref(), &cookies);
         // Google Analytics should be detected via _ga_* pattern
         // (This test may need adjustment based on actual fingerprint rules)
         // The important thing is that wildcard matching works

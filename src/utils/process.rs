@@ -103,7 +103,7 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
             }
         },
         &attempt_count,
-        ctx.config.runtime_metrics.as_ref(),
+        ctx.runtime.runtime_metrics.as_ref(),
     )
     .await;
 

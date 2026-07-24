@@ -19,6 +19,72 @@ use satellite::{
     insert_redirect_chain, insert_security_headers, insert_technologies, insert_txt_records,
 };
 
+/// Column names for `url_status` INSERT / UPSERT (single source of truth).
+///
+/// `final_domain` is part of the conflict key and is omitted from the UPDATE SET
+/// clause; every other column is refreshed on conflict.
+const URL_STATUS_COLUMNS: &[&str] = &[
+    "initial_domain",
+    "final_domain",
+    "ip_address",
+    "reverse_dns_name",
+    "http_status",
+    "http_status_text",
+    "response_time_seconds",
+    "title",
+    "keywords",
+    "description",
+    "tls_version",
+    "ssl_cert_subject",
+    "ssl_cert_issuer",
+    "ssl_cert_valid_from_ms",
+    "ssl_cert_valid_to_ms",
+    "is_mobile_friendly",
+    "observed_at_ms",
+    "spf_record",
+    "dmarc_record",
+    "cipher_suite",
+    "key_algorithm",
+    "run_id",
+    "body_sha256",
+    "body_truncated",
+    "external_scripts_eligible",
+    "external_scripts_scanned",
+    "content_length",
+    "http_version",
+    "body_word_count",
+    "body_line_count",
+    "content_type",
+    "canonical_url",
+    "cert_fingerprint_sha256",
+    "cert_serial_number",
+    "cert_is_self_signed",
+    "cert_is_wildcard",
+    "cert_is_mismatched",
+    "meta_refresh_url",
+];
+
+fn url_status_upsert_sql() -> String {
+    let columns = URL_STATUS_COLUMNS.join(", ");
+    let placeholders = std::iter::repeat_n("?", URL_STATUS_COLUMNS.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let updates = URL_STATUS_COLUMNS
+        .iter()
+        .filter(|&&col| col != "final_domain")
+        .map(|col| format!("{col}=excluded.{col}"))
+        .collect::<Vec<_>>()
+        .join(",\n            ");
+    format!(
+        "INSERT INTO url_status (
+            {columns}
+        ) VALUES ({placeholders})
+        ON CONFLICT(run_id, final_domain) DO UPDATE SET
+            {updates}
+        RETURNING id"
+    )
+}
+
 /// Parameters for inserting a URL record.
 ///
 /// This struct groups all parameters needed to insert a URL record, reducing
@@ -146,58 +212,8 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     // 1. Insert into main url_status table
     // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
     // This eliminates the need for a separate SELECT query and improves performance
-    let url_status_id_result = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO url_status (
-            initial_domain, final_domain, ip_address, reverse_dns_name, http_status, http_status_text,
-            response_time_seconds, title, keywords, description, tls_version, ssl_cert_subject,
-            ssl_cert_issuer, ssl_cert_valid_from_ms, ssl_cert_valid_to_ms, is_mobile_friendly, observed_at_ms,
-            spf_record, dmarc_record, cipher_suite, key_algorithm, run_id,
-            body_sha256, body_truncated, external_scripts_eligible, external_scripts_scanned,
-            content_length, http_version, body_word_count, body_line_count,
-            content_type, canonical_url, cert_fingerprint_sha256,
-            cert_serial_number, cert_is_self_signed, cert_is_wildcard, cert_is_mismatched,
-            meta_refresh_url
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(run_id, final_domain) DO UPDATE SET
-            initial_domain=excluded.initial_domain,
-            ip_address=excluded.ip_address,
-            reverse_dns_name=excluded.reverse_dns_name,
-            http_status=excluded.http_status,
-            http_status_text=excluded.http_status_text,
-            response_time_seconds=excluded.response_time_seconds,
-            title=excluded.title,
-            keywords=excluded.keywords,
-            description=excluded.description,
-            tls_version=excluded.tls_version,
-            ssl_cert_subject=excluded.ssl_cert_subject,
-            ssl_cert_issuer=excluded.ssl_cert_issuer,
-            ssl_cert_valid_from_ms=excluded.ssl_cert_valid_from_ms,
-            ssl_cert_valid_to_ms=excluded.ssl_cert_valid_to_ms,
-            is_mobile_friendly=excluded.is_mobile_friendly,
-            observed_at_ms=excluded.observed_at_ms,
-            spf_record=excluded.spf_record,
-            dmarc_record=excluded.dmarc_record,
-            cipher_suite=excluded.cipher_suite,
-            key_algorithm=excluded.key_algorithm,
-            run_id=excluded.run_id,
-            body_sha256=excluded.body_sha256,
-            body_truncated=excluded.body_truncated,
-            external_scripts_eligible=excluded.external_scripts_eligible,
-            external_scripts_scanned=excluded.external_scripts_scanned,
-            content_length=excluded.content_length,
-            http_version=excluded.http_version,
-            body_word_count=excluded.body_word_count,
-            body_line_count=excluded.body_line_count,
-            content_type=excluded.content_type,
-            canonical_url=excluded.canonical_url,
-            cert_fingerprint_sha256=excluded.cert_fingerprint_sha256,
-            cert_serial_number=excluded.cert_serial_number,
-            cert_is_self_signed=excluded.cert_is_self_signed,
-            cert_is_wildcard=excluded.cert_is_wildcard,
-            cert_is_mismatched=excluded.cert_is_mismatched,
-            meta_refresh_url=excluded.meta_refresh_url
-        RETURNING id",
-    )
+    let upsert_sql = url_status_upsert_sql();
+    let url_status_id_result = sqlx::query_scalar::<_, i64>(&upsert_sql)
     .bind(&params.record.initial_domain)
     .bind(&params.record.final_domain)
     .bind(&params.record.ip_address)
@@ -511,53 +527,33 @@ mod tests {
 
     /// Creates a minimal `UrlRecord` for testing
     fn create_test_url_record() -> UrlRecord {
-        UrlRecord {
-            initial_domain: "example.com".to_string(),
-            final_domain: "example.com".to_string(),
-            ip_address: "93.184.216.34".to_string(),
-            reverse_dns_name: Some("example.com".to_string()),
-            status: 200,
-            status_desc: "OK".to_string(),
-            response_time: 0.123,
-            title: "Example Domain".to_string(),
-            keywords: Some("example, test".to_string()),
-            description: Some("Example description".to_string()),
-            tls_version: Some(crate::models::TlsVersion::Tls13),
-            ssl_cert_subject: Some("CN=example.com".to_string()),
-            ssl_cert_issuer: Some("CN=Let's Encrypt".to_string()),
-            ssl_cert_valid_from: NaiveDate::from_ymd_opt(2024, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0),
-            ssl_cert_valid_to: NaiveDate::from_ymd_opt(2025, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0),
-            is_mobile_friendly: true,
-            timestamp: 1704067200000, // 2024-01-01 00:00:00 UTC in milliseconds
-            nameservers: Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string()),
-            txt_records: Some(r#"["v=spf1 include:_spf.example.com ~all"]"#.to_string()),
-            mx_records: Some(r#"[{"priority": 10, "hostname": "mail.example.com"}]"#.to_string()),
-            spf_record: Some("v=spf1 include:_spf.example.com ~all".to_string()),
-            dmarc_record: Some("v=DMARC1; p=none".to_string()),
-            cipher_suite: Some("TLS_AES_256_GCM_SHA384".to_string()),
-            key_algorithm: Some(crate::models::KeyAlgorithm::ECDSA),
-            run_id: Some("test-run-1".to_string()),
-            body_sha256: None,
-            body_truncated: false,
-            external_scripts_eligible: 0,
-            external_scripts_scanned: 0,
-            content_length: None,
-            http_version: None,
-            body_word_count: None,
-            body_line_count: None,
-            content_type: None,
-            canonical_url: None,
-            cert_fingerprint_sha256: None,
-            cert_serial_number: None,
-            cert_is_self_signed: None,
-            cert_is_wildcard: None,
-            cert_is_mismatched: None,
-            meta_refresh_url: None,
-        }
+        let mut record = UrlRecord::test_default();
+        record.reverse_dns_name = Some("example.com".to_string());
+        record.response_time = 0.123;
+        record.title = "Example Domain".to_string();
+        record.keywords = Some("example, test".to_string());
+        record.description = Some("Example description".to_string());
+        record.tls_version = Some(crate::models::TlsVersion::Tls13);
+        record.ssl_cert_subject = Some("CN=example.com".to_string());
+        record.ssl_cert_issuer = Some("CN=Let's Encrypt".to_string());
+        record.ssl_cert_valid_from = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0);
+        record.ssl_cert_valid_to = NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0);
+        record.is_mobile_friendly = true;
+        record.timestamp = 1_704_067_200_000; // 2024-01-01 00:00:00 UTC in milliseconds
+        record.nameservers = Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string());
+        record.txt_records = Some(r#"["v=spf1 include:_spf.example.com ~all"]"#.to_string());
+        record.mx_records =
+            Some(r#"[{"priority": 10, "hostname": "mail.example.com"}]"#.to_string());
+        record.spf_record = Some("v=spf1 include:_spf.example.com ~all".to_string());
+        record.dmarc_record = Some("v=DMARC1; p=none".to_string());
+        record.cipher_suite = Some("TLS_AES_256_GCM_SHA384".to_string());
+        record.key_algorithm = Some(crate::models::KeyAlgorithm::ECDSA);
+        record.run_id = Some("test-run-1".to_string());
+        record
     }
 
     #[tokio::test]
@@ -706,10 +702,12 @@ mod tests {
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
+                category: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
+                category: None,
             },
         ];
         let sans = Vec::new();

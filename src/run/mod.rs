@@ -213,10 +213,10 @@ pub async fn run_scan(
             failed_urls: Arc::clone(&resources.failed_urls),
             skipped_urls: Arc::clone(&resources.skipped_urls),
             start_time: Arc::new(resources.start_time),
-            error_stats: resources.error_stats.clone(),
-            timing_stats: Some(Arc::clone(&resources.timing_stats)),
+            error_stats: Arc::clone(&resources.shared_ctx.runtime.error_stats),
+            timing_stats: Some(Arc::clone(&resources.shared_ctx.runtime.timing_stats)),
             request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
-            runtime_metrics: Arc::clone(&resources.runtime_metrics),
+            runtime_metrics: Arc::clone(&resources.shared_ctx.runtime.runtime_metrics),
             run_id: Some(resources.run_id.clone()),
             run_start_time_unix_secs: Some({
                 #[allow(clippy::cast_precision_loss)]
@@ -446,7 +446,7 @@ pub async fn run_scan(
                     "Drain timeout ({drain_timeout_secs}s) reached, recording {abandoned_count} in-flight task(s) as failures and aborting"
                 );
                 let inserted = record_drain_timeout_failures(
-                    &resources.pool,
+                    &resources.shared_ctx.pool,
                     &resources.run_id,
                     drain_timeout_secs,
                     &abandoned,
