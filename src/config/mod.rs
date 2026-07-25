@@ -1,19 +1,20 @@
 //! Application configuration and constants.
 //!
-//! This module provides:
-//! - Configuration constants (timeouts, limits, etc.)
-//! - HTTP header name constants
-//! - Configuration types (`Config`, plus shared enums re-exported from `domain_status_cli`)
-//! - Config construction (merge file+env with CLI overlay)
+//! Library consumers typically need [`Config`] and related enums only.
+//! Most timeouts/header name constants are crate-private implementation detail.
 
 mod constants;
 mod headers;
 mod merge;
 mod types;
 
-// Re-export all constants
-pub use constants::*;
-pub use headers::*;
+// Crate-internal constants/headers (not part of the stable library surface).
+pub(crate) use constants::*;
+pub(crate) use headers::*;
+
+// Small set kept public for tests/docs and Config defaults.
+pub use constants::{DB_PATH, DEFAULT_USER_AGENT, WHOIS_TIMEOUT_SECS};
+
 pub use merge::{apply_file_env_map_to_config, merge_file_env_and_cli};
 pub use types::{
     log_level_filter, Config, ConfigValidationError, FailOn, LogFormat, LogLevel,

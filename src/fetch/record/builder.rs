@@ -8,7 +8,7 @@
 use regex::Regex;
 use std::collections::HashSet;
 
-use crate::database::UrlRecord;
+use crate::storage::UrlRecord;
 
 /// Returns the PSL registrable domain (eTLD+1) for a given FQDN.
 ///

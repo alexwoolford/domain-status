@@ -265,4 +265,69 @@ mod tests {
             merge_file_env_and_cli(Some(&file_env), cli_config, Some(&["drain_timeout_secs"]));
         assert_eq!(merged2.drain_timeout_secs, 90);
     }
+
+    #[test]
+    fn test_merge_fail_on_invalid_skipped_valid_applied_cli_overrides() {
+        // Invalid fail_on is skipped → default Never preserved
+        let mut invalid = HashMap::new();
+        invalid.insert("fail_on".to_string(), "boom".to_string());
+        let merged_invalid = merge_file_env_and_cli(
+            Some(&invalid),
+            Config {
+                fail_on: FailOn::Never,
+                ..Default::default()
+            },
+            Some(&[]),
+        );
+        assert!(
+            matches!(merged_invalid.fail_on, FailOn::Never),
+            "invalid fail_on must leave default Never"
+        );
+
+        // Valid file value applied when CLI not explicit
+        let mut valid = HashMap::new();
+        valid.insert("fail_on".to_string(), "pct>".to_string());
+        let merged_valid = merge_file_env_and_cli(
+            Some(&valid),
+            Config {
+                fail_on: FailOn::Never,
+                ..Default::default()
+            },
+            Some(&[]),
+        );
+        assert!(
+            matches!(merged_valid.fail_on, FailOn::PctGreaterThan),
+            "valid file fail_on=pct> must apply"
+        );
+
+        // Explicit CLI any_failure overrides file pct>
+        let merged_cli = merge_file_env_and_cli(
+            Some(&valid),
+            Config {
+                fail_on: FailOn::AnyFailure,
+                ..Default::default()
+            },
+            Some(&["fail_on"]),
+        );
+        assert!(
+            matches!(merged_cli.fail_on, FailOn::AnyFailure),
+            "explicit CLI fail_on must override file"
+        );
+
+        // Invalid bool for enable_whois is skipped
+        let mut bad_bool = HashMap::new();
+        bad_bool.insert("enable_whois".to_string(), "maybe".to_string());
+        let merged_bool = merge_file_env_and_cli(
+            Some(&bad_bool),
+            Config {
+                enable_whois: false,
+                ..Default::default()
+            },
+            Some(&[]),
+        );
+        assert!(
+            !merged_bool.enable_whois,
+            "invalid enable_whois must leave default false"
+        );
+    }
 }

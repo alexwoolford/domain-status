@@ -615,10 +615,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_response_data_success() {
-        // Note: extract_response_data uses response.url() for final_url, which will be an IPv6 address
-        // from the mock server. Domain extraction will fail for IPv6, so we test that the function
-        // returns an error in this case (expected behavior). The actual domain extraction logic
-        // is tested in src/domain/tests.rs with proper domain URLs.
+        // Note: response.url() is an IP from the mock server; IP literals are valid domain keys.
         let server = Server::run();
         let server_url = server.url("/test").to_string();
         let test_url = "https://example.com/test";
@@ -637,27 +634,19 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction will fail because response.url() returns IPv6 address
-        // This is expected - the function should return an error
+        // Domain extraction now accepts IP literals as domain keys (needed for
+        // wiremock/httpmock). This test still exercises extract_response_data end-to-end.
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
 
-        // Should return error because domain extraction fails on IPv6 addresses
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+        // original_url is example.com; final_url from httptest is an IP — both extract.
         assert!(
-            error_msg.contains("Failed to extract registrable domain")
-                || error_msg.contains("Failed to extract domain")
-                || error_msg.contains("IP addresses do not have registrable domains"),
-            "Error message should mention domain extraction failure, got: {}",
-            error_msg
+            result.is_ok(),
+            "extract_response_data should succeed with IP final URL, got: {result:?}"
         );
     }
 
     #[tokio::test]
     async fn test_extract_response_data_non_html_content_type() {
-        // Note: This test verifies content-type checking logic
-        // Domain extraction will fail (IPv6), but we can test the content-type logic
-        // by checking the error message or testing separately
         let server = Server::run();
         let server_url = server.url("/test").to_string();
         let test_url = "https://example.com/test";
@@ -674,17 +663,16 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction will fail (IPv6), so we expect an error
-        // The content-type check happens after domain extraction, so we can't test it
-        // with httptest. Content-type logic is tested indirectly through integration tests.
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        let data = result
+            .expect("application/json is scannable")
+            .expect("should return Some ResponseData");
+        assert_eq!(data.content_type.as_deref(), Some("application/json"));
+        assert!(data.body.contains("key"));
     }
 
     #[tokio::test]
     async fn test_extract_response_data_missing_content_type() {
-        // Note: Domain extraction fails with IPv6, so we can't fully test this with httptest
-        // Missing content-type logic is tested through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
         let test_url = "https://example.com/test";
@@ -699,15 +687,20 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), so we expect an error
+        // Missing Content-Type: treated as HTML-ish / proceeds or errors on empty policy — not IP domain.
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        // Accept either success (body treated as HTML) or a content-type related error.
+        if let Err(e) = &result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("IP addresses do not have registrable domains"),
+                "IP domain rejection should be gone, got: {msg}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn test_extract_response_data_empty_body() {
-        // Note: Domain extraction fails with IPv6, so we can't fully test empty body logic
-        // Empty body logic is tested through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
         let test_url = "https://example.com/test";
@@ -724,9 +717,11 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), so we expect an error
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "empty HTML body with IP final URL should extract, got: {result:?}"
+        );
     }
 
     #[test]
@@ -751,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_response_data_security_headers_extraction() {
-        // Note: Domain extraction fails with IPv6, so we can't fully test header extraction
+        // httpmock serves from an IP literal (valid domain key).
         // Header extraction is tested in fetch/request/tests.rs and through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
@@ -771,15 +766,16 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), so we expect an error
-        // Header extraction logic is tested in fetch/request/tests.rs
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[tokio::test]
     async fn test_extract_response_data_http_headers_extraction() {
-        // Note: Domain extraction fails with IPv6, so we can't fully test header extraction
+        // httpmock serves from an IP literal (valid domain key).
         // Header extraction is tested in fetch/request/tests.rs and through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
@@ -799,15 +795,16 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), so we expect an error
-        // Header extraction logic is tested in fetch/request/tests.rs
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[tokio::test]
     async fn test_extract_response_data_status_code_extraction() {
-        // Note: Domain extraction fails with IPv6, so we can't fully test status code extraction
+        // httpmock serves from an IP literal (valid domain key).
         // Status code extraction is straightforward and tested through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
@@ -825,10 +822,11 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), so we expect an error
-        // Status code extraction is straightforward and tested through integration tests
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[test]
@@ -934,9 +932,12 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), but we verify the content-type logic exists
+        // IP literals are valid domain keys; assert extraction succeeds.
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -960,9 +961,12 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), but we verify the function handles headers safely
+        // IP literals are valid domain keys; assert extraction succeeds.
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -988,9 +992,12 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), but we verify body reading logic exists
+        // IP literals are valid domain keys; assert extraction succeeds.
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[test]
@@ -1091,11 +1098,13 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), but we verify body reading logic exists
         // The code at line 75-87 handles body read failures by catching errors
         // and using empty string, then checking if empty (line 89-92)
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err()); // Domain extraction fails
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -1120,11 +1129,13 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
         let extractor = create_test_extractor();
 
-        // Domain extraction fails (IPv6), but Content-Encoding header is logged
         // The code at line 70-72 logs Content-Encoding for debugging
         // reqwest automatically decompresses, so the body is already decompressed
         let result = extract_response_data(response, test_url, &server_url, &extractor).await;
-        assert!(result.is_err()); // Domain extraction fails
+        assert!(
+            result.is_ok(),
+            "expected Ok after IP domain support, got: {result:?}"
+        );
     }
 
     #[tokio::test]

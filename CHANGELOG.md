@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Adversarial / offline orchestration tests: UPSERT satellite cleanup, implies fixed-point + exclude, offline `run_scan` with local fingerprints, config merge fail_on contracts, partial-failure accounting, fast concurrency smoke.
+- [`docs/TESTING.md`](docs/TESTING.md): what default CI proves vs ignored/e2e, and that coverage is informational.
+
+### Changed
+- Soft-skip / discarded-result tests in `run` and fingerprint detection made honest (assert errors, local fingerprints, or `#[ignore]` with reason).
+- Public API hygiene: removed `database` shim; `initialization` is crate-private; most config constants/header names are crate-private (kept `DEFAULT_USER_AGENT`, `WHOIS_TIMEOUT_SECS`, `DB_PATH`).
+- ADR 0001 documents vendored fingerprint fallback.
+- IP-literal hosts are accepted as domain keys in `extract_domain` (enables wiremock/httpmock CI scans; production SSRF still blocks private IPs before fetch).
+
 ## [0.1.25] - 2026-07-23
 
 ### Fixed

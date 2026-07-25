@@ -16,9 +16,10 @@ Uses `just` as the task runner (install: `cargo install just`).
 | Run all checks | `just check` (fmt + lint + test) |
 | Format | `just fmt` |
 | Lint | `just lint` (clippy with `--locked -D warnings`) |
-| Run tests | `just test` (excludes network-dependent) |
+| Run tests | `just test` (excludes network-dependent / `#[ignore]`) |
 | Run single test | `cargo test test_name --all-features --locked` |
 | Run E2E tests | `just test-e2e` (requires network, runs `#[ignore]` tests) |
+| Testing posture | See [docs/TESTING.md](docs/TESTING.md) — coverage is informational, not a gate |
 | Docs check | `just docs-check` (rustdoc examples + warning cleanliness) |
 | Full CI locally | `just ci` |
 | Coverage | `just coverage` (generates HTML via tarpaulin) |

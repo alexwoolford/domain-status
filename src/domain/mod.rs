@@ -26,12 +26,14 @@ use anyhow::{Context, Result};
 ///
 /// # Returns
 ///
-/// The registrable domain (e.g., "example.com" from "<https://www.example.com/path>")
+/// The registrable domain (e.g., "example.com" from "<https://www.example.com/path>").
+/// For IP-literal hosts, returns the IP string (used as the UPSERT/domain key).
+/// Production SSRF checks still block private/loopback IPs before fetch.
 ///
 /// # Errors
 ///
-/// Returns an error if the URL cannot be parsed, if the URL is an IP address,
-/// or if domain extraction fails.
+/// Returns an error if the URL cannot be parsed, has no host, or PSL extraction fails
+/// for a non-IP hostname.
 ///
 /// Uses `psl` to correctly extract the registrable domain, handling
 /// both simple TLDs (e.g., "example.com") and multi-part TLDs (e.g., "example.co.uk").
@@ -44,17 +46,15 @@ pub fn extract_domain(_list: &psl::List, url: &str) -> Result<String> {
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("URL '{url}' has no host component"))?;
 
-    // Reject IP addresses (they don't have registrable domains)
-    // Check both IPv4 and IPv6 addresses
+    // IP literals have no PSL registrable domain; use the IP as the domain key so
+    // wiremock/httptest integration tests and legitimate IP URL scans can succeed.
     if host.parse::<std::net::Ipv4Addr>().is_ok()
         || host.parse::<std::net::Ipv6Addr>().is_ok()
         || parsed
             .host()
             .is_some_and(|h| matches!(h, url::Host::Ipv4(_) | url::Host::Ipv6(_)))
     {
-        return Err(anyhow::anyhow!(
-            "IP addresses do not have registrable domains: {host}"
-        ));
+        return Ok(host.to_string());
     }
 
     // Use psl::domain_str() to get the registrable domain as a string

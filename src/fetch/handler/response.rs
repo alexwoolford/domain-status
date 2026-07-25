@@ -330,7 +330,14 @@ mod tests {
     use httptest::{matchers::*, responders::*, Expectation, Server};
     use std::sync::Arc;
 
-    async fn create_test_context(_server: &Server) -> ProcessingContext {
+    async fn create_test_context(server: &Server) -> ProcessingContext {
+        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/favicon.ico"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+
         let client = Arc::new(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
@@ -396,9 +403,7 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // Non-HTML responses should return Ok(()) silently
-        // Note: Domain extraction may fail for IP addresses from httptest,
-        // but if it succeeds, non-HTML content should be skipped
+        // application/json is scannable (secret detection); without migrations insert fails.
         let result = handle_response(
             response,
             original_url,
@@ -410,27 +415,18 @@ mod tests {
         )
         .await;
 
-        // Should succeed (skip silently) OR fail at domain extraction (both are acceptable)
-        // The key is that if extract_response_data returns Ok(None), handle_response returns Skipped
-        match result {
-            Ok(crate::fetch::UrlProcessOutcome::Skipped) => {
-                // Success - non-HTML was skipped silently
-            }
-            Ok(crate::fetch::UrlProcessOutcome::Inserted) => {
-                panic!("non-HTML response should not reach insert path");
-            }
-            Err(e) => {
-                // Domain extraction failed (expected for IP addresses)
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("domain")
-                        || error_msg.contains("Failed to extract")
-                        || error_msg.contains("IP addresses"),
-                    "Expected domain extraction error, got: {}",
-                    error_msg
-                );
-            }
-        }
+        assert!(
+            result.is_err(),
+            "expected DB insert failure without migrations"
+        );
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Database")
+                || error_msg.contains("migration")
+                || error_msg.contains("no such table")
+                || error_msg.contains("url_status"),
+            "Expected database/schema error, got: {error_msg}"
+        );
     }
 
     #[tokio::test]
@@ -453,9 +449,7 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // Empty responses should return Ok(()) silently
-        // Note: Domain extraction may fail for IP addresses from httptest,
-        // but if it succeeds, empty body should be skipped
+        // Empty bodies still record metadata; without migrations insert fails.
         let result = handle_response(
             response,
             original_url,
@@ -467,27 +461,18 @@ mod tests {
         )
         .await;
 
-        // Should succeed (skip silently) OR fail at domain extraction (both are acceptable)
-        // The key is that if extract_response_data returns Ok(None), handle_response returns Skipped
-        match result {
-            Ok(crate::fetch::UrlProcessOutcome::Skipped) => {
-                // Success - empty body was skipped silently
-            }
-            Ok(crate::fetch::UrlProcessOutcome::Inserted) => {
-                panic!("empty-body response should not reach insert path");
-            }
-            Err(e) => {
-                // Domain extraction failed (expected for IP addresses)
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("domain")
-                        || error_msg.contains("Failed to extract")
-                        || error_msg.contains("IP addresses"),
-                    "Expected domain extraction error, got: {}",
-                    error_msg
-                );
-            }
-        }
+        assert!(
+            result.is_err(),
+            "expected DB insert failure without migrations"
+        );
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Database")
+                || error_msg.contains("migration")
+                || error_msg.contains("no such table")
+                || error_msg.contains("url_status"),
+            "Expected database/schema error, got: {error_msg}"
+        );
     }
 
     #[tokio::test]
@@ -510,8 +495,8 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // DNS failure should propagate (domain extraction will fail first, but if it succeeds,
-        // DNS lookup will fail for invalid domain)
+        // Final URL is an IP mock host (valid domain key). Insert fails without migrations;
+        // DNS on the mock IP may also fail depending on resolver.
         let result = handle_response(
             response,
             original_url,
@@ -523,16 +508,14 @@ mod tests {
         )
         .await;
 
-        // Should fail - either domain extraction or DNS lookup
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("Failed to extract")
-                || error_msg.contains("domain")
-                || error_msg.contains("DNS")
-                || error_msg.contains("Database write failed"), // Or database error if migrations missing
-            "Expected domain/DNS/database error, got: {}",
-            error_msg
+            error_msg.contains("DNS")
+                || error_msg.contains("Database")
+                || error_msg.contains("no such table")
+                || error_msg.contains("url_status"),
+            "Expected DNS/database error, got: {error_msg}"
         );
     }
 
@@ -618,8 +601,6 @@ mod tests {
         )
         .await;
 
-        // Should return error - either database insertion failure or domain extraction failure
-        // Domain extraction fails first for IP addresses from httptest
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -627,10 +608,8 @@ mod tests {
                 || error_msg.contains("Database")
                 || error_msg.contains("migration")
                 || error_msg.contains("table")
-                || error_msg.contains("domain")
-                || error_msg.contains("IP addresses"),
-            "Expected database or domain error, got: {}",
-            error_msg
+                || error_msg.contains("url_status"),
+            "Expected database error, got: {error_msg}"
         );
     }
 
@@ -649,6 +628,13 @@ mod tests {
                     .insert_header("Content-Type", "text/html; charset=utf-8")
                     .body("<html><head><title>Test</title></head><body>Hello</body></html>"),
             ),
+        );
+
+        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/favicon.ico"))
+                .times(0..)
+                .respond_with(status_code(404)),
         );
 
         let client = reqwest::Client::new();
@@ -716,22 +702,15 @@ mod tests {
         )
         .await;
 
-        // Should return error - either domain extraction (for IP addresses) or database insertion
-        assert!(
-            result.is_err(),
-            "Should fail when database insertion fails or domain extraction fails"
-        );
+        assert!(result.is_err(), "Should fail when database insertion fails");
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("Database write failed")
                 || error_msg.contains("pool")
                 || error_msg.contains("closed")
                 || error_msg.contains("Connection")
-                || error_msg.contains("domain")
-                || error_msg.contains("IP addresses")
-                || error_msg.contains("Failed to extract"),
-            "Expected database insertion or domain extraction error, got: {}",
-            error_msg
+                || error_msg.contains("Database"),
+            "Expected database insertion error, got: {error_msg}"
         );
     }
 }

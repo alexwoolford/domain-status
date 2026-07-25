@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-03-01
+- Updated: 2026-07-24
 
 ## Context
 
@@ -11,6 +12,7 @@
 - locally cacheable
 - overrideable for deterministic or offline operation
 - explicit about merge behavior when more than one upstream is involved
+- able to start in offline/CI environments when remotes are unreachable
 
 The implementation currently loads rulesets in `src/fingerprint/ruleset/mod.rs`.
 
@@ -26,6 +28,7 @@ The scanner will:
 - refresh cached rulesets on a 7-day TTL
 - allow a caller-supplied local path or URL via `--fingerprints`
 - continue with partial upstream success when at least one configured source loads successfully
+- **fall back to a bundled minimal ruleset** (`assets/fingerprints/`, loaded via `src/fingerprint/ruleset/vendored.rs`) when **all** configured sources fail (cold-start offline/CI relief). Remote refresh remains the preferred path when network is available.
 
 When multiple sources are merged, later sources overwrite earlier ones for the same technology key. This is an explicit part of the contract.
 
@@ -33,25 +36,30 @@ When multiple sources are merged, later sources overwrite earlier ones for the s
 
 Positive:
 
-- avoids maintaining a first-party fingerprint corpus
+- avoids maintaining a full first-party fingerprint corpus as the primary source
 - keeps the default behavior close to established upstream ecosystems
 - supports deterministic local testing by pointing at local rulesets
 - amortizes cold-start cost through local caching
+- offline/CI first runs no longer hard-fail solely because GitHub is unreachable
 
 Trade-offs:
 
-- cold-cache runs can depend on network availability
+- cold-cache runs still prefer network when available
 - upstream changes can alter detection behavior without local code changes
 - partial-source success improves resilience but can reduce consistency if one source is temporarily unavailable
+- the vendored fallback is intentionally small (common techs only), not Wappalyzer-complete
 
 ## Operational Notes
 
 - `GITHUB_TOKEN` is optional but recommended to reduce GitHub API rate-limit issues during metadata lookup
 - the cache is part of the working-directory contract and should be treated as a local runtime artifact
+- for fully deterministic CI, prefer an explicit `--fingerprints` path over relying on the vendored fallback
 
 ## Related Code
 
 - `src/fingerprint/ruleset/mod.rs`
 - `src/fingerprint/ruleset/cache.rs`
+- `src/fingerprint/ruleset/vendored.rs`
 - `src/fingerprint/ruleset/github/`
+- `assets/fingerprints/`
 - `docs/PRODUCTION_HARDENING.md`

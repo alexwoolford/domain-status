@@ -61,8 +61,8 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database;
     use crate::error_handling::ProcessingStats;
+    use crate::storage::{update_run_stats, RunStats};
     use crate::utils::TimingStats;
     use anyhow::{Context, Result};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -94,7 +94,7 @@ mod tests {
             "Run statistics: total={total_urls}, successful={successful_urls}, failed={failed_urls_count}, skipped={skipped_urls_count}"
         );
 
-        let stats = database::RunStats {
+        let stats = RunStats {
             run_id,
             total_urls,
             successful_urls,
@@ -102,7 +102,7 @@ mod tests {
             skipped_urls: skipped_urls_count,
             elapsed_seconds,
         };
-        database::update_run_stats(pool, &stats)
+        update_run_stats(pool, &stats)
             .await
             .context("Failed to update run statistics")?;
 
