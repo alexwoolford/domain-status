@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-07-25
+
 ### Added
 - Adversarial / offline orchestration tests: UPSERT satellite cleanup, implies fixed-point + exclude, offline `run_scan` with local fingerprints, config merge fail_on contracts, partial-failure accounting, fast concurrency smoke.
 - [`docs/TESTING.md`](docs/TESTING.md): what default CI proves vs ignored/e2e, and that coverage is informational.
@@ -16,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public API hygiene: removed `database` shim; `initialization` is crate-private; most config constants/header names are crate-private (kept `DEFAULT_USER_AGENT`, `WHOIS_TIMEOUT_SECS`, `DB_PATH`).
 - ADR 0001 documents vendored fingerprint fallback.
 - IP-literal hosts are accepted as domain keys in `extract_domain` (enables wiremock/httpmock CI scans; production SSRF still blocks private IPs before fetch).
+
+### Fixed
+- **CI Lint**: crate-private `initialization` rustdoc examples marked `ignore` (same pattern as resolver/rate_limiter).
+- **CI macOS fingerprint tests**: do not cache vendored minimal ruleset under the remote cache key; serialize first ruleset load; skip full-corpus matcher tests when only `bundled-minimal` is available.
+- **CI E2E mock scan**: expect `/favicon.ico` after IP hosts became valid domain keys.
 
 ## [0.1.25] - 2026-07-23
 
@@ -274,7 +281,8 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.25...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.26...HEAD
+[0.1.26]: https://github.com/alexwoolford/domain_status/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/alexwoolford/domain_status/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/alexwoolford/domain_status/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/alexwoolford/domain_status/compare/v0.1.22...v0.1.23
