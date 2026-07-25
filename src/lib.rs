@@ -46,6 +46,9 @@
 //! # Stability and API guarantees
 //!
 //! - **Stable:** Exit codes (see project docs), [`Config`] validation rules, and public function signatures and types follow `SemVer`.
+//! - **Primary embed API:** [`Config`] + [`run_scan`] + [`export`] + [`summary`] (+ typed errors / exit codes).
+//! - **Advanced (may narrow further in 0.x):** [`whois`], [`GeoIpService`], [`cli`].
+//! - **Crate-private:** initialization helpers, most config constants/header names, fetch/fingerprint/storage internals.
 //! - **May change:** Exact wording of error messages, the internal error chain and downcasting behavior, and default config values (e.g. timeouts, limits) may change in patch or minor releases to improve safety or diagnostics.
 
 #![deny(
@@ -59,7 +62,6 @@ mod app;
 pub mod cli;
 mod clock;
 pub mod config;
-mod database;
 mod dns;
 mod domain;
 mod error_handling;
@@ -68,7 +70,7 @@ pub mod export;
 mod fetch;
 mod fingerprint;
 mod geoip;
-pub mod initialization;
+pub(crate) mod initialization;
 mod models;
 mod parse;
 mod run;

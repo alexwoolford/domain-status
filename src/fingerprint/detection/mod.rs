@@ -317,14 +317,165 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_detect_technologies_blocking_with_init_ruleset() {
-        if crate::fingerprint::init_ruleset(None, None).await.is_err() {
-            return;
+    fn empty_tech() -> crate::fingerprint::models::Technology {
+        crate::fingerprint::models::Technology {
+            cats: vec![],
+            website: String::new(),
+            headers: HashMap::new(),
+            cookies: HashMap::new(),
+            meta: HashMap::new(),
+            script: vec![],
+            html: vec![],
+            url: vec![],
+            js: HashMap::new(),
+            implies: vec![],
+            excludes: vec![],
         }
-        let Some(ruleset) = crate::fingerprint::get_ruleset().await else {
-            return;
-        };
+    }
+
+    /// Offline implies fixed-point: A→B→C must yield A,B,C with B/C marked implied.
+    #[test]
+    fn test_detect_implies_fixed_point_offline() {
+        let mut technologies = HashMap::new();
+        let mut tech_a = empty_tech();
+        tech_a.html.push("marker-tech-a".to_string());
+        tech_a.implies.push("TechB".to_string());
+        technologies.insert("TechA".to_string(), tech_a);
+
+        let mut tech_b = empty_tech();
+        tech_b.implies.push("TechC".to_string());
+        technologies.insert("TechB".to_string(), tech_b);
+
+        technologies.insert("TechC".to_string(), empty_tech());
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "<html>marker-tech-a</html>",
+            "https://example.com",
+            &HashSet::new(),
+        )
+        .expect("detect");
+
+        let by_name: HashMap<_, _> = result.iter().map(|t| (t.name.as_str(), t)).collect();
+        assert_eq!(by_name.len(), 3, "expected A,B,C got {:?}", by_name.keys());
+        assert!(!by_name["TechA"].is_implied);
+        assert!(by_name["TechB"].is_implied);
+        assert!(by_name["TechC"].is_implied);
+    }
+
+    /// Offline: observed `TechA` excludes `TechC` even when `TechC` arrives via implies.
+    #[test]
+    fn test_detect_implies_then_exclude_offline() {
+        let mut technologies = HashMap::new();
+        let mut tech_a = empty_tech();
+        tech_a.html.push("marker-tech-a".to_string());
+        tech_a.implies.push("TechB".to_string());
+        tech_a.excludes.push("TechC".to_string());
+        technologies.insert("TechA".to_string(), tech_a);
+
+        let mut tech_b = empty_tech();
+        tech_b.implies.push("TechC".to_string());
+        technologies.insert("TechB".to_string(), tech_b);
+        technologies.insert("TechC".to_string(), empty_tech());
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "<html>marker-tech-a</html>",
+            "https://example.com",
+            &HashSet::new(),
+        )
+        .expect("detect");
+
+        let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains("TechA"));
+        assert!(names.contains("TechB"));
+        assert!(
+            !names.contains("TechC"),
+            "TechC must be excluded despite implies chain; got {names:?}"
+        );
+    }
+
+    /// Versioned detected name `TechB:1.2` is excluded by base-name `excludes: ["TechB"]`.
+    #[test]
+    fn test_detect_versioned_exclude_offline() {
+        let mut technologies = HashMap::new();
+        let mut tech_a = empty_tech();
+        tech_a.html.push("marker-tech-a".to_string());
+        tech_a.excludes.push("TechB".to_string());
+        technologies.insert("TechA".to_string(), tech_a);
+
+        let mut tech_b = empty_tech();
+        tech_b.html.push("marker-tech-b".to_string());
+        // Capture a version from the HTML so detection yields TechB with version.
+        tech_b
+            .html
+            .push("marker-tech-b-v([0-9.]+)\\;version:\\1".to_string());
+        technologies.insert("TechB".to_string(), tech_b);
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "<html>marker-tech-a marker-tech-b-v1.2</html>",
+            "https://example.com",
+            &HashSet::new(),
+        )
+        .expect("detect");
+
+        let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains("TechA"));
+        assert!(
+            !names.contains("TechB"),
+            "versioned TechB must be excluded by base name; got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires network for default fingerprint sources; use offline fixture tests instead"]
+    async fn test_detect_technologies_blocking_with_init_ruleset() {
+        crate::fingerprint::init_ruleset(None, None)
+            .await
+            .expect("init_ruleset should succeed when network is available");
+        let ruleset = crate::fingerprint::get_ruleset()
+            .await
+            .expect("ruleset should be loaded after init");
 
         let meta_tags = HashMap::new();
         let script_sources = vec!["https://example.com/jquery.min.js".to_string()];
@@ -344,11 +495,8 @@ mod tests {
 
         let tech_names: Vec<String> = result.iter().map(|t| t.name.clone()).collect();
         assert!(
-            tech_names.contains(&"jQuery".to_string())
-                || tech_names.contains(&"JavaScript".to_string())
-                || tech_names.contains(&"Nginx".to_string())
-                || !tech_names.is_empty(),
-            "Expected at least one technology match, got: {tech_names:?}"
+            tech_names.contains(&"jQuery".to_string()) || tech_names.contains(&"Nginx".to_string()),
+            "Expected jQuery or Nginx from fixture signals, got: {tech_names:?}"
         );
     }
 

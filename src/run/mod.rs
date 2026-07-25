@@ -540,17 +540,34 @@ mod tests {
     #[tokio::test]
     async fn test_run_scan_database_initialization_failure() {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let db_path = temp_file.path().to_path_buf();
-        drop(temp_file);
+        // Parent path is a file, so SQLite cannot create a DB underneath it.
+        let db_path = temp_file.path().join("nested").join("domain_status.db");
+        let fp = NamedTempFile::new().expect("fp");
+        std::fs::write(fp.path(), "{}").expect("empty fingerprints");
 
         let config = Config {
             file: std::path::PathBuf::from("/dev/null"),
             db_path,
+            fingerprints: Some(fp.path().to_string_lossy().into_owned()),
             ..Default::default()
         };
 
         let result = run_scan(config).await;
-        let _ = result;
+        assert!(
+            result.is_err(),
+            "run_scan should fail when db_path parent is not a directory"
+        );
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("database")
+                || error_msg.contains("Database")
+                || error_msg.contains("Failed to")
+                || error_msg.contains("No such file")
+                || error_msg.contains("os error")
+                || error_msg.contains("unable to open")
+                || error_msg.contains("not a directory"),
+            "Expected database init error, got: {error_msg}"
+        );
     }
 
     #[tokio::test]
@@ -647,6 +664,9 @@ mod tests {
         .expect("Failed to write test file");
 
         let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let fp_dir = tempfile::TempDir::new().expect("fp dir");
+        let fp_path = fp_dir.path().join("technologies.json");
+        std::fs::write(&fp_path, "{}").expect("empty fingerprints");
 
         let config = Config {
             file: temp_input.path().to_path_buf(),
@@ -662,7 +682,7 @@ mod tests {
             log_level_filter_override: None,
             log_format: LogFormat::Plain,
             user_agent: crate::config::DEFAULT_USER_AGENT.to_string(),
-            fingerprints: None,
+            fingerprints: Some(fp_path.to_string_lossy().into_owned()),
             geoip: None,
             status_port: None,
             log_file: None,
@@ -672,15 +692,14 @@ mod tests {
             drain_timeout_secs: 10,
         };
 
-        let result = run_scan(config).await;
-        match &result {
-            Ok(report) => assert_eq!(
-                report.total_urls, 1,
-                "File with one URL and comments should result in one URL attempted"
-            ),
-            Err(_) => {
-                // Init or network failure (e.g. fingerprint fetch); skip assertion
-            }
-        }
+        // Comment lines are skipped; the remaining URL is attempted. Use empty local
+        // fingerprints so this never soft-passes on network fingerprint failure.
+        let report = run_scan(config)
+            .await
+            .expect("scan with local fingerprints must not fail init");
+        assert_eq!(
+            report.total_urls, 1,
+            "File with one URL and comments should result in one URL attempted"
+        );
     }
 }

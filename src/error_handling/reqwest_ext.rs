@@ -19,7 +19,7 @@ use crate::config::HTTP_STATUS_TOO_MANY_REQUESTS;
 /// # Example
 ///
 /// ```ignore
-/// use domain_status::error_handling::ReqwestErrorExt;
+/// use domain_status::ReqwestErrorExt;
 ///
 /// if let Err(e) = client.get(url).send().await {
 ///     stats.increment_error(e.categorize());

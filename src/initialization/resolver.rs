@@ -32,7 +32,8 @@ use hickory_resolver::TokioResolver;
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
+/// // crate-private; example kept for maintainers
 /// use domain_status::initialization::init_resolver;
 ///
 /// let resolver = init_resolver().expect("resolver should initialize");

@@ -240,7 +240,14 @@ mod tests {
     use httptest::{matchers::*, responders::*, Expectation, Server};
     use std::sync::Arc;
 
-    async fn create_test_context(_server: &Server) -> ProcessingContext {
+    async fn create_test_context(server: &Server) -> ProcessingContext {
+        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/favicon.ico"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+
         let client = Arc::new(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
@@ -301,21 +308,19 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // This will fail because handle_response needs a database with migrations
-        // But we can test that the request part works
+        // Request + domain extraction succeed; insert fails without migrations.
         let result = handle_http_request(&ctx, &url, start_time).await;
-
-        // Should fail at domain extraction or database insertion
-        // (httptest uses IP addresses which don't have registrable domains)
-        assert!(result.is_err()); // Expected - domain extraction or database issue
+        assert!(
+            result.is_err(),
+            "expected DB insert failure without migrations"
+        );
         let error_msg = result.unwrap_err().to_string();
         assert!(
             error_msg.contains("Database")
                 || error_msg.contains("migration")
-                || error_msg.contains("registrable domains")
-                || error_msg.contains("domain"),
-            "Expected domain/database error, got: {}",
-            error_msg
+                || error_msg.contains("no such table")
+                || error_msg.contains("url_status"),
+            "Expected database/schema error, got: {error_msg}"
         );
     }
 
@@ -333,9 +338,8 @@ mod tests {
         let start_time = std::time::Instant::now();
 
         let _result = handle_http_request(&ctx, &url, start_time).await;
-        // 403 pages are now processed through handle_response (OSINT data preserved).
-        // The result may be Ok (page processed) or Err (domain extraction failure in tests).
-        // The key assertion: bot detection metric is tracked regardless.
+        // 403 pages are processed through handle_response (OSINT data preserved).
+        // Result may be Ok or Err (e.g. missing migrations); bot detection must still be tracked.
 
         assert_eq!(
             ctx.runtime

@@ -87,6 +87,18 @@ fn test_extract_domain_url_without_host() {
     assert!(extract_domain(&extractor, "file:///path/to/file").is_err());
 }
 
+#[test]
+fn test_extract_domain_ip_literal_used_as_key() {
+    let extractor = test_extractor();
+    assert_eq!(
+        extract_domain(&extractor, "http://127.0.0.1:8080/path").unwrap(),
+        "127.0.0.1"
+    );
+    assert_eq!(
+        extract_domain(&extractor, "http://[::1]/").unwrap(),
+        "[::1]"
+    );
+}
 
 #[test]
 fn test_extract_domain_uk_domain() {

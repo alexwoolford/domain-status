@@ -116,7 +116,8 @@ impl RateLimiter {
 ///
 /// Disabled mode:
 ///
-/// ```
+/// ```ignore
+/// // crate-private; example kept for maintainers
 /// use domain_status::initialization::init_rate_limiter;
 ///
 /// assert!(init_rate_limiter(0, 10).is_none());
@@ -124,7 +125,8 @@ impl RateLimiter {
 ///
 /// Basic lifecycle with explicit shutdown:
 ///
-/// ```no_run
+/// ```ignore
+/// // crate-private; example kept for maintainers
 /// use domain_status::initialization::init_rate_limiter;
 ///
 /// # #[tokio::main]

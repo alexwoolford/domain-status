@@ -939,6 +939,118 @@ mod tests {
         assert_eq!(row.get::<i64, _>("http_status"), 301);
     }
 
+    /// Adversarial: UPSERT must DELETE stale satellite rows before re-inserting.
+    /// Without the `SATELLITE_TABLES` cleanup, rescans leave orphan techs/redirects.
+    #[tokio::test]
+    async fn test_upsert_clears_stale_satellite_rows() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
+        let record = create_test_url_record();
+        let empty_headers = HashMap::new();
+        let empty_oids = HashSet::new();
+        let empty_sans: Vec<String> = Vec::new();
+
+        let tech_a = vec![crate::fingerprint::DetectedTechnology {
+            name: "TechA".to_string(),
+            version: None,
+            category: None,
+            is_implied: false,
+        }];
+        let redirects_first: Vec<(String, u16)> = vec![
+            ("http://old.example.com".to_string(), 301),
+            ("https://example.com".to_string(), 200),
+        ];
+
+        let id1 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &empty_headers,
+            http_headers: &empty_headers,
+            oids: &empty_oids,
+            redirect_chain: &redirects_first,
+            technologies: &tech_a,
+            subject_alternative_names: &empty_sans,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+        })
+        .await
+        .expect("first insert");
+
+        let tech_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_technologies WHERE url_status_id = ?")
+                .bind(id1)
+                .fetch_one(&pool)
+                .await
+                .expect("count techs");
+        let redirect_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_redirect_chain WHERE url_status_id = ?")
+                .bind(id1)
+                .fetch_one(&pool)
+                .await
+                .expect("count redirects");
+        assert_eq!(tech_count, 1);
+        assert_eq!(redirect_count, 2);
+
+        let tech_b = vec![crate::fingerprint::DetectedTechnology {
+            name: "TechB".to_string(),
+            version: Some("2.0".to_string()),
+            category: None,
+            is_implied: false,
+        }];
+        let redirects_second: Vec<(String, u16)> = Vec::new();
+
+        let id2 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &empty_headers,
+            http_headers: &empty_headers,
+            oids: &empty_oids,
+            redirect_chain: &redirects_second,
+            technologies: &tech_b,
+            subject_alternative_names: &empty_sans,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+        })
+        .await
+        .expect("upsert");
+
+        assert_eq!(id1, id2, "UPSERT should keep the same url_status id");
+
+        let tech_names: Vec<String> = sqlx::query_scalar(
+            "SELECT technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY 1",
+        )
+        .bind(id2)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch techs after upsert");
+        assert_eq!(
+            tech_names,
+            vec!["TechB".to_string()],
+            "stale TechA must be gone; only TechB remains"
+        );
+
+        let redirect_count_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_redirect_chain WHERE url_status_id = ?")
+                .bind(id2)
+                .fetch_one(&pool)
+                .await
+                .expect("count redirects after upsert");
+        assert_eq!(
+            redirect_count_after, 0,
+            "stale redirect hops must be deleted on UPSERT with empty chain"
+        );
+    }
+
     #[tokio::test]
     async fn test_insert_url_record_nullable_fields() {
         let pool = create_test_pool().await;
