@@ -111,18 +111,12 @@ pub(crate) fn check_body_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::{get_ruleset, init_ruleset};
+    use crate::fingerprint::ruleset::init_full_ruleset_for_tests;
 
     /// Test meta tag detection matching wappalyzergo's `TestBodyDetect` meta test
     #[tokio::test]
     async fn test_body_meta() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -187,12 +181,7 @@ mod tests {
     /// Matching wappalyzergo's `TestBodyDetect` html-implied test
     #[tokio::test]
     async fn test_body_html_implied() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -228,13 +217,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access to fetch fingerprint ruleset
     async fn test_body_script_src() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -273,13 +256,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access to fetch fingerprint ruleset
     async fn test_body_html_pattern() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -334,62 +311,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_body_empty_inputs() {
-        // Test that empty inputs are handled gracefully
-        // This is critical - prevents panics from empty HTML, scripts, meta tags
-        // Skip test if ruleset initialization fails
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
-            return;
-        };
+        // Empty inputs must not panic; no remote ruleset required.
+        let ruleset = FingerprintRuleset::empty_for_tests();
 
         let html_body = "";
         let script_sources = vec![];
         let meta_tags = HashMap::new();
         let url = "";
 
-        let result = check_body_with_ruleset(
-            ruleset.as_ref(),
-            html_body,
-            &script_sources,
-            &meta_tags,
-            url,
-        );
-
-        // Should return empty results (no matches) without panicking
-        assert!(result.is_empty() || !result.is_empty()); // Either is valid
+        let result = check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn test_check_body_very_large_html() {
-        // Test that very large HTML bodies are handled without excessive memory usage
-        // This is critical - prevents DoS from extremely large HTML responses
-        // Skip test if ruleset initialization fails
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
-            return;
-        };
+        // Large HTML must not panic the matcher; no remote ruleset required.
+        let ruleset = FingerprintRuleset::empty_for_tests();
 
-        // Create a very large HTML body (1MB)
         let large_html = format!("<html><body>{}</body></html>", "A".repeat(1_000_000));
         let script_sources = vec![];
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        let result = check_body_with_ruleset(
-            ruleset.as_ref(),
-            &large_html,
-            &script_sources,
-            &meta_tags,
-            url,
-        );
-
-        // Should complete without panicking (result may be empty or have matches)
-        let _ = result;
+        let _result =
+            check_body_with_ruleset(&ruleset, &large_html, &script_sources, &meta_tags, url);
     }
 }

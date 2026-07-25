@@ -113,18 +113,13 @@ pub(crate) fn check_cookies_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::{get_ruleset, init_ruleset};
+    use crate::fingerprint::ruleset::init_full_ruleset_for_tests;
 
     /// Test cookie detection matching wappalyzergo's `TestCookiesDetect`
     #[tokio::test]
     async fn test_cookies_detect() {
         // Initialize ruleset (uses wappalyzergo format for exact parity)
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -143,12 +138,7 @@ mod tests {
     /// Test cookie position handling (matching wappalyzergo's position test)
     #[tokio::test]
     async fn test_cookies_position() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -255,12 +245,7 @@ mod tests {
     /// Test wildcard cookie matching
     #[tokio::test]
     async fn test_cookies_wildcard() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
