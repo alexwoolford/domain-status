@@ -60,18 +60,13 @@ pub(crate) fn check_headers_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::{get_ruleset, init_ruleset};
+    use crate::fingerprint::ruleset::init_full_ruleset_for_tests;
 
     /// Test header detection matching wappalyzergo's `TestHeadersDetect`
     #[tokio::test]
     async fn test_headers_detect() {
         // Initialize ruleset (uses wappalyzergo format for exact parity)
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -90,12 +85,7 @@ mod tests {
     /// Test Apache detection with version (matching wappalyzergo's `Test_All_Match_Paths`)
     #[tokio::test]
     async fn test_headers_apache_with_version() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 
@@ -123,12 +113,7 @@ mod tests {
     /// Test empty pattern (header exists, value doesn't matter)
     #[tokio::test]
     async fn test_headers_empty_pattern() {
-        // Skip test if ruleset initialization fails (e.g., no network in CI)
-        if init_ruleset(None, None).await.is_err() {
-            eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-            return;
-        }
-        let Some(ruleset) = get_ruleset().await else {
+        let Some(ruleset) = init_full_ruleset_for_tests().await else {
             return;
         };
 

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::fingerprint::models::{FingerprintMetadata, FingerprintRuleset};
 
@@ -44,6 +44,9 @@ const DEFAULT_CACHE_DIR: &str = ".fingerprints_cache";
 static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
     LazyLock::new(|| Arc::new(RwLock::new(None)));
 
+/// Serializes first-load so concurrent callers cannot race vendored vs remote writes.
+static RULESET_INIT: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
 /// Initializes the fingerprint ruleset from URL or local path.
 ///
 /// Rules are cached locally and refreshed if older than 7 days.
@@ -57,7 +60,16 @@ pub async fn init_ruleset(
     fingerprints_source: Option<&str>,
     cache_dir: Option<&Path>,
 ) -> Result<Arc<FingerprintRuleset>> {
-    // Check if already loaded
+    // Fast path: already loaded
+    {
+        let ruleset = RULESET.read().await;
+        if let Some(ref cached) = *ruleset {
+            return Ok(cached.clone());
+        }
+    }
+
+    // Only one task performs the expensive load/fetch.
+    let _init_guard = RULESET_INIT.lock().await;
     {
         let ruleset = RULESET.read().await;
         if let Some(ref cached) = *ruleset {
@@ -137,6 +149,32 @@ pub async fn init_ruleset(
 pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
     let guard = RULESET.read().await;
     guard.as_ref().cloned()
+}
+
+/// True when only the offline bundled-minimal ruleset is loaded.
+#[cfg(test)]
+pub(crate) fn is_bundled_minimal(ruleset: &FingerprintRuleset) -> bool {
+    ruleset.metadata.version == "bundled-minimal" || ruleset.metadata.source.contains("vendored:")
+}
+
+/// Initialize default ruleset for Wappalyzer-parity unit tests.
+///
+/// Returns `None` when remote fetch failed and only the bundled-minimal
+/// fallback is available (those tests need the full technology corpus).
+#[cfg(test)]
+pub(crate) async fn init_full_ruleset_for_tests() -> Option<Arc<FingerprintRuleset>> {
+    if init_ruleset(None, None).await.is_err() {
+        eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
+        return None;
+    }
+    let ruleset = get_ruleset().await?;
+    if is_bundled_minimal(ruleset.as_ref()) {
+        eprintln!(
+            "Skipping test: only bundled-minimal fingerprints available (need full Wappalyzer corpus)"
+        );
+        return None;
+    }
+    Some(ruleset)
 }
 
 /// Fetches ruleset from multiple sources and merges them (matching Go implementation)
@@ -254,10 +292,8 @@ async fn fetch_ruleset_from_multiple_sources(
             sources.len()
         );
         let vendored = load_vendored_ruleset()?;
-        // Best-effort cache so subsequent runs reuse the fallback without re-parsing.
-        if let Err(e) = save_to_cache(&vendored, cache_dir, cache_key).await {
-            log::debug!("Failed to cache vendored fingerprint ruleset: {e}");
-        }
+        // Do NOT write vendored under the remote `cache_key`. That would poison
+        // subsequent cold starts into believing the full GitHub merge is cached.
         return Ok(vendored);
     }
 

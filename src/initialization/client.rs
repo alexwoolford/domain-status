@@ -44,7 +44,8 @@ use reqwest::ClientBuilder;
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```ignore
+/// // `initialization` is crate-private; this example is illustrative only.
 /// use domain_status::{initialization::{init_client, init_resolver}, Config};
 ///
 /// # #[tokio::main]
@@ -103,7 +104,8 @@ pub async fn init_client(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```ignore
+/// // `initialization` is crate-private; this example is illustrative only.
 /// use domain_status::{initialization::{init_redirect_client, init_resolver}, Config};
 ///
 /// # #[tokio::main]

@@ -132,6 +132,12 @@ mod tests {
                         .append_header("Server", "nginx/1.18.0"),
                 ),
         );
+        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/favicon.ico"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
 
         // Create temporary input file
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
