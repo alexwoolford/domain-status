@@ -65,9 +65,16 @@ pub async fn init_scan_resources(
         .validate()
         .map_err(|e| anyhow::anyhow!("Configuration validation failed: {e}"))?;
 
+    let cache_root = crate::cache_paths::resolve_cache_root(config.cache_dir.as_deref());
+    let fingerprints_cache = crate::cache_paths::fingerprints_dir(&cache_root);
+    let geoip_cache = crate::cache_paths::geoip_dir(&cache_root);
+    let ua_cache = crate::cache_paths::user_agent_dir(&cache_root);
+    let whois_cache = crate::cache_paths::whois_dir(&cache_root);
+    log::debug!("Cache root: {}", cache_root.display());
+
     // Update user agent if using default
     if config.user_agent == DEFAULT_USER_AGENT {
-        let updated_ua = crate::user_agent::get_default_user_agent(None).await;
+        let updated_ua = crate::user_agent::get_default_user_agent(Some(&ua_cache)).await;
         config.user_agent = updated_ua;
         log::debug!("Using auto-updated User-Agent: {}", config.user_agent);
     }
@@ -162,16 +169,19 @@ pub async fn init_scan_resources(
     }
 
     // Initialize fingerprint ruleset
-    let ruleset = crate::fingerprint::init_ruleset(config.fingerprints.as_deref(), None)
-        .await
-        .context("Failed to initialize fingerprint ruleset")?;
+    let ruleset =
+        crate::fingerprint::init_ruleset(config.fingerprints.as_deref(), Some(&fingerprints_cache))
+            .await
+            .context("Failed to initialize fingerprint ruleset")?;
 
     // Eagerly load the bundled gitleaks ruleset so any malformed config surfaces as
     // a clean startup error instead of as a panic on first secret-scan use.
     crate::parse::gitleaks::init_gitleaks().context("Failed to load bundled gitleaks ruleset")?;
 
     // Initialize GeoIP database
-    let geoip_metadata = match crate::geoip::init_geoip(config.geoip.as_deref(), None).await {
+    let geoip_metadata = match crate::geoip::init_geoip(config.geoip.as_deref(), Some(&geoip_cache))
+        .await
+    {
         Ok(metadata) => metadata,
         Err(e) => {
             warn!("Failed to initialize GeoIP database: {e}. Continuing without GeoIP lookup.");
@@ -234,6 +244,7 @@ pub async fn init_scan_resources(
             Arc::clone(&timing_stats),
             Some(run_id.clone()),
             config.enable_whois,
+            whois_cache.clone(),
             config.scan_external_scripts,
             Arc::clone(&runtime_metrics),
             config.allow_localhost_for_tests,

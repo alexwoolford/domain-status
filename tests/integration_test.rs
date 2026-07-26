@@ -153,6 +153,7 @@ mod tests {
             max_concurrency: 1,
             rate_limit_rps: 0, // Disable rate limiting for test
             enable_whois: false,
+            cache_dir: None,
             scan_external_scripts: false, // Disable WHOIS for faster tests
             log_level: domain_status::LogLevel::Error, // Reduce log noise in tests
             log_level_filter_override: None,

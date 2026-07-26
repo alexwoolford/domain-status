@@ -283,6 +283,7 @@ mod tests {
                 Arc::new(TimingStats::new()),
                 Some("run-1".to_string()),
                 false,
+                std::path::PathBuf::from("/tmp/domain_status_whois_test"),
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,

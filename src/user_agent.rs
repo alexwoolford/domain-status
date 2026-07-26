@@ -3,14 +3,11 @@
 //! This module provides functionality to fetch and cache the latest Chrome version
 //! for User-Agent strings, ensuring they stay current over time.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-
-/// Default cache directory for User-Agent version
-const DEFAULT_CACHE_DIR: &str = ".user_agent_cache";
 
 /// Cache duration: 30 days
 /// Chrome releases roughly every 4 weeks, so 30 days ensures we stay current
@@ -127,7 +124,7 @@ async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
 /// Otherwise, fetches the latest version and caches it.
 pub async fn get_chrome_version(cache_dir: Option<&Path>) -> String {
     let cache_path = cache_dir.map_or_else(
-        || PathBuf::from(DEFAULT_CACHE_DIR),
+        || crate::cache_paths::user_agent_dir(&crate::cache_paths::resolve_cache_root(None)),
         std::path::Path::to_path_buf,
     );
 

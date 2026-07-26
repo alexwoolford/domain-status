@@ -54,7 +54,7 @@ pub const WHOIS_TIMEOUT_SECS: u64 = 5;
 ///
 /// The auto-update mechanism:
 /// - Fetches latest Chrome version from Chrome's release API at startup
-/// - Caches the version locally for 30 days (in `.user_agent_cache/`)
+/// - Caches the version under the shared cache root (`user_agent/`, 30 days)
 /// - Falls back to this hardcoded value if fetch fails
 /// - Only updates if user didn't provide `--user-agent` flag
 ///

@@ -18,9 +18,6 @@ pub use types::{GeoIpMetadata, GeoIpResult};
 use maxminddb::Reader;
 use std::sync::{Arc, LazyLock, RwLock};
 
-/// Default cache directory for `GeoIP` databases
-pub const DEFAULT_CACHE_DIR: &str = ".geoip_cache";
-
 /// Environment variable name for `MaxMind` license key
 pub const MAXMIND_LICENSE_KEY_ENV: &str = "MAXMIND_LICENSE_KEY";
 

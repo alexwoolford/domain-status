@@ -34,6 +34,11 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
     // Prefer -v/-q when they differ from the Info baseline; otherwise use --log-level.
     let log_level_filter_override =
         Some(cli.verbosity.log_level_filter()).filter(|f| *f != log::LevelFilter::Info);
+    let enable_whois = if cli.no_whois {
+        false
+    } else {
+        cli.enable_whois
+    };
     Config {
         file: cli.file,
         log_level: cli.log_level,
@@ -47,7 +52,8 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         fingerprints: cli.fingerprints,
         geoip: cli.geoip,
         status_port: cli.status_port,
-        enable_whois: cli.enable_whois,
+        enable_whois,
+        cache_dir: cli.cache_dir,
         scan_external_scripts: cli.scan_external_scripts,
         fail_on: cli.fail_on,
         fail_on_pct_threshold: cli.fail_on_pct_threshold,
@@ -81,10 +87,12 @@ where
 fn load_file_env_config(
     explicit_config_path: Option<&Path>,
 ) -> Result<Option<HashMap<String, String>>> {
-    let config_name = std::env::var("DOMAIN_STATUS_CONFIG_FILE")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(|| explicit_config_path.map(Path::to_path_buf));
+    // CLI `--config` wins over DOMAIN_STATUS_CONFIG_FILE (documented precedence).
+    let config_name = explicit_config_path.map(Path::to_path_buf).or_else(|| {
+        std::env::var("DOMAIN_STATUS_CONFIG_FILE")
+            .ok()
+            .map(std::path::PathBuf::from)
+    });
 
     let mut builder = config::Config::builder();
 
@@ -124,6 +132,8 @@ const SCAN_CONFIG_ARG_IDS: &[&str] = &[
     "geoip",
     "status_port",
     "enable_whois",
+    "no_whois",
+    "cache_dir",
     "scan_external_scripts",
     "fail_on",
     "fail_on_pct_threshold",
@@ -190,11 +200,12 @@ pub fn load_environment() {
 
 fn init_scan_logging(
     log_level: &LogLevel,
+    log_format: LogFormat,
     log_file: &Path,
     log_level_override: Option<log::LevelFilter>,
 ) -> Result<()> {
     let level = log_level_override.unwrap_or_else(|| log_level_filter(log_level));
-    init_logger_to_file(level, log_file).context("Failed to initialize file logger")?;
+    init_logger_to_file(level, log_format, log_file).context("Failed to initialize file logger")?;
     eprintln!("📝 Logs: {}", log_file.display());
     log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
     Ok(())
@@ -231,6 +242,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
         .context("Configuration error: log_file not set")?;
     init_scan_logging(
         &config.log_level,
+        config.log_format,
         log_file,
         config.log_level_filter_override,
     )?;
@@ -595,6 +607,8 @@ mod tests {
             geoip: Some("/path/to/geoip.mmdb".to_string()),
             status_port: Some(8080),
             enable_whois: true,
+            no_whois: false,
+            cache_dir: None,
             scan_external_scripts: true,
             fail_on: CliFailOn::AnyFailure,
             fail_on_pct_threshold: 15,

@@ -83,9 +83,9 @@ By default the scanner fetches and merges upstream fingerprint rules from:
 - `enthec/webappanalyzer`
 - `HTTPArchive/wappalyzer`
 
-The merged ruleset is cached in:
+The merged ruleset is cached under the shared cache root:
 
-- `.fingerprints_cache/`
+- `…/domain_status/fingerprints/` (see [ADVANCED.md](ADVANCED.md))
 
 Tips:
 
@@ -94,9 +94,9 @@ Tips:
 
 ### User-Agent refresh
 
-If you keep the built-in default User-Agent, the scanner may fetch the latest Chrome version and cache it in:
+If you keep the built-in default User-Agent, the scanner may fetch the latest Chrome version and cache it under:
 
-- `.user_agent_cache/version.json`
+- `…/domain_status/user_agent/version.json`
 
 This cache lasts 30 days.
 
@@ -105,7 +105,7 @@ This cache lasts 30 days.
 GeoIP is best-effort and only active when configured.
 
 - automatic download path requires `MAXMIND_LICENSE_KEY`
-- cache location: `.geoip_cache/`
+- cache location: `…/domain_status/geoip/`
 - cold-cache GeoIP initialization may download MaxMind data
 - failures do not abort the scan; the scanner continues without GeoIP
 
@@ -113,9 +113,10 @@ GeoIP is best-effort and only active when configured.
 
 WHOIS/RDAP is disabled unless `--enable-whois` is set.
 
-- cache location: `.whois_cache/`
+- cache location: `…/domain_status/whois/`
 - cache TTL: 7 days
 - lookups are best-effort and can legitimately return `None`
+- use `--no-whois` to force-disable if TOML enabled it
 
 ## 6. Writable-Directory Assumptions
 
@@ -123,12 +124,9 @@ The process expects write access for:
 
 - `./domain_status.db` unless `--db-path` is overridden
 - `./domain_status.log` during `scan`
-- `.fingerprints_cache/`
-- `.geoip_cache/`
-- `.whois_cache/`
-- `.user_agent_cache/`
+- Shared cache root (`DOMAIN_STATUS_CACHE_DIR` or `~/.cache/domain_status/`)
 
-If you run inside a sandboxed or read-only environment, set alternate paths or pre-create the writable directories you need.
+If you run inside a sandboxed or read-only environment, set `--cache-dir` / `--db-path` / `--log-file` or pre-create the writable directories you need.
 
 ## 7. Temp Directory Assumptions
 

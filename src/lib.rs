@@ -59,6 +59,7 @@
 )]
 
 mod app;
+mod cache_paths;
 pub mod cli;
 mod clock;
 pub mod config;

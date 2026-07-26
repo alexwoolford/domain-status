@@ -120,8 +120,11 @@ pub async fn prepare_record_for_insertion(
                     params.resp_data.final_domain
                 );
 
-                let result = match crate::whois::lookup_whois(&params.resp_data.final_domain, None)
-                    .await
+                let result = match crate::whois::lookup_whois(
+                    &params.resp_data.final_domain,
+                    Some(params.ctx.runtime.whois_cache_dir.as_path()),
+                )
+                .await
                 {
                     Ok(Some(whois_result)) => {
                         log::debug!(
@@ -239,6 +242,7 @@ mod tests {
                 timing_stats,
                 run_id,
                 enable_whois,
+                std::path::PathBuf::from("/tmp/domain_status_whois_test"),
                 false,
                 Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
                 true,
