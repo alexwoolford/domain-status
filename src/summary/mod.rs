@@ -310,13 +310,15 @@ mod tests {
         .await
         .expect("insert implied technology");
 
+        // Non-AKIA placeholder: summary only counts rows; an AKIA… literal trips
+        // gitleaks `aws-access-token` outside allowlisted paths (.gitleaks.toml).
         sqlx::query(
             "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location) \
              VALUES (?, ?, ?, ?, ?)",
         )
         .bind(url_id_1)
-        .bind("aws_access_key")
-        .bind("AKIAABCDEFGHIJKLMNOP")
+        .bind("fixture_secret_type")
+        .bind("fixture-secret-value-001")
         .bind("critical")
         .bind("inline_script")
         .execute(pool)
