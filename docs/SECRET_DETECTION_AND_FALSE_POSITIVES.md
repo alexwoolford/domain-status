@@ -8,7 +8,7 @@ Prefer maintainable fixes over growing per-site exception lists:
 
 1. **Upstream distinctive shapes** — keep well-scoped Gitleaks rules (e.g. Dropbox `sl.…` / long-lived); disable catch-alls that only match “provider name + short alnum”.
 2. **Same-id rule replace** in `config/gitleaks.overrides.toml` when the upstream regex is the bug (see `sourcegraph-access-token`, `square-access-token`, `datadog-access-token`).
-3. **Structural plausibility** in `web_rule_match_is_plausible` (entropy/length for `generic-api-key`, camelCase reject for LinkedIn ids, etc.).
+3. **Structural plausibility** in `web_rule_match_is_plausible` (entropy/length for `generic-api-key`, camelCase reject for LinkedIn ids, etc.), or `web_rule_match_is_plausible_in_context` when the disambiguating signal (e.g. a provider name like "algolia") sits outside the capture group and needs the surrounding text window.
 4. **Severity demotion** when the match is real but public/temporary (e.g. `X-Amz-Credential=` → Low), still stored for inventory.
 5. **Allowlists** only for product-format public-by-design IDs (Weglot `wg_…`, App Insights `instrumentationKey`, HubSpot form UUIDs) — not site names or one-off URL trivia.
 
@@ -32,6 +32,7 @@ Prefer maintainable fixes over growing per-site exception lists:
 | `"link_type":"…"` + `"key":"<uuid>"` | generic-api-key | Prismic/CMS document UUID | Allowlisted (`"link_type"`) |
 | `X-Amz-Credential=AKIA\|ASIA…` | aws-access-token | Pre-signed URL temporary credential ID | Severity demoted to **Low** (still stored) |
 | `"datadogVersion":"<40 hex>"` | datadog-access-token | Build hash, not API key | Rule replaced: credential assignment only |
+| `algoliaApiKey:`/`al_apiKey:` assignment of a 32-40 char hex value | datadog-access-token | Algolia search credential — regex only requires `apiKey`/`appKey`, which is a substring of `algoliaApiKey` | Allowlisted (same-line `algolia`/`al_apiKey` in overrides) **and** context-aware reject in `web_rule_match_is_plausible_in_context` (catches assignments split across lines) |
 | `EAAA…` in binary | square-access-token | WebP/binary collision | Rule replaced: `sq0atp-` only |
 | Bare `EAA[MC]…` in binary | facebook-page-access-token | Binary collision | Rule replaced: `access_token=` context |
 | 15-char near “dropbox” | dropbox-api-token | JS identifier (e.g. `theChampSiteUrl`) | Rule disabled; use long/short-lived Dropbox rules |

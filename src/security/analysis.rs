@@ -56,7 +56,10 @@ fn hostname_matches_certificate(
 ///
 /// * `final_url` - The final URL after redirects (to check if HTTPS)
 /// * `tls_version` - TLS version used (if HTTPS)
-/// * `security_headers` - Map of security headers found
+/// * `security_headers` - Map of security headers found. Kept as a parameter for API
+///   stability and potential future header-derived checks, but "missing header"
+///   findings (HSTS/CSP/X-Content-Type-Options/X-Frame-Options) are intentionally
+///   **not** emitted here anymore — see the module-level note below.
 /// * `cert_subject` - Certificate subject (if HTTPS)
 /// * `cert_issuer` - Certificate issuer (if HTTPS)
 /// * `cert_valid_to` - Certificate expiration date (if HTTPS)
@@ -64,11 +67,29 @@ fn hostname_matches_certificate(
 ///
 /// # Returns
 ///
-/// A vector of security warnings found
+/// A vector of security warnings found.
+///
+/// # Missing security headers are no longer reported as warnings
+///
+/// Earlier versions of this function emitted `MissingHsts`, `MissingCsp`,
+/// `MissingContentTypeOptions`, and `MissingFrameOptions` findings whenever the
+/// corresponding header was absent. These were checklist-style absence checks, not
+/// evidence of an actual problem observed on the target — every plain site without
+/// those headers produced the same four "findings", drowning out the warnings that
+/// represent real, observed issues (`NoHttps`, `WeakTls`, `InvalidCertificate`).
+///
+/// Header presence/absence is still fully queryable: every captured response header
+/// (including the four above, when present) is stored per-URL in
+/// `url_security_headers`. Analysts who want a "missing header" report can compute it
+/// with a `NOT EXISTS` query against that table rather than relying on a
+/// pre-computed, always-fires warning. The `SecurityWarning::Missing*` enum variants
+/// are kept (and still implement `description()`/`code()`) for backward
+/// compatibility with any code that matches on them, but `analyze_security` no longer
+/// constructs them.
 pub fn analyze_security(
     final_url: &str,
     tls_version: Option<TlsVersion>,
-    security_headers: &HashMap<String, String>,
+    _security_headers: &HashMap<String, String>,
     cert_subject: Option<&str>,
     cert_issuer: Option<&str>,
     cert_valid_to: Option<&chrono::NaiveDateTime>,
@@ -88,36 +109,6 @@ pub fn analyze_security(
         if version.is_weak() {
             warnings.push(SecurityWarning::WeakTls);
         }
-    }
-
-    // Check for missing security headers (case-insensitive)
-    // Headers are stored with their original case, so we need to check case-insensitively
-    let has_hsts = security_headers
-        .keys()
-        .any(|k| k.eq_ignore_ascii_case("strict-transport-security"));
-    if !has_hsts {
-        warnings.push(SecurityWarning::MissingHsts);
-    }
-
-    let has_csp = security_headers
-        .keys()
-        .any(|k| k.eq_ignore_ascii_case("content-security-policy"));
-    if !has_csp {
-        warnings.push(SecurityWarning::MissingCsp);
-    }
-
-    let has_content_type_options = security_headers
-        .keys()
-        .any(|k| k.eq_ignore_ascii_case("x-content-type-options"));
-    if !has_content_type_options {
-        warnings.push(SecurityWarning::MissingContentTypeOptions);
-    }
-
-    let has_frame_options = security_headers
-        .keys()
-        .any(|k| k.eq_ignore_ascii_case("x-frame-options"));
-    if !has_frame_options {
-        warnings.push(SecurityWarning::MissingFrameOptions);
     }
 
     // Check certificate validity
@@ -227,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_security_missing_security_headers() {
+    fn test_analyze_security_missing_security_headers_not_reported() {
         let security_headers = HashMap::new(); // Empty headers
 
         let warnings = analyze_security(
@@ -240,11 +231,15 @@ mod tests {
             None,
         );
 
-        // Should warn about missing security headers
-        assert!(warnings.contains(&SecurityWarning::MissingHsts));
-        assert!(warnings.contains(&SecurityWarning::MissingCsp));
-        assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
-        assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
+        // Missing headers are no longer reported as warnings (checklist noise);
+        // absence is queryable via url_security_headers instead.
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingFrameOptions));
+        // With HTTPS, strong TLS, and no cert info supplied, only the
+        // extraction-failure InvalidCertificate warning should remain.
+        assert_eq!(warnings, vec![SecurityWarning::InvalidCertificate]);
     }
 
     #[test]

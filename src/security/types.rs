@@ -1,19 +1,34 @@
 //! Security warning types.
 
 /// Types of security warnings that can be detected
+///
+/// **Note:** The four `Missing*` variants are no longer produced by
+/// [`crate::security::analyze_security`] and are therefore never persisted into
+/// `url_security_warnings`. They are retained here only so any code that matches on
+/// `SecurityWarning` (e.g. `description()`/`code()` callers) continues to compile.
+/// Header absence is a checklist item, not an observed finding, and is derivable
+/// on demand from the `url_security_headers` table instead.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SecurityWarning {
     /// Site uses HTTP instead of HTTPS
     NoHttps,
     /// TLS version is too old (< TLS 1.2)
     WeakTls,
-    /// Missing Strict-Transport-Security (HSTS) header
+    /// Missing Strict-Transport-Security (HSTS) header. No longer emitted; see enum docs.
+    #[allow(dead_code)]
+    // retained for backward-compat matching; analyze_security no longer constructs it
     MissingHsts,
-    /// Missing Content-Security-Policy header
+    /// Missing Content-Security-Policy header. No longer emitted; see enum docs.
+    #[allow(dead_code)]
+    // retained for backward-compat matching; analyze_security no longer constructs it
     MissingCsp,
-    /// Missing X-Content-Type-Options header
+    /// Missing X-Content-Type-Options header. No longer emitted; see enum docs.
+    #[allow(dead_code)]
+    // retained for backward-compat matching; analyze_security no longer constructs it
     MissingContentTypeOptions,
-    /// Missing X-Frame-Options header
+    /// Missing X-Frame-Options header. No longer emitted; see enum docs.
+    #[allow(dead_code)]
+    // retained for backward-compat matching; analyze_security no longer constructs it
     MissingFrameOptions,
     /// Invalid or untrusted SSL certificate (self-signed, expired, or hostname mismatch)
     InvalidCertificate,

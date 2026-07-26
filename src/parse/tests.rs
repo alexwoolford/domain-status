@@ -77,6 +77,22 @@ fn test_extract_title_multiple_tags() {
 }
 
 #[test]
+fn test_extract_title_rawtext_content_model_preserves_literal_angle_brackets() {
+    // <title> is a RAWTEXT element per the HTML5 spec: html5ever never parses its
+    // contents as child elements/comments, so anything that looks like a tag or
+    // comment inside <title>...</title> is literal text, not markup. text()
+    // (the primary extraction path) faithfully returns that literal content —
+    // this is correct HTML5 parsing behavior, not a bug, and is why title
+    // extraction doesn't need general tag-stripping on the common path (only the
+    // rarely-hit inner_html fallback below needs it; see `strip_html_tags`).
+    let html = r#"<html><head><title><!-- literally text, not a comment --></title></head></html>"#;
+    let document = Html::parse_document(html);
+    let stats = test_error_stats();
+    let title = extract_title(&document, &stats);
+    assert_eq!(title, "<!-- literally text, not a comment -->");
+}
+
+#[test]
 fn test_extract_meta_keywords_basic() {
     let html = r#"<html><head><meta name="keywords" content="rust, programming, language"></head></html>"#;
     let document = Html::parse_document(html);

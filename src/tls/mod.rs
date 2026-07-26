@@ -84,7 +84,16 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
     }
 }
 
-async fn resolve_public_tls_addr(domain: &str, resolver: &TokioResolver) -> Result<SocketAddr> {
+/// Resolves all public (non-private, non-loopback, non-link-local) IP addresses for
+/// `domain`, ordered with IPv4 addresses first.
+///
+/// IPv4-first ordering approximates Happy Eyeballs behavior for this diagnostic
+/// side-channel: when IPv6 egress is broken (a common misconfiguration), trying IPv4
+/// first avoids wasting the connect timeout on an address family that can't route.
+async fn resolve_public_tls_addrs(
+    domain: &str,
+    resolver: &TokioResolver,
+) -> Result<Vec<SocketAddr>> {
     crate::security::validate_url_safe(&format!("https://{domain}/"))?;
 
     let response = resolver
@@ -92,11 +101,63 @@ async fn resolve_public_tls_addr(domain: &str, resolver: &TokioResolver) -> Resu
         .await
         .map_err(|e| anyhow::anyhow!("Failed to resolve {domain}: {e}"))?;
 
-    response
-        .iter()
-        .find(|ip| crate::security::safe_resolver::is_public_ip(*ip))
+    let addrs = order_public_addrs_ipv4_first(
+        response
+            .iter()
+            .filter(|ip| crate::security::safe_resolver::is_public_ip(*ip)),
+    );
+
+    if addrs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No public IP addresses resolved for {domain}"
+        ));
+    }
+
+    Ok(addrs
+        .into_iter()
         .map(|ip| SocketAddr::new(ip, 443))
-        .ok_or_else(|| anyhow::anyhow!("No public IP addresses resolved for {domain}"))
+        .collect())
+}
+
+/// Orders an iterator of IP addresses with all IPv4 addresses before IPv6 addresses,
+/// preserving relative order within each family (the resolver's original preference).
+fn order_public_addrs_ipv4_first(
+    ips: impl Iterator<Item = std::net::IpAddr>,
+) -> Vec<std::net::IpAddr> {
+    let (mut v4, v6): (Vec<_>, Vec<_>) = ips.partition(std::net::IpAddr::is_ipv4);
+    v4.extend(v6);
+    v4
+}
+
+/// Attempts a TCP connect to each candidate address in order, returning the first
+/// successful connection. Each attempt is bounded by the standard TCP connect timeout.
+/// If every attempt fails, returns an error listing all attempted addresses.
+async fn connect_tls_tcp(domain: &str, addrs: &[SocketAddr]) -> Result<(TcpStream, SocketAddr)> {
+    let mut last_errors: Vec<String> = Vec::with_capacity(addrs.len());
+
+    for &socket_addr in addrs {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
+            TcpStream::connect(socket_addr),
+        )
+        .await
+        {
+            Ok(Ok(sock)) => return Ok((sock, socket_addr)),
+            Ok(Err(e)) => {
+                error!("Failed to connect to {domain} ({socket_addr}) - {e}");
+                last_errors.push(format!("{socket_addr} ({e})"));
+            }
+            Err(_) => {
+                error!("TCP connection timeout for {domain} via {socket_addr}");
+                last_errors.push(format!("{socket_addr} (timeout)"));
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Failed to connect to {domain} via any of: {}",
+        last_errors.join(", ")
+    ))
 }
 
 fn parse_certificate_info_from_der(
@@ -214,30 +275,9 @@ pub async fn get_ssl_certificate_info(
     };
 
     log::debug!("Attempting to connect to domain: {domain}");
-    let socket_addr = resolve_public_tls_addr(&domain, resolver).await?;
-    let sock = match tokio::time::timeout(
-        std::time::Duration::from_secs(crate::config::TCP_CONNECT_TIMEOUT_SECS),
-        TcpStream::connect(socket_addr),
-    )
-    .await
-    {
-        Ok(Ok(sock)) => sock,
-        Ok(Err(e)) => {
-            error!("Failed to connect to {domain} ({socket_addr}) - {e}");
-            return Err(anyhow::anyhow!(
-                "Failed to connect to {domain} via {socket_addr}"
-            ));
-        }
-        Err(_) => {
-            error!("TCP connection timeout for {domain} via {socket_addr}");
-            return Err(anyhow::anyhow!(
-                "TCP connection timeout for {} via {} ({}s)",
-                domain,
-                socket_addr,
-                crate::config::TCP_CONNECT_TIMEOUT_SECS
-            ));
-        }
-    };
+    let socket_addrs = resolve_public_tls_addrs(&domain, resolver).await?;
+    let (sock, socket_addr) = connect_tls_tcp(&domain, &socket_addrs).await?;
+    log::debug!("Connected to {domain} via {socket_addr}");
 
     let connector = TlsConnector::from(Arc::new(config));
     let tls_stream = match tokio::time::timeout(
@@ -518,6 +558,62 @@ mod tests {
             parsed.key_algorithm,
             Some(crate::models::KeyAlgorithm::ECDSA | crate::models::KeyAlgorithm::Ed25519)
         ));
+    }
+
+    #[test]
+    fn test_order_public_addrs_ipv4_first_prefers_ipv4() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+        let ips = vec![
+            std::net::IpAddr::V6(Ipv6Addr::LOCALHOST),
+            std::net::IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+            std::net::IpAddr::V6(Ipv6Addr::new(
+                0x2606, 0x2800, 0x220, 1, 0x248, 0x1893, 0x25c8, 0x1946,
+            )),
+            std::net::IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+        ];
+        let ordered = order_public_addrs_ipv4_first(ips.into_iter());
+        assert_eq!(
+            ordered,
+            vec![
+                std::net::IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                std::net::IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+                std::net::IpAddr::V6(Ipv6Addr::LOCALHOST),
+                std::net::IpAddr::V6(Ipv6Addr::new(
+                    0x2606, 0x2800, 0x220, 1, 0x248, 0x1893, 0x25c8, 0x1946,
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_order_public_addrs_ipv4_first_empty() {
+        let ordered = order_public_addrs_ipv4_first(std::iter::empty());
+        assert!(ordered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_connect_tls_tcp_tries_each_addr_and_reports_all_on_failure() {
+        // 127.0.0.1:1 is a reserved, normally-closed port; used here purely to force
+        // a connection failure without any network dependency.
+        let addrs = vec![
+            SocketAddr::from(([127, 0, 0, 1], 1)),
+            SocketAddr::from(([127, 0, 0, 1], 2)),
+        ];
+        let err = connect_tls_tcp("example.test", &addrs)
+            .await
+            .expect_err("both addresses should fail to connect");
+        let msg = err.to_string();
+        assert!(msg.contains("127.0.0.1:1"), "message: {msg}");
+        assert!(msg.contains("127.0.0.1:2"), "message: {msg}");
+        assert!(msg.contains("example.test"), "message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_connect_tls_tcp_returns_no_addrs_error_when_empty() {
+        let err = connect_tls_tcp("example.test", &[])
+            .await
+            .expect_err("no addresses should fail");
+        assert!(err.to_string().contains("any of"));
     }
 
     #[test]

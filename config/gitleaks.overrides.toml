@@ -51,6 +51,17 @@ keywords = [
     "ddapikey",
     "ddappkey",
 ]
+# Algolia search credentials are also 32-char hex-ish values assigned to an
+# `apiKey`/`algoliaApiKey`/`al_apiKey`-style property, colliding with this
+# rule's shape. Same-line "algolia"/"al_apiKey" context means it's Algolia,
+# not Datadog. (A wider, cross-line context check also runs in Rust for
+# assignments split across lines; see web_rule_match_is_plausible_in_context.)
+[[rules.allowlists]]
+regexTarget = "line"
+regexes = [
+    '''(?i)algolia''',
+    '''(?i)al_apikey''',
+]
 
 # Upstream facebook-page-access-token matches bare EAA[MC]… anywhere, including
 # binary blobs. Require an access_token-style assignment context.

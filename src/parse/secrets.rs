@@ -206,6 +206,26 @@ fn web_rule_match_is_plausible(rule_id: &str, matched_value: &str) -> bool {
     }
 }
 
+/// Context-aware plausibility filter, run once the surrounding text (context window
+/// or containing line) is available for the match.
+///
+/// Some rules can't be disambiguated from `matched_value` alone because the tell is
+/// in a variable/property name that sits *before* the captured value, outside the
+/// rule's capture group. `datadog-access-token`'s regex matches any
+/// `apiKey`/`appKey`-style assignment of a 32-40 char hex value, but Algolia search
+/// credentials are also typically assigned to `apiKey`/`algoliaApiKey`/`al_apiKey`
+/// and are also 32-char hex strings — so a plain "APIKEY: <hex>" match can't tell
+/// Datadog and Algolia apart, but the nearby "algolia" text can.
+fn web_rule_match_is_plausible_in_context(rule_id: &str, nearby_text: &str) -> bool {
+    match rule_id {
+        "datadog-access-token" => {
+            let lower = nearby_text.to_ascii_lowercase();
+            !(lower.contains("algolia") || lower.contains("al_apikey"))
+        }
+        _ => true,
+    }
+}
+
 /// Severity for a gitleaks rule id.
 ///
 /// Three-step classification:
@@ -714,6 +734,9 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
             }
             let context = extract_context(body, mat.start(), mat.end());
             let line_content = line_containing(body, mat.start(), mat.end());
+            if !web_rule_match_is_plausible_in_context(&rule.id, &context) {
+                continue;
+            }
             if rule_allowlist_skips(&rule.allowlists, &matched_value, line_content, full_match) {
                 continue;
             }
@@ -1645,6 +1668,59 @@ mod tests {
         assert!(
             dd.is_some(),
             "DD_API_KEY assignment should still be reported; got {:?}",
+            secrets_key
+        );
+        assert_eq!(dd.unwrap().matched_value, hash);
+    }
+
+    /// Algolia search credentials assigned to an `apiKey`-style property collide with
+    /// the `datadog-access-token` regex shape (both are 32-40 char hex-ish values
+    /// assigned to a key/name containing "apiKey"). Nearby "algolia" context must
+    /// suppress the datadog false positive; a real `DD_API_KEY` assignment (no
+    /// Algolia context nearby) must still match.
+    #[test]
+    fn test_datadog_algolia_false_positive_suppressed() {
+        let hash = "e561f43f1a2b3c4d5e6f708192a3b4c5d6e7f809";
+
+        let body_algolia_camel = format!(r#"var algoliaApiKey = "{hash}";"#);
+        let secrets_algolia_camel = detect_exposed_secrets(&body_algolia_camel);
+        assert!(
+            secrets_algolia_camel
+                .iter()
+                .all(|s| s.secret_type != "datadog-access-token"),
+            "algoliaApiKey assignment must not match datadog-access-token; got {:?}",
+            secrets_algolia_camel
+        );
+
+        let body_al_apikey = format!(r#"var al_apiKey = "{hash}";"#);
+        let secrets_al_apikey = detect_exposed_secrets(&body_al_apikey);
+        assert!(
+            secrets_al_apikey
+                .iter()
+                .all(|s| s.secret_type != "datadog-access-token"),
+            "al_apiKey assignment must not match datadog-access-token; got {:?}",
+            secrets_al_apikey
+        );
+
+        let body_nearby = format!(r#"algolia config: apiKey: "{hash}", appId: "ABC123XYZ""#);
+        let secrets_nearby = detect_exposed_secrets(&body_nearby);
+        assert!(
+            secrets_nearby
+                .iter()
+                .all(|s| s.secret_type != "datadog-access-token"),
+            "apiKey near 'algolia' context must not match datadog-access-token; got {:?}",
+            secrets_nearby
+        );
+
+        // Real Datadog assignment (no Algolia context nearby) must still match.
+        let body_key = format!(r#"DD_API_KEY={hash}"#);
+        let secrets_key = detect_exposed_secrets(&body_key);
+        let dd = secrets_key
+            .iter()
+            .find(|s| s.secret_type == "datadog-access-token");
+        assert!(
+            dd.is_some(),
+            "DD_API_KEY assignment with no Algolia context should still be reported; got {:?}",
             secrets_key
         );
         assert_eq!(dd.unwrap().matched_value, hash);

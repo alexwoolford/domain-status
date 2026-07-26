@@ -65,6 +65,22 @@ pub(crate) const HEADER_ETAG: &str = "ETag";
 /// Last-Modified header
 pub(crate) const HEADER_LAST_MODIFIED: &str = "Last-Modified";
 
+// Resource discovery / protocol negotiation
+/// Link header (rel=preload/prefetch/alternate/etc. resource hints and pagination)
+pub(crate) const HEADER_LINK: &str = "Link";
+/// Alt-Svc header (alternative service/protocol advertisement, e.g. HTTP/3 support)
+pub(crate) const HEADER_ALT_SVC: &str = "Alt-Svc";
+/// Accept-CH header (client hints the server requests from the client)
+pub(crate) const HEADER_ACCEPT_CH: &str = "Accept-CH";
+/// Critical-CH header (client hints required before the client should retry)
+pub(crate) const HEADER_CRITICAL_CH: &str = "Critical-CH";
+/// Clear-Site-Data header (instructs browser to clear cookies/storage/cache)
+pub(crate) const HEADER_CLEAR_SITE_DATA: &str = "Clear-Site-Data";
+/// Report-To header (reporting API endpoint configuration)
+pub(crate) const HEADER_REPORT_TO: &str = "Report-To";
+/// NEL header (Network Error Logging configuration)
+pub(crate) const HEADER_NEL: &str = "NEL";
+
 /// List of other HTTP headers to capture (non-security).
 /// These are stored in the `url_http_headers` table.
 /// Headers are categorized by use case:
@@ -72,6 +88,9 @@ pub(crate) const HEADER_LAST_MODIFIED: &str = "Last-Modified";
 /// - CDN/Proxy: CF-Ray, X-Served-By, Via (infrastructure analysis)
 /// - Performance: Server-Timing, X-Cache (performance monitoring)
 /// - Caching: Cache-Control, `ETag`, Last-Modified (cache analysis)
+/// - Resource discovery/negotiation: Link, Alt-Svc, Accept-CH, Critical-CH,
+///   Clear-Site-Data, Report-To, NEL (resource hints, protocol upgrades, client
+///   hints, and reporting configuration)
 ///
 /// To add/remove headers, modify this array.
 pub(crate) const HTTP_HEADERS: &[&str] = &[
@@ -90,4 +109,12 @@ pub(crate) const HTTP_HEADERS: &[&str] = &[
     HEADER_CACHE_CONTROL,
     HEADER_ETAG,
     HEADER_LAST_MODIFIED,
+    // Resource discovery/protocol negotiation
+    HEADER_LINK,
+    HEADER_ALT_SVC,
+    HEADER_ACCEPT_CH,
+    HEADER_CRITICAL_CH,
+    HEADER_CLEAR_SITE_DATA,
+    HEADER_REPORT_TO,
+    HEADER_NEL,
 ];

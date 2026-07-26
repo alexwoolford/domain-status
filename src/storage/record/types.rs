@@ -45,7 +45,7 @@ pub struct BatchRecord {
     pub caa_records: Option<String>,  // CAA records JSON (satellite table)
     pub csp_domains: Vec<(String, String, Option<String>)>, // (directive, fqdn, registrable_domain)
     pub cookies: Vec<CookieInfo>,
-    pub resource_hints: Vec<(String, String)>, // (hint_type, href)
+    pub resource_hints: Vec<(String, String)>, // (hint_type, href); hint_type: preconnect/dns-prefetch/preload/prefetch/modulepreload
     pub body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain)
 }
 

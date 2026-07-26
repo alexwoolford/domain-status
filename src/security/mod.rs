@@ -1,19 +1,27 @@
 //! Security analysis and warning detection.
 //!
-//! This module analyzes HTTP responses and TLS configurations to identify
-//! security issues and best practice violations:
+//! This module analyzes HTTP responses and TLS configurations to identify real
+//! security issues:
 //! - Missing HTTPS
 //! - Weak TLS versions
-//! - Missing security headers (HSTS, CSP, etc.)
+//! - Invalid/untrusted certificates (self-signed, expired, hostname mismatch)
 //!
-//! Warnings are stored in the database for later analysis.
+//! Warnings are stored in the `url_security_warnings` table for later analysis.
+//! Note: "missing header" checklist items (HSTS/CSP/X-Content-Type-Options/
+//! X-Frame-Options absence) are intentionally **not** stored as warnings — see
+//! [`analyze_security`] for rationale. Header presence is queryable directly from
+//! `url_security_headers`.
 
 mod analysis;
+mod hsts;
 pub(crate) mod safe_resolver;
 mod types;
 mod url_validation;
 
 pub use analysis::analyze_security;
+#[allow(unused_imports)]
+// Public API re-export; HstsDirectives is the parse_hsts_directive return type
+pub use hsts::{parse_hsts_directive, HstsDirectives};
 pub use types::SecurityWarning;
 pub use url_validation::{ssrf_safe_redirect_policy, validate_url_safe};
 
@@ -62,7 +70,10 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_security_missing_headers() {
+    fn test_analyze_security_missing_headers_not_reported() {
+        // Missing header checklist items are no longer emitted as warnings; they're
+        // queryable via url_security_headers absence instead. With no cert info
+        // supplied, only the extraction-failure InvalidCertificate warning remains.
         let headers = HashMap::new();
         let warnings = analyze_security(
             "https://example.com",
@@ -73,10 +84,11 @@ mod tests {
             None,
             None,
         );
-        assert!(warnings.contains(&SecurityWarning::MissingHsts));
-        assert!(warnings.contains(&SecurityWarning::MissingCsp));
-        assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
-        assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingFrameOptions));
+        assert_eq!(warnings, vec![SecurityWarning::InvalidCertificate]);
     }
 
     #[test]
@@ -125,11 +137,10 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_security_missing_single_header() {
-        // Test each missing header individually
+    fn test_analyze_security_partial_headers_no_missing_warnings() {
+        // Regardless of which subset of security headers is present, no Missing*
+        // warning should ever be emitted anymore.
         let mut headers = HashMap::new();
-
-        // Missing HSTS only
         headers.insert(
             "content-security-policy".to_string(),
             "default-src 'self'".to_string(),
@@ -137,7 +148,6 @@ mod tests {
         headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
         headers.insert("x-frame-options".to_string(), "DENY".to_string());
 
-        // Provide valid certificate info
         let valid_date = chrono::Utc::now()
             .naive_utc()
             .checked_add_signed(chrono::Duration::days(365))
@@ -152,95 +162,11 @@ mod tests {
             Some(&valid_date),
             None,
         );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings.contains(&SecurityWarning::MissingHsts));
-
-        // Missing CSP only
-        headers.clear();
-        headers.insert(
-            "strict-transport-security".to_string(),
-            "max-age=31536000".to_string(),
-        );
-        headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
-        headers.insert("x-frame-options".to_string(), "DENY".to_string());
-
-        // Provide valid certificate info
-        let valid_date = chrono::Utc::now()
-            .naive_utc()
-            .checked_add_signed(chrono::Duration::days(365))
-            .unwrap();
-
-        let warnings = analyze_security(
-            "https://example.com",
-            Some(TlsVersion::Tls13),
-            &headers,
-            Some("CN=example.com"),
-            Some("CN=Let's Encrypt"),
-            Some(&valid_date),
-            None,
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings.contains(&SecurityWarning::MissingCsp));
-
-        // Missing X-Content-Type-Options only
-        headers.clear();
-        headers.insert(
-            "strict-transport-security".to_string(),
-            "max-age=31536000".to_string(),
-        );
-        headers.insert(
-            "content-security-policy".to_string(),
-            "default-src 'self'".to_string(),
-        );
-        headers.insert("x-frame-options".to_string(), "DENY".to_string());
-
-        // Provide valid certificate info
-        let valid_date = chrono::Utc::now()
-            .naive_utc()
-            .checked_add_signed(chrono::Duration::days(365))
-            .unwrap();
-
-        let warnings = analyze_security(
-            "https://example.com",
-            Some(TlsVersion::Tls13),
-            &headers,
-            Some("CN=example.com"),
-            Some("CN=Let's Encrypt"),
-            Some(&valid_date),
-            None,
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
-
-        // Missing X-Frame-Options only
-        headers.clear();
-        headers.insert(
-            "strict-transport-security".to_string(),
-            "max-age=31536000".to_string(),
-        );
-        headers.insert(
-            "content-security-policy".to_string(),
-            "default-src 'self'".to_string(),
-        );
-        headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
-
-        // Provide valid certificate info
-        let valid_date = chrono::Utc::now()
-            .naive_utc()
-            .checked_add_signed(chrono::Duration::days(365))
-            .unwrap();
-
-        let warnings = analyze_security(
-            "https://example.com",
-            Some(TlsVersion::Tls13),
-            &headers,
-            Some("CN=example.com"),
-            Some("CN=Let's Encrypt"),
-            Some(&valid_date),
-            None,
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
+        assert_eq!(warnings.len(), 0);
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingFrameOptions));
     }
 
     #[test]
@@ -304,7 +230,9 @@ mod tests {
 
     #[test]
     fn test_analyze_security_no_tls_version() {
-        // HTTPS without TLS version info
+        // HTTPS without TLS version info: no WeakTls (no version info), and since no
+        // certificate info was supplied either, extraction-failure InvalidCertificate
+        // is the only warning.
         let headers = HashMap::new();
         let warnings = analyze_security(
             "https://example.com",
@@ -316,10 +244,10 @@ mod tests {
             None,
         );
 
-        // Should have missing headers warnings, but not WeakTls (no version info)
-        assert!(warnings.contains(&SecurityWarning::MissingHsts));
-        assert!(warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
         assert!(!warnings.contains(&SecurityWarning::WeakTls));
+        assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
     }
 
     #[test]
@@ -359,9 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_security_all_warnings() {
-        // HTTP with weak TLS and no headers (if it were HTTPS)
-        // But HTTP returns early, so test HTTPS with weak TLS and no headers
+    fn test_analyze_security_weak_tls_only_warning_with_valid_cert() {
+        // HTTPS with weak TLS and a valid certificate should only warn about WeakTls;
+        // missing headers are no longer reported.
         let headers = HashMap::new();
 
         // Provide valid certificate info
@@ -380,14 +308,13 @@ mod tests {
             None,
         );
 
-        // Should have WeakTls + all missing headers (but NOT InvalidCertificate since cert is valid)
         assert!(warnings.contains(&SecurityWarning::WeakTls));
-        assert!(warnings.contains(&SecurityWarning::MissingHsts));
-        assert!(warnings.contains(&SecurityWarning::MissingCsp));
-        assert!(warnings.contains(&SecurityWarning::MissingContentTypeOptions));
-        assert!(warnings.contains(&SecurityWarning::MissingFrameOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
+        assert!(!warnings.contains(&SecurityWarning::MissingCsp));
+        assert!(!warnings.contains(&SecurityWarning::MissingContentTypeOptions));
+        assert!(!warnings.contains(&SecurityWarning::MissingFrameOptions));
         assert!(!warnings.contains(&SecurityWarning::InvalidCertificate));
-        assert_eq!(warnings.len(), 5);
+        assert_eq!(warnings.len(), 1);
     }
 
     #[test]
@@ -578,8 +505,8 @@ mod tests {
 
         // Should have InvalidCertificate warning due to extraction failure
         assert!(warnings.contains(&SecurityWarning::InvalidCertificate));
-        // Also should have missing headers warnings
-        assert!(warnings.contains(&SecurityWarning::MissingHsts));
+        // Missing headers are no longer reported as warnings
+        assert!(!warnings.contains(&SecurityWarning::MissingHsts));
     }
 
     #[test]

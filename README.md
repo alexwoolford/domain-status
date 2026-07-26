@@ -53,13 +53,14 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 ## Features (core)
 
 - HTTP status, redirects, response metadata
-- TLS certificate fields
+- TLS certificate fields (resolves all public IPs, IPv4-first, so dual-stack hosts with broken IPv6 egress still get a certificate)
 - DNS (NS/TXT/MX + SPF/DMARC)
 - Technology fingerprints + exposed secrets (static HTML; no JS execution)
+- Security findings (`no_https`, `weak_tls`, `invalid_certificate`) — real observed issues only; header *presence* (HSTS/CSP/etc.) is captured separately and "missing header" is a query, not a precomputed warning (see [DATABASE.md](DATABASE.md))
 - SQLite fact table + satellite tables; `summary` command
 - Concurrency / rate limiting; `--fail-on` for CI exit policy
 
-**Also available (see docs):** GeoIP, WHOIS, live status/Prometheus server, CSV/JSONL/Parquet export, TOML/`DOMAIN_STATUS_*` config.
+**Also available (see docs):** GeoIP, WHOIS, live status/Prometheus server, CSV/JSONL/Parquet export, TOML/`DOMAIN_STATUS_*` config, plus lower-signal supplementary fields (meta keywords, viewport-based mobile-friendly heuristic, body-referenced domains) best used as secondary context rather than headline metrics.
 
 ## Limitations
 

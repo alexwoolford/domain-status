@@ -93,9 +93,9 @@ Important characteristics:
 | `http_status_text` | `TEXT NOT NULL` | Human-readable status |
 | `response_time_seconds` | `REAL NOT NULL` | Response time |
 | `title` | `TEXT NOT NULL` | Empty string when missing |
-| `keywords` | `TEXT` | Optional meta keywords |
+| `keywords` | `TEXT` | Optional `<meta name="keywords">` content, verbatim. Low-signal: most modern sites leave this tag empty or unmaintained; treat as supplementary, not a reliable content-classification signal. |
 | `description` | `TEXT` | Optional meta description |
-| `is_mobile_friendly` | `BOOLEAN NOT NULL DEFAULT 0` | Viewport-meta heuristic |
+| `is_mobile_friendly` | `BOOLEAN NOT NULL DEFAULT 0` | Heuristic based on presence of a `<meta name="viewport">` tag only — it does not verify actual responsive layout/CSS. Treat as a weak proxy, not a mobile-usability audit. |
 | `tls_version` | `TEXT` | Nullable for HTTP-only or missing TLS data |
 | `cipher_suite` | `TEXT` | Captured TLS cipher suite |
 | `key_algorithm` | `TEXT` | Parsed certificate key algorithm |
@@ -176,8 +176,15 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_caa_records` | Certificate Authority Authorization | `flag`, `tag`, `value` |
 | `url_csp_domains` | Domains from Content-Security-Policy | `directive`, `fqdn`, `registrable_domain` |
 | `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
-| `url_resource_hints` | Preconnect/dns-prefetch hints | `hint_type`, `href` |
-| `url_body_domains` | FQDNs referenced in HTML body | `fqdn`, `registrable_domain` |
+| `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload | `hint_type`, `href` |
+| `url_body_domains` | FQDNs referenced in HTML body attributes (`href`/`src`). Low-signal on its own — high volume, mostly CDN/asset noise; more useful joined against `url_csp_domains` or `url_technologies` than read standalone. | `fqdn`, `registrable_domain` |
+
+> **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
+> a zone apex (e.g. `example.com`), so this table is typically empty for
+> root-domain scans — real CNAME data mostly shows up for `www.`/subdomain
+> targets. Some registrars/CDNs "flatten" apex aliasing (ALIAS/ANAME or
+> provider-side flattening) to a plain A/AAAA record, which is invisible here.
+> Don't read an empty `url_cname_records` row as "not behind a CDN."
 
 ### HTTP and TLS satellites
 
@@ -199,7 +206,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_social_media_links` | Social profile links | `platform`, `profile_url`, `identifier` |
 | `url_analytics_ids` | Analytics/tracking IDs | `provider`, `tracking_id` |
 | `url_contact_links` | `mailto:` and `tel:` links | `contact_type`, `contact_value`, `raw_href` |
-| `url_security_warnings` | Derived security findings | `warning_code`, `warning_description` |
+| `url_security_warnings` | Real, observed security issues only — see note below | `warning_code`, `warning_description` |
 | `url_technologies` | Technology fingerprint matches | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
 | `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `header_json`, `payload_json`, `algorithm`, `issuer`, `subject`, `expiration_ms` |
@@ -235,6 +242,33 @@ The current `url_whois` schema uses:
 - `raw_response`
 
 These names replace older or more ambiguous variants that may appear in stale docs or old queries.
+
+### Security warnings
+
+`url_security_warnings` only stores warnings for issues actually observed on the
+target: `no_https`, `weak_tls`, and `invalid_certificate`. It does **not** store a
+"missing header" finding for absent `Strict-Transport-Security`,
+`Content-Security-Policy`, `X-Content-Type-Options`, or `X-Frame-Options` headers —
+those are checklist/absence checks, not evidence of a problem, and every plain site
+without those headers would otherwise produce the same four rows, drowning out the
+warnings that represent something actually wrong. Header presence is fully
+queryable without a precomputed warning: absence of a given `header_name` for a
+`url_status_id` in `url_security_headers` **is** the "missing header" signal, e.g.:
+
+```sql
+SELECT s.final_domain
+FROM url_status s
+WHERE NOT EXISTS (
+    SELECT 1 FROM url_security_headers h
+    WHERE h.url_status_id = s.id AND h.header_name = 'Strict-Transport-Security'
+);
+```
+
+The raw `Strict-Transport-Security` header value (when present) is stored verbatim
+in `url_security_headers`, e.g. `max-age=31536000; includeSubDomains; preload`. Its
+`max-age` / `includeSubDomains` / `preload` directives aren't broken out into
+separate columns (to avoid schema churn for a header most sites don't send), but
+they're straightforward to parse from that single value if needed for analysis.
 
 ### Secret findings
 

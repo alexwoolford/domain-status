@@ -191,7 +191,7 @@ mod tests {
     async fn test_init_geoip_no_path_no_license() {
         // Test when no path and no license key
         // Ensure environment variable is cleared (previous tests might have set it)
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
 
         let result = init_geoip(None, None).await;
         assert!(result.is_ok());
@@ -207,18 +207,17 @@ mod tests {
     #[tokio::test]
     async fn test_init_geoip_empty_license_key() {
         // Test with empty license key
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
         let result = init_geoip(None, None).await;
         assert!(result.is_ok());
         // Should return None (GeoIP disabled)
         assert!(result.unwrap().is_none());
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
     async fn test_init_geoip_invalid_path() {
         // Without a license key, a missing local path must still fail (no silent disable).
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let result = init_geoip(Some("nonexistent/path/to/database.mmdb"), None).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -235,7 +234,7 @@ mod tests {
     async fn test_missing_local_geoip_falls_back_to_license_key() {
         // Missing --geoip path + license key → resolve to MaxMind download URL (not bare path).
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test-license-key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test-license-key"));
 
         let resolved =
             resolve_geoip_source(Some("nonexistent/GeoLite2-City.mmdb"), temp_dir.path())
@@ -254,13 +253,11 @@ mod tests {
             !path.contains("nonexistent"),
             "should not keep the missing local path when license key is set: {path}"
         );
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
     async fn test_missing_local_geoip_without_license_keeps_path() {
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let missing = "nonexistent/GeoLite2-City.mmdb";
 
@@ -415,7 +412,7 @@ mod tests {
         // Clear license key and use an *existing* invalid file so parallel tests that set
         // MAXMIND_LICENSE_KEY cannot trigger the missing-path MaxMind download fallback
         // (which would make this timing assertion flake/fail).
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let bad_db = temp_dir.path().join("not-a-database.mmdb");
         std::fs::write(&bad_db, b"not-a-valid-mmdb")
             .expect("Failed to write invalid GeoIP fixture");
@@ -546,7 +543,7 @@ mod tests {
     async fn test_init_geoip_cache_path_default_vs_provided() {
         // Test that cache path defaults correctly when not provided (lines 43-45)
         // This is critical - default cache dir should be used when cache_dir is None
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
 
         // Test with None cache_dir (should use default)
         let result1 = init_geoip(None, None).await;
@@ -600,12 +597,10 @@ mod tests {
             .expect("Failed to write cache");
 
         // Should use cached file (line 86) instead of downloading
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_geoip(None, Some(temp_dir.path())).await;
         // Should fail on parse, but cache usage path should be tested
         assert!(result.is_err());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
