@@ -23,7 +23,7 @@ The scanner will:
 - default to merging two upstream technology directories:
   - `enthec/webappanalyzer`
   - `HTTPArchive/wappalyzer`
-- cache the resolved ruleset in `.fingerprints_cache/`
+- cache the resolved ruleset under the shared cache root (`…/domain_status/fingerprints/`)
 - use a cache key derived from the configured source list
 - refresh cached rulesets on a 7-day TTL
 - allow a caller-supplied local path or URL via `--fingerprints`

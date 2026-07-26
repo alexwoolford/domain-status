@@ -169,6 +169,7 @@ mod tests {
             fingerprints: None,
             geoip: None,
             enable_whois: false,
+            cache_dir: None,
             scan_external_scripts: false,
             log_file: None,
             progress_callback: None,

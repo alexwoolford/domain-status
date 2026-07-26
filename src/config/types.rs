@@ -131,6 +131,13 @@ pub struct Config {
     /// Enable WHOIS/RDAP lookup for domain registration information
     pub enable_whois: bool,
 
+    /// Shared cache root for fingerprints / `GeoIP` / WHOIS / User-Agent.
+    ///
+    /// When `None`, resolves via `DOMAIN_STATUS_CACHE_DIR` or the platform XDG
+    /// cache directory (`~/.cache/domain_status` on Linux/macOS). The `SQLite` DB
+    /// and log file are separate outputs (`db_path` / `log_file`).
+    pub cache_dir: Option<PathBuf>,
+
     /// Fetch external `<script src>` URLs and scan their content for
     /// exposed secrets. Off by default. When enabled, fetches are
     /// SSRF-validated, bounded by `MAX_RESPONSE_BODY_SIZE` and
@@ -209,6 +216,7 @@ impl Default for Config {
             geoip: None,
             status_port: None,
             enable_whois: false,
+            cache_dir: None,
             scan_external_scripts: false,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
@@ -237,6 +245,7 @@ impl std::fmt::Debug for Config {
             .field("geoip", &self.geoip)
             .field("status_port", &self.status_port)
             .field("enable_whois", &self.enable_whois)
+            .field("cache_dir", &self.cache_dir)
             .field("scan_external_scripts", &self.scan_external_scripts)
             .field("fail_on", &self.fail_on)
             .field("fail_on_pct_threshold", &self.fail_on_pct_threshold)
@@ -587,6 +596,7 @@ mod tests {
             max_concurrency: 50,
             rate_limit_rps: 25,
             enable_whois: true,
+            cache_dir: None,
             status_port: Some(8080),
             ..Default::default()
         };

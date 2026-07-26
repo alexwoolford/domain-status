@@ -5,7 +5,7 @@ mod parse;
 mod types;
 
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use whois_service::WhoisClient;
@@ -14,9 +14,6 @@ pub use types::WhoisResult;
 
 use cache::WhoisCacheStore;
 use parse::{convert_parsed_data, enrich_result_from_raw_text};
-
-/// Default cache directory for WHOIS data
-const DEFAULT_CACHE_DIR: &str = ".whois_cache";
 
 /// Performs a WHOIS lookup for a domain
 ///
@@ -77,7 +74,7 @@ where
     Fut: std::future::Future<Output = Result<whois_service::WhoisResponse>>,
 {
     let cache_path = cache_dir.map_or_else(
-        || PathBuf::from(DEFAULT_CACHE_DIR),
+        || crate::cache_paths::whois_dir(&crate::cache_paths::resolve_cache_root(None)),
         std::path::Path::to_path_buf,
     );
     let cache = WhoisCacheStore::default();

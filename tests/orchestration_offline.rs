@@ -54,6 +54,7 @@ fn base_config(input: PathBuf, db: PathBuf, fingerprints: &Path) -> Config {
         geoip: None,
         status_port: None,
         enable_whois: false,
+        cache_dir: None,
         scan_external_scripts: false,
         fail_on: FailOn::Never,
         fail_on_pct_threshold: 10,

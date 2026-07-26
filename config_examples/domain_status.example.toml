@@ -1,24 +1,28 @@
 # Example configuration for domain_status (optional).
 #
-# Use: --config path/to/this/file or set DOMAIN_STATUS_CONFIG_FILE.
-# Environment variables DOMAIN_STATUS_* override file values (e.g. DOMAIN_STATUS_MAX_CONCURRENCY=50).
-# CLI options override both. Precedence: CLI > env > file > defaults.
+# Use: --config path/to/this/file
+# DOMAIN_STATUS_* env vars override file values; CLI overrides both.
+# Precedence: CLI > env > file > defaults.
+# `--config` wins over DOMAIN_STATUS_CONFIG_FILE.
 #
-# Copy to domain_status.toml in the current directory for automatic discovery, or
-# reference explicitly: domain_status scan --config ./domain_status.toml urls.txt
+# Copy to domain_status.toml in the cwd, or:
+#   domain_status scan --config ./domain_status.toml urls.txt
+#
+# Prefer CLI for day-to-day use; use TOML *or* env for repeatable jobs—not both equally.
 
-# file          = "urls.txt"           # Input URL list (often overridden by CLI positional)
+# file          = "urls.txt"
 # db_path       = "./domain_status.db"
+# cache_dir     = "/var/cache/domain_status"   # optional; else XDG ~/.cache/domain_status
 # max_concurrency = 30
 # timeout_seconds = 10
 # user_agent    = "domain_status/0.1"
-# rate_limit_rps = 15   # Requests per second (0 to disable). If you see 429s, lower and re-run.
-# log_level     = "info"               # error | warn | info | debug | trace
-# log_format    = "plain"              # plain | json
+# rate_limit_rps = 15
+# log_level     = "info"               # or use CLI -v / -q
+# log_format    = "plain"              # plain | json (scan log file)
 # log_file      = "domain_status.log"
-# fingerprints  = "https://raw.githubusercontent.com/..."  # Optional ruleset URL or path
-# geoip         = "/path/to/GeoLite2-City.mmdb"        # Or download URL
-# status_port   = 8080                 # Optional HTTP status server port
-# enable_whois  = false
-# fail_on       = "never"             # never | any_failure | pct>
-# fail_on_pct_threshold = 10           # Used when fail_on = "pct>"
+# fingerprints  = "/path/to/technologies"
+# geoip         = "/path/to/GeoLite2-City.mmdb"
+# status_port   = 8080
+# enable_whois  = false                # CLI --no-whois forces off
+# fail_on       = "never"              # never | any_failure | pct>
+# fail_on_pct_threshold = 10

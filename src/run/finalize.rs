@@ -213,6 +213,7 @@ mod tests {
                 Arc::clone(&timing_stats),
                 Some(run_id.to_string()),
                 false,
+                std::path::PathBuf::from("/tmp/domain_status_whois_test"),
                 false,
                 Arc::new(RuntimeMetrics::default()),
                 true,
@@ -223,6 +224,7 @@ mod tests {
         let config = Config {
             db_path: std::path::PathBuf::from(":memory:"),
             enable_whois: false,
+            cache_dir: None,
             scan_external_scripts: false,
             ..Config::default()
         };

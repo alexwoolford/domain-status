@@ -43,13 +43,14 @@ pub struct ScanCommand {
     #[arg(value_parser)]
     pub file: PathBuf,
 
-    /// Baseline log level; overridden by -v / -q. Prefer verbosity flags for quick changes.
+    /// Baseline log level; overridden by `-v` / `-q` (preferred for quick changes).
     #[arg(long, value_enum, default_value_t = LogLevel::Info, env = "DOMAIN_STATUS_LOG_LEVEL")]
     pub log_level: LogLevel,
 
     #[command(flatten)]
     pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
 
+    /// Format for the scan log file (`--log-file`). Use `-v`/`-q` for verbosity.
     #[arg(long, value_enum, default_value_t = LogFormat::Plain, env = "DOMAIN_STATUS_LOG_FORMAT")]
     pub log_format: LogFormat,
 
@@ -84,6 +85,16 @@ pub struct ScanCommand {
 
     #[arg(long)]
     pub enable_whois: bool,
+
+    /// Disable WHOIS even if enabled in TOML / env (`enable_whois = true`).
+    #[arg(long, conflicts_with = "enable_whois")]
+    pub no_whois: bool,
+
+    /// Shared cache root for fingerprints, GeoIP, WHOIS, and User-Agent data.
+    /// Defaults to `$DOMAIN_STATUS_CACHE_DIR` or the XDG cache dir
+    /// (`~/.cache/domain_status`). Database and log paths are separate.
+    #[arg(long, value_parser, env = "DOMAIN_STATUS_CACHE_DIR")]
+    pub cache_dir: Option<PathBuf>,
 
     /// Fetch first-party external `<script src>` URLs and scan their content
     /// for exposed secrets. Off by default because it expands the threat

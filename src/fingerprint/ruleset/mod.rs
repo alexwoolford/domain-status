@@ -16,7 +16,7 @@ mod vendored;
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 use tokio::sync::{Mutex, RwLock};
@@ -36,9 +36,6 @@ const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
     "https://raw.githubusercontent.com/enthec/webappanalyzer/main/src/technologies",
     "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies",
 ];
-
-/// Default cache directory for fingerprint rules
-const DEFAULT_CACHE_DIR: &str = ".fingerprints_cache";
 
 /// Global ruleset cache (lazy-loaded)
 static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
@@ -88,7 +85,7 @@ pub async fn init_ruleset(
     };
 
     let cache_path = cache_dir.map_or_else(
-        || PathBuf::from(DEFAULT_CACHE_DIR),
+        || crate::cache_paths::fingerprints_dir(&crate::cache_paths::resolve_cache_root(None)),
         std::path::Path::to_path_buf,
     );
 

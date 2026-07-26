@@ -97,6 +97,9 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
             "enable_whois" => {
                 config.enable_whois = parse_bool(value).unwrap_or(false);
             }
+            "cache_dir" => {
+                config.cache_dir = Some(PathBuf::from(value));
+            }
             "scan_external_scripts" => {
                 config.scan_external_scripts = parse_bool(value).unwrap_or(false);
             }
@@ -176,6 +179,13 @@ pub fn merge_file_env_and_cli(
     }
     if overwrite("enable_whois") {
         config.enable_whois = cli_config.enable_whois;
+    }
+    // `--no-whois` wins over TOML enable_whois=true when set on the CLI.
+    if overwrite("no_whois") {
+        config.enable_whois = false;
+    }
+    if overwrite("cache_dir") {
+        config.cache_dir = cli_config.cache_dir;
     }
     if overwrite("scan_external_scripts") {
         config.scan_external_scripts = cli_config.scan_external_scripts;
@@ -321,6 +331,7 @@ mod tests {
             Some(&bad_bool),
             Config {
                 enable_whois: false,
+                cache_dir: None,
                 ..Default::default()
             },
             Some(&[]),

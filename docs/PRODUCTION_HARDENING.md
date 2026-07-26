@@ -36,10 +36,10 @@ The process needs write access to the working directory, or explicit alternate p
 
 - `./domain_status.db`
 - `./domain_status.log` during `scan`
-- `.fingerprints_cache/`
-- `.geoip_cache/`
-- `.whois_cache/`
-- `.user_agent_cache/`
+- `…/domain_status/fingerprints/`
+- `…/domain_status/geoip/`
+- `…/domain_status/whois/`
+- `…/domain_status/user_agent/`
 
 Distributed binaries also need a writable temp directory because embedded SQL migrations may be extracted into a temporary directory before execution.
 
@@ -93,7 +93,7 @@ By default, scans fetch and merge two upstream technology directories:
 - `enthec/webappanalyzer`
 - `HTTPArchive/wappalyzer`
 
-The merged ruleset is cached in `.fingerprints_cache/` for 7 days. Cold-cache runs may hit GitHub-hosted assets. Supplying `GITHUB_TOKEN` helps avoid GitHub API rate limits for commit metadata lookups.
+The merged ruleset is cached in `…/domain_status/fingerprints/` for 7 days. Cold-cache runs may hit GitHub-hosted assets. Supplying `GITHUB_TOKEN` helps avoid GitHub API rate limits for commit metadata lookups.
 
 ### GeoIP
 
@@ -101,20 +101,20 @@ GeoIP is optional and best-effort.
 
 - If `--geoip` is supplied, that path or URL is used.
 - Otherwise the scanner attempts an automatic MaxMind download when `MAXMIND_LICENSE_KEY` is set.
-- Databases are cached in `.geoip_cache/` for 7 days.
+- Databases are cached in `…/domain_status/geoip/` for 7 days.
 - Failures are logged and scanning continues without GeoIP enrichment.
 
 ### WHOIS
 
 WHOIS/RDAP is disabled unless `--enable-whois` is set.
 
-- Results are cached in `.whois_cache/` for 7 days.
+- Results are cached in `…/domain_status/whois/` for 7 days.
 - Lookup timeout is `5s`.
 - Failures are logged and scanning continues.
 
 ### User-Agent refresh
 
-If the built-in default User-Agent is used, the scanner may fetch the latest Chrome version and cache it in `.user_agent_cache/version.json` for 30 days. This is a cold-start outbound dependency worth accounting for in locked-down environments.
+If the built-in default User-Agent is used, the scanner may fetch the latest Chrome version and cache it in `…/domain_status/user_agent/version.json` for 30 days. This is a cold-start outbound dependency worth accounting for in locked-down environments.
 
 ## Status Server
 
@@ -163,7 +163,7 @@ Remember that `pct>` returns exit code `3` when zero URLs were processed.
 ## Hardening Checklist
 
 - Run from a directory with predictable write access, or override paths explicitly.
-- Pre-warm `.fingerprints_cache/` and `.geoip_cache/` in controlled environments if cold-start network access is undesirable.
+- Pre-warm `…/domain_status/fingerprints/` and `…/domain_status/geoip/` in controlled environments if cold-start network access is undesirable.
 - Provide `GITHUB_TOKEN` when relying on default GitHub-hosted fingerprint sources.
 - Provide `MAXMIND_LICENSE_KEY` only when GeoIP is required.
 - Keep the status server local-only.

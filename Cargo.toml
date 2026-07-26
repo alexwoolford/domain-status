@@ -179,6 +179,7 @@ murmur3 = "^0.1"
 # Parquet export (columnar format for analytics). 59+ drops the thrift crate dep.
 arrow = { version = "^59", default-features = false }
 parquet = { version = "^59", default-features = false, features = ["arrow", "snap"] }
+dirs = "^6"
 
 [build-dependencies]
 clap = { version = "^4.6", features = ["derive"] }

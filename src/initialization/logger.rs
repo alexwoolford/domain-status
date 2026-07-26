@@ -191,11 +191,12 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 /// Initializes the logger to write to a file with timestamps.
 ///
 /// Used when progress bar is enabled - logs go to file while progress bar shows on terminal.
-/// Log format includes ISO 8601 timestamps for each entry.
+/// Log format includes ISO 8601 timestamps for each entry (plain) or one JSON object per line.
 ///
 /// # Arguments
 ///
 /// * `level` - Minimum log level to display
+/// * `format` - Plain text or JSON lines
 /// * `log_file` - Path to the log file
 ///
 /// # Returns
@@ -204,7 +205,11 @@ pub fn init_logger_with(level: LevelFilter, format: LogFormat) -> Result<(), Ini
 ///
 /// # Errors
 /// Returns `Err` when the log file cannot be created or logger setup fails.
-pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), InitializationError> {
+pub fn init_logger_to_file(
+    level: LevelFilter,
+    format: LogFormat,
+    log_file: &Path,
+) -> Result<(), InitializationError> {
     ensure_parent_dir_secure(log_file).map_err(|e| {
         InitializationError::LoggerSetupError(format!("Failed to create log directory: {e}"))
     })?;
@@ -227,17 +232,46 @@ pub fn init_logger_to_file(level: LevelFilter, log_file: &Path) -> Result<(), In
     builder.filter_level(level);
     log_filters::apply_silenced_crates(&mut builder, level);
 
-    // Format with timestamps (no colors since it's going to a file)
-    builder.format(|buf, record| {
-        writeln!(
-            buf,
-            "[{}] {} {} - {}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-            record.level(),
-            record.target(),
-            record.args()
-        )
-    });
+    match format {
+        LogFormat::Json => {
+            builder.format(|buf, record| {
+                writeln!(
+                    buf,
+                    r#"{{"ts":"{}","level":"{}","target":"{}","msg":{}}}"#,
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
+                    record.level(),
+                    record.target(),
+                    serde_json::to_string(&record.args().to_string())
+                        .unwrap_or_else(|_| { format!("{:?}", record.args().to_string()) })
+                )
+            });
+        }
+        LogFormat::Plain => {
+            builder.format(|buf, record| {
+                writeln!(
+                    buf,
+                    "[{}] {} {} - {}",
+                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                    record.level(),
+                    record.target(),
+                    record.args()
+                )
+            });
+        }
+        _ => {
+            // Non-exhaustive enum from CLI crate; treat unknown as plain.
+            builder.format(|buf, record| {
+                writeln!(
+                    buf,
+                    "[{}] {} {} - {}",
+                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                    record.level(),
+                    record.target(),
+                    record.args()
+                )
+            });
+        }
+    }
 
     // Pipe the formatted bytes to the channel-backed writer instead of stderr.
     // env_logger holds the Pipe in an internal Mutex, so concurrent log calls
@@ -328,7 +362,7 @@ mod tests {
         let blocker = tempfile::NamedTempFile::new().expect("tempfile");
         let invalid_path = blocker.path().join("nested").join("log.txt");
 
-        let result = init_logger_to_file(LevelFilter::Info, &invalid_path);
+        let result = init_logger_to_file(LevelFilter::Info, LogFormat::Plain, &invalid_path);
         assert!(
             result.is_err(),
             "Should fail when parent path is not a directory"

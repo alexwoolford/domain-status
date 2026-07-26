@@ -4,6 +4,7 @@
 //! reducing function argument counts and improving maintainability.
 
 use hickory_resolver::TokioResolver;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error_handling::ProcessingStats;
@@ -39,6 +40,8 @@ pub struct RuntimeContext {
     pub run_id: Option<String>,
     /// Whether WHOIS lookup is enabled
     pub enable_whois: bool,
+    /// Directory for WHOIS/RDAP disk cache (under the shared cache root)
+    pub whois_cache_dir: PathBuf,
     /// Whether first-party external `<script src>` URLs should be fetched and
     /// scanned for secrets. Mirrors `Config::scan_external_scripts`. Off by default.
     pub scan_external_scripts: bool,
@@ -92,6 +95,7 @@ impl RuntimeContext {
         timing_stats: Arc<TimingStats>,
         run_id: Option<String>,
         enable_whois: bool,
+        whois_cache_dir: PathBuf,
         scan_external_scripts: bool,
         runtime_metrics: Arc<RuntimeMetrics>,
         allow_localhost_for_tests: bool,
@@ -101,6 +105,7 @@ impl RuntimeContext {
             timing_stats,
             run_id,
             enable_whois,
+            whois_cache_dir,
             scan_external_scripts,
             runtime_metrics,
             allow_localhost_for_tests,
@@ -187,6 +192,7 @@ mod tests {
                 timing_stats.clone(),
                 run_id.clone(),
                 enable_whois,
+                std::path::PathBuf::from("/tmp/domain_status_whois_test"),
                 false,
                 Arc::new(RuntimeMetrics::default()),
                 true,
@@ -254,6 +260,7 @@ mod tests {
                 timing_stats,
                 run_id,
                 enable_whois,
+                std::path::PathBuf::from("/tmp/domain_status_whois_test"),
                 false,
                 Arc::new(RuntimeMetrics::default()),
                 true,

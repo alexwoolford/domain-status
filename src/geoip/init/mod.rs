@@ -123,7 +123,7 @@ pub async fn init_geoip(
     cache_dir: Option<&Path>,
 ) -> Result<Option<GeoIpMetadata>> {
     let cache_path = cache_dir.map_or_else(
-        || std::path::PathBuf::from(geoip::DEFAULT_CACHE_DIR),
+        || crate::cache_paths::geoip_dir(&crate::cache_paths::resolve_cache_root(None)),
         std::path::Path::to_path_buf,
     );
 
@@ -730,8 +730,14 @@ mod tests {
         assert!(result2.is_ok());
 
         // Both should handle cache path correctly
-        // Default path is geoip::DEFAULT_CACHE_DIR (line 45)
-        assert_eq!(geoip::DEFAULT_CACHE_DIR, ".geoip_cache");
+        // Default path resolution uses the shared cache root (XDG / DOMAIN_STATUS_CACHE_DIR).
+        let default_path =
+            crate::cache_paths::geoip_dir(&crate::cache_paths::resolve_cache_root(None));
+        assert!(
+            default_path.ends_with("geoip") || default_path.to_string_lossy().contains("geoip"),
+            "default geoip cache should be under shared root: {}",
+            default_path.display()
+        );
     }
 
     #[tokio::test]
