@@ -117,7 +117,8 @@ pub struct UrlRecordInsertParams<'a> {
     pub csp_domains: &'a [(String, String, Option<String>)],
     /// Cookie security info
     pub cookies: &'a [crate::storage::CookieInfo],
-    /// Resource hints (`hint_type`, href)
+    /// Resource hints (`hint_type`, href); `hint_type` includes preconnect, dns-prefetch,
+    /// preload, prefetch, and modulepreload
     pub resource_hints: &'a [(String, String)],
     /// Body domains (fqdn, `registrable_domain`)
     pub body_domains: &'a [(String, Option<String>)],
@@ -444,7 +445,8 @@ async fn insert_cookies(
     }
 }
 
-/// Inserts resource hints into `url_resource_hints` table.
+/// Inserts resource hints into `url_resource_hints` table. `hint_type` may be
+/// preconnect, dns-prefetch, preload, prefetch, or modulepreload.
 async fn insert_resource_hints(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,

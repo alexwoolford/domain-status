@@ -132,6 +132,9 @@ pub fn extract_security_headers(headers: &reqwest::header::HeaderMap) -> HashMap
 /// - CDN/Proxy: CF-Ray, X-Served-By, Via (infrastructure analysis)
 /// - Performance: Server-Timing, X-Cache (performance monitoring)
 /// - Caching: Cache-Control, `ETag`, Last-Modified (cache analysis)
+/// - Resource discovery/negotiation: Link, Alt-Svc, Accept-CH, Critical-CH,
+///   Clear-Site-Data, Report-To, NEL (resource hints, protocol upgrades, client
+///   hints, and reporting configuration)
 ///
 /// # Arguments
 ///

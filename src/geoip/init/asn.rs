@@ -94,6 +94,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_asn_database_no_license_key() {
         // Test when no license key is set
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let result = init_asn_database(temp_dir.path()).await;
         assert!(result.is_ok());
@@ -103,11 +104,10 @@ mod tests {
     #[tokio::test]
     async fn test_init_asn_database_empty_license_key() {
         // Test with empty license key
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let result = init_asn_database(temp_dir.path()).await;
         assert!(result.is_ok());
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -126,14 +126,12 @@ mod tests {
         // Test with invalid cache file path (non-existent file)
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         // Set a license key to trigger download attempt
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
 
         // This will attempt to download, which will fail, but should handle gracefully
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok even if download fails (logs warning but continues)
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -153,12 +151,10 @@ mod tests {
             .await
             .expect("Failed to write metadata");
 
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download since cache file is missing
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -170,12 +166,10 @@ mod tests {
             .await
             .expect("Failed to write invalid metadata");
 
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should handle invalid metadata gracefully (treat as missing)
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -184,7 +178,7 @@ mod tests {
         // This is critical - ASN is optional, failures should be logged but not fatal
         // The code at line 60-65 handles download failures gracefully
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "invalid_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("invalid_key"));
 
         // Should return Ok even if download fails
         let result = init_asn_database(temp_dir.path()).await;
@@ -192,8 +186,6 @@ mod tests {
             result.is_ok(),
             "ASN download failure should not break initialization"
         );
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -228,12 +220,10 @@ mod tests {
             .expect("Failed to save metadata");
 
         // Should handle corrupted cache gracefully (fall through to download or skip)
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok even if cache load fails
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -241,7 +231,7 @@ mod tests {
         // Test that concurrent ASN initialization doesn't cause issues
         // This is critical - multiple background tasks might try to initialize
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
 
         // Spawn multiple tasks
         let handles: Vec<_> = (0..5)
@@ -256,8 +246,6 @@ mod tests {
             let result = handle.await.expect("Task panicked");
             assert!(result.is_ok());
         }
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -270,13 +258,11 @@ mod tests {
 
         // We can't easily simulate lock poisoning, but we verify the error handling
         // The code uses .map_err() which converts poisoned lock to an error
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok (download fails but handled gracefully)
         // or Ok if somehow succeeds
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -312,12 +298,10 @@ mod tests {
             .expect("Failed to write cache");
 
         // Cache should be expired (age >= TTL)
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download since cache is expired
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -352,12 +336,10 @@ mod tests {
             .expect("Failed to write cache");
 
         // Should attempt to load from cache (will fail on parse, but tests the path)
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok (cache load fails but handled gracefully)
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -384,12 +366,10 @@ mod tests {
         // Note: Creating a non-UTF-8 path is platform-specific and difficult in tests
         // But we verify the code path exists and handles to_str() returning None
         // The code at line 70 checks to_str() and line 78-79 logs warning if None
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should handle gracefully (cache file doesn't exist, so won't hit UTF-8 check)
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -415,12 +395,10 @@ mod tests {
             .expect("Failed to save metadata");
 
         // When elapsed() fails, should_download should be true (line 36)
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download when elapsed() fails
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 
     #[tokio::test]
@@ -448,11 +426,9 @@ mod tests {
         // Cache file doesn't exist, so !cache_file.exists() is true
         // Should trigger download (line 34: age.as_secs() >= TTL || !cache_file.exists())
         assert!(!cache_file.exists());
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download since cache file is missing
         assert!(result.is_ok());
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 }

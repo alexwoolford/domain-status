@@ -48,6 +48,16 @@ Subdirectories:
 
 `--scan-external-scripts` fetches first-party `<script src>` URLs only (same eTLD+1; CDN denylist). Off by default; expands latency and fetch surface.
 
+## TLS certificate capture
+
+The certificate side-channel connection resolves **all** public IP addresses for the
+domain (IPv4 before IPv6) and tries a TCP connect to each on `:443` in order until
+one succeeds, rather than only the first resolved address. This matters for
+dual-stack (A + AAAA) hosts where IPv6 egress is broken or unreachable from the
+scanning host — without the fallback, every such domain would fail certificate
+capture even though its IPv4 address is perfectly reachable. Only addresses that
+pass the SSRF `is_public_ip` check are attempted.
+
 ## Tuning notes
 
 - `--timeout-seconds` is per HTTP request; overall per-URL processing budget is a separate hardcoded cap (~35s).

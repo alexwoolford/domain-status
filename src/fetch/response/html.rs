@@ -229,9 +229,11 @@ pub(crate) fn parse_html_content(
         });
     debug!("Extracted meta refresh URL for {final_domain}: {meta_refresh_url:?}");
 
-    // Extract resource hints (preconnect, dns-prefetch)
+    // Extract resource hints: cross-origin hints (preconnect, dns-prefetch) are
+    // normalized to a bare hostname, while resource-fetch hints (preload, prefetch,
+    // modulepreload) usually point at same-origin paths, so their href is kept as-is.
     let hint_selector = crate::utils::parse_selector_with_fallback(
-        r#"link[rel="preconnect"], link[rel="dns-prefetch"]"#,
+        r#"link[rel="preconnect"], link[rel="dns-prefetch"], link[rel="preload"], link[rel="prefetch"], link[rel="modulepreload"]"#,
         "resource hint extraction",
     );
     let resource_hints: Vec<(String, String)> = document
@@ -239,23 +241,30 @@ pub(crate) fn parse_html_content(
         .filter_map(|el| {
             let rel = el.value().attr("rel")?;
             let href = el.value().attr("href").filter(|h| !h.is_empty())?;
-            // Extract hostname from href (handles https://host, //host, and bare host)
-            let hostname = if href.starts_with("//") {
-                url::Url::parse(&format!("https:{href}"))
-                    .ok()
-                    .and_then(|u| u.host_str().map(str::to_lowercase))
-            } else if href.starts_with("http://") || href.starts_with("https://") {
-                url::Url::parse(href)
-                    .ok()
-                    .and_then(|u| u.host_str().map(str::to_lowercase))
+            let value = if matches!(rel, "preconnect" | "dns-prefetch") {
+                // Extract hostname from href (handles https://host, //host, and bare host)
+                let hostname = if href.starts_with("//") {
+                    url::Url::parse(&format!("https:{href}"))
+                        .ok()
+                        .and_then(|u| u.host_str().map(str::to_lowercase))
+                } else if href.starts_with("http://") || href.starts_with("https://") {
+                    url::Url::parse(href)
+                        .ok()
+                        .and_then(|u| u.host_str().map(str::to_lowercase))
+                } else {
+                    // Bare hostname like "fonts.googleapis.com"
+                    Some(href.trim_end_matches('/').to_lowercase())
+                }?;
+                if hostname.is_empty() || !hostname.contains('.') {
+                    return None;
+                }
+                hostname
             } else {
-                // Bare hostname like "fonts.googleapis.com"
-                Some(href.trim_end_matches('/').to_lowercase())
-            }?;
-            if hostname.is_empty() || !hostname.contains('.') {
-                return None;
-            }
-            Some((rel.to_string(), hostname))
+                // preload/prefetch/modulepreload: keep the resource href as-is
+                // (typically a same-origin path, not a hostname).
+                href.to_string()
+            };
+            Some((rel.to_string(), value))
         })
         .collect();
     debug!(
@@ -406,6 +415,42 @@ mod tests {
             result.meta_tags.get("http-equiv:refresh"),
             Some(&vec!["30".to_string()])
         );
+    }
+
+    #[test]
+    fn test_parse_html_content_resource_hints() {
+        let html = r#"
+            <html>
+                <head>
+                    <link rel="preconnect" href="https://fonts.googleapis.com">
+                    <link rel="dns-prefetch" href="//cdn.example.com">
+                    <link rel="preload" href="/assets/app.css" as="style">
+                    <link rel="prefetch" href="/next-page.html">
+                    <link rel="modulepreload" href="/js/module.mjs">
+                </head>
+                <body></body>
+            </html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+
+        assert!(result
+            .resource_hints
+            .contains(&("preconnect".to_string(), "fonts.googleapis.com".to_string())));
+        assert!(result
+            .resource_hints
+            .contains(&("dns-prefetch".to_string(), "cdn.example.com".to_string())));
+        // preload/prefetch/modulepreload keep the href as-is (same-origin paths, not hostnames)
+        assert!(result
+            .resource_hints
+            .contains(&("preload".to_string(), "/assets/app.css".to_string())));
+        assert!(result
+            .resource_hints
+            .contains(&("prefetch".to_string(), "/next-page.html".to_string())));
+        assert!(result
+            .resource_hints
+            .contains(&("modulepreload".to_string(), "/js/module.mjs".to_string())));
+        assert_eq!(result.resource_hints.len(), 5);
     }
 
     #[test]

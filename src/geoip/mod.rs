@@ -39,3 +39,48 @@ pub(crate) static GEOIP_CITY_READER: LazyLock<GeoIpReaderCache> =
 /// ASN data requires a separate database (GeoLite2-ASN)
 pub(crate) static GEOIP_ASN_READER: LazyLock<GeoIpReaderCache> =
     LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+/// Test helpers for serializing `MAXMIND_LICENSE_KEY` env mutations across parallel tests.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::MAXMIND_LICENSE_KEY_ENV;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Holds the license-key env lock; restores the previous value on drop.
+    pub struct LicenseKeyEnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous: Option<String>,
+    }
+
+    impl LicenseKeyEnvGuard {
+        /// Acquire the lock and set `MAXMIND_LICENSE_KEY` (`None` clears it).
+        pub fn apply(value: Option<&str>) -> Self {
+            let lock = env_lock();
+            let previous = std::env::var(MAXMIND_LICENSE_KEY_ENV).ok();
+            match value {
+                Some(v) => std::env::set_var(MAXMIND_LICENSE_KEY_ENV, v),
+                None => std::env::remove_var(MAXMIND_LICENSE_KEY_ENV),
+            }
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for LicenseKeyEnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(v) => std::env::set_var(MAXMIND_LICENSE_KEY_ENV, v),
+                None => std::env::remove_var(MAXMIND_LICENSE_KEY_ENV),
+            }
+        }
+    }
+}
