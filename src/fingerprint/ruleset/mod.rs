@@ -148,32 +148,6 @@ pub(crate) async fn get_ruleset() -> Option<Arc<FingerprintRuleset>> {
     guard.as_ref().cloned()
 }
 
-/// True when only the offline bundled-minimal ruleset is loaded.
-#[cfg(test)]
-pub(crate) fn is_bundled_minimal(ruleset: &FingerprintRuleset) -> bool {
-    ruleset.metadata.version == "bundled-minimal" || ruleset.metadata.source.contains("vendored:")
-}
-
-/// Initialize default ruleset for Wappalyzer-parity unit tests.
-///
-/// Returns `None` when remote fetch failed and only the bundled-minimal
-/// fallback is available (those tests need the full technology corpus).
-#[cfg(test)]
-pub(crate) async fn init_full_ruleset_for_tests() -> Option<Arc<FingerprintRuleset>> {
-    if init_ruleset(None, None).await.is_err() {
-        eprintln!("Skipping test: ruleset initialization failed (likely no network access)");
-        return None;
-    }
-    let ruleset = get_ruleset().await?;
-    if is_bundled_minimal(ruleset.as_ref()) {
-        eprintln!(
-            "Skipping test: only bundled-minimal fingerprints available (need full Wappalyzer corpus)"
-        );
-        return None;
-    }
-    Some(ruleset)
-}
-
 /// Fetches ruleset from multiple sources and merges them (matching Go implementation)
 #[allow(clippy::too_many_lines)] // Tries multiple source types (URL, file, GitHub dir/commit) with fallback logic
 #[allow(clippy::cognitive_complexity)] // Each source type has distinct fetch/parse/merge logic

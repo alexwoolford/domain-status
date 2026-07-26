@@ -286,78 +286,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_cache_dir_creation() {
-        // Test that cache directory is used when provided
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_dir = temp_dir.path().join("geoip_cache");
-
-        // Should not panic even if cache dir doesn't exist yet
-        let result = init_geoip(None, Some(&cache_dir)).await;
-        // May succeed or fail depending on license key, but should handle cache dir gracefully
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_license_key_url_encoding() {
-        // Test that license keys with special characters are properly URL-encoded
-        // This is critical - special characters in license keys could break download URLs
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Test with various special characters that need encoding
-        let special_keys = vec![
-            "key+with+plus",
-            "key with spaces",
-            "key&with&ampersand",
-            "key=with=equals",
-            "key#with#hash",
-            "key%with%percent",
-        ];
-
-        for key in special_keys {
-            std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, key);
-            let result = init_geoip(None, Some(temp_dir.path())).await;
-            // Should handle encoding gracefully (may fail on download, but shouldn't panic)
-            // The important thing is that URL encoding doesn't break
-            let _ = result;
-        }
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_cache_expired_elapsed_failure() {
-        // Test that SystemTime::elapsed() failures are handled correctly
-        // This is critical - if system time goes backwards, elapsed() can fail
-        // The code at line 61 handles this by defaulting to should_download = true
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("metadata.json");
-
-        // Create metadata with future timestamp (simulates clock skew)
-        // When elapsed() is called on a future time, it returns Err
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-
-        let future_time = SystemTime::now() + Duration::from_secs(86400 * 365); // 1 year in future
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: future_time,
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // When elapsed() fails (future time), should default to downloading
-        // This is tested implicitly - the code at line 61-64 handles elapsed() failure
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
-        let result = init_geoip(None, Some(temp_dir.path())).await;
-        // Should attempt download when elapsed() fails (future timestamp)
-        let _ = result;
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
-    }
-
-    #[tokio::test]
     async fn test_init_geoip_different_source_reloads() {
         // Test that different source paths trigger reload
         // This is critical - if source changes, database should be reloaded
@@ -402,21 +330,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_cache_file_path_utf8_validation() {
-        // Test that cache file paths with invalid UTF-8 are handled gracefully
-        // This is critical - non-UTF-8 paths on some systems could cause issues
-        // The code at line 65 checks to_str() and logs a warning if invalid
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Create a cache directory structure that might have UTF-8 issues
-        // In practice, this is hard to test without platform-specific paths
-        // But we verify the code path exists and handles it
-        let result = init_geoip(None, Some(temp_dir.path())).await;
-        // Should handle gracefully (may fail on missing license, but not on path issues)
-        let _ = result;
-    }
-
-    #[tokio::test]
     async fn test_init_geoip_background_asn_failure_doesnt_affect_main() {
         // Test that background ASN initialization failure doesn't affect main init
         // This is critical - ASN is optional, failures should be logged but not fatal
@@ -430,91 +343,6 @@ mod tests {
         // Main init should fail (file doesn't exist), but ASN failure shouldn't affect it
         assert!(result.is_err());
         // The important thing is that background task failure doesn't cause panic
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_cache_ttl_boundary_exact() {
-        // Test cache TTL boundary condition (exactly at TTL)
-        // This is critical - cache should expire at exactly TTL seconds
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("metadata.json");
-
-        // Create metadata with timestamp exactly at TTL boundary
-        let ttl_ago = SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: ttl_ago,
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Create minimal cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Cache should be considered expired (age >= TTL)
-        // This is tested implicitly - the code at line 62 checks age.as_secs() < TTL
-        // At exactly TTL, it should be >= TTL, so cache is expired
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
-        let result = init_geoip(None, Some(temp_dir.path())).await;
-        // Should attempt download since cache is expired
-        let _ = result;
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_cache_ttl_boundary_one_second_before() {
-        // Test cache TTL boundary condition (one second before TTL)
-        // This is critical - cache should be fresh if age < TTL
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("metadata.json");
-
-        // Create metadata with timestamp one second before TTL
-        let one_second_before_ttl =
-            SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS - 1);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: one_second_before_ttl,
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Create minimal cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Cache should be considered fresh (age < TTL)
-        // The code at line 62 checks age.as_secs() < TTL
-        // One second before TTL means age < TTL, so cache is fresh
-        // But it will fail on parse, so we just verify the check works
-        let result = init_geoip(None, Some(temp_dir.path())).await;
-        // May fail on parse, but cache freshness check should work
-        let _ = result;
     }
 
     #[tokio::test]
@@ -799,63 +627,5 @@ mod tests {
         assert!(result2.is_err()); // Still fails because not actually loaded
 
         // The important thing is that the code path exists and would work if database was loaded
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_license_key_url_encoding_special_chars() {
-        // Test that license key URL encoding handles special characters (lines 75-76)
-        // This is critical - special characters in license keys could break download URLs
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Test with various special characters that need encoding
-        let special_keys = vec![
-            "key+with+plus",
-            "key with spaces",
-            "key&with&ampersand",
-            "key=with=equals",
-        ];
-
-        for key in special_keys {
-            std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, key);
-            let result = init_geoip(None, Some(temp_dir.path())).await;
-            // Should handle encoding gracefully (may fail on download, but encoding works)
-            // The code at line 75-76 uses form_urlencoded::byte_serialize
-            let _ = result;
-        }
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_cache_ttl_check_cache_file_exists() {
-        // Test that cache file existence is checked (line 62)
-        // This is critical - missing cache file should trigger download even if metadata exists
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("metadata.json");
-
-        // Create fresh metadata but no cache file
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Cache file doesn't exist, so !cache_file.exists() is true
-        // Should trigger download (line 62: age.as_secs() >= TTL || !cache_file.exists())
-        assert!(!cache_file.exists());
-        std::env::set_var(geoip::MAXMIND_LICENSE_KEY_ENV, "test_key");
-        let result = init_geoip(None, Some(temp_dir.path())).await;
-        // Should attempt download since cache file is missing
-        let _ = result;
-
-        std::env::remove_var(geoip::MAXMIND_LICENSE_KEY_ENV);
     }
 }

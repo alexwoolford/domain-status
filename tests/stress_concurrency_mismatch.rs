@@ -1,11 +1,7 @@
+//! Stress demo (not a contract test): narrative/`println!` only, zero asserts.
+//! Skipped by CI and `just test-e2e` (`--skip stress_`).
+//!
 //! Stress test demonstrating database pool exhaustion under high concurrency.
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::too_many_lines,
-    clippy::manual_flatten
-)]
 //!
 //! **VULNERABILITY FOUND**: Connection pool size (30) much smaller than max concurrency (500).
 //!
@@ -41,6 +37,13 @@
 //! - Or document the limitation: "Max effective concurrency: 30"
 //! - Or implement write batching/queue to decouple workers from connections
 //! - Or increase pool size to 100+ for high-concurrency workloads
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines,
+    clippy::manual_flatten
+)]
 
 use domain_status::{
     init_db_pool_with_path, insert_url_record, run_migrations, UrlRecord, UrlRecordInsertParams,

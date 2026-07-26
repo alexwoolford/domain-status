@@ -1,10 +1,7 @@
+//! Stress demo (not a contract test): narrative/`println!` only, zero asserts.
+//! Skipped by CI and `just test-e2e` (`--skip stress_`).
+//!
 //! Stress test demonstrating database unbounded growth vulnerability.
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::too_many_lines
-)]
 //!
 //! **VULNERABILITY FOUND**: No retention policy or cleanup mechanism for old data.
 //!
@@ -40,6 +37,12 @@
 //! - Add WAL checkpoint policy (PRAGMA `wal_autocheckpoint`)
 //! - Support data export/archival for historical analysis
 //! - Document disk space requirements in production guide
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines
+)]
 
 use domain_status::{
     init_db_pool_with_path, insert_url_record, run_migrations, UrlRecord, UrlRecordInsertParams,

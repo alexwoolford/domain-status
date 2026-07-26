@@ -1051,6 +1051,404 @@ mod tests {
         );
     }
 
+    /// Every table hanging off `url_status.id` that `insert_url_record` cleans before
+    /// re-inserting on UPSERT (mirrors the `SATELLITE_TABLES` list in
+    /// `insert_url_record_impl`, including the enrichment tables populated outside this
+    /// transaction but still cleaned here).
+    const ALL_SATELLITE_TABLES: &[&str] = &[
+        "url_technologies",
+        "url_nameservers",
+        "url_txt_records",
+        "url_mx_records",
+        "url_security_headers",
+        "url_http_headers",
+        "url_certificate_oids",
+        "url_redirect_chain",
+        "url_certificate_sans",
+        "url_cname_records",
+        "url_ipv6_addresses",
+        "url_caa_records",
+        "url_csp_domains",
+        "url_cookies",
+        "url_resource_hints",
+        "url_body_domains",
+        "url_analytics_ids",
+        "url_structured_data",
+        "url_social_media_links",
+        "url_security_warnings",
+        "url_contact_links",
+        "url_exposed_secrets",
+        "url_partial_failures",
+        "url_favicons",
+        "url_geoip",
+        "url_whois",
+    ];
+
+    /// DNS/header/cert satellites: `url_technologies`, `url_nameservers`, `url_txt_records`,
+    /// `url_mx_records`, `url_security_headers`, `url_http_headers`, `url_certificate_oids`.
+    async fn seed_dns_and_header_satellite_tables(pool: &SqlitePool, url_status_id: i64) {
+        sqlx::query("INSERT INTO url_technologies (url_status_id, technology_name) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("SeedTech")
+            .execute(pool)
+            .await
+            .expect("seed url_technologies");
+
+        sqlx::query("INSERT INTO url_nameservers (url_status_id, nameserver) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("ns1.seed.example")
+            .execute(pool)
+            .await
+            .expect("seed url_nameservers");
+
+        sqlx::query(
+            "INSERT INTO url_txt_records (url_status_id, record_type, record_value) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("SPF")
+        .bind("v=spf1 -all")
+        .execute(pool)
+        .await
+        .expect("seed url_txt_records");
+
+        sqlx::query(
+            "INSERT INTO url_mx_records (url_status_id, priority, mail_exchange) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind(10i64)
+        .bind("mail.seed.example")
+        .execute(pool)
+        .await
+        .expect("seed url_mx_records");
+
+        sqlx::query(
+            "INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("X-Seed-Security")
+        .bind("seed-value")
+        .execute(pool)
+        .await
+        .expect("seed url_security_headers");
+
+        sqlx::query(
+            "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("X-Seed-Header")
+        .bind("seed-value")
+        .execute(pool)
+        .await
+        .expect("seed url_http_headers");
+
+        sqlx::query("INSERT INTO url_certificate_oids (url_status_id, oid) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("1.2.3.4.5")
+            .execute(pool)
+            .await
+            .expect("seed url_certificate_oids");
+    }
+
+    /// Cert/redirect/DNS-record satellites: `url_redirect_chain`, `url_certificate_sans`,
+    /// `url_cname_records`, `url_ipv6_addresses`, `url_caa_records`, `url_csp_domains`,
+    /// `url_cookies`.
+    async fn seed_redirect_and_record_satellite_tables(pool: &SqlitePool, url_status_id: i64) {
+        sqlx::query(
+            "INSERT INTO url_redirect_chain (url_status_id, sequence_order, redirect_url) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind(1i64)
+        .bind("https://seed.example/hop")
+        .execute(pool)
+        .await
+        .expect("seed url_redirect_chain");
+
+        sqlx::query("INSERT INTO url_certificate_sans (url_status_id, san_value) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("seed.example")
+            .execute(pool)
+            .await
+            .expect("seed url_certificate_sans");
+
+        sqlx::query("INSERT INTO url_cname_records (url_status_id, cname_target) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("cdn.seed.example")
+            .execute(pool)
+            .await
+            .expect("seed url_cname_records");
+
+        sqlx::query("INSERT INTO url_ipv6_addresses (url_status_id, ipv6_address) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("::1")
+            .execute(pool)
+            .await
+            .expect("seed url_ipv6_addresses");
+
+        sqlx::query(
+            "INSERT INTO url_caa_records (url_status_id, flag, tag, value) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind(0i64)
+        .bind("issue")
+        .bind("seed-ca.example")
+        .execute(pool)
+        .await
+        .expect("seed url_caa_records");
+
+        sqlx::query(
+            "INSERT INTO url_csp_domains (url_status_id, directive, fqdn, registrable_domain) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("script-src")
+        .bind("cdn.seed.example")
+        .bind("seed.example")
+        .execute(pool)
+        .await
+        .expect("seed url_csp_domains");
+
+        sqlx::query(
+            "INSERT INTO url_cookies (url_status_id, cookie_name, secure, http_only, same_site, domain, path) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("seed_session")
+        .bind(true)
+        .bind(true)
+        .bind("Strict")
+        .bind("seed.example")
+        .bind("/")
+        .execute(pool)
+        .await
+        .expect("seed url_cookies");
+    }
+
+    /// Body-content satellites: `url_resource_hints`, `url_body_domains`, `url_analytics_ids`,
+    /// `url_structured_data`, `url_social_media_links`, `url_security_warnings`,
+    /// `url_contact_links`.
+    async fn seed_body_content_satellite_tables(pool: &SqlitePool, url_status_id: i64) {
+        sqlx::query(
+            "INSERT INTO url_resource_hints (url_status_id, hint_type, href) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("preconnect")
+        .bind("https://cdn.seed.example")
+        .execute(pool)
+        .await
+        .expect("seed url_resource_hints");
+
+        sqlx::query(
+            "INSERT INTO url_body_domains (url_status_id, fqdn, registrable_domain) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("linked.seed.example")
+        .bind("seed.example")
+        .execute(pool)
+        .await
+        .expect("seed url_body_domains");
+
+        sqlx::query(
+            "INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("Seed Analytics")
+        .bind("SEED-1")
+        .execute(pool)
+        .await
+        .expect("seed url_analytics_ids");
+
+        sqlx::query(
+            "INSERT INTO url_structured_data (url_status_id, data_type, property_name, property_value) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("open_graph")
+        .bind("og:title")
+        .bind("Seed Title")
+        .execute(pool)
+        .await
+        .expect("seed url_structured_data");
+
+        sqlx::query(
+            "INSERT INTO url_social_media_links (url_status_id, platform, profile_url, identifier) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("Seed Platform")
+        .bind("https://seed.example/profile")
+        .bind("seeduser")
+        .execute(pool)
+        .await
+        .expect("seed url_social_media_links");
+
+        sqlx::query(
+            "INSERT INTO url_security_warnings (url_status_id, warning_code, warning_description) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("seed_warning")
+        .bind("Seed warning description")
+        .execute(pool)
+        .await
+        .expect("seed url_security_warnings");
+
+        sqlx::query(
+            "INSERT INTO url_contact_links (url_status_id, contact_type, contact_value, raw_href) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("email")
+        .bind("seed@example.com")
+        .bind("mailto:seed@example.com")
+        .execute(pool)
+        .await
+        .expect("seed url_contact_links");
+    }
+
+    /// Enrichment satellites populated outside the main insert transaction:
+    /// `url_exposed_secrets`, `url_partial_failures`, `url_favicons`, `url_geoip`, `url_whois`.
+    async fn seed_enrichment_satellite_tables(pool: &SqlitePool, url_status_id: i64) {
+        sqlx::query(
+            "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("seed_secret")
+        .bind("seed-matched-value")
+        .bind("low")
+        .bind("inline_script")
+        .bind("...seed context...")
+        .execute(pool)
+        .await
+        .expect("seed url_exposed_secrets");
+
+        sqlx::query(
+            "INSERT INTO url_partial_failures (url_status_id, error_type, error_message, observed_at_ms) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("seed_error")
+        .bind("seed error message")
+        .bind(1_704_067_200_000i64)
+        .execute(pool)
+        .await
+        .expect("seed url_partial_failures");
+
+        sqlx::query(
+            "INSERT INTO url_favicons (url_status_id, favicon_url, hash, base64_data) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("https://seed.example/favicon.ico")
+        .bind(12345i64)
+        .bind("c2VlZA==")
+        .execute(pool)
+        .await
+        .expect("seed url_favicons");
+
+        sqlx::query("INSERT INTO url_geoip (url_status_id, country_code) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("US")
+            .execute(pool)
+            .await
+            .expect("seed url_geoip");
+
+        sqlx::query("INSERT INTO url_whois (url_status_id, registrar) VALUES (?, ?)")
+            .bind(url_status_id)
+            .bind("Seed Registrar")
+            .execute(pool)
+            .await
+            .expect("seed url_whois");
+    }
+
+    /// Inserts one minimal, schema-valid row into every table in `ALL_SATELLITE_TABLES`
+    /// for the given `url_status_id`, using the columns required by each table's schema
+    /// (see `migrations/`).
+    async fn seed_one_row_per_satellite_table(pool: &SqlitePool, url_status_id: i64) {
+        seed_dns_and_header_satellite_tables(pool, url_status_id).await;
+        seed_redirect_and_record_satellite_tables(pool, url_status_id).await;
+        seed_body_content_satellite_tables(pool, url_status_id).await;
+        seed_enrichment_satellite_tables(pool, url_status_id).await;
+    }
+
+    /// Adversarial: UPSERT must clear stale rows from *every* satellite/enrichment table
+    /// that hangs off `url_status.id`, not just the ones this transaction re-inserts.
+    /// Without cleanup, a rescan with (e.g.) no more exposed secrets or `GeoIP` data would
+    /// leave a stale "detection" from a previous scan visible forever.
+    #[tokio::test]
+    async fn test_upsert_clears_all_satellite_tables() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
+        // Use the bare default (not `create_test_url_record()`, whose nameservers/txt/mx
+        // JSON fields would themselves insert satellite rows) so the "first insert
+        // produces zero satellite rows" assumption below holds.
+        let mut record = UrlRecord::test_default();
+        record.run_id = Some("test-run-1".to_string());
+
+        let id1 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &HashMap::new(),
+            http_headers: &HashMap::new(),
+            oids: &HashSet::new(),
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+        })
+        .await
+        .expect("first insert");
+
+        seed_one_row_per_satellite_table(&pool, id1).await;
+
+        for table in ALL_SATELLITE_TABLES {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
+            ))
+            .bind(id1)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("failed to count seeded rows in {table}: {e}"));
+            assert_eq!(
+                count, 1,
+                "seed setup should have inserted exactly 1 row into {table}"
+            );
+        }
+
+        // Second UPSERT with the same (run_id, final_domain) and empty satellites/tech.
+        let id2 = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &HashMap::new(),
+            http_headers: &HashMap::new(),
+            oids: &HashSet::new(),
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+        })
+        .await
+        .expect("upsert");
+        assert_eq!(id1, id2, "UPSERT must reuse the same url_status id");
+
+        for table in ALL_SATELLITE_TABLES {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
+            ))
+            .bind(id2)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("failed to count post-upsert rows in {table}: {e}"));
+            assert_eq!(
+                count, 0,
+                "UPSERT with empty satellites must clear stale rows from {table}, found {count}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_insert_url_record_nullable_fields() {
         let pool = create_test_pool().await;

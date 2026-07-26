@@ -52,6 +52,7 @@ fn build_schema() -> Schema {
         Field::new("body_line_count", DataType::Int64, true),
         Field::new("content_type", DataType::Utf8, true),
         Field::new("canonical_url", DataType::Utf8, true),
+        Field::new("body_truncated", DataType::Boolean, false),
         // Redirects
         Field::new("redirect_count", DataType::Int32, false),
         Field::new("final_redirect_url", DataType::Utf8, false),
@@ -437,6 +438,7 @@ fn write_batch(
     let mut body_line_count_b = Int64Builder::new();
     let mut content_type_b = StringBuilder::new();
     let mut canonical_url_b = StringBuilder::new();
+    let mut body_truncated_b = BooleanBuilder::new();
     let mut redirect_count_b = Int32Builder::new();
     let mut final_redirect_url_b = StringBuilder::new();
     let mut technology_count_b = Int32Builder::new();
@@ -621,6 +623,7 @@ fn write_batch(
         append_opt_i64(&mut body_line_count_b, row.main.body_line_count);
         append_opt_str(&mut content_type_b, row.main.content_type.as_ref());
         append_opt_str(&mut canonical_url_b, row.main.canonical_url.as_ref());
+        body_truncated_b.append_value(row.main.body_truncated);
 
         // redirect_count is a small Vec length (bounded by HTTP redirect limit), fits in i32
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
@@ -1042,6 +1045,7 @@ fn write_batch(
         Arc::new(body_line_count_b.finish()),
         Arc::new(content_type_b.finish()),
         Arc::new(canonical_url_b.finish()),
+        Arc::new(body_truncated_b.finish()),
         Arc::new(redirect_count_b.finish()),
         Arc::new(final_redirect_url_b.finish()),
         Arc::new(redirect_chain_b.finish()),
@@ -1423,8 +1427,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(
             batch.num_columns(),
-            68,
-            "Should have 68 columns matching schema"
+            69,
+            "Should have 69 columns matching schema (68 + body_truncated)"
         );
 
         // Verify the 'url' column
@@ -1446,6 +1450,19 @@ mod tests {
         assert!(
             tls_arr.is_null(0),
             "tls_version should be null for our test data"
+        );
+
+        // body_truncated defaults to 0/false for rows inserted without it set.
+        let body_truncated_col = batch
+            .column_by_name("body_truncated")
+            .expect("Should have body_truncated column");
+        let body_truncated_arr = body_truncated_col
+            .as_any()
+            .downcast_ref::<arrow::array::BooleanArray>()
+            .expect("body_truncated should be BooleanArray");
+        assert!(
+            !body_truncated_arr.value(0),
+            "body_truncated should default to false"
         );
     }
 

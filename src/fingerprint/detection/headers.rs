@@ -60,21 +60,51 @@ pub(crate) fn check_headers_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::init_full_ruleset_for_tests;
+    use crate::fingerprint::models::{FingerprintMetadata, Technology};
 
-    /// Test header detection matching wappalyzergo's `TestHeadersDetect`
-    #[tokio::test]
-    async fn test_headers_detect() {
-        // Initialize ruleset (uses wappalyzergo format for exact parity)
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    fn empty_tech() -> Technology {
+        Technology {
+            cats: vec![],
+            website: String::new(),
+            headers: HashMap::new(),
+            cookies: HashMap::new(),
+            meta: HashMap::new(),
+            script: vec![],
+            html: vec![],
+            url: vec![],
+            js: HashMap::new(),
+            implies: vec![],
+            excludes: vec![],
+        }
+    }
 
-        // Test Vercel detection via Server header
+    fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {
+        FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        }
+    }
+
+    /// Header keys must be lowercase in fixtures: the ruleset normalizes header
+    /// names to lowercase on load, and `check_headers_with_ruleset` does an
+    /// exact-key `get()` against the already-lowercased request headers.
+    #[test]
+    fn test_headers_detect_vercel_via_server_header() {
+        let mut tech = empty_tech();
+        tech.headers.insert("server".to_string(), "now".to_string());
+        let mut technologies = HashMap::new();
+        technologies.insert("Vercel".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
+
         let mut headers = HashMap::new();
         headers.insert("server".to_string(), "now".to_string());
 
-        let results = check_headers_with_ruleset(ruleset.as_ref(), &headers);
+        let results = check_headers_with_ruleset(&ruleset, &headers);
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
             tech_names.contains(&"Vercel".to_string()),
@@ -82,17 +112,22 @@ mod tests {
         );
     }
 
-    /// Test Apache detection with version (matching wappalyzergo's `Test_All_Match_Paths`)
-    #[tokio::test]
-    async fn test_headers_apache_with_version() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// Apache detection with version extraction from the `Server` header.
+    #[test]
+    fn test_headers_apache_with_version() {
+        let mut tech = empty_tech();
+        tech.headers.insert(
+            "server".to_string(),
+            r"Apache(?:/([\d.]+))?\;version:\1".to_string(),
+        );
+        let mut technologies = HashMap::new();
+        technologies.insert("Apache HTTP Server".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
         let mut headers = HashMap::new();
         headers.insert("server".to_string(), "Apache/2.4.29".to_string());
 
-        let results = check_headers_with_ruleset(ruleset.as_ref(), &headers);
+        let results = check_headers_with_ruleset(&ruleset, &headers);
         let tech_names: Vec<String> = results
             .iter()
             .map(|r| {
@@ -106,25 +141,28 @@ mod tests {
 
         assert!(
             tech_names.contains(&"Apache HTTP Server:2.4.29".to_string()),
-            "Could not match Apache with version"
+            "Could not match Apache with version, got: {tech_names:?}"
         );
     }
 
-    /// Test empty pattern (header exists, value doesn't matter)
-    #[tokio::test]
-    async fn test_headers_empty_pattern() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// Empty pattern (header exists, value doesn't matter): HSTS via
+    /// `strict-transport-security`.
+    #[test]
+    fn test_headers_empty_pattern_hsts() {
+        let mut tech = empty_tech();
+        tech.headers
+            .insert("strict-transport-security".to_string(), String::new());
+        let mut technologies = HashMap::new();
+        technologies.insert("HSTS".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
-        // Test HSTS detection (strict-transport-security header with empty pattern)
         let mut headers = HashMap::new();
         headers.insert(
             "strict-transport-security".to_string(),
             "max-age=31536000".to_string(),
         );
 
-        let results = check_headers_with_ruleset(ruleset.as_ref(), &headers);
+        let results = check_headers_with_ruleset(&ruleset, &headers);
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
             tech_names.contains(&"HSTS".to_string()),
