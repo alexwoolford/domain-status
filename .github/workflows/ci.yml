@@ -153,7 +153,8 @@ jobs:
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
           github.event_name != 'schedule' &&
           steps.check_coverage.outputs.exists == 'true'
-        uses: codecov/codecov-action@v5
+        # v6+ uses Node 24 (clears github-script@v7 / Node 20 deprecation warnings)
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: alexwoolford/domain_status
@@ -200,7 +201,8 @@ jobs:
       - name: Scan for secrets
         # Skip secret scanning on scheduled runs (only needed for code changes)
         if: github.event_name != 'schedule'
-        uses: gitleaks/gitleaks-action@v2
+        # v3 is a Node 20→24 runtime bump only (no input/behavior changes)
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Note: gitleaks-action doesn't support 'with' inputs
