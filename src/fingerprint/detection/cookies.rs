@@ -113,21 +113,49 @@ pub(crate) fn check_cookies_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::init_full_ruleset_for_tests;
+    use crate::fingerprint::models::{FingerprintMetadata, Technology};
 
-    /// Test cookie detection matching wappalyzergo's `TestCookiesDetect`
-    #[tokio::test]
-    async fn test_cookies_detect() {
-        // Initialize ruleset (uses wappalyzergo format for exact parity)
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    fn empty_tech() -> Technology {
+        Technology {
+            cats: vec![],
+            website: String::new(),
+            headers: HashMap::new(),
+            cookies: HashMap::new(),
+            meta: HashMap::new(),
+            script: vec![],
+            html: vec![],
+            url: vec![],
+            js: HashMap::new(),
+            implies: vec![],
+            excludes: vec![],
+        }
+    }
 
-        // Test Microsoft Advertising detection via _uetsid cookie
+    fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {
+        FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        }
+    }
+
+    /// Empty cookie pattern means "cookie present" — Microsoft Advertising via `_uetsid`.
+    #[test]
+    fn test_cookies_microsoft_advertising_via_uetsid() {
+        let mut tech = empty_tech();
+        tech.cookies.insert("_uetsid".to_string(), String::new());
+        let mut technologies = HashMap::new();
+        technologies.insert("Microsoft Advertising".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
+
         let mut cookies = HashMap::new();
         cookies.insert("_uetsid".to_string(), "ABCDEF".to_string());
 
-        let results = check_cookies_with_ruleset(ruleset.as_ref(), &cookies);
+        let results = check_cookies_with_ruleset(&ruleset, &cookies);
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
             tech_names.contains(&"Microsoft Advertising".to_string()),
@@ -135,55 +163,37 @@ mod tests {
         );
     }
 
-    /// Test cookie position handling (matching wappalyzergo's position test)
-    #[tokio::test]
-    async fn test_cookies_position() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// Java (via `jsessionid`) and Laravel (via `laravel_session`) both detected
+    /// when both cookies are present.
+    #[test]
+    fn test_cookies_java_and_laravel_both_present() {
+        let mut java = empty_tech();
+        java.cookies.insert("jsessionid".to_string(), String::new());
+        let mut laravel = empty_tech();
+        laravel
+            .cookies
+            .insert("laravel_session".to_string(), String::new());
 
-        // Test Java detection via jsessionid cookie
-        let mut cookies1 = HashMap::new();
-        cookies1.insert("jsessionid".to_string(), "111".to_string());
+        let mut technologies = HashMap::new();
+        technologies.insert("Java".to_string(), java);
+        technologies.insert("Laravel".to_string(), laravel);
+        let ruleset = ruleset_with(technologies);
 
-        let results1 = check_cookies_with_ruleset(ruleset.as_ref(), &cookies1);
-        let tech_names1: Vec<String> = results1.iter().map(|r| r.tech_name.clone()).collect();
-        eprintln!("Detected technologies from jsessionid: {:?}", tech_names1);
+        let mut cookies = HashMap::new();
+        cookies.insert("jsessionid".to_string(), "111".to_string());
+        cookies.insert("XSRF-TOKEN".to_string(), "test".to_string());
+        cookies.insert("laravel_session".to_string(), "eyJ*".to_string());
+
+        let results = check_cookies_with_ruleset(&ruleset, &cookies);
+        let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
-            tech_names1.contains(&"Java".to_string()),
-            "Could not get correct fingerprints for Java. Detected: {:?}",
-            tech_names1
-        );
-
-        // Test multiple technologies from cookies
-        let mut cookies2 = HashMap::new();
-        cookies2.insert("jsessionid".to_string(), "111".to_string());
-        cookies2.insert("XSRF-TOKEN".to_string(), "test".to_string());
-        cookies2.insert("laravel_session".to_string(), "eyJ*".to_string());
-
-        let results2 = check_cookies_with_ruleset(ruleset.as_ref(), &cookies2);
-        let tech_names2: Vec<String> = results2.iter().map(|r| r.tech_name.clone()).collect();
-        eprintln!("Detected technologies: {:?}", tech_names2);
-        // Verify Java and Laravel are detected (these should be reliable)
-        assert!(
-            tech_names2.contains(&"Java".to_string()),
-            "Could not get correct fingerprints for Java. Detected: {:?}",
-            tech_names2
+            tech_names.contains(&"Java".to_string()),
+            "Could not get correct fingerprints for Java. Detected: {tech_names:?}"
         );
         assert!(
-            tech_names2.contains(&"Laravel".to_string()),
-            "Could not get correct fingerprints for Laravel. Detected: {:?}",
-            tech_names2
+            tech_names.contains(&"Laravel".to_string()),
+            "Could not get correct fingerprints for Laravel. Detected: {tech_names:?}"
         );
-        // PHP detection might depend on ruleset version - verify cookie detection is working
-        if !tech_names2.contains(&"PHP".to_string()) {
-            eprintln!(
-                "Warning: PHP not detected. This may be due to ruleset changes. Detected: {:?}",
-                tech_names2
-            );
-            // Don't fail the test - cookie detection is working (Java and Laravel detected)
-            // PHP pattern might have changed in the ruleset
-        }
     }
 
     // --- wildcard_cookie_regex unit tests --------------------------------------------------
@@ -242,21 +252,23 @@ mod tests {
         assert!(!re_mid.is_match("prefix_x_suffix_extra"));
     }
 
-    /// Test wildcard cookie matching
-    #[tokio::test]
-    async fn test_cookies_wildcard() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// Wildcard cookie name `_ga_*` matches `_ga_123456` — Google Analytics.
+    #[test]
+    fn test_cookies_wildcard_matches_google_analytics() {
+        let mut tech = empty_tech();
+        tech.cookies.insert("_ga_*".to_string(), String::new());
+        let mut technologies = HashMap::new();
+        technologies.insert("Google Analytics".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
-        // Test Google Analytics _ga_* wildcard pattern
         let mut cookies = HashMap::new();
         cookies.insert("_ga_123456".to_string(), "test".to_string());
 
-        let results = check_cookies_with_ruleset(ruleset.as_ref(), &cookies);
-        // Google Analytics should be detected via _ga_* pattern
-        // (This test may need adjustment based on actual fingerprint rules)
-        // The important thing is that wildcard matching works
-        assert!(!results.is_empty(), "Wildcard cookie matching should work");
+        let results = check_cookies_with_ruleset(&ruleset, &cookies);
+        let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
+        assert!(
+            tech_names.contains(&"Google Analytics".to_string()),
+            "Could not match Google Analytics via wildcard cookie, got: {tech_names:?}"
+        );
     }
 }

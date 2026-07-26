@@ -816,6 +816,7 @@ async fn test_export_csv_all_columns_present() {
         "keywords",
         "description",
         "is_mobile_friendly",
+        "body_truncated",
         "redirect_count",
         "final_redirect_url",
         "technologies",
@@ -971,7 +972,7 @@ async fn test_export_csv_null_handling() {
 }
 
 #[tokio::test]
-async fn test_export_csv_redirect_chain_edge_cases() {
+async fn test_export_csv_no_redirects_still_exports_final_domain() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let db_path = temp_dir.path().join("test_export.db");
     let output_path = temp_dir.path().join("output.csv");
@@ -986,8 +987,6 @@ async fn test_export_csv_redirect_chain_edge_cases() {
         1704067200000i64,
     )
     .await;
-
-    // No redirects (should use final_domain as final_redirect_url)
     drop(pool);
 
     let count = export_csv(&ExportOptions {
@@ -1009,8 +1008,13 @@ async fn test_export_csv_redirect_chain_edge_cases() {
         csv_content.contains("final.com"),
         "CSV should contain final_domain when no redirects"
     );
+}
 
-    // Test with multiple redirects (reuse same database)
+#[tokio::test]
+async fn test_export_csv_redirect_chain_edge_cases() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+
     let pool2 = create_test_pool_with_path(&db_path).await;
     let url_id2 =
         create_test_url_status(&pool2, "start.com", "end.com", 200, None, 1704067300000i64).await;
@@ -1045,7 +1049,7 @@ async fn test_export_csv_redirect_chain_edge_cases() {
     .await
     .expect("Export should handle multiple redirects");
 
-    assert_eq!(count, 2, "Should export 2 records");
+    assert_eq!(count, 1, "Should export 1 record");
 
     let csv_content = std::fs::read_to_string(&output_path2).expect("Should read CSV file");
     // Should contain final redirect URL
@@ -1054,11 +1058,22 @@ async fn test_export_csv_redirect_chain_edge_cases() {
         "CSV should contain final redirect URL"
     );
     // Redirect count should be 3
-    // Use CSV parser to properly extract the redirect_count field
+    // Use CSV parser to properly extract the redirect_count field, looking it up by
+    // header name rather than a hardcoded ordinal (column order shifts as fields are added).
     use csv::ReaderBuilder;
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
         .from_reader(csv_content.as_bytes());
+    let headers = reader.headers().expect("Should read headers").clone();
+    let redirect_count_idx = headers
+        .iter()
+        .position(|h| h == "redirect_count")
+        .expect("Should have redirect_count column");
+    let final_redirect_url_idx = headers
+        .iter()
+        .position(|h| h == "final_redirect_url")
+        .expect("Should have final_redirect_url column");
+
     let mut found_start = false;
     for result in reader.records() {
         let record = result.expect("Should parse CSV record");
@@ -1070,16 +1085,145 @@ async fn test_export_csv_redirect_chain_edge_cases() {
             || initial_domain.contains("start.com")
             || final_domain.contains("start.com")
         {
-            // redirect_count is at index 19 (after url, initial_domain, ..., canonical_url)
-            let redirect_count = record.get(19).expect("Should have redirect_count field");
+            let redirect_count = record
+                .get(redirect_count_idx)
+                .expect("Should have redirect_count field");
             assert_eq!(
                 redirect_count, "3",
                 "CSV should show redirect count of 3 for start.com"
+            );
+            let final_redirect_url = record
+                .get(final_redirect_url_idx)
+                .expect("Should have final_redirect_url field");
+            assert_eq!(
+                final_redirect_url, "https://end.com",
+                "final_redirect_url should be the last redirect hop when redirect_count > 0"
             );
             found_start = true;
         }
     }
     assert!(found_start, "Should find start.com in CSV");
+}
+
+/// Contract: when `redirect_count == 0`, `final_redirect_url` must be empty — never a
+/// fallback to `final_domain`. Callers that want the effective URL already have
+/// `final_domain`; a non-empty `final_redirect_url` should mean "a redirect actually
+/// happened". This matches JSONL's existing behavior (see `export_row.final_redirect_url`).
+#[tokio::test]
+async fn test_export_csv_final_redirect_url_empty_when_no_redirects() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+    create_test_url_status(
+        &pool,
+        "noredirect.com",
+        "noredirect.com",
+        200,
+        None,
+        1704067200000,
+    )
+    .await;
+    // No rows in url_redirect_chain: redirect_count must be 0.
+    drop(pool);
+
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
+    assert_eq!(count, 1);
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+    use csv::ReaderBuilder;
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(csv_content.as_bytes());
+    let headers = reader.headers().expect("Should read headers").clone();
+    let redirect_count_idx = headers
+        .iter()
+        .position(|h| h == "redirect_count")
+        .expect("Should have redirect_count column");
+    let final_redirect_url_idx = headers
+        .iter()
+        .position(|h| h == "final_redirect_url")
+        .expect("Should have final_redirect_url column");
+
+    let record = reader
+        .records()
+        .next()
+        .expect("Should have one data row")
+        .expect("Should parse CSV record");
+    assert_eq!(record.get(redirect_count_idx), Some("0"));
+    assert_eq!(
+        record.get(final_redirect_url_idx),
+        Some(""),
+        "final_redirect_url must be empty when redirect_count is 0, not final_domain"
+    );
+}
+
+/// Contract: `body_truncated` (scan-completeness signal from migration
+/// `0009_secrets_scan_completeness.sql`) must be surfaced as a named CSV column.
+#[tokio::test]
+async fn test_export_csv_body_truncated_column_present() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let output_path = temp_dir.path().join("output.csv");
+
+    let pool = create_test_pool_with_path(&db_path).await;
+    let url_id = create_test_url_status(
+        &pool,
+        "truncated.com",
+        "truncated.com",
+        200,
+        None,
+        1704067200000,
+    )
+    .await;
+    sqlx::query("UPDATE url_status SET body_truncated = 1 WHERE id = ?")
+        .bind(url_id)
+        .execute(&pool)
+        .await
+        .expect("Failed to set body_truncated");
+    drop(pool);
+
+    let count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(output_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+    })
+    .await
+    .expect("Export should succeed");
+    assert_eq!(count, 1);
+
+    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
+    use csv::ReaderBuilder;
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(csv_content.as_bytes());
+    let headers = reader.headers().expect("Should read headers").clone();
+    let body_truncated_idx = headers
+        .iter()
+        .position(|h| h == "body_truncated")
+        .expect("Should have body_truncated column");
+
+    let record = reader
+        .records()
+        .next()
+        .expect("Should have one data row")
+        .expect("Should parse CSV record");
+    assert_eq!(record.get(body_truncated_idx), Some("true"));
 }
 
 #[tokio::test]

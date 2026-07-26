@@ -1,11 +1,7 @@
+//! Stress demo (not a contract test): narrative/`println!` only, zero asserts.
+//! Skipped by CI and `just test-e2e` (`--skip stress_`).
+//!
 //! Stress test demonstrating resource exhaustion from concurrent redirect chains.
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::too_many_lines,
-    clippy::manual_flatten
-)]
 //!
 //! **VULNERABILITY FOUND**: Memory/resource spike from concurrent deep redirect chains.
 //!
@@ -46,6 +42,13 @@
 //! - Add redirect budget: max total redirects across all URLs
 //! - Monitor memory usage during redirect processing
 //! - Reject redirect chains with too many unique domains
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines,
+    clippy::manual_flatten
+)]
 
 use axum::{
     extract::Path,

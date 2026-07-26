@@ -35,9 +35,9 @@ docs-check:
     cargo test --doc --all-features --locked
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 
-# Run end-to-end tests (requires network)
+# Run end-to-end tests (requires network). Skips zero-assert stress demos (matches CI).
 test-e2e:
-    cargo test --all-features --all-targets --locked -- --ignored
+    cargo test --all-features --all-targets --locked -- --ignored --skip stress_
 
 # Run tests with coverage
 coverage:

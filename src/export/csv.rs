@@ -106,6 +106,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "body_line_count",
         "content_type",
         "canonical_url",
+        "body_truncated",
         "redirect_count",
         "final_redirect_url",
         "technologies",
@@ -189,13 +190,11 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         let main = extract_main_row_data(&row);
         let export_row = build_export_row(&pool, main).await?;
 
-        // Build URL and final redirect URL (use final_domain if no redirects)
+        // Build URL. `final_redirect_url` mirrors JSONL: empty when redirect_count == 0
+        // (no redirects means there is no "final redirect" to report), never a fallback
+        // to final_domain — callers that want the effective URL already have `final_domain`.
         let url = build_url(&export_row.main.final_domain);
-        let final_redirect_url = if export_row.final_redirect_url.is_empty() {
-            export_row.main.final_domain.clone()
-        } else {
-            export_row.final_redirect_url.clone()
-        };
+        let final_redirect_url = export_row.final_redirect_url.clone();
 
         // Write CSV row
         writer.write_record(&[
@@ -232,6 +231,12 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
                 .map_or(String::new(), |v| v.to_string()),
             export_row.main.content_type.clone().unwrap_or_default(),
             export_row.main.canonical_url.clone().unwrap_or_default(),
+            if export_row.main.body_truncated {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
             export_row.redirect_count.to_string(),
             final_redirect_url,
             export_row.technologies_str.clone(),

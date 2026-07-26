@@ -140,79 +140,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_latest_commit_sha_valid_format() {
-        // Test with valid URL format (may or may not succeed depending on network)
-        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies";
-        let result = get_latest_commit_sha(url).await;
-        // May succeed or fail depending on network, but should not panic
-        let _ = result;
-    }
-
-    #[tokio::test]
     async fn test_get_latest_commit_sha_nonexistent_repo() {
         // Test with non-existent repository
         let url = "https://raw.githubusercontent.com/nonexistent/repo/main/path";
         let result = get_latest_commit_sha(url).await;
         // Should return None for non-existent repos
         assert_eq!(result, None);
-    }
-
-    #[tokio::test]
-    async fn test_get_latest_commit_sha_url_with_multiple_path_segments() {
-        // Test URL parsing with path containing multiple slashes
-        // e.g., https://raw.githubusercontent.com/owner/repo/branch/path/to/deep/file.json
-        // This is critical - ensures path extraction works correctly for nested paths
-        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies/nested/path.json";
-        let result = get_latest_commit_sha(url).await;
-        // May succeed or fail depending on network, but should not panic
-        // The key is that path extraction handles multiple segments correctly
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_get_latest_commit_sha_url_with_empty_path() {
-        // Test URL with minimal path (just branch, no path after)
-        // This is an edge case - URL structure: https://raw.githubusercontent.com/owner/repo/branch
-        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main";
-        let result = get_latest_commit_sha(url).await;
-        // Should handle gracefully (may return None if path is required)
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_get_latest_commit_sha_url_parsing_handles_trailing_slash() {
-        // Test URL with trailing slash in path
-        // This is critical - trailing slashes can break path extraction
-        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies/";
-        let result = get_latest_commit_sha(url).await;
-        // Should handle trailing slash correctly
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_get_latest_commit_sha_url_exactly_seven_parts() {
-        // Test URL parsing with exactly 7 parts (boundary case)
-        // This is critical - the code checks parts.len() < 7, so exactly 7 should work
-        // URL structure: https://raw.githubusercontent.com/owner/repo/branch/path
-        // parts[0] = "https:", parts[1] = "", parts[2] = "raw.githubusercontent.com",
-        // parts[3] = owner, parts[4] = repo, parts[5] = branch, parts[6] = path
-        // So 7 parts means minimal valid URL
-        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main";
-        let result = get_latest_commit_sha(url).await;
-        // Should handle gracefully (may succeed or fail depending on network)
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_get_latest_commit_sha_url_with_empty_path_segments() {
-        // Test URL with empty path segments (double slashes)
-        // This is critical - empty segments could break path extraction
-        let url =
-            "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main//src//technologies";
-        let result = get_latest_commit_sha(url).await;
-        // Should handle gracefully (may succeed or fail depending on network)
-        // The path extraction at line 49 uses parts[6..].join("/") which handles empty segments
-        let _ = result;
     }
 
     #[tokio::test]
@@ -241,18 +174,5 @@ mod tests {
         let result = get_latest_commit_sha(url).await;
         // Should return None (parts.len() < 7)
         assert_eq!(result, None);
-    }
-
-    #[tokio::test]
-    async fn test_get_latest_commit_sha_path_extraction_with_single_segment() {
-        // Test path extraction when path has only one segment
-        // This is critical - ensures path extraction works for simple paths
-        // The code at line 49 uses parts[6..].join("/")
-        // For URL: https://raw.githubusercontent.com/owner/repo/branch/file.json
-        // parts[6] = "file.json", so path should be "file.json"
-        let url = "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/file.json";
-        let result = get_latest_commit_sha(url).await;
-        // Should handle gracefully (may succeed or fail depending on network)
-        let _ = result;
     }
 }

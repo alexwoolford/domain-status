@@ -23,6 +23,16 @@ fn write_urls(urls: &[&str]) -> NamedTempFile {
     file
 }
 
+/// `init_ruleset` caches the parsed ruleset in a process-wide static keyed only on
+/// "first call wins" (see `src/fingerprint/ruleset/mod.rs`), ignoring the source path on
+/// every later call within the same test binary. All offline tests in this file must
+/// therefore share one canonical fixture — otherwise whichever test's `run_scan` reaches
+/// `init_ruleset` first silently decides which technologies every other test observes.
+///
+/// Nginx implies `TestOS` (never pattern-matched directly) so the offline detect path's
+/// `is_implied` flagging can be exercised: Nginx stays `is_implied=0` (observed via the
+/// `Server` header, with a captured version), `TestOS` arrives only via `implies` and is
+/// marked `is_implied=1`.
 fn write_fingerprint_fixture(dir: &TempDir) -> PathBuf {
     let path = dir.path().join("technologies.json");
     std::fs::write(
@@ -31,7 +41,12 @@ fn write_fingerprint_fixture(dir: &TempDir) -> PathBuf {
   "Nginx": {
     "cats": [6],
     "website": "https://nginx.org",
-    "headers": { "Server": "nginx(?:/([\\d.]+))?\\;version:\\1" }
+    "headers": { "Server": "nginx(?:/([\\d.]+))?\\;version:\\1" },
+    "implies": ["TestOS"]
+  },
+  "TestOS": {
+    "cats": [28],
+    "website": "https://example.com/testos"
   }
 }"#,
     )
@@ -208,6 +223,82 @@ async fn test_partial_failure_accounting_and_exit_codes() {
     assert_eq!(evaluate_exit_code(&FailOn::PctGreaterThan, 90, &report), 0);
 }
 
+/// Adversarial: when the drain timeout fires mid-flight, the abandoned task must be
+/// recorded as a `url_failures` row (never silently dropped), and the same domain must
+/// never end up in both `url_status` and `url_failures` for the same run (no UPSERT
+/// collision between a late-arriving success and a drain-timeout failure).
+#[tokio::test]
+async fn test_drain_timeout_records_failure_with_status_failure_exclusivity() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+        .mount(&mock)
+        .await;
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let urls = write_urls(&[&format!("{}/", mock.uri())]);
+    let db = NamedTempFile::new().expect("db");
+
+    let mut config = base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    );
+    // Shorter than the mock's 5s response delay, so the drain deadline fires while
+    // the single in-flight task is still awaiting the response.
+    config.drain_timeout_secs = 1;
+
+    let report = run_scan(config)
+        .await
+        .expect("run_scan must complete even when drain timeout aborts in-flight tasks");
+
+    assert_eq!(report.total_urls, 1);
+    assert_eq!(
+        report.successful + report.failed + report.skipped,
+        report.total_urls,
+        "counters must partition total_urls even when drain fires"
+    );
+    assert!(
+        report.failed >= 1,
+        "the 5s-delayed request must be aborted and recorded as a failure by the 1s drain timeout"
+    );
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+
+    let failure_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM url_failures WHERE run_id = ?")
+            .bind(&report.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("failure count");
+    assert!(
+        failure_count >= 1,
+        "drain timeout must persist a url_failures row for the abandoned task"
+    );
+
+    // Anti-join: no domain may appear in both url_status and url_failures for this run.
+    let overlap_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM url_status s \
+         WHERE s.run_id = ? \
+         AND EXISTS (\
+             SELECT 1 FROM url_failures f \
+             WHERE f.run_id = s.run_id AND f.initial_domain = s.initial_domain\
+         )",
+    )
+    .bind(&report.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("overlap query");
+    assert_eq!(
+        overlap_count, 0,
+        "no domain may be recorded in both url_status and url_failures for the same run"
+    );
+}
+
 #[tokio::test]
 async fn test_fast_concurrency_smoke_max_inflight() {
     let max_concurrency = 2;
@@ -264,4 +355,162 @@ async fn test_fast_concurrency_smoke_max_inflight() {
         "observed concurrency {observed} exceeded limit {max_concurrency}"
     );
     assert!(observed >= 1, "expected at least one in-flight observation");
+}
+
+/// Adversarial: technology version capture and implies-driven `is_implied` flagging must
+/// both round-trip through the offline detect path into `url_technologies` columns.
+#[tokio::test]
+async fn test_technology_version_and_is_implied_persisted() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Server", "nginx/1.24.0")
+                .set_body_string("<html><title>Implies Fixture</title></html>"),
+        )
+        .mount(&mock)
+        .await;
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let urls = write_urls(&[&format!("{}/", mock.uri())]);
+    let db = NamedTempFile::new().expect("db");
+
+    let report = run_scan(base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    ))
+    .await
+    .expect("offline run_scan with implies fixture must succeed");
+
+    assert_eq!(report.successful, 1);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+
+    let nginx_row = sqlx::query(
+        "SELECT technology_version, is_implied FROM url_technologies t \
+         JOIN url_status u ON u.id = t.url_status_id \
+         WHERE u.run_id = ? AND t.technology_name = 'Nginx'",
+    )
+    .bind(&report.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Nginx technology row");
+    assert_eq!(
+        nginx_row.get::<Option<String>, _>("technology_version"),
+        Some("1.24.0".to_string()),
+        "observed Nginx must capture the version from the Server header"
+    );
+    assert_eq!(
+        nginx_row.get::<i64, _>("is_implied"),
+        0,
+        "directly observed Nginx must not be marked implied"
+    );
+
+    let testos_row = sqlx::query(
+        "SELECT is_implied FROM url_technologies t \
+         JOIN url_status u ON u.id = t.url_status_id \
+         WHERE u.run_id = ? AND t.technology_name = 'TestOS'",
+    )
+    .bind(&report.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("TestOS technology row (via implies)");
+    assert_eq!(
+        testos_row.get::<i64, _>("is_implied"),
+        1,
+        "TestOS only arrives via Nginx's implies list; must be marked implied"
+    );
+}
+
+/// Adversarial: a private/loopback IP literal must be counted as `skipped` (SSRF policy),
+/// never as `failed` — and a skip must not trip `FailOn::AnyFailure`.
+#[tokio::test]
+async fn test_private_ip_url_is_skipped_not_failed_and_does_not_trip_fail_on_any() {
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    // IP literal bypasses DNS/SafeResolver, so SSRF protection must catch it via
+    // validate_url_safe() on the initial URL itself (see src/run/mod.rs).
+    let urls = write_urls(&["http://127.0.0.1/"]);
+    let db = NamedTempFile::new().expect("db");
+
+    let mut config = base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    );
+    config.allow_localhost_for_tests = false;
+
+    let report = run_scan(config)
+        .await
+        .expect("scan must complete even when every URL is SSRF-unsafe");
+
+    assert_eq!(report.total_urls, 1);
+    assert_eq!(report.successful, 0);
+    assert_eq!(
+        report.failed, 0,
+        "SSRF-unsafe URLs must be skipped, not failed"
+    );
+    assert_eq!(report.skipped, 1);
+    assert_eq!(
+        report.successful + report.failed + report.skipped,
+        report.total_urls
+    );
+
+    assert_eq!(
+        evaluate_exit_code(&FailOn::AnyFailure, 10, &report),
+        0,
+        "a skip must not be treated as a failure by FailOn::AnyFailure"
+    );
+}
+
+/// Adversarial: an unusable `--geoip` path must not fail the whole scan (soft-fail).
+/// `init_geoip` errors are caught and logged in `src/run/init.rs`; the scan proceeds
+/// with `GeoIP` lookups disabled, so `url_geoip` stays empty for every URL in the run.
+#[tokio::test]
+async fn test_bogus_geoip_path_soft_fails_scan_still_succeeds() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><title>Geo</title></html>"))
+        .mount(&mock)
+        .await;
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let urls = write_urls(&[&format!("{}/", mock.uri())]);
+    let db = NamedTempFile::new().expect("db");
+
+    let mut config = base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    );
+    config.geoip = Some("/nonexistent/path/GeoLite2.mmdb".to_string());
+
+    let report = run_scan(config)
+        .await
+        .expect("a bogus --geoip path must not fail the scan (soft-fail)");
+
+    assert_eq!(report.successful, 1);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+    let geoip_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM url_geoip g \
+         JOIN url_status u ON u.id = g.url_status_id WHERE u.run_id = ?",
+    )
+    .bind(&report.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("geoip count");
+    assert_eq!(
+        geoip_count, 0,
+        "GeoIP init failure must disable lookups, not error out or fabricate data"
+    );
 }

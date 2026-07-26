@@ -212,6 +212,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "body_line_count": export_row.main.body_line_count,
             "content_type": export_row.main.content_type,
             "canonical_url": export_row.main.canonical_url,
+            "body_truncated": export_row.main.body_truncated,
             "redirect_chain": redirect_chain,
             "redirect_count": export_row.redirect_count,
             "final_redirect_url": export_row.final_redirect_url,
@@ -986,6 +987,55 @@ mod tests {
             .expect("Should be array");
         assert!(redirect_chain.is_empty());
         assert_eq!(json_obj["final_redirect_url"], "");
+    }
+
+    /// Contract: `body_truncated` (scan-completeness signal from migration
+    /// `0009_secrets_scan_completeness.sql`) must be surfaced as a named JSONL field.
+    #[tokio::test]
+    async fn test_export_jsonl_body_truncated_field_present() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        let url_id = create_test_url_status(&pool, "truncated.example", 200).await;
+        sqlx::query("UPDATE url_status SET body_truncated = 1 WHERE id = ?")
+            .bind(url_id)
+            .execute(&pool)
+            .await
+            .expect("Failed to set body_truncated");
+
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        let count = export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+        })
+        .await
+        .expect("Should export successfully");
+        assert_eq!(count, 1);
+
+        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Failed to read output file");
+
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("Should be valid JSON");
+        assert_eq!(json_obj["body_truncated"], true);
     }
 
     #[tokio::test]

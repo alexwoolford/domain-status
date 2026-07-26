@@ -124,6 +124,9 @@ pub struct MainRowData {
     pub content_type: Option<String>,
     pub canonical_url: Option<String>,
     pub cert_fingerprint_sha256: Option<String>,
+    /// True when the response body hit `MAX_RESPONSE_BODY_SIZE` and was truncated before
+    /// secret-detection/hashing ran (see migration `0009_secrets_scan_completeness.sql`).
+    pub body_truncated: bool,
 }
 
 /// A single redirect entry.
@@ -346,6 +349,7 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         content_type: row.get("content_type"),
         canonical_url: row.get("canonical_url"),
         cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),
+        body_truncated: row.get("body_truncated"),
     }
 }
 

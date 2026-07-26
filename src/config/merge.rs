@@ -341,4 +341,66 @@ mod tests {
             "invalid enable_whois must leave default false"
         );
     }
+
+    /// Adversarial: `--no-whois` on the CLI must beat `enable_whois=true` from the config
+    /// file, even though `no_whois` and `enable_whois` are different keys under the hood.
+    #[test]
+    fn test_no_whois_cli_flag_overrides_toml_enable_whois_true() {
+        let mut file_env = HashMap::new();
+        file_env.insert("enable_whois".to_string(), "true".to_string());
+
+        // `--no-whois` set: explicit key list includes "no_whois" (not "enable_whois").
+        let merged = merge_file_env_and_cli(
+            Some(&file_env),
+            Config {
+                enable_whois: true, // irrelevant: overwrite("enable_whois") is false here
+                ..Default::default()
+            },
+            Some(&["no_whois"]),
+        );
+        assert!(
+            !merged.enable_whois,
+            "--no-whois must force enable_whois=false even though the TOML file says true"
+        );
+    }
+
+    /// Without `--no-whois`, file/env `enable_whois=true` must still apply normally.
+    #[test]
+    fn test_enable_whois_true_from_file_applies_without_no_whois_flag() {
+        let mut file_env = HashMap::new();
+        file_env.insert("enable_whois".to_string(), "true".to_string());
+
+        let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
+        assert!(
+            merged.enable_whois,
+            "file enable_whois=true must apply when --no-whois was not set"
+        );
+    }
+
+    /// Adversarial: `scan_external_scripts` must parse permissive truthy string forms
+    /// ("yes", "true", "1") from the config file / env map, not just canonical "true".
+    #[test]
+    fn test_scan_external_scripts_parses_permissive_truthy_strings() {
+        for truthy in ["yes", "true", "1", "on", "YES", "True"] {
+            let mut file_env = HashMap::new();
+            file_env.insert("scan_external_scripts".to_string(), truthy.to_string());
+
+            let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
+            assert!(
+                merged.scan_external_scripts,
+                "scan_external_scripts={truthy:?} must parse to true"
+            );
+        }
+
+        for falsy in ["no", "false", "0", "off"] {
+            let mut file_env = HashMap::new();
+            file_env.insert("scan_external_scripts".to_string(), falsy.to_string());
+
+            let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
+            assert!(
+                !merged.scan_external_scripts,
+                "scan_external_scripts={falsy:?} must parse to false"
+            );
+        }
+    }
 }

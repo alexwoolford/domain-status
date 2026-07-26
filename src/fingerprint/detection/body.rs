@@ -111,14 +111,46 @@ pub(crate) fn check_body_with_ruleset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::ruleset::init_full_ruleset_for_tests;
+    use crate::fingerprint::models::{FingerprintMetadata, Technology};
 
-    /// Test meta tag detection matching wappalyzergo's `TestBodyDetect` meta test
-    #[tokio::test]
-    async fn test_body_meta() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    fn empty_tech() -> Technology {
+        Technology {
+            cats: vec![],
+            website: String::new(),
+            headers: HashMap::new(),
+            cookies: HashMap::new(),
+            meta: HashMap::new(),
+            script: vec![],
+            html: vec![],
+            url: vec![],
+            js: HashMap::new(),
+            implies: vec![],
+            excludes: vec![],
+        }
+    }
+
+    fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {
+        FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        }
+    }
+
+    /// Meta tag detection: `tech.meta` key `"generator"` matches `meta_tags` key
+    /// `"name:generator"` (see `check_meta_patterns`).
+    #[test]
+    fn test_body_meta_generator_match() {
+        let mut tech = empty_tech();
+        tech.meta
+            .insert("generator".to_string(), vec!["mura cms 1".to_string()]);
+        let mut technologies = HashMap::new();
+        technologies.insert("Mura CMS".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
         let html_body = r#"<html>
 <head>
@@ -131,59 +163,25 @@ mod tests {
         let script_sources = vec![];
         let url = "https://example.com";
 
-        let results = check_body_with_ruleset(
-            ruleset.as_ref(),
-            html_body,
-            &script_sources,
-            &meta_tags,
-            url,
+        let results =
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+
+        let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
+        assert_eq!(
+            tech_names,
+            vec!["Mura CMS".to_string()],
+            "Could not get correct match for Mura CMS via generator meta tag"
         );
-
-        let tech_names: Vec<String> = results
-            .iter()
-            .map(|r| {
-                if let Some(ref version) = r.version {
-                    format!("{}:{}", r.tech_name, version)
-                } else {
-                    r.tech_name.clone()
-                }
-            })
-            .collect();
-
-        eprintln!("Detected technologies: {:?}", tech_names);
-        // Note: Mura CMS might not be in the ruleset or pattern might have changed
-        // This test verifies meta tag detection works, not that a specific technology exists
-        if !tech_names.is_empty() {
-            // If we detected anything, meta tag detection is working
-            // The specific technology may vary based on ruleset version
-            eprintln!(
-                "Meta tag detection is working (detected {} technologies)",
-                tech_names.len()
-            );
-        } else {
-            // If nothing detected, check if ruleset has meta patterns at all
-            let ruleset = crate::fingerprint::ruleset::get_ruleset().await;
-            if let Some(ruleset) = ruleset {
-                let has_meta_patterns = ruleset
-                    .technologies
-                    .values()
-                    .any(|tech| !tech.meta.is_empty());
-                if has_meta_patterns {
-                    panic!("Meta tag detection failed - ruleset has meta patterns but none matched. Detected: {:?}", tech_names);
-                } else {
-                    eprintln!("Skipping: ruleset has no meta tag patterns");
-                }
-            }
-        }
     }
 
-    /// Test HTML pattern detection with implied technologies
-    /// Matching wappalyzergo's `TestBodyDetect` html-implied test
-    #[tokio::test]
-    async fn test_body_html_implied() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// HTML pattern detection via `data-ng-app` attribute (`AngularJS`).
+    #[test]
+    fn test_body_html_pattern_angularjs() {
+        let mut tech = empty_tech();
+        tech.html.push("data-ng-app".to_string());
+        let mut technologies = HashMap::new();
+        technologies.insert("AngularJS".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
         let html_body = r#"<html data-ng-app="rbschangeapp">
 <head>
@@ -196,69 +194,49 @@ mod tests {
         let script_sources = vec![];
         let url = "https://example.com";
 
-        let results = check_body_with_ruleset(
-            ruleset.as_ref(),
-            html_body,
-            &script_sources,
-            &meta_tags,
-            url,
-        );
+        let results =
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
-
-        // AngularJS should be detected via data-ng-app attribute
         assert!(
             tech_names.contains(&"AngularJS".to_string()),
-            "Could not get correct implied match for AngularJS"
+            "Could not get correct match for AngularJS via data-ng-app"
         );
     }
 
-    /// Test script source detection
-    #[tokio::test]
-    #[ignore] // Requires network access to fetch fingerprint ruleset
-    async fn test_body_script_src() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// Script source detection with version extraction (jQuery CDN URL).
+    #[test]
+    fn test_body_script_src_jquery() {
+        let mut tech = empty_tech();
+        tech.script
+            .push(r"jquery(?:-(\d+\.\d+\.\d+))[/.-]\;version:\1".to_string());
+        let mut technologies = HashMap::new();
+        technologies.insert("jQuery".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
         let html_body = "";
         let script_sources = vec!["https://cdn.example.com/jquery-3.6.0.min.js".to_string()];
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        let results = check_body_with_ruleset(
-            ruleset.as_ref(),
-            html_body,
-            &script_sources,
-            &meta_tags,
-            url,
-        );
+        let results =
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
 
-        let tech_names: Vec<String> = results
+        let result = results
             .iter()
-            .map(|r| {
-                if let Some(ref version) = r.version {
-                    format!("{}:{}", r.tech_name, version)
-                } else {
-                    r.tech_name.clone()
-                }
-            })
-            .collect();
-
-        // jQuery should be detected via script src
-        assert!(
-            tech_names.iter().any(|name| name.starts_with("jQuery")),
-            "Could not detect jQuery via script src"
-        );
+            .find(|r| r.tech_name == "jQuery")
+            .expect("Could not detect jQuery via script src");
+        assert_eq!(result.version.as_deref(), Some("3.6.0"));
     }
 
-    /// Test HTML pattern detection (`WordPress`)
-    #[tokio::test]
-    #[ignore] // Requires network access to fetch fingerprint ruleset
-    async fn test_body_html_pattern() {
-        let Some(ruleset) = init_full_ruleset_for_tests().await else {
-            return;
-        };
+    /// HTML pattern detection (`WordPress` via `/wp-content/`).
+    #[test]
+    fn test_body_html_pattern_wordpress() {
+        let mut tech = empty_tech();
+        tech.html.push("wp-content".to_string());
+        let mut technologies = HashMap::new();
+        technologies.insert("WordPress".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
 
         let html_body = r#"<html>
 <head>
@@ -272,28 +250,14 @@ mod tests {
         let meta_tags = HashMap::new();
         let url = "https://example.com";
 
-        let results = check_body_with_ruleset(
-            ruleset.as_ref(),
-            html_body,
-            &script_sources,
-            &meta_tags,
-            url,
-        );
+        let results =
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
-
-        // WordPress should be detected via /wp-content/ pattern
-        // Skip test if WordPress isn't detected (ruleset may have changed or pattern matching may differ)
-        if !tech_names.contains(&"WordPress".to_string()) {
-            eprintln!(
-                "Skipping test: WordPress not detected. Detected technologies: {:?}",
-                tech_names
-            );
-            eprintln!(
-                "This may be due to changes in the fingerprint ruleset or pattern matching logic."
-            );
-            return;
-        }
+        assert!(
+            tech_names.contains(&"WordPress".to_string()),
+            "Could not get correct match for WordPress via wp-content"
+        );
     }
 
     #[test]
