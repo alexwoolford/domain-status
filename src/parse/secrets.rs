@@ -964,6 +964,50 @@ mod tests {
         assert!(secrets.iter().any(|s| s.secret_type == "openai-api-key"));
     }
 
+    /// Build a 93-char Anthropic mid-segment without embedding a full key literal in source.
+    ///
+    /// Digits-first / uppercase-only so the mid never contains the global allowlist
+    /// stopword `abcdefghijklmnopqrstuvwxyz`.
+    fn anthropic_key_mid() -> String {
+        (0..93)
+            .map(|i| {
+                let n = u8::try_from(i % 36).unwrap();
+                match n {
+                    0..=9 => (b'0' + n) as char,
+                    _ => (b'A' + (n - 10)) as char,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_detect_anthropic_api_key() {
+        // gitleaks: sk-ant-api03- + 93 [A-Za-z0-9_-] + AA
+        let key = format!("sk-ant-api03-{}AA", anthropic_key_mid());
+        let body = format!(r#"<script>const ANTHROPIC_API_KEY = "{key}";</script>"#);
+        let secrets = detect_exposed_secrets(&body);
+        let found = secrets
+            .iter()
+            .find(|s| s.secret_type == "anthropic-api-key")
+            .unwrap_or_else(|| panic!("expected anthropic-api-key; got {secrets:?}"));
+        assert_eq!(found.matched_value, key);
+        assert_eq!(found.severity, SecretSeverity::High);
+    }
+
+    #[test]
+    fn test_detect_anthropic_admin_api_key() {
+        // gitleaks: sk-ant-admin01- + 93 [A-Za-z0-9_-] + AA
+        let key = format!("sk-ant-admin01-{}AA", anthropic_key_mid());
+        let body = format!(r#"window.__cfg = {{ adminKey: "{key}" }};"#);
+        let secrets = detect_exposed_secrets(&body);
+        let found = secrets
+            .iter()
+            .find(|s| s.secret_type == "anthropic-admin-api-key")
+            .unwrap_or_else(|| panic!("expected anthropic-admin-api-key; got {secrets:?}"));
+        assert_eq!(found.matched_value, key);
+        assert_eq!(found.severity, SecretSeverity::High);
+    }
+
     #[test]
     fn test_detect_slack_bot_token() {
         let body = r#"token: "xoxb-123456789012-1234567890123-ABCDEFabcdef123456789012""#;
