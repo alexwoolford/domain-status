@@ -145,8 +145,40 @@ async fn parallel_enrich(
         (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us),
     ) = dns_result?;
 
-    // DNS/TLS finish after the first tech pass (they run in parallel). Merge
-    // dns / certIssuer pattern matches now that those signals exist.
+    let technologies_vec = supplement_technologies_after_enrichment(
+        ctx,
+        technologies_vec,
+        &tls_dns_data,
+        &additional_dns,
+        &external_script_scan,
+        &resp_data.final_domain,
+    )
+    .await;
+
+    Ok(EnrichmentResult {
+        technologies_vec,
+        tech_detection_us,
+        tls_dns_data,
+        additional_dns,
+        partial_failures,
+        dns_forward_us,
+        dns_reverse_us,
+        dns_additional_us,
+        tls_handshake_us,
+        favicon_result,
+        external_script_scan,
+    })
+}
+
+/// Merge DNS/cert and fetched-script-body signals into the first tech pass.
+async fn supplement_technologies_after_enrichment(
+    ctx: &ProcessingContext,
+    technologies_vec: Vec<DetectedTechnology>,
+    tls_dns_data: &crate::fetch::dns::TlsDnsData,
+    additional_dns: &crate::fetch::dns::AdditionalDnsData,
+    external_script_scan: &crate::fetch::external_scripts::ExternalScriptScanResult,
+    final_domain: &str,
+) -> Vec<DetectedTechnology> {
     let dns_haystack = crate::fingerprint::dns_records_haystack(
         additional_dns.nameservers.as_deref(),
         additional_dns.txt_records.as_deref(),
@@ -162,19 +194,28 @@ async fn parallel_enrich(
         tls_dns_data.issuer.as_deref(),
     );
 
-    Ok(EnrichmentResult {
-        technologies_vec,
-        tech_detection_us,
-        tls_dns_data,
-        additional_dns,
-        partial_failures,
-        dns_forward_us,
-        dns_reverse_us,
-        dns_additional_us,
-        tls_handshake_us,
-        favicon_result,
-        external_script_scan,
+    if external_script_scan.script_bodies_text.is_empty() {
+        return technologies_vec;
+    }
+
+    let ruleset = Arc::clone(&ctx.ruleset);
+    let script_text = external_script_scan.script_bodies_text.clone();
+    let fallback = technologies_vec.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::fingerprint::supplement_technologies_with_script_text(
+            ruleset.as_ref(),
+            technologies_vec,
+            &script_text,
+        )
     })
+    .await
+    {
+        Ok(techs) => techs,
+        Err(e) => {
+            log::warn!("External-script tech supplement join failed for {final_domain}: {e}");
+            fallback
+        }
+    }
 }
 
 /// Merge external-script and response-header secret findings into `html_data`.

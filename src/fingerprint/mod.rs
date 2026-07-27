@@ -17,9 +17,12 @@
 //! - URL patterns
 //! - Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
 //! - DNS records and TLS certificate issuer (after DNS/TLS enrichment)
+//! - First-party external script bodies when `--scan-external-scripts` is on
+//!   (same fetch as secret scanning; static `scripts` patterns only)
 //!
-//! **`--scan-external-scripts` does not feed technology detection** — it only
-//! scans first-party script bodies for exposed secrets.
+//! Enabling `--scan-external-scripts` improves both secret coverage and
+//! technology detection via static matching on fetched first-party bodies.
+//! Third-party CDN scripts are not fetched (denylist). JavaScript is never executed.
 
 mod detection;
 #[cfg(test)]
@@ -39,6 +42,7 @@ pub use ruleset::init_ruleset;
 // Blocking detection for the scan hot path (ruleset passed explicitly).
 pub(crate) use detection::{
     detect_technologies_blocking, dns_records_haystack, supplement_technologies_with_dns_cert,
+    supplement_technologies_with_script_text,
 };
 // Global getter retained for unit tests that call `init_ruleset` then exercise matchers.
 #[cfg(test)]

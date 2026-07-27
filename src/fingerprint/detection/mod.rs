@@ -309,6 +309,51 @@ pub(crate) fn supplement_technologies_with_dns_cert(
     finalize_detections(detected, ruleset)
 }
 
+/// Matches Wappalyzer `scripts` patterns against fetched (or inline) script text
+/// and merges into an existing detection set, then re-runs implies / excludes.
+///
+/// Used after `--scan-external-scripts` returns concatenated first-party bodies.
+pub(crate) fn supplement_technologies_with_script_text(
+    ruleset: &FingerprintRuleset,
+    already_detected: Vec<DetectedTechnology>,
+    script_text: &str,
+) -> Vec<DetectedTechnology> {
+    if script_text.is_empty() {
+        return already_detected;
+    }
+
+    let mut detected = detected_to_map(&already_detected);
+    let mut added_any = false;
+    for (tech_name, tech) in &ruleset.technologies {
+        if tech.scripts.is_empty() {
+            continue;
+        }
+        let mut matched = false;
+        let mut version: Option<String> = None;
+        for pattern in &tech.scripts {
+            let result = crate::fingerprint::patterns::matches_pattern(pattern, script_text);
+            if result.matched {
+                matched = true;
+                if version.is_none() && result.version.is_some() {
+                    version = result.version;
+                }
+                if version.is_some() {
+                    break;
+                }
+            }
+        }
+        if matched {
+            merge_observed(&mut detected, tech_name.clone(), version);
+            added_any = true;
+        }
+    }
+    if !added_any {
+        return already_detected;
+    }
+    expand_implies(&mut detected, ruleset);
+    finalize_detections(detected, ruleset)
+}
+
 /// Builds lowercase DNS haystacks from stored additional DNS fields for pattern matching.
 #[must_use]
 pub(crate) fn dns_records_haystack(
@@ -717,6 +762,48 @@ mod tests {
         let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains("Google Workspace"));
         assert!(names.contains("Gmail"));
+    }
+
+    #[test]
+    fn test_supplement_script_text_detects_scripts_only_tech() {
+        let mut technologies = HashMap::new();
+        let mut webpack = empty_tech();
+        webpack
+            .scripts
+            .push(r"function webpackJsonpCallback\(data\) \{".to_string());
+        webpack.implies.push("JavaScript".to_string());
+        technologies.insert("Webpack".to_string(), webpack);
+        technologies.insert("JavaScript".to_string(), empty_tech());
+
+        let ruleset = FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+
+        let body = "function webpackJsonpCallback(data) { return data; }";
+        let result =
+            supplement_technologies_with_script_text(&ruleset, Vec::new(), &body.to_lowercase());
+        let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains("Webpack"));
+        assert!(names.contains("JavaScript"));
+    }
+
+    #[test]
+    fn test_supplement_script_text_empty_is_noop() {
+        let prior = vec![DetectedTechnology {
+            name: "Nginx".into(),
+            version: None,
+            category: None,
+            is_implied: false,
+        }];
+        let ruleset = FingerprintRuleset::empty_for_tests();
+        let result = supplement_technologies_with_script_text(&ruleset, prior.clone(), "");
+        assert_eq!(result, prior);
     }
 
     #[tokio::test]
