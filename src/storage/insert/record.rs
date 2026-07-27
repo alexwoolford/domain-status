@@ -557,6 +557,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -639,6 +640,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -780,6 +782,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -870,6 +873,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         let result = insert_batch_record(&pool, record).await;
@@ -925,6 +929,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("Failed to insert URL record");
@@ -956,6 +961,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         // Should succeed even if some enrichment fails
@@ -1013,6 +1019,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         // Should succeed - main record and technologies should be inserted
@@ -1068,6 +1075,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         // Should succeed even with no enrichment data
@@ -1110,6 +1118,7 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
+            script_hosts: vec![],
         };
 
         // Should fail - main record insertion failure propagates

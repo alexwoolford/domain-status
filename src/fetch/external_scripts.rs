@@ -236,6 +236,36 @@ fn resolve_script_url(page_url: &str, src: &str) -> Option<String> {
     base.join(trimmed).ok().map(|u| u.to_string())
 }
 
+/// Unique hosts referenced by `<script src>` on a page, with first-party classification.
+///
+/// Relative `src` values are resolved against `page_url`. Duplicate hosts are collapsed.
+pub(crate) fn collect_script_hosts(
+    page_url: &str,
+    script_sources: &[String],
+) -> Vec<crate::storage::ScriptHostInfo> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for src in script_sources {
+        let Some(abs) = resolve_script_url(page_url, src) else {
+            continue;
+        };
+        let Some(host) = url_host(&abs) else {
+            continue;
+        };
+        if !seen.insert(host.clone()) {
+            continue;
+        }
+        let registrable = registrable_domain(&host);
+        let is_first_party = is_first_party_script(page_url, &abs);
+        out.push(crate::storage::ScriptHostInfo {
+            host,
+            registrable_domain: registrable,
+            is_first_party,
+        });
+    }
+    out
+}
+
 /// Fetches a script body with size + timeout caps and charset-aware decoding.
 async fn fetch_script_body(client: &reqwest::Client, url: &str) -> Option<String> {
     let resp = match tokio::time::timeout(
@@ -399,6 +429,45 @@ mod tests {
             "https://example.co.uk/page",
             "https://cdn.example.co.uk/main.js"
         ));
+    }
+
+    #[test]
+    fn test_collect_script_hosts_first_and_third_party() {
+        let hosts = collect_script_hosts(
+            "https://www.example.com/page",
+            &[
+                "/app.js".to_string(),
+                "https://www.googletagmanager.com/gtm.js".to_string(),
+                "https://static.example.com/bundle.js".to_string(),
+                "/app.js".to_string(),
+            ],
+        );
+        assert!(
+            hosts
+                .iter()
+                .any(|h| h.host == "www.example.com" && h.is_first_party),
+            "relative first-party host; got {hosts:?}"
+        );
+        assert!(
+            hosts
+                .iter()
+                .any(|h| h.host == "static.example.com" && h.is_first_party),
+            "same eTLD+1; got {hosts:?}"
+        );
+        assert!(
+            hosts
+                .iter()
+                .any(|h| h.host == "www.googletagmanager.com" && !h.is_first_party),
+            "GTM must be third-party; got {hosts:?}"
+        );
+        assert_eq!(
+            hosts
+                .iter()
+                .filter(|h| h.host == "www.example.com")
+                .count(),
+            1,
+            "duplicate hosts collapsed"
+        );
     }
 
     #[test]

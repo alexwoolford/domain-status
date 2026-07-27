@@ -26,6 +26,10 @@ pub struct UrlRecord {
     pub initial_domain: String,
     /// The final domain/URL after following redirects
     pub final_domain: String,
+    /// Original request URL (scheme/host/path/query) before redirects
+    pub initial_url: Option<String>,
+    /// Final URL after redirects (scheme/host/path/query)
+    pub final_url: Option<String>,
     /// The resolved IP address of the final domain
     pub ip_address: String,
     /// Reverse DNS lookup result for the IP address
@@ -42,6 +46,8 @@ pub struct UrlRecord {
     pub keywords: Option<String>,
     /// HTML meta description
     pub description: Option<String>,
+    /// Content of `<meta name="robots">` when present
+    pub meta_robots: Option<String>,
     /// TLS version
     pub tls_version: Option<crate::models::TlsVersion>,
     /// SSL certificate subject (e.g., "CN=example.com")
@@ -116,6 +122,8 @@ impl UrlRecord {
         Self {
             initial_domain: "example.com".to_string(),
             final_domain: "example.com".to_string(),
+            initial_url: Some("https://example.com/".to_string()),
+            final_url: Some("https://example.com/".to_string()),
             ip_address: "93.184.216.34".to_string(),
             reverse_dns_name: None,
             status: 200,
@@ -124,6 +132,7 @@ impl UrlRecord {
             title: "Example".to_string(),
             keywords: None,
             description: None,
+            meta_robots: None,
             tls_version: None,
             ssl_cert_subject: None,
             ssl_cert_issuer: None,

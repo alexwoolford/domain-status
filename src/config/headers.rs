@@ -80,6 +80,8 @@ pub(crate) const HEADER_CLEAR_SITE_DATA: &str = "Clear-Site-Data";
 pub(crate) const HEADER_REPORT_TO: &str = "Report-To";
 /// NEL header (Network Error Logging configuration)
 pub(crate) const HEADER_NEL: &str = "NEL";
+/// X-Robots-Tag (indexability directives from the origin)
+pub(crate) const HEADER_X_ROBOTS_TAG: &str = "X-Robots-Tag";
 
 /// List of other HTTP headers to capture (non-security).
 /// These are stored in the `url_http_headers` table.
@@ -91,6 +93,7 @@ pub(crate) const HEADER_NEL: &str = "NEL";
 /// - Resource discovery/negotiation: Link, Alt-Svc, Accept-CH, Critical-CH,
 ///   Clear-Site-Data, Report-To, NEL (resource hints, protocol upgrades, client
 ///   hints, and reporting configuration)
+/// - SEO / crawl: X-Robots-Tag
 ///
 /// To add/remove headers, modify this array.
 pub(crate) const HTTP_HEADERS: &[&str] = &[
@@ -117,4 +120,6 @@ pub(crate) const HTTP_HEADERS: &[&str] = &[
     HEADER_CLEAR_SITE_DATA,
     HEADER_REPORT_TO,
     HEADER_NEL,
+    // SEO / crawl
+    HEADER_X_ROBOTS_TAG,
 ];

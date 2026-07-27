@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// reference-counted view (clone is a pointer + atomic refcount bump).
 #[derive(Debug)]
 pub(crate) struct ResponseData {
+    pub(crate) initial_url: String,
     pub(crate) final_url: String,
     pub(crate) initial_domain: String,
     pub(crate) final_domain: String,
@@ -64,6 +65,8 @@ pub(crate) struct HtmlData {
     pub(crate) favicon_url: Option<String>, // Favicon URL extracted from <link rel="icon"> tags
     pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
     pub(crate) meta_refresh_url: Option<String>, // Meta refresh redirect URL
+    /// Content of `<meta name="robots">` when present
+    pub(crate) meta_robots: Option<String>,
     pub(crate) resource_hints: Vec<(String, String)>, // (hint_type, href) for preconnect/dns-prefetch/preload/prefetch/modulepreload
     /// Deprecated — body-domain capture disabled; always empty on new scans.
     #[allow(dead_code)]

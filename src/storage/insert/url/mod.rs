@@ -26,6 +26,8 @@ use satellite::{
 const URL_STATUS_COLUMNS: &[&str] = &[
     "initial_domain",
     "final_domain",
+    "initial_url",
+    "final_url",
     "ip_address",
     "reverse_dns_name",
     "http_status",
@@ -34,6 +36,7 @@ const URL_STATUS_COLUMNS: &[&str] = &[
     "title",
     "keywords",
     "description",
+    "meta_robots",
     "tls_version",
     "ssl_cert_subject",
     "ssl_cert_issuer",
@@ -122,6 +125,8 @@ pub struct UrlRecordInsertParams<'a> {
     pub resource_hints: &'a [(String, String)],
     /// Body domains (fqdn, `registrable_domain`)
     pub body_domains: &'a [(String, Option<String>)],
+    /// Script `src` host inventory
+    pub script_hosts: &'a [crate::storage::ScriptHostInfo],
 }
 
 impl<'a> UrlRecordInsertParams<'a> {
@@ -163,6 +168,7 @@ impl<'a> UrlRecordInsertParams<'a> {
             cookies: &batch.cookies,
             resource_hints: &batch.resource_hints,
             body_domains: &batch.body_domains,
+            script_hosts: &batch.script_hosts,
         }
     }
 }
@@ -217,6 +223,8 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     let url_status_id_result = sqlx::query_scalar::<_, i64>(&upsert_sql)
     .bind(&params.record.initial_domain)
     .bind(&params.record.final_domain)
+    .bind(&params.record.initial_url)
+    .bind(&params.record.final_url)
     .bind(&params.record.ip_address)
     .bind(&params.record.reverse_dns_name)
     .bind(params.record.status)
@@ -225,6 +233,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     .bind(&params.record.title)
     .bind(&params.record.keywords)
     .bind(&params.record.description)
+    .bind(&params.record.meta_robots)
     .bind(params.record.tls_version.as_ref().map(crate::models::TlsVersion::as_str))
     .bind(&params.record.ssl_cert_subject)
     .bind(&params.record.ssl_cert_issuer)
@@ -320,6 +329,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
         "url_cookies",
         "url_resource_hints",
         "url_body_domains",
+        "url_script_hosts",
         // Enrichment tables (inserted after this transaction, but cleaned here)
         "url_analytics_ids",
         "url_structured_data",
@@ -361,6 +371,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     insert_cookies(&mut tx, url_status_id, params.cookies).await;
     insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await;
     insert_body_domains(&mut tx, url_status_id, params.body_domains).await;
+    insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await;
 
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.
@@ -442,6 +453,43 @@ async fn insert_cookies(
     }
     if let Err(e) = qb.execute(&mut **tx).await {
         log::warn!("Failed to insert cookies for {url_status_id}: {e}");
+    }
+}
+
+/// Inserts script `src` host inventory into `url_script_hosts`.
+async fn insert_script_hosts(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    hosts: &[crate::storage::ScriptHostInfo],
+) {
+    if hosts.is_empty() {
+        return;
+    }
+    let query = super::utils::build_batch_insert_query(
+        "url_script_hosts",
+        &[
+            "url_status_id",
+            "host",
+            "registrable_domain",
+            "is_first_party",
+        ],
+        hosts.len(),
+        Some(
+            "ON CONFLICT(url_status_id, host) DO UPDATE SET \
+             registrable_domain=excluded.registrable_domain, \
+             is_first_party=excluded.is_first_party",
+        ),
+    );
+    let mut qb = sqlx::query(&query);
+    for h in hosts {
+        qb = qb
+            .bind(url_status_id)
+            .bind(&h.host)
+            .bind(&h.registrable_domain)
+            .bind(h.is_first_party);
+    }
+    if let Err(e) = qb.execute(&mut **tx).await {
+        log::warn!("Failed to insert script hosts for {url_status_id}: {e}");
     }
 }
 
@@ -589,6 +637,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await;
 
@@ -609,6 +658,71 @@ mod tests {
         assert_eq!(row.get::<String, _>("final_domain"), "example.com");
         assert_eq!(row.get::<i64, _>("http_status"), 200);
         assert_eq!(row.get::<String, _>("title"), "Example Domain");
+    }
+
+    #[tokio::test]
+    async fn test_insert_high_value_capture_fields() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
+        let mut record = create_test_url_record();
+        record.initial_url = Some("http://example.com/start".to_string());
+        record.final_url = Some("https://example.com/land?x=1".to_string());
+        record.meta_robots = Some("noindex".to_string());
+
+        let script_hosts = vec![crate::storage::ScriptHostInfo {
+            host: "cdn.example.com".to_string(),
+            registrable_domain: Some("example.com".to_string()),
+            is_first_party: true,
+        }];
+
+        let id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &HashMap::new(),
+            http_headers: &HashMap::new(),
+            oids: &HashSet::new(),
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+            script_hosts: &script_hosts,
+        })
+        .await
+        .expect("insert");
+
+        let row = sqlx::query(
+            "SELECT initial_url, final_url, meta_robots FROM url_status WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch");
+        assert_eq!(
+            row.get::<Option<String>, _>("initial_url").as_deref(),
+            Some("http://example.com/start")
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("final_url").as_deref(),
+            Some("https://example.com/land?x=1")
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("meta_robots").as_deref(),
+            Some("noindex")
+        );
+
+        let host_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_script_hosts WHERE url_status_id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(host_count, 1);
     }
 
     #[tokio::test]
@@ -636,6 +750,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("insert");
@@ -674,6 +789,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("upsert");
@@ -735,6 +851,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -787,6 +904,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -844,6 +962,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -903,6 +1022,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("Failed to insert record");
@@ -926,6 +1046,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("Failed to upsert record");
@@ -982,6 +1103,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("first insert");
@@ -1025,6 +1147,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("upsert");
@@ -1077,6 +1200,7 @@ mod tests {
         "url_cookies",
         "url_resource_hints",
         "url_body_domains",
+        "url_script_hosts",
         "url_analytics_ids",
         "url_structured_data",
         "url_social_media_links",
@@ -1251,6 +1375,18 @@ mod tests {
         .expect("seed url_body_domains");
 
         sqlx::query(
+            "INSERT INTO url_script_hosts (url_status_id, host, registrable_domain, is_first_party) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("cdn.seed.example")
+        .bind("seed.example")
+        .bind(true)
+        .execute(pool)
+        .await
+        .expect("seed url_script_hosts");
+
+
+        sqlx::query(
             "INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (?, ?, ?)",
         )
         .bind(url_status_id)
@@ -1397,6 +1533,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("first insert");
@@ -1434,6 +1571,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await
         .expect("upsert");
@@ -1497,6 +1635,7 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             body_domains: &[],
+            script_hosts: &[],
         })
         .await;
 
