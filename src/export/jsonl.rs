@@ -47,6 +47,7 @@ use super::row::{build_export_row, build_url, extract_main_row_data, parse_strin
 ///     domain: None,
 ///     status: None,
 ///     since: None,
+///     include_implied_tech: false,
 /// })
 /// .await?;
 ///
@@ -89,7 +90,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
     while let Some(row) = rows.try_next().await? {
         // Extract main row data and build the complete export row
         let main = extract_main_row_data(&row);
-        let export_row = build_export_row(&pool, main).await?;
+        let export_row = build_export_row(&pool, main, opts.include_implied_tech).await?;
 
         // Build URL
         let url = build_url(&export_row.main.final_domain);
@@ -403,6 +404,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -477,6 +479,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -523,6 +526,7 @@ mod tests {
             domain: Some("example.com".to_string()),
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -558,6 +562,7 @@ mod tests {
             domain: None,
             status: Some(404),
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -615,6 +620,7 @@ mod tests {
             domain: None,
             status: None,
             since: Some(1704100000000i64), // Between the two timestamps
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -672,6 +678,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -716,6 +723,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully even with empty database");
@@ -747,6 +755,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export to stdout successfully");
@@ -804,6 +813,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -850,6 +860,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await;
 
@@ -919,6 +930,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -968,6 +980,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -1023,6 +1036,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -1102,6 +1116,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully even with NULL values");
@@ -1163,6 +1178,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -1281,6 +1297,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -1390,6 +1407,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully even with empty satellites");

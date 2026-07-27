@@ -93,9 +93,9 @@ Important characteristics:
 | `http_status_text` | `TEXT NOT NULL` | Human-readable status |
 | `response_time_seconds` | `REAL NOT NULL` | Response time |
 | `title` | `TEXT NOT NULL` | Empty string when missing |
-| `keywords` | `TEXT` | Optional `<meta name="keywords">` content, verbatim. Low-signal: most modern sites leave this tag empty or unmaintained; treat as supplementary, not a reliable content-classification signal. |
+| `keywords` | `TEXT` | **Deprecated — no longer written.** Column retained for old DBs. Previously `<meta name="keywords">` (obsolete SEO). |
 | `description` | `TEXT` | Optional meta description |
-| `is_mobile_friendly` | `BOOLEAN NOT NULL DEFAULT 0` | Heuristic based on presence of a `<meta name="viewport">` tag only — it does not verify actual responsive layout/CSS. Treat as a weak proxy, not a mobile-usability audit. |
+| `is_mobile_friendly` | `BOOLEAN NOT NULL DEFAULT 0` | **Deprecated — always written as `0`.** Previously a viewport-meta heuristic only. |
 | `tls_version` | `TEXT` | Nullable for HTTP-only or missing TLS data |
 | `cipher_suite` | `TEXT` | Captured TLS cipher suite |
 | `key_algorithm` | `TEXT` | Parsed certificate key algorithm |
@@ -111,8 +111,8 @@ Important characteristics:
 | `external_scripts_scanned` | `INTEGER NOT NULL DEFAULT 0` | Scripts successfully fetched/scanned for secrets (capped; 0 when flag off) |
 | `content_length` | `INTEGER` | Response body length in bytes |
 | `http_version` | `TEXT` | HTTP protocol version (`HTTP/1.1`, `HTTP/2`, etc.) |
-| `body_word_count` | `INTEGER` | Word count of the response body |
-| `body_line_count` | `INTEGER` | Line count of the response body |
+| `body_word_count` | `INTEGER` | **Deprecated — no longer written** (prefer `content_length` + `body_sha256`). |
+| `body_line_count` | `INTEGER` | **Deprecated — no longer written.** |
 | `content_type` | `TEXT` | Content-Type header value |
 | `canonical_url` | `TEXT` | URL from `<link rel="canonical">` |
 | `cert_fingerprint_sha256` | `TEXT` | SHA-256 hash of the leaf TLS certificate DER |
@@ -176,8 +176,8 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_caa_records` | Certificate Authority Authorization | `flag`, `tag`, `value` |
 | `url_csp_domains` | Domains from Content-Security-Policy | `directive`, `fqdn`, `registrable_domain` |
 | `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
-| `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload | `hint_type`, `href` |
-| `url_body_domains` | FQDNs referenced in HTML body attributes (`href`/`src`). Low-signal on its own — high volume, mostly CDN/asset noise; more useful joined against `url_csp_domains` or `url_technologies` than read standalone. | `fqdn`, `registrable_domain` |
+| `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload (`hint_type` stored lowercase) | `hint_type`, `href` |
+| `url_body_domains` | **Deprecated — no longer populated.** Table retained for old DBs. Prefer `url_csp_domains`, `url_analytics_ids`, `url_social_media_links`. | `fqdn`, `registrable_domain` |
 
 > **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
 > a zone apex (e.g. `example.com`), so this table is typically empty for
@@ -194,7 +194,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_security_headers` | Security-focused header subset | `header_name`, `header_value` |
 | `url_certificate_oids` | Certificate OIDs | `oid` |
 | `url_certificate_sans` | Certificate SANs | `san_value` |
-| `url_favicons` | Favicon URL/hash/base64 payload | `favicon_url`, `hash`, `base64_data` |
+| `url_favicons` | Favicon URL + Shodan-compatible hash. `base64_data` is **no longer written** (storage bomb; column retained nullable for old DBs). | `favicon_url`, `hash`, `base64_data` |
 
 ### Enrichment satellites
 
@@ -207,7 +207,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_analytics_ids` | Analytics/tracking IDs | `provider`, `tracking_id` |
 | `url_contact_links` | `mailto:` and `tel:` links | `contact_type`, `contact_value`, `raw_href` |
 | `url_security_warnings` | Real, observed security issues only — see note below | `warning_code`, `warning_description` |
-| `url_technologies` | Technology fingerprint matches | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
+| `url_technologies` | Directly observed fingerprint matches. `HTTP/3` and `HSTS` are **not** inserted (use headers / `http_version` / TLS). Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
 | `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `header_json`, `payload_json`, `algorithm`, `issuer`, `subject`, `expiration_ms` |
 
@@ -219,7 +219,7 @@ These tables hang off `url_failures.id`:
 |------|---------|
 | `url_failure_redirect_chain` | Redirect history captured before failure |
 | `url_failure_response_headers` | Response headers observed before failure |
-| `url_failure_request_headers` | Request headers sent for debugging |
+| `url_failure_request_headers` | **Deprecated — no longer written** on new failures (echo of scanner outbound headers). Table retained for old DBs. |
 
 ## Relationship Semantics
 
@@ -269,6 +269,27 @@ in `url_security_headers`, e.g. `max-age=31536000; includeSubDomains; preload`. 
 `max-age` / `includeSubDomains` / `preload` directives aren't broken out into
 separate columns (to avoid schema churn for a header most sites don't send), but
 they're straightforward to parse from that single value if needed for analysis.
+
+### Legacy databases (pre–data-capture cleanup)
+
+Scans produced with **v0.1.26 and earlier** may still contain:
+
+- `missing_csp` / `missing_hsts` / `missing_frame_options` / `missing_content_type_options` in `url_security_warnings` (checklist noise). Filter with:
+
+```sql
+SELECT * FROM url_security_warnings
+WHERE warning_code NOT LIKE 'missing_%';
+```
+
+- Empty TLS on rows whose `ip_address` is IPv6 (no IPv4 fallback yet). Prefer newer binaries for dual-stack cert coverage.
+- Populated `keywords`, `body_word_count` / `body_line_count`, `url_body_domains`, favicon `base64_data`, and `url_failure_request_headers`.
+
+Optional maintenance to reclaim disk from old favicon payloads:
+
+```sql
+UPDATE url_favicons SET base64_data = NULL WHERE base64_data IS NOT NULL AND base64_data != '';
+VACUUM;
+```
 
 ### Secret findings
 

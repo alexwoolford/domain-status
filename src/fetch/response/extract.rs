@@ -28,19 +28,6 @@ fn format_http_version(version: reqwest::Version) -> String {
         other => format!("{other:?}"),
     }
 }
-
-/// Computes body content metrics (word count and line count).
-fn compute_body_metrics(body: &str) -> (Option<i64>, Option<i64>) {
-    if body.is_empty() {
-        return (None, None);
-    }
-    // Body is size-limited during streaming (typically < 10MB), word/line counts fit in i64
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    let word_count = body.split_whitespace().count() as i64;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    let line_count = body.lines().count() as i64;
-    (Some(word_count), Some(line_count))
-}
 use crate::domain::extract_domain;
 use crate::fetch::request::{extract_http_headers, extract_security_headers};
 
@@ -391,7 +378,9 @@ pub(crate) async fn extract_response_data(
     // Body is size-limited during streaming (typically < 10MB), length fits in i64
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let content_length = Some(body.len() as i64);
-    let (body_word_count, body_line_count) = compute_body_metrics(&body);
+    // body_word_count / body_line_count are deprecated low-signal metrics — leave NULL.
+    let body_word_count = None;
+    let body_line_count = None;
 
     Ok(Some(ResponseData {
         final_url,

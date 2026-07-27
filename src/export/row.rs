@@ -505,7 +505,11 @@ async fn fetch_social_and_structured(
 
 #[allow(clippy::too_many_lines)] // Sequentially fetches ~15 related tables to build a single export row
 #[allow(clippy::cognitive_complexity)] // Inherent in assembling data from many DB tables into one struct
-pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<ExportRow> {
+pub async fn build_export_row(
+    pool: &DbPool,
+    main: MainRowData,
+    include_implied_tech: bool,
+) -> Result<ExportRow> {
     let url_status_id = main.id;
 
     // Fetch redirect chain
@@ -534,30 +538,39 @@ pub async fn build_export_row(pool: &DbPool, main: MainRowData) -> Result<Export
         .unwrap_or_default();
 
     // Fetch technologies (both string format for CSV backward compat and structured for JSONL)
+    let tech_filter = if include_implied_tech {
+        ""
+    } else {
+        " AND COALESCE(is_implied, 0) = 0"
+    };
+    let tech_kv_sql = format!(
+        "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ?{tech_filter} ORDER BY technology_name"
+    );
     let (technologies_str, technology_count) = fetch_key_value_list(
         pool,
-        "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+        &tech_kv_sql,
         "technology_name",
         "technology_version",
         url_status_id,
     )
     .await?;
-    let technologies: Vec<TechnologyRecord> = sqlx::query(
+    let tech_struct_sql = format!(
         "SELECT technology_name, technology_version, technology_category, is_implied
-         FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name LIMIT ?",
-    )
-    .bind(url_status_id)
-    .bind(EXPORT_LIMIT)
-    .fetch_all(pool.as_ref())
-    .await?
-    .iter()
-    .map(|r| TechnologyRecord {
-        name: r.get("technology_name"),
-        version: r.get("technology_version"),
-        category: r.get("technology_category"),
-        is_implied: r.get::<i64, _>("is_implied") != 0,
-    })
-    .collect();
+         FROM url_technologies WHERE url_status_id = ?{tech_filter} ORDER BY technology_name LIMIT ?"
+    );
+    let technologies: Vec<TechnologyRecord> = sqlx::query(&tech_struct_sql)
+        .bind(url_status_id)
+        .bind(EXPORT_LIMIT)
+        .fetch_all(pool.as_ref())
+        .await?
+        .iter()
+        .map(|r| TechnologyRecord {
+            name: r.get("technology_name"),
+            version: r.get("technology_version"),
+            category: r.get("technology_category"),
+            is_implied: r.get::<i64, _>("is_implied") != 0,
+        })
+        .collect();
     let technology_categories_str = technologies
         .iter()
         .filter_map(|t| t.category.as_deref())

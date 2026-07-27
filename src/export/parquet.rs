@@ -1137,6 +1137,7 @@ fn write_batch(
 ///     domain: Some("example.com".to_string()),
 ///     status: None,
 ///     since: None,
+///     include_implied_tech: false,
 /// })
 /// .await?;
 ///
@@ -1188,7 +1189,7 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
 
     while let Some(row) = rows_stream.try_next().await? {
         let main = extract_main_row_data(&row);
-        let export_row = build_export_row(&pool, main).await?;
+        let export_row = build_export_row(&pool, main, opts.include_implied_tech).await?;
         batch_rows.push(export_row);
 
         if batch_rows.len() >= BATCH_SIZE {
@@ -1276,6 +1277,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await;
 
@@ -1305,6 +1307,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await;
 
@@ -1333,6 +1336,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should succeed on empty database");
@@ -1409,6 +1413,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export successfully");
@@ -1491,6 +1496,7 @@ mod tests {
             domain: Some("example.com".to_string()),
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export with filter");

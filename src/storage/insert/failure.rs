@@ -126,6 +126,11 @@ async fn insert_failure_response_headers(
 /// # Returns
 ///
 /// `Ok(())` if successful, `DatabaseError` if insertion fails
+/// Inserts request headers into `url_failure_request_headers` table.
+///
+/// Retained for schema/back-compat tooling; new failures no longer call this
+/// (outbound request headers are low-value once the scanner UA is known).
+#[allow(dead_code)]
 async fn insert_failure_request_headers(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     failure_id: i64,
@@ -182,8 +187,8 @@ async fn insert_failure_satellite_data(
     // Insert response headers
     insert_failure_response_headers(tx, failure_id, &failure.response_headers).await?;
 
-    // Insert request headers
-    insert_failure_request_headers(tx, failure_id, &failure.request_headers).await?;
+    // Request headers are no longer persisted (echo of our outbound UA/headers).
+    // Table retained for old DBs; skip insert on new failures.
 
     Ok(())
 }
@@ -494,7 +499,7 @@ mod tests {
         );
         assert_eq!(response_rows[1].get::<String, _>("header_name"), "Server");
 
-        // Verify request headers
+        // Request headers are no longer persisted on new failures.
         let request_rows = sqlx::query(
             "SELECT header_name, header_value FROM url_failure_request_headers WHERE url_failure_id = ? ORDER BY header_name",
         )
@@ -503,11 +508,9 @@ mod tests {
         .await
         .expect("Failed to fetch request headers");
 
-        assert_eq!(request_rows.len(), 2);
-        assert_eq!(request_rows[0].get::<String, _>("header_name"), "Accept");
-        assert_eq!(
-            request_rows[1].get::<String, _>("header_name"),
-            "User-Agent"
+        assert!(
+            request_rows.is_empty(),
+            "url_failure_request_headers should not be written for new failures"
         );
     }
 
@@ -874,9 +877,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_url_failure_request_headers_conflict_handling() {
-        // Test that request headers with duplicate names are handled correctly
-        // This is critical - ON CONFLICT DO UPDATE ensures latest value is used
+    async fn test_insert_failure_request_headers_helper_conflict_handling() {
+        // Helper retained for back-compat; verify ON CONFLICT DO UPDATE still works if called.
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-req-headers", 1704067200000i64).await;
 
@@ -894,18 +896,24 @@ mod tests {
             run_id: Some("test-run-req-headers".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![
-                ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
-                ("User-Agent".to_string(), "Chrome/91.0".to_string()), // Duplicate name
-            ],
+            request_headers: vec![],
         };
 
-        let result = insert_url_failure(&pool, &failure).await;
-        assert!(result.is_ok());
+        let failure_id = insert_url_failure(&pool, &failure).await.expect("insert");
 
-        let failure_id = result.unwrap();
+        let mut tx = pool.begin().await.expect("begin");
+        insert_failure_request_headers(
+            &mut tx,
+            failure_id,
+            &[
+                ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
+                ("User-Agent".to_string(), "Chrome/91.0".to_string()),
+            ],
+        )
+        .await
+        .expect("insert request headers");
+        tx.commit().await.expect("commit");
 
-        // Verify that duplicate header names result in only one entry (last value wins)
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM url_failure_request_headers WHERE url_failure_id = ? AND header_name = 'User-Agent'",
         )
@@ -914,12 +922,8 @@ mod tests {
         .await
         .expect("Failed to count User-Agent headers");
 
-        assert_eq!(
-            count, 1,
-            "Duplicate header names should result in one entry (last value wins)"
-        );
+        assert_eq!(count, 1);
 
-        // Verify the last value is stored
         let row = sqlx::query(
             "SELECT header_value FROM url_failure_request_headers WHERE url_failure_id = ? AND header_name = 'User-Agent'",
         )

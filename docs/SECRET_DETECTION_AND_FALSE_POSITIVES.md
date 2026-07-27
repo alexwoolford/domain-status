@@ -38,6 +38,8 @@ Prefer maintainable fixes over growing per-site exception lists:
 | 15-char near “dropbox” | dropbox-api-token | JS identifier (e.g. `theChampSiteUrl`) | Rule disabled; use long/short-lived Dropbox rules |
 | camelCase near “linkedin” (e.g. `thumbnailWidth`) | linkedin-client-id/secret | JS property name | Plausibility: reject lowercase-starting camelCase |
 | Cloudflare email obfuscation (40-char hex) | sourcegraph-access-token | `email-protection#`, `data-cfemail=`, `__cf_email__` | Allowlisted in overrides |
+| Firebase / Maps / browser `AIza…` | gcp-api-key | Often **public client** keys embedded in JS by design | Treat as **Low** inventory; confirm restriction (HTTP referrer / API) before escalating |
+| Netlify CWV / shop / session JWTs | jwt | Public or short-lived client tokens | Keep claims in `url_jwt_claims`; severity usually Low — not a private signing key |
 | HTML `id="[40 hex]"` (e.g. Wix build) | sourcegraph-access-token | Build/instance ID | Allowlisted in overrides |
 
 ## How to triage

@@ -215,7 +215,8 @@ pub(crate) async fn fetch_and_hash_favicon(
     };
 
     let hash = compute_shodan_favicon_hash(&bytes);
-    let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    // Do not persist favicon bytes (storage bomb); Shodan interop only needs the hash.
+    let base64_data = String::new();
 
     Some(FaviconData {
         favicon_url,

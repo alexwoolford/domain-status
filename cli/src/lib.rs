@@ -155,6 +155,11 @@ pub struct ExportCommand {
 
     #[arg(long)]
     pub since: Option<i64>,
+
+    /// Include fingerprint technologies with `is_implied = 1` in export output.
+    /// Default: only directly observed technologies.
+    #[arg(long, default_value_t = false)]
+    pub include_implied_tech: bool,
 }
 
 /// Summary command arguments.

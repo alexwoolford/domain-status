@@ -40,6 +40,7 @@ pub enum ExportFormat {
 ///     domain: None,
 ///     status: None,
 ///     since: None,
+///     include_implied_tech: false,
 /// };
 /// ```
 ///
@@ -57,6 +58,7 @@ pub enum ExportFormat {
 ///     domain: Some("example.com".to_string()),
 ///     status: Some(200),
 ///     since: Some(1_700_000_000_000),
+///     include_implied_tech: false,
 /// };
 /// ```
 #[derive(Clone, Debug)]
@@ -75,4 +77,6 @@ pub struct ExportOptions {
     pub status: Option<u16>,
     /// Optional lower bound on `observed_at_ms`, in milliseconds since Unix epoch.
     pub since: Option<i64>,
+    /// When false (default), export omits fingerprint rows with `is_implied = 1`.
+    pub include_implied_tech: bool,
 }

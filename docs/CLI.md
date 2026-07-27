@@ -44,6 +44,7 @@ Config file path: `--config` **wins** over `DOMAIN_STATUS_CONFIG_FILE`; else cwd
 domain_status summary --top 20
 domain_status export --format csv --output results.csv
 domain_status export --format jsonl --run-id run_…
+domain_status export --include-implied-tech   # include is_implied=1 fingerprint rows (off by default)
 ```
 
 See [ADVANCED.md](ADVANCED.md) for enrichments and cache layout.

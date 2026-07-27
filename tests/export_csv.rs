@@ -167,6 +167,7 @@ async fn test_export_csv_basic() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -239,6 +240,7 @@ async fn test_export_csv_filter_by_run_id() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -287,6 +289,7 @@ async fn test_export_csv_filter_by_domain() {
         domain: Some("example.com".to_string()),
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -327,6 +330,7 @@ async fn test_export_csv_filter_by_status() {
         domain: None,
         status: Some(200),
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -361,6 +365,7 @@ async fn test_export_csv_empty_database() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed even with empty database");
@@ -397,6 +402,7 @@ async fn test_export_csv_missing_relationships() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed even with missing relationships");
@@ -433,6 +439,7 @@ async fn test_export_csv_all_enrichment_data() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -521,6 +528,7 @@ async fn test_export_csv_filter_combinations() {
         domain: None,
         status: Some(200),
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -570,6 +578,7 @@ async fn test_export_csv_filter_by_since() {
         domain: None,
         status: None,
         since: Some(since_timestamp),
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -610,6 +619,7 @@ async fn test_export_csv_stdout() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -671,6 +681,7 @@ async fn test_export_csv_date_formatting() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -742,6 +753,7 @@ async fn test_export_csv_comma_separated_lists() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -791,6 +803,7 @@ async fn test_export_csv_all_columns_present() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -938,6 +951,7 @@ async fn test_export_csv_null_handling() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should handle NULL values");
@@ -997,6 +1011,7 @@ async fn test_export_csv_no_redirects_still_exports_final_domain() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should handle no redirects");
@@ -1045,6 +1060,7 @@ async fn test_export_csv_redirect_chain_edge_cases() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should handle multiple redirects");
@@ -1136,6 +1152,7 @@ async fn test_export_csv_final_redirect_url_empty_when_no_redirects() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -1202,6 +1219,7 @@ async fn test_export_csv_body_truncated_column_present() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -1309,6 +1327,7 @@ async fn test_export_csv_header_filtering() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should filter headers");
@@ -1382,6 +1401,7 @@ async fn test_export_csv_unicode_and_special_chars() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should handle unicode and special chars");

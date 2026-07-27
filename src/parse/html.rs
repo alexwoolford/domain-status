@@ -13,6 +13,7 @@ use crate::error_handling::ProcessingStats;
 
 // CSS selector strings
 const TITLE_SELECTOR_STR: &str = "title";
+#[allow(dead_code)] // used only by deprecated extract_meta_keywords
 const META_KEYWORDS_SELECTOR_STR: &str = "meta[name='keywords']";
 const META_DESCRIPTION_SELECTOR_STR: &str = "meta[name='description']";
 static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
@@ -20,6 +21,7 @@ static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
         .expect("TITLE_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
 });
 
+#[allow(dead_code)] // used only by deprecated extract_meta_keywords
 static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse(META_KEYWORDS_SELECTOR_STR).expect(
         "META_KEYWORDS_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug",
@@ -116,6 +118,9 @@ pub fn extract_title(document: &Html, error_stats: &ProcessingStats) -> String {
 /// # Returns
 ///
 /// A vector of keyword strings, or `None` if no keywords meta tag is found or if it's empty.
+///
+/// Deprecated for new scans (meta keywords are no longer persisted); retained for unit tests.
+#[allow(dead_code)]
 pub fn extract_meta_keywords(
     document: &Html,
     error_stats: &ProcessingStats,
@@ -188,6 +193,9 @@ pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Opt
 /// # Returns
 ///
 /// `true` if a viewport meta tag is present, `false` otherwise.
+///
+/// Deprecated for new scans (`is_mobile_friendly` is always stored as false); retained for unit tests.
+#[allow(dead_code)]
 pub fn is_mobile_friendly(html: &str) -> bool {
     // Use a case-insensitive byte search instead of re-parsing the DOM.
     // The caller (parse_html_content) already parsed the DOM — this avoids a

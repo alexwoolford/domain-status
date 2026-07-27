@@ -51,6 +51,7 @@ fn format_date(ts_ms: Option<i64>) -> String {
 ///     domain: None,
 ///     status: Some(200),
 ///     since: None,
+///     include_implied_tech: false,
 /// })
 /// .await?;
 ///
@@ -188,7 +189,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     while let Some(row) = rows.try_next().await? {
         // Extract main row data and build the complete export row
         let main = extract_main_row_data(&row);
-        let export_row = build_export_row(&pool, main).await?;
+        let export_row = build_export_row(&pool, main, opts.include_implied_tech).await?;
 
         // Build URL. `final_redirect_url` mirrors JSONL: empty when redirect_count == 0
         // (no redirects means there is no "final redirect" to report), never a fallback
@@ -854,6 +855,7 @@ mod tests {
             domain: None,
             status: None,
             since: None,
+            include_implied_tech: false,
         })
         .await
         .expect("Should export CSV");

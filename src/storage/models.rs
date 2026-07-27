@@ -183,7 +183,9 @@ pub struct UrlFailureRecord {
     pub run_id: Option<String>,       // Foreign key to runs.run_id
     pub redirect_chain: Vec<String>,  // Redirect chain before failure (if any)
     pub response_headers: Vec<(String, String)>, // Response headers received (if any)
-    pub request_headers: Vec<(String, String)>, // Request headers sent (for debugging)
+    /// Deprecated — no longer inserted into `url_failure_request_headers`.
+    #[allow(dead_code)]
+    pub request_headers: Vec<(String, String)>,
 }
 
 /// Represents a partial failure (DNS/TLS error that didn't prevent URL processing).

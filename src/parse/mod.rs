@@ -23,6 +23,7 @@ mod structured;
 pub use analytics::{extract_analytics_ids, AnalyticsId, AnalyticsProvider};
 #[allow(unused_imports)] // Public API re-export
 pub use contact::{extract_contact_links, ContactLink, ContactType};
+#[allow(unused_imports)] // Public API re-export (still used by parse::tests)
 pub use html::{
     extract_meta_description, extract_meta_keywords, extract_title, is_mobile_friendly,
 };
