@@ -406,6 +406,7 @@ mod tests {
             meta_tags: HashMap::new(),
             script_sources: vec![],
             script_tag_ids: HashSet::new(),
+            inline_script_text: String::new(),
             external_scripts_eligible: 0,
             external_scripts_scanned: 0,
             favicon_url: None,

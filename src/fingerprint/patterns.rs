@@ -220,6 +220,16 @@ fn parse_pattern(pattern: &str) -> ParsedPattern {
     }
 }
 
+/// Parses a technology reference used in `implies` / `excludes`.
+///
+/// Upstream encodes metadata after `\;`, e.g. `PHP\;confidence:75` or
+/// `Magento\;version:2`. Returns `(technology_name, optional_literal_version)`.
+#[must_use]
+pub(crate) fn parse_technology_reference(raw: &str) -> (String, Option<String>) {
+    let parsed = parse_pattern(raw);
+    (parsed.pattern_for_match, parsed.version_template)
+}
+
 /// Checks if a pattern string contains regex-like syntax.
 ///
 /// Patterns starting with ^ or containing regex special chars are likely regex.

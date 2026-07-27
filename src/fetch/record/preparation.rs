@@ -287,6 +287,7 @@ mod tests {
             meta_tags: std::collections::HashMap::new(),
             script_sources: Vec::new(),
             script_tag_ids: std::collections::HashSet::new(),
+            inline_script_text: String::new(),
             external_scripts_eligible: 0,
             external_scripts_scanned: 0,
             favicon_url: None,

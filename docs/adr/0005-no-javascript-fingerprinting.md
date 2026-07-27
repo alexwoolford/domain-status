@@ -23,8 +23,11 @@ Technology detection is based on static evidence such as:
 - headers
 - cookies
 - HTML
-- script URLs
+- script URLs (`scriptSrc`) and inline `<script>` text (`scripts`)
+- DNS records and TLS certificate issuer (matched after DNS/TLS enrichment)
 - other response-derived patterns
+
+`--scan-external-scripts` fetches first-party script bodies for **secret detection only**; those bodies are not fed into technology fingerprinting.
 
 This keeps the scanner aligned with a lightweight, batch-oriented architecture rather than turning it into a browser automation system.
 
@@ -42,6 +45,7 @@ Trade-offs:
 - client-side-rendered technologies may be missed
 - JavaScript-only redirects or late-loaded frameworks may not appear
 - some modern SPA-heavy targets will have intentionally incomplete detection coverage
+- upstream `dom` / `xhr` / runtime `js` object rules remain unmatched (by design)
 
 ## Related Code
 

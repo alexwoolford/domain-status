@@ -119,6 +119,7 @@ pub(crate) fn parse_html_content(
 
     let mut script_sources = Vec::new();
     let mut script_tag_ids = HashSet::new();
+    let mut inline_script_parts: Vec<String> = Vec::new();
     let script_selector =
         crate::utils::parse_selector_with_fallback("script", "script tag extraction");
     for element in document.select(&script_selector) {
@@ -127,12 +128,33 @@ pub(crate) fn parse_html_content(
             script_tag_ids.insert(id.to_string());
         }
         // Extract script src URLs (skip empty src attributes)
-        if let Some(src) = element.value().attr("src") {
-            if !src.is_empty() {
-                script_sources.push(src.to_string());
-            }
+        let src = element.value().attr("src").filter(|s| !s.is_empty());
+        if let Some(src) = src {
+            script_sources.push(src.to_string());
+            continue;
         }
+        // Inline script bodies for Wappalyzer `scripts` patterns (static text only).
+        // Skip JSON-LD / application/json payloads to reduce noise.
+        let script_type = element
+            .value()
+            .attr("type")
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if script_type.contains("ld+json") || script_type.contains("json") {
+            continue;
+        }
+        let text: String = element.text().collect();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip JSON payloads (JSON-LD without type, Next.js __NEXT_DATA__, etc.)
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            continue;
+        }
+        inline_script_parts.push(text);
     }
+    let inline_script_text = inline_script_parts.join("\n").to_lowercase();
     // Fallback: Use regex to extract script sources that scraper might have missed
     // This is a safety net for edge cases where the HTML parser might miss script tags
     use std::sync::LazyLock;
@@ -302,6 +324,7 @@ pub(crate) fn parse_html_content(
         meta_tags,
         script_sources,
         script_tag_ids,
+        inline_script_text,
         external_scripts_eligible: 0,
         external_scripts_scanned: 0,
         favicon_url,
@@ -435,6 +458,10 @@ mod tests {
 
         // Check script IDs
         assert!(result.script_tag_ids.contains("__NEXT_DATA__"));
+        // Inline scripts (non-JSON) feed fingerprint `scripts` patterns
+        assert!(result.inline_script_text.contains("console.log"));
+        // JSON payloads in script tags are skipped
+        assert!(!result.inline_script_text.contains("\"page\""));
     }
 
     #[test]

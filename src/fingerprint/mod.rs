@@ -6,19 +6,23 @@
 //!
 //! # Pattern Matching
 //!
-//! Technology detection matches patterns against:
+//! Technology detection matches patterns against static evidence only
+//! (no JavaScript execution — see ADR 0005):
 //! - HTTP headers (Server, X-Powered-By, etc.)
 //! - Cookies
 //! - Meta tags (name, property, http-equiv)
-//! - Script source URLs (from HTML, not fetched)
+//! - Script source URLs from the initial HTML (not fetched)
+//! - Inline `<script>` text (`scripts` patterns)
 //! - HTML text content
 //! - URL patterns
 //! - Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
+//! - DNS records and TLS certificate issuer (after DNS/TLS enrichment)
 //!
-//! **Note:** We match `WappalyzerGo`'s behavior - we do NOT execute JavaScript
-//! or fetch external scripts. We only analyze the initial HTML response.
+//! **`--scan-external-scripts` does not feed technology detection** — it only
+//! scans first-party script bodies for exposed secrets.
 
 mod detection;
+#[cfg(test)]
 mod js_parsing;
 mod models;
 mod patterns;
@@ -33,7 +37,9 @@ pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 pub use ruleset::init_ruleset;
 
 // Blocking detection for the scan hot path (ruleset passed explicitly).
-pub(crate) use detection::detect_technologies_blocking;
+pub(crate) use detection::{
+    detect_technologies_blocking, dns_records_haystack, supplement_technologies_with_dns_cert,
+};
 // Global getter retained for unit tests that call `init_ruleset` then exercise matchers.
 #[cfg(test)]
 pub(crate) use ruleset::get_ruleset;
@@ -97,6 +103,7 @@ mod tests {
             &normalized_body,
             url,
             &script_tag_ids,
+            "",
         )
         .expect("empty ruleset detection should succeed");
 
