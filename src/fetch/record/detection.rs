@@ -25,6 +25,7 @@ pub(crate) async fn detect_technologies_safely(
     let script_sources = html_data.script_sources.clone();
     let url = resp_data.final_url.clone();
     let script_tag_ids = html_data.script_tag_ids.clone();
+    let inline_script_text = html_data.inline_script_text.clone();
 
     // Run CPU-bound regex work on blocking thread pool to avoid executor starvation.
     let result = tokio::task::spawn_blocking(move || {
@@ -36,6 +37,7 @@ pub(crate) async fn detect_technologies_safely(
             &normalized_body,
             &url,
             &script_tag_ids,
+            &inline_script_text,
         )
     })
     .await
@@ -125,6 +127,7 @@ mod tests {
             meta_tags: HashMap::new(),
             script_sources: vec![],
             script_tag_ids: HashSet::new(),
+            inline_script_text: String::new(),
             external_scripts_eligible: 0,
             external_scripts_scanned: 0,
             favicon_url: None,

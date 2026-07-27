@@ -145,6 +145,23 @@ async fn parallel_enrich(
         (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us),
     ) = dns_result?;
 
+    // DNS/TLS finish after the first tech pass (they run in parallel). Merge
+    // dns / certIssuer pattern matches now that those signals exist.
+    let dns_haystack = crate::fingerprint::dns_records_haystack(
+        additional_dns.nameservers.as_deref(),
+        additional_dns.txt_records.as_deref(),
+        additional_dns.mx_records.as_deref(),
+        additional_dns.cname_chain.as_deref(),
+        additional_dns.spf_record.as_deref(),
+        additional_dns.dmarc_record.as_deref(),
+    );
+    let technologies_vec = crate::fingerprint::supplement_technologies_with_dns_cert(
+        ctx.ruleset.as_ref(),
+        technologies_vec,
+        &dns_haystack,
+        tls_dns_data.issuer.as_deref(),
+    );
+
     Ok(EnrichmentResult {
         technologies_vec,
         tech_detection_us,

@@ -9,6 +9,7 @@
 
 mod body;
 mod cookies;
+mod dns_cert;
 mod headers;
 mod matching;
 mod utils;
@@ -19,34 +20,31 @@ use std::sync::Arc;
 
 use crate::error_handling::FingerprintError;
 use crate::fingerprint::models::FingerprintRuleset;
+use crate::fingerprint::patterns::parse_technology_reference;
 
 use body::check_body_with_ruleset;
 use cookies::check_cookies_with_ruleset;
+use dns_cert::check_dns_and_cert_with_ruleset;
 use headers::check_headers_with_ruleset;
 use matching::apply_technology_exclusions;
 use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 
 /// Detects technologies from extracted HTML data, headers, and URL.
 ///
-/// Static matcher using single-request fields only (no JavaScript execution):
+/// Static matcher (no JavaScript execution):
 /// - Headers
 /// - Cookies (from `SET_COOKIE` and Cookie headers)
 /// - Meta tags (name, property, http-equiv)
-/// - Script sources (`src` URLs)
+/// - Script sources (`src` URLs from HTML — not fetched)
+/// - Inline `<script>` text (`scripts` patterns)
 /// - Script tag IDs (static HTML `id` attributes, e.g. `__NEXT_DATA__`)
 /// - HTML text patterns
 /// - URL patterns
 ///
+/// DNS / cert-issuer matching runs separately via
+/// [`supplement_technologies_with_dns_cert`] after those signals are available.
+///
 /// Technologies with only runtime `js` object patterns (and no other signals) are not detected.
-///
-/// # Arguments
-///
-/// * `meta_tags` - Map of meta tag name/property/http-equiv -> Vec of content values
-/// * `script_sources` - Vector of script src URLs
-/// * `html_body` - Full HTML body normalized to lowercase
-/// * `headers` - HTTP response headers
-/// * `url` - The URL being analyzed
-/// * `script_tag_ids` - Script tag IDs found in HTML (matched against ruleset `js` keys)
 ///
 /// Technology detection result with name and optional version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -57,6 +55,12 @@ pub struct DetectedTechnology {
     pub category: Option<String>,
     /// True when this technology was added only via another tech's `implies` list.
     pub is_implied: bool,
+}
+
+#[derive(Clone)]
+struct TechInfo {
+    version: Option<String>,
+    is_implied: bool,
 }
 
 /// Drops version strings that look like content/git hashes rather than semver.
@@ -77,6 +81,129 @@ pub(crate) fn sanitize_technology_version(version: Option<String>) -> Option<Str
     Some(version)
 }
 
+fn merge_observed(
+    detected: &mut HashMap<String, TechInfo>,
+    tech_name: String,
+    version: Option<String>,
+) {
+    let version = sanitize_technology_version(version);
+    detected
+        .entry(tech_name)
+        .and_modify(|existing| {
+            existing.is_implied = false;
+            if existing.version.is_none() && version.is_some() {
+                existing.version.clone_from(&version);
+            }
+        })
+        .or_insert(TechInfo {
+            version,
+            is_implied: false,
+        });
+}
+
+/// Expands `implies` to a fixed point, stripping upstream `\;…` metadata from names.
+fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &FingerprintRuleset) {
+    const MAX_IMPLIES_DEPTH: u32 = 10;
+    for _ in 0..MAX_IMPLIES_DEPTH {
+        let mut implied_to_add: Vec<(String, Option<String>)> = Vec::new();
+        for tech_name in detected.keys() {
+            let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
+                &tech_name[..colon_pos]
+            } else {
+                tech_name
+            };
+            if let Some(tech) = ruleset.technologies.get(base_tech_name) {
+                for implied in &tech.implies {
+                    let (name, version) = parse_technology_reference(implied);
+                    implied_to_add.push((name, version));
+                }
+            }
+        }
+        let mut added_any = false;
+        for (implied_name, version) in implied_to_add {
+            if !ruleset.technologies.contains_key(&implied_name) {
+                continue;
+            }
+            let version = sanitize_technology_version(version);
+            match detected.get_mut(&implied_name) {
+                Some(existing) => {
+                    if existing.version.is_none() && version.is_some() {
+                        existing.version = version;
+                    }
+                }
+                None => {
+                    detected.insert(
+                        implied_name,
+                        TechInfo {
+                            version,
+                            is_implied: true,
+                        },
+                    );
+                    added_any = true;
+                }
+            }
+        }
+        if !added_any {
+            break;
+        }
+    }
+}
+
+fn finalize_detections(
+    detected: HashMap<String, TechInfo>,
+    ruleset: &FingerprintRuleset,
+) -> Vec<DetectedTechnology> {
+    let detected_vec: Vec<(String, Option<String>, bool)> = detected
+        .into_iter()
+        .map(|(name, info)| (name, info.version, info.is_implied))
+        .collect();
+
+    let detected_formatted_for_exclusions: HashSet<String> = detected_vec
+        .iter()
+        .map(|(name, version, _)| {
+            if let Some(ref ver) = version {
+                format!("{name}:{ver}")
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+    let final_detected_formatted =
+        apply_technology_exclusions(&detected_formatted_for_exclusions, ruleset);
+
+    detected_vec
+        .into_iter()
+        .filter(|(name, version, _)| {
+            let formatted = if let Some(ref ver) = version {
+                format!("{name}:{ver}")
+            } else {
+                name.clone()
+            };
+            final_detected_formatted.contains(&formatted)
+        })
+        .map(|(name, version, is_implied)| DetectedTechnology {
+            category: get_technology_category(ruleset, &name),
+            name,
+            version,
+            is_implied,
+        })
+        .collect()
+}
+
+fn detected_to_map(techs: &[DetectedTechnology]) -> HashMap<String, TechInfo> {
+    let mut detected = HashMap::with_capacity(techs.len());
+    for tech in techs {
+        detected.insert(
+            tech.name.clone(),
+            TechInfo {
+                version: tech.version.clone(),
+                is_implied: tech.is_implied,
+            },
+        );
+    }
+    detected
+}
+
 /// CPU-bound technology detection using a pre-fetched ruleset.
 /// Intended to be run on a blocking thread (e.g. via `tokio::task::spawn_blocking`)
 /// to avoid starving the async executor with regex work.
@@ -91,6 +218,7 @@ pub(crate) fn detect_technologies_blocking(
     html_body: &str,
     url: &str,
     script_tag_ids: &HashSet<String>,
+    inline_script_text: &str,
 ) -> Result<Vec<DetectedTechnology>, FingerprintError> {
     let cookies = extract_cookies_from_headers(headers);
     let header_map = normalize_headers_to_map(headers);
@@ -102,29 +230,7 @@ pub(crate) fn detect_technologies_blocking(
         script_sources.len()
     );
 
-    #[derive(Clone)]
-    struct TechInfo {
-        version: Option<String>,
-        is_implied: bool,
-    }
     let mut detected: HashMap<String, TechInfo> = HashMap::with_capacity(32);
-
-    let merge_observed =
-        |detected: &mut HashMap<String, TechInfo>, tech_name: String, version: Option<String>| {
-            let version = sanitize_technology_version(version);
-            detected
-                .entry(tech_name)
-                .and_modify(|existing| {
-                    existing.is_implied = false;
-                    if existing.version.is_none() && version.is_some() {
-                        existing.version.clone_from(&version);
-                    }
-                })
-                .or_insert(TechInfo {
-                    version,
-                    is_implied: false,
-                });
-        };
 
     let header_results = check_headers_with_ruleset(ruleset, &header_map);
     for result in header_results {
@@ -138,7 +244,14 @@ pub(crate) fn detect_technologies_blocking(
         }
     }
 
-    let body_results = check_body_with_ruleset(ruleset, html_body, script_sources, meta_tags, url);
+    let body_results = check_body_with_ruleset(
+        ruleset,
+        html_body,
+        script_sources,
+        meta_tags,
+        url,
+        inline_script_text,
+    );
     for result in body_results {
         merge_observed(&mut detected, result.tech_name, result.version);
     }
@@ -156,88 +269,89 @@ pub(crate) fn detect_technologies_blocking(
         }
     }
 
-    // Add implied technologies (fixed-point: A→B, B→C must yield both B and C).
-    const MAX_IMPLIES_DEPTH: u32 = 10;
-    for _ in 0..MAX_IMPLIES_DEPTH {
-        let mut implied_to_add = Vec::new();
-        for tech_name in detected.keys() {
-            let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
-                &tech_name[..colon_pos]
-            } else {
-                tech_name
-            };
-            if let Some(tech) = ruleset.technologies.get(base_tech_name) {
-                for implied in &tech.implies {
-                    implied_to_add.push(implied.clone());
-                }
-            }
-        }
-        let mut added_any = false;
-        for implied_name in implied_to_add {
-            if ruleset.technologies.contains_key(&implied_name)
-                && !detected.contains_key(&implied_name)
-            {
-                detected.insert(
-                    implied_name,
-                    TechInfo {
-                        version: None,
-                        is_implied: true,
-                    },
-                );
-                added_any = true;
-            }
-        }
-        if !added_any {
-            break;
-        }
-    }
+    expand_implies(&mut detected, ruleset);
 
-    let detected_vec: Vec<(String, Option<String>, bool)> = detected
-        .iter()
-        .map(|(name, info)| (name.clone(), info.version.clone(), info.is_implied))
-        .collect();
-
-    let detected_formatted_for_exclusions: HashSet<String> = detected_vec
-        .iter()
-        .map(|(name, version, _)| {
-            if let Some(ref ver) = version {
-                format!("{name}:{ver}")
-            } else {
-                name.clone()
-            }
-        })
-        .collect();
-    let final_detected_formatted =
-        apply_technology_exclusions(&detected_formatted_for_exclusions, ruleset);
-
-    let final_detected: Vec<(String, Option<String>, bool)> = detected_vec
-        .into_iter()
-        .filter(|(name, version, _)| {
-            let formatted = if let Some(ref ver) = version {
-                format!("{name}:{ver}")
-            } else {
-                name.clone()
-            };
-            final_detected_formatted.contains(&formatted)
-        })
-        .collect();
+    let before_exclusions = detected.len();
+    let final_detected = finalize_detections(detected, ruleset);
 
     log::debug!(
         "Technology detection (blocking) summary for {}: {} detected ({} after exclusions)",
         url,
-        detected.len(),
+        before_exclusions,
         final_detected.len()
     );
 
-    Ok(final_detected
-        .into_iter()
-        .map(|(name, version, is_implied)| DetectedTechnology {
-            category: get_technology_category(ruleset, &name),
-            name,
-            version,
-            is_implied,
-        })
-        .collect())
+    Ok(final_detected)
+}
+
+/// Merges DNS / cert-issuer matches into an existing detection set and re-runs
+/// implies / excludes. Intended to run after DNS/TLS enrichment completes.
+pub(crate) fn supplement_technologies_with_dns_cert(
+    ruleset: &FingerprintRuleset,
+    already_detected: Vec<DetectedTechnology>,
+    dns_records: &HashMap<String, String>,
+    cert_issuer: Option<&str>,
+) -> Vec<DetectedTechnology> {
+    if dns_records.is_empty() && cert_issuer.is_none() {
+        return already_detected;
+    }
+
+    let mut detected = detected_to_map(&already_detected);
+    let supplemental = check_dns_and_cert_with_ruleset(ruleset, dns_records, cert_issuer);
+    if supplemental.is_empty() {
+        return already_detected;
+    }
+
+    for result in supplemental {
+        merge_observed(&mut detected, result.tech_name, result.version);
+    }
+    expand_implies(&mut detected, ruleset);
+    finalize_detections(detected, ruleset)
+}
+
+/// Builds lowercase DNS haystacks from stored additional DNS fields for pattern matching.
+#[must_use]
+pub(crate) fn dns_records_haystack(
+    nameservers: Option<&str>,
+    txt_records: Option<&str>,
+    mx_records: Option<&str>,
+    cname_chain: Option<&str>,
+    spf_record: Option<&str>,
+    dmarc_record: Option<&str>,
+) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let push = |map: &mut HashMap<String, String>, key: &str, value: Option<&str>| {
+        if let Some(v) = value {
+            if !v.is_empty() {
+                map.insert(key.to_string(), v.to_lowercase());
+            }
+        }
+    };
+    push(&mut map, "NS", nameservers);
+    push(&mut map, "MX", mx_records);
+    push(&mut map, "CNAME", cname_chain);
+
+    // TXT haystack includes SPF/DMARC text when present (common verification patterns).
+    let mut txt_parts = Vec::new();
+    if let Some(t) = txt_records {
+        if !t.is_empty() {
+            txt_parts.push(t);
+        }
+    }
+    if let Some(t) = spf_record {
+        if !t.is_empty() {
+            txt_parts.push(t);
+        }
+    }
+    if let Some(t) = dmarc_record {
+        if !t.is_empty() {
+            txt_parts.push(t);
+        }
+    }
+    if !txt_parts.is_empty() {
+        map.insert("TXT".to_string(), txt_parts.join(" ").to_lowercase());
+    }
+    map
 }
 
 /// Gets the category name for a technology, if available.
@@ -311,6 +425,7 @@ mod tests {
             "",
             "https://example.com",
             &HashSet::new(),
+            "",
         )
         .expect("empty ruleset detection should succeed");
 
@@ -318,19 +433,7 @@ mod tests {
     }
 
     fn empty_tech() -> crate::fingerprint::models::Technology {
-        crate::fingerprint::models::Technology {
-            cats: vec![],
-            website: String::new(),
-            headers: HashMap::new(),
-            cookies: HashMap::new(),
-            meta: HashMap::new(),
-            script: vec![],
-            html: vec![],
-            url: vec![],
-            js: HashMap::new(),
-            implies: vec![],
-            excludes: vec![],
-        }
+        crate::fingerprint::models::Technology::default()
     }
 
     /// Offline implies fixed-point: A→B→C must yield A,B,C with B/C marked implied.
@@ -366,6 +469,7 @@ mod tests {
             "<html>marker-tech-a</html>",
             "https://example.com",
             &HashSet::new(),
+            "",
         )
         .expect("detect");
 
@@ -374,6 +478,86 @@ mod tests {
         assert!(!by_name["TechA"].is_implied);
         assert!(by_name["TechB"].is_implied);
         assert!(by_name["TechC"].is_implied);
+    }
+
+    /// Upstream encodes `implies` with `\;confidence:` — must still resolve.
+    #[test]
+    fn test_detect_implies_strips_confidence_metadata() {
+        let mut technologies = HashMap::new();
+        let mut hhvm = empty_tech();
+        hhvm.html.push("marker-hhvm".to_string());
+        hhvm.implies.push("PHP\\;confidence:75".to_string());
+        technologies.insert("HHVM".to_string(), hhvm);
+        technologies.insert("PHP".to_string(), empty_tech());
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "<html>marker-hhvm</html>",
+            "https://example.com",
+            &HashSet::new(),
+            "",
+        )
+        .expect("detect");
+
+        let php = result
+            .iter()
+            .find(|t| t.name == "PHP")
+            .expect("PHP implied");
+        assert!(php.is_implied);
+        assert!(php.version.is_none());
+    }
+
+    /// Upstream encodes `implies` with `\;version:N` — name resolves and version is kept.
+    #[test]
+    fn test_detect_implies_applies_literal_version() {
+        let mut technologies = HashMap::new();
+        let mut theme = empty_tech();
+        theme.html.push("marker-hyva".to_string());
+        theme.implies.push("Magento\\;version:2".to_string());
+        technologies.insert("Hyva Themes".to_string(), theme);
+        technologies.insert("Magento".to_string(), empty_tech());
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "<html>marker-hyva</html>",
+            "https://example.com",
+            &HashSet::new(),
+            "",
+        )
+        .expect("detect");
+
+        let magento = result
+            .iter()
+            .find(|t| t.name == "Magento")
+            .expect("Magento implied");
+        assert!(magento.is_implied);
+        assert_eq!(magento.version.as_deref(), Some("2"));
     }
 
     /// Offline: observed `TechA` excludes `TechC` even when `TechC` arrives via implies.
@@ -409,6 +593,7 @@ mod tests {
             "<html>marker-tech-a</html>",
             "https://example.com",
             &HashSet::new(),
+            "",
         )
         .expect("detect");
 
@@ -419,6 +604,46 @@ mod tests {
             !names.contains("TechC"),
             "TechC must be excluded despite implies chain; got {names:?}"
         );
+    }
+
+    /// Excludes with `\;confidence:` metadata still match base technology names.
+    #[test]
+    fn test_detect_excludes_strips_metadata() {
+        let mut technologies = HashMap::new();
+        let mut tech_a = empty_tech();
+        tech_a.html.push("marker-tech-a".to_string());
+        tech_a.excludes.push("TechB\\;confidence:50".to_string());
+        technologies.insert("TechA".to_string(), tech_a);
+
+        let mut tech_b = empty_tech();
+        tech_b.html.push("marker-tech-b".to_string());
+        technologies.insert("TechB".to_string(), tech_b);
+
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "<html>marker-tech-a marker-tech-b</html>",
+            "https://example.com",
+            &HashSet::new(),
+            "",
+        )
+        .expect("detect");
+
+        let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains("TechA"));
+        assert!(!names.contains("TechB"));
     }
 
     /// Versioned detected name `TechB:1.2` is excluded by base-name `excludes: ["TechB"]`.
@@ -456,6 +681,7 @@ mod tests {
             "<html>marker-tech-a marker-tech-b-v1.2</html>",
             "https://example.com",
             &HashSet::new(),
+            "",
         )
         .expect("detect");
 
@@ -465,6 +691,32 @@ mod tests {
             !names.contains("TechB"),
             "versioned TechB must be excluded by base name; got {result:?}"
         );
+    }
+
+    #[test]
+    fn test_supplement_dns_cert_merges_and_implies() {
+        let mut technologies = HashMap::new();
+        let mut mx_tech = empty_tech();
+        mx_tech.dns.insert("MX".into(), vec!["google\\.com".into()]);
+        mx_tech.implies.push("Gmail\\;confidence:50".to_string());
+        technologies.insert("Google Workspace".to_string(), mx_tech);
+        technologies.insert("Gmail".to_string(), empty_tech());
+
+        let ruleset = FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+
+        let dns = HashMap::from([("MX".into(), "10 aspmx.l.google.com.".to_string())]);
+        let result = supplement_technologies_with_dns_cert(&ruleset, Vec::new(), &dns, None);
+        let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains("Google Workspace"));
+        assert!(names.contains("Gmail"));
     }
 
     #[tokio::test]
@@ -490,6 +742,7 @@ mod tests {
             "",
             "https://example.com",
             &HashSet::new(),
+            "",
         )
         .expect("detection with initialized ruleset should succeed");
 

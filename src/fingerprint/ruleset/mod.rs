@@ -30,6 +30,10 @@ use github::get_latest_commit_sha;
 use local::load_from_path;
 use vendored::load_vendored_ruleset;
 
+/// Cache schema version. Bump when `Technology` retained fields change so old
+/// narrowed caches (missing dns/certIssuer/scripts) are not reused.
+const CACHE_SCHEMA_VERSION: &str = "2";
+
 /// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then `HTTPArchive`).
 /// wappalyzergo uses the same two sources; we merge with later overwriting earlier for the same technology.
 const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
@@ -89,19 +93,21 @@ pub async fn init_ruleset(
         std::path::Path::to_path_buf,
     );
 
-    // Create a cache key from all sources
-    // Use SHA256 hash to avoid URL character issues and ensure deterministic caching
-    // The actual sources are stored in metadata.source for human readability
+    // Create a cache key from all sources + schema version.
+    // Use SHA256 hash to avoid URL character issues and ensure deterministic caching.
+    // The actual sources are stored in metadata.source for human readability.
+    // Schema version invalidates caches written before dns/certIssuer/scripts were retained.
     let cache_key = if sources.is_empty() {
         // Fallback to default cache key if sources is somehow empty (should never happen)
         log::warn!("Fingerprint sources is empty, using default cache key");
-        "default".to_string()
+        format!("default-schema{CACHE_SCHEMA_VERSION}")
     } else if sources.len() == 1 {
         // Single source: use hash to handle special characters in URLs
-        format!("{:x}", Sha256::digest(sources[0].as_bytes()))
+        let material = format!("{CACHE_SCHEMA_VERSION}\n{}", sources[0]);
+        format!("{:x}", Sha256::digest(material.as_bytes()))
     } else {
         // Multiple sources: hash the joined sources (using newline as delimiter)
-        let combined = sources.join("\n");
+        let combined = format!("{CACHE_SCHEMA_VERSION}\n{}", sources.join("\n"));
         format!("{:x}", Sha256::digest(combined.as_bytes()))
     };
 
@@ -509,17 +515,12 @@ mod tests {
 
     #[test]
     fn test_cache_key_construction_single_source() {
-        // Test cache key construction for single source (line 87-89)
-        // Should produce SHA256 hash of the source URL
+        // Mirrors production: schema version prefixed so old narrowed caches miss.
+        let schema = "2";
         let sources = ["https://source.com".to_string()];
-        let cache_key = if sources.len() == 1 {
-            format!("{:x}", Sha256::digest(sources[0].as_bytes()))
-        } else {
-            let combined = sources.join("\n");
-            format!("{:x}", Sha256::digest(combined.as_bytes()))
-        };
+        let material = format!("{schema}\n{}", sources[0]);
+        let cache_key = format!("{:x}", Sha256::digest(material.as_bytes()));
 
-        // Verify it's a valid SHA256 hex string (64 characters)
         assert_eq!(
             cache_key.len(),
             64,
@@ -530,27 +531,20 @@ mod tests {
             "Hash should only contain hex digits"
         );
 
-        // Verify the expected hash value for "https://source.com"
-        let expected_hash = "60ef962257f419d4576a713a49f7309f1797614577b1f16cc9a867a54f386619";
+        let expected_hash = format!("{:x}", Sha256::digest(b"2\nhttps://source.com"));
         assert_eq!(cache_key, expected_hash);
     }
 
     #[test]
     fn test_cache_key_construction_multiple_sources() {
-        // Test cache key construction for multiple sources (line 90-93)
-        // Should produce SHA256 hash of newline-joined sources
+        let schema = "2";
         let sources = [
             "https://source1.com".to_string(),
             "https://source2.com".to_string(),
         ];
-        let cache_key = if sources.len() == 1 {
-            format!("{:x}", Sha256::digest(sources[0].as_bytes()))
-        } else {
-            let combined = sources.join("\n");
-            format!("{:x}", Sha256::digest(combined.as_bytes()))
-        };
+        let combined = format!("{schema}\n{}", sources.join("\n"));
+        let cache_key = format!("{:x}", Sha256::digest(combined.as_bytes()));
 
-        // Verify it's a valid SHA256 hex string (64 characters)
         assert_eq!(
             cache_key.len(),
             64,
@@ -561,25 +555,26 @@ mod tests {
             "Hash should only contain hex digits"
         );
 
-        // Verify the expected hash value for "https://source1.com\nhttps://source2.com"
-        let expected_hash = "f3457c3dd40c5100f522ed2aba0f2fc774223660a93ce15d08b294d004293fea";
+        let expected_hash = format!(
+            "{:x}",
+            Sha256::digest(b"2\nhttps://source1.com\nhttps://source2.com")
+        );
         assert_eq!(cache_key, expected_hash);
     }
 
     #[test]
     fn test_cache_key_construction_empty_sources_fallback() {
-        // Test cache key construction fallback for empty sources (line 83-86)
-        // This should never happen, but the code has defensive handling
         let sources: Vec<String> = vec![];
         let cache_key = if sources.is_empty() {
-            "default".to_string()
+            "default-schema2".to_string()
         } else if sources.len() == 1 {
-            format!("{:x}", Sha256::digest(sources[0].as_bytes()))
+            let material = format!("2\n{}", sources[0]);
+            format!("{:x}", Sha256::digest(material.as_bytes()))
         } else {
-            let combined = sources.join("\n");
+            let combined = format!("2\n{}", sources.join("\n"));
             format!("{:x}", Sha256::digest(combined.as_bytes()))
         };
-        assert_eq!(cache_key, "default");
+        assert_eq!(cache_key, "default-schema2");
     }
 
     #[test]

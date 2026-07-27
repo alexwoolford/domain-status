@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 /// Technology fingerprint rule structure matching Wappalyzer schema
 /// Note: The technology name is the key in the JSON, not a field
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Technology {
     /// Category IDs
     #[serde(default)]
@@ -31,11 +31,16 @@ pub struct Technology {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_meta_map")]
     pub meta: HashMap<String, Vec<String>>,
-    /// Script source patterns (can be string or array) - Wappalyzer uses "scriptSrc"
+    /// Script source URL patterns (can be string or array) - Wappalyzer uses "scriptSrc"
     #[serde(default)]
     #[serde(alias = "scriptSrc")]
     #[serde(deserialize_with = "deserialize_string_or_array")]
     pub script: Vec<String>,
+    /// Inline (and external) JavaScript source-code patterns — Wappalyzer `scripts`.
+    /// Matched against inline `<script>` text only (no JS execution / no fetch).
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_string_or_array")]
+    pub scripts: Vec<String>,
     /// HTML text patterns (can be string or array)
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_string_or_array")]
@@ -44,6 +49,15 @@ pub struct Technology {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_string_or_array")]
     pub url: Vec<String>,
+    /// DNS record patterns: record type (TXT/MX/NS/…) -> pattern(s)
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_meta_map")]
+    pub dns: HashMap<String, Vec<String>>,
+    /// SSL certificate issuer patterns (Wappalyzer `certIssuer`)
+    #[serde(default)]
+    #[serde(alias = "certIssuer")]
+    #[serde(deserialize_with = "deserialize_string_or_array")]
+    pub cert_issuer: Vec<String>,
     /// JavaScript object properties to check
     #[serde(default)]
     pub js: HashMap<String, String>,
@@ -325,11 +339,42 @@ mod tests {
         assert!(tech.cookies.is_empty());
         assert!(tech.meta.is_empty());
         assert!(tech.script.is_empty());
+        assert!(tech.scripts.is_empty());
         assert!(tech.html.is_empty());
         assert!(tech.url.is_empty());
+        assert!(tech.dns.is_empty());
+        assert!(tech.cert_issuer.is_empty());
         assert!(tech.js.is_empty());
         assert!(tech.implies.is_empty());
         assert!(tech.excludes.is_empty());
+    }
+
+    /// Test deserializing dns, certIssuer, and scripts fields
+    #[test]
+    fn test_technology_deserialize_dns_cert_scripts() {
+        let json = r#"{
+            "dns": {
+                "TXT": "google-site-verification",
+                "MX": ["google\\.com", "aspmx"]
+            },
+            "certIssuer": "Let's Encrypt",
+            "scripts": "function webpackJsonpCallback\\(data\\) {"
+        }"#;
+
+        let tech: Technology = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(
+            tech.dns.get("TXT"),
+            Some(&vec!["google-site-verification".to_string()])
+        );
+        assert_eq!(
+            tech.dns.get("MX"),
+            Some(&vec!["google\\.com".to_string(), "aspmx".to_string()])
+        );
+        assert_eq!(tech.cert_issuer, vec!["Let's Encrypt".to_string()]);
+        assert_eq!(
+            tech.scripts,
+            vec![r"function webpackJsonpCallback\(data\) {".to_string()]
+        );
     }
 
     /// Test deserializing a complete technology (real-world example)
@@ -780,8 +825,11 @@ mod tests {
         assert!(tech.cookies.is_empty());
         assert!(tech.meta.is_empty());
         assert!(tech.script.is_empty());
+        assert!(tech.scripts.is_empty());
         assert!(tech.html.is_empty());
         assert!(tech.url.is_empty());
+        assert!(tech.dns.is_empty());
+        assert!(tech.cert_issuer.is_empty());
         assert!(tech.js.is_empty());
         assert!(tech.implies.is_empty());
         assert!(tech.excludes.is_empty());

@@ -44,16 +44,25 @@ pub(crate) fn extract_cookies_from_headers(headers: &HeaderMap) -> HashMap<Strin
 /// Converts HTTP headers to a lowercase map for pattern matching.
 ///
 /// Normalizes both header names and values to lowercase to match Go implementation.
+/// Duplicate values for the same header are comma-joined (last-wins would miss
+/// patterns that only appear on an earlier value, e.g. multiple `Link` headers).
 ///
 /// Note: For custom headers (like `alt-svc`), we need to handle them specially.
 /// `HeaderName::as_str()` works for both standard and custom headers.
 pub(crate) fn normalize_headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
-    let mut header_map = HashMap::new();
+    let mut header_map: HashMap<String, String> = HashMap::new();
     for (name, value) in headers {
         // Get header name as string (works for both standard and custom headers)
         let header_name = name.as_str().to_lowercase();
         if let Ok(header_value) = value.to_str() {
-            header_map.insert(header_name, header_value.to_lowercase());
+            let lower = header_value.to_lowercase();
+            header_map
+                .entry(header_name)
+                .and_modify(|existing| {
+                    existing.push_str(", ");
+                    existing.push_str(&lower);
+                })
+                .or_insert(lower);
         }
     }
 
@@ -221,6 +230,25 @@ mod tests {
         let normalized = normalize_headers_to_map(&headers);
         // Invalid UTF-8 should be filtered out (to_str() fails)
         assert!(normalized.is_empty() || !normalized.contains_key("server"));
+    }
+
+    #[test]
+    fn test_normalize_headers_to_map_joins_duplicate_values() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            reqwest::header::LINK,
+            HeaderValue::from_static("</a>; rel=preload"),
+        );
+        headers.append(
+            reqwest::header::LINK,
+            HeaderValue::from_static("</b>; rel=preconnect"),
+        );
+
+        let normalized = normalize_headers_to_map(&headers);
+        let link = normalized.get("link").expect("link header");
+        assert!(link.contains("</a>; rel=preload"));
+        assert!(link.contains("</b>; rel=preconnect"));
+        assert!(link.contains(", "));
     }
 
     #[test]

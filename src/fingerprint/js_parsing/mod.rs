@@ -1,16 +1,8 @@
-//! JavaScript pattern parsing utilities (does NOT execute JavaScript).
+//! JavaScript pattern parsing utilities (test-only; does NOT execute JavaScript).
 //!
-//! This module provides utility functions for parsing JavaScript patterns from HTML,
-//! such as stripping comments and strings for pattern matching. It does NOT execute
-//! JavaScript code.
-//!
-//! **Note:** `WappalyzerGo` does NOT execute JavaScript and does NOT fetch external scripts.
-//! It only analyzes the initial HTML response. We match this behavior:
-//! - Script source patterns match against URLs from HTML (not fetched content)
-//! - JS property matching is disabled - we only match via script tag IDs
-//! - Only inline script content is used for JS pattern matching (if enabled)
+//! Quarantined under `#[cfg(test)]` — production fingerprinting matches static
+//! HTML/script text and does not use this stripper.
 
 mod utils;
 
-#[cfg(test)]
 pub use utils::strip_js_comments_and_strings;

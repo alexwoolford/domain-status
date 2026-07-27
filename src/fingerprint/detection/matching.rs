@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 
 use crate::fingerprint::models::FingerprintRuleset;
+use crate::fingerprint::patterns::parse_technology_reference;
 
 /// Extracts base technology name from formatted name (strips version if present).
 /// `"jQuery:3.6.0"` -> `"jQuery"`, `"WordPress"` -> `"WordPress"`
@@ -41,10 +42,10 @@ pub(crate) fn apply_technology_exclusions(
                 .technologies
                 .get(other_base_name)
                 .is_some_and(|other_tech| {
-                    other_tech
-                        .excludes
-                        .iter()
-                        .any(|excluded| excluded == base_tech_name)
+                    other_tech.excludes.iter().any(|excluded| {
+                        let (excluded_name, _) = parse_technology_reference(excluded);
+                        excluded_name == base_tech_name
+                    })
                 })
         });
 
@@ -62,19 +63,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn create_empty_technology() -> Technology {
-        Technology {
-            cats: vec![],
-            website: String::new(),
-            headers: HashMap::new(),
-            cookies: HashMap::new(),
-            meta: HashMap::new(),
-            script: vec![],
-            html: vec![],
-            url: vec![],
-            js: HashMap::new(),
-            implies: vec![],
-            excludes: vec![],
-        }
+        Technology::default()
     }
 
     fn create_test_metadata() -> crate::fingerprint::models::FingerprintMetadata {

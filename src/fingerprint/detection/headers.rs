@@ -63,19 +63,7 @@ mod tests {
     use crate::fingerprint::models::{FingerprintMetadata, Technology};
 
     fn empty_tech() -> Technology {
-        Technology {
-            cats: vec![],
-            website: String::new(),
-            headers: HashMap::new(),
-            cookies: HashMap::new(),
-            meta: HashMap::new(),
-            script: vec![],
-            html: vec![],
-            url: vec![],
-            js: HashMap::new(),
-            implies: vec![],
-            excludes: vec![],
-        }
+        Technology::default()
     }
 
     fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {

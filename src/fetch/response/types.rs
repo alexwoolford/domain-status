@@ -55,6 +55,8 @@ pub(crate) struct HtmlData {
     pub(crate) meta_tags: HashMap<String, Vec<String>>, // Vec to handle multiple meta tags with same name (e.g., multiple generator tags)
     pub(crate) script_sources: Vec<String>,
     pub(crate) script_tag_ids: HashSet<String>, // Script tag IDs (for __NEXT_DATA__ etc.)
+    /// Concatenated inline `<script>` text (no `src`), lowercase, for `scripts` patterns.
+    pub(crate) inline_script_text: String,
     /// First-party external script candidates considered when scanning is enabled.
     pub(crate) external_scripts_eligible: u32,
     /// External scripts successfully fetched/scanned (0 when flag off).

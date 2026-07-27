@@ -30,7 +30,7 @@ domain_status export                # Optional flatten (csv|jsonl|parquet)
 | `--fail-on` | `never` | `any-failure` \| `pct>` (+ `--fail-on-pct-threshold`) |
 | `--status-port` | off | Local Axum `/health` `/status` `/metrics` |
 | `--drain-timeout-secs` | `10` | Abort in-flight after queue drain |
-| `--scan-external-scripts` | off | First-party script secret scan |
+| `--scan-external-scripts` | off | First-party script **secret** scan (does not feed technology fingerprints) |
 
 ## Config precedence
 

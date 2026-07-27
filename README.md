@@ -55,7 +55,7 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 - HTTP status, redirects, response metadata
 - TLS certificate fields (resolves all public IPs, IPv4-first, so dual-stack hosts with broken IPv6 egress still get a certificate)
 - DNS (NS/TXT/MX + SPF/DMARC)
-- Technology fingerprints + exposed secrets (static HTML; no JS execution)
+- Technology fingerprints + exposed secrets (static analysis; no JS execution). Fingerprints use headers/cookies/meta/HTML/`scriptSrc` URLs/inline script text/DNS/cert issuer from the initial response — not fetched script bodies. `--scan-external-scripts` only adds secret scanning of first-party scripts.
 - Security findings (`no_https`, `weak_tls`, `invalid_certificate`) — real observed issues only; header *presence* (HSTS/CSP/etc.) is captured separately and "missing header" is a query, not a precomputed warning (see [DATABASE.md](DATABASE.md))
 - SQLite fact table + satellite tables; `summary` command
 - Concurrency / rate limiting; `--fail-on` for CI exit policy
@@ -64,7 +64,7 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 
 ## Limitations
 
-- Static analysis only — no JavaScript rendering
+- Static analysis only — no JavaScript rendering; JS-runtime-only fingerprint rules will not match
 - Fingerprint rules depend on network refresh or a local `--fingerprints` path
 - Private/link-local targets are blocked (SSRF protection)
 

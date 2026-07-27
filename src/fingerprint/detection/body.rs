@@ -1,10 +1,11 @@
-//! Body-based technology detection (HTML, script sources, meta tags).
+//! Body-based technology detection (HTML, script sources, meta tags, inline scripts).
 //!
 //! This module matches technologies based on HTML body content,
 //! following wappalyzergo's `checkBody()` logic which checks:
 //! 1. HTML patterns (via `matchString(body, htmlPart)`)
 //! 2. Script sources (via `matchString(scriptSrc, scriptPart)`)
 //! 3. Meta tags (via `matchKeyValueString(name, content, metaPart)`)
+//! 4. Inline script text (Wappalyzer `scripts` field — static text only)
 
 use std::collections::HashMap;
 
@@ -18,26 +19,66 @@ pub struct BodyMatchResult {
     pub version: Option<String>,
 }
 
+/// Tries patterns against `text`, updating `matched` / `version`.
+/// Returns `true` when a version was captured (caller may stop early).
+fn match_patterns_against_text(
+    patterns: &[String],
+    text: &str,
+    matched: &mut bool,
+    version: &mut Option<String>,
+) -> bool {
+    for pattern in patterns {
+        let result = matches_pattern(pattern, text);
+        if result.matched {
+            *matched = true;
+            if version.is_none() && result.version.is_some() {
+                *version = result.version;
+            }
+            if version.is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn match_meta(
+    tech_meta: &HashMap<String, Vec<String>>,
+    meta_tags: &HashMap<String, Vec<String>>,
+    matched: &mut bool,
+    version: &mut Option<String>,
+) {
+    for (meta_key, patterns) in tech_meta {
+        let result = check_meta_patterns(meta_key, patterns, meta_tags);
+        if result.matched {
+            *matched = true;
+            if version.is_none() && result.version.is_some() {
+                *version = result.version;
+            }
+            if version.is_some() {
+                break;
+            }
+        }
+    }
+}
+
 /// Checks all technologies against HTML body content and returns matches.
 ///
-/// This matches wappalyzergo's `checkBody()` flow:
-/// 1. HTML patterns (checked first)
-/// 2. Script sources (checked during tokenization)
-/// 3. Meta tags (checked during tokenization)
-/// 4. URL patterns (checked last)
-///
 /// Synchronous body check using a pre-fetched ruleset (for use on blocking threads).
+#[allow(clippy::too_many_arguments)] // Distinct body-side signal channels
 pub(crate) fn check_body_with_ruleset(
     ruleset: &FingerprintRuleset,
     html_body: &str,
     script_sources: &[String],
     meta_tags: &HashMap<String, Vec<String>>,
     url: &str,
+    inline_script_text: &str,
 ) -> Vec<BodyMatchResult> {
     let mut results = Vec::new();
     for (tech_name, tech) in &ruleset.technologies {
         if tech.html.is_empty()
             && tech.script.is_empty()
+            && tech.scripts.is_empty()
             && tech.meta.is_empty()
             && tech.url.is_empty()
         {
@@ -45,59 +86,31 @@ pub(crate) fn check_body_with_ruleset(
         }
         let mut matched = false;
         let mut version: Option<String> = None;
-        for pattern in &tech.html {
-            let result = matches_pattern(pattern, html_body);
-            if result.matched {
-                matched = true;
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                if version.is_some() {
+
+        let _ = match_patterns_against_text(&tech.html, html_body, &mut matched, &mut version);
+        if version.is_none() {
+            for script_src in script_sources {
+                if match_patterns_against_text(&tech.script, script_src, &mut matched, &mut version)
+                {
                     break;
                 }
             }
         }
-        for script_src in script_sources {
-            for pattern in &tech.script {
-                let result = matches_pattern(pattern, script_src);
-                if result.matched {
-                    matched = true;
-                    if version.is_none() && result.version.is_some() {
-                        version = result.version;
-                    }
-                    if version.is_some() {
-                        break;
-                    }
-                }
-            }
-            if version.is_some() {
-                break;
-            }
+        if version.is_none() && !inline_script_text.is_empty() {
+            let _ = match_patterns_against_text(
+                &tech.scripts,
+                inline_script_text,
+                &mut matched,
+                &mut version,
+            );
         }
-        for (meta_key, patterns) in &tech.meta {
-            let result = check_meta_patterns(meta_key, patterns, meta_tags);
-            if result.matched {
-                matched = true;
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                if version.is_some() {
-                    break;
-                }
-            }
+        if version.is_none() {
+            match_meta(&tech.meta, meta_tags, &mut matched, &mut version);
         }
-        for url_pattern in &tech.url {
-            let result = matches_pattern(url_pattern, url);
-            if result.matched {
-                matched = true;
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                if version.is_some() {
-                    break;
-                }
-            }
+        if version.is_none() {
+            let _ = match_patterns_against_text(&tech.url, url, &mut matched, &mut version);
         }
+
         if matched {
             results.push(BodyMatchResult {
                 tech_name: tech_name.clone(),
@@ -114,19 +127,7 @@ mod tests {
     use crate::fingerprint::models::{FingerprintMetadata, Technology};
 
     fn empty_tech() -> Technology {
-        Technology {
-            cats: vec![],
-            website: String::new(),
-            headers: HashMap::new(),
-            cookies: HashMap::new(),
-            meta: HashMap::new(),
-            script: vec![],
-            html: vec![],
-            url: vec![],
-            js: HashMap::new(),
-            implies: vec![],
-            excludes: vec![],
-        }
+        Technology::default()
     }
 
     fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {
@@ -164,7 +165,7 @@ mod tests {
         let url = "https://example.com";
 
         let results =
-            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url, "");
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert_eq!(
@@ -195,7 +196,7 @@ mod tests {
         let url = "https://example.com";
 
         let results =
-            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url, "");
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
@@ -220,13 +221,36 @@ mod tests {
         let url = "https://example.com";
 
         let results =
-            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url, "");
 
         let result = results
             .iter()
             .find(|r| r.tech_name == "jQuery")
             .expect("Could not detect jQuery via script src");
         assert_eq!(result.version.as_deref(), Some("3.6.0"));
+    }
+
+    /// Inline `scripts` pattern detection (static text, no JS execution).
+    #[test]
+    fn test_body_inline_scripts_pattern() {
+        let mut tech = empty_tech();
+        tech.scripts
+            .push(r"function webpackJsonpCallback\(data\) \{".to_string());
+        let mut technologies = HashMap::new();
+        technologies.insert("Webpack".to_string(), tech);
+        let ruleset = ruleset_with(technologies);
+
+        let inline = "function webpackJsonpCallback(data) { return data; }";
+        let results = check_body_with_ruleset(
+            &ruleset,
+            "",
+            &[],
+            &HashMap::new(),
+            "https://example.com",
+            inline,
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tech_name, "Webpack");
     }
 
     /// HTML pattern detection (`WordPress` via `/wp-content/`).
@@ -251,7 +275,7 @@ mod tests {
         let url = "https://example.com";
 
         let results =
-            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url, "");
 
         let tech_names: Vec<String> = results.iter().map(|r| r.tech_name.clone()).collect();
         assert!(
@@ -269,7 +293,7 @@ mod tests {
         let url = "https://example.com";
 
         let results =
-            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url, "");
         assert!(results.is_empty());
     }
 
@@ -283,7 +307,8 @@ mod tests {
         let meta_tags = HashMap::new();
         let url = "";
 
-        let result = check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url);
+        let result =
+            check_body_with_ruleset(&ruleset, html_body, &script_sources, &meta_tags, url, "");
         assert!(result.is_empty());
     }
 
@@ -298,6 +323,6 @@ mod tests {
         let url = "https://example.com";
 
         let _result =
-            check_body_with_ruleset(&ruleset, &large_html, &script_sources, &meta_tags, url);
+            check_body_with_ruleset(&ruleset, &large_html, &script_sources, &meta_tags, url, "");
     }
 }

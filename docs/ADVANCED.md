@@ -46,7 +46,7 @@ Subdirectories:
 
 ## External script secret scanning
 
-`--scan-external-scripts` fetches first-party `<script src>` URLs only (same eTLD+1; CDN denylist). Off by default; expands latency and fetch surface.
+`--scan-external-scripts` fetches first-party `<script src>` URLs only (same eTLD+1; CDN denylist) and runs **secret detection** on their bodies. Off by default; expands latency and fetch surface. It does **not** feed technology fingerprinting — fingerprints use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/DNS/cert issuer.
 
 ## TLS certificate capture
 
