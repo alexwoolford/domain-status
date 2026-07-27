@@ -39,13 +39,14 @@ Prefer maintainable fixes over growing per-site exception lists:
 | camelCase near “linkedin” (e.g. `thumbnailWidth`) | linkedin-client-id/secret | JS property name | Plausibility: reject lowercase-starting camelCase |
 | Cloudflare email obfuscation (40-char hex) | sourcegraph-access-token | `email-protection#`, `data-cfemail=`, `__cf_email__` | Allowlisted in overrides |
 | Firebase / Maps / browser `AIza…` | gcp-api-key | Often **public client** keys embedded in JS by design | Treat as **Low** inventory; confirm restriction (HTTP referrer / API) before escalating |
+| Google AI Studio / **Gemini** API keys (`AIza…`) | gcp-api-key | Same shape as Maps/Firebase browser keys; there is **no** separate `gemini-api-key` rule | Detected and stored as `gcp-api-key` at **Low**; triage like other Google client keys |
 | Netlify CWV / shop / session JWTs | jwt | Public or short-lived client tokens | Keep claims in `url_jwt_claims`; severity usually Low — not a private signing key |
 | HTML `id="[40 hex]"` (e.g. Wix build) | sourcegraph-access-token | Build/instance ID | Allowlisted in overrides |
 
 ## How to triage
 
 - Use **`location`** and **`context`**: `inline_script`, `json_ld`, `url_parameter`, `set_cookie`, and `external_script:…` are more likely to be real secrets; `data_attribute` and `html_body` often contain public IDs or CDN content.
-- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`). Treat `gcp-api-key`, `jwt`, and Amz-Credential AWS IDs as **Low** inventory, not urgent leaks.
+- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`, `sk-…T3BlbkFJ…` OpenAI, `sk-ant-api03-` / `sk-ant-admin01-` Anthropic). Treat `gcp-api-key` (including Gemini/AI Studio `AIza…` keys), `jwt`, and Amz-Credential AWS IDs as **Low** inventory, not urgent leaks.
 - When assessing possible misses, join `url_status.body_truncated` and `external_scripts_eligible` / `external_scripts_scanned` (incomplete scan when truncated or eligible > scanned).
 - Inspect **`context`**: Look for `data-*-form`, `id="..."`, `email-protection#`, or other HTML patterns that indicate a public identifier or obfuscation.
 - For high-confidence secrets, prefer findings where the value has a known token format (prefix, length) and the context does not match the patterns above.
