@@ -22,7 +22,7 @@ use crate::error_handling::FingerprintError;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::parse_technology_reference;
 
-use body::check_body_with_ruleset;
+use body::{check_body_with_ruleset, check_scripts_with_ruleset};
 use cookies::check_cookies_with_ruleset;
 use dns_cert::check_dns_and_cert_with_ruleset;
 use headers::check_headers_with_ruleset;
@@ -36,13 +36,14 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 /// - Cookies (from `SET_COOKIE` and Cookie headers)
 /// - Meta tags (name, property, http-equiv)
 /// - Script sources (`src` URLs from HTML — not fetched)
-/// - Inline `<script>` text (`scripts` patterns)
+/// - Inline `<script>` text (`scripts` patterns; same matcher as fetched bodies)
 /// - Script tag IDs (static HTML `id` attributes, e.g. `__NEXT_DATA__`)
 /// - HTML text patterns
 /// - URL patterns
 ///
-/// DNS / cert-issuer matching runs separately via
-/// [`supplement_technologies_with_dns_cert`] after those signals are available.
+/// Late signals (DNS / cert issuer / fetched script bodies) are merged after
+/// `parallel_enrich` via [`supplement_technologies_with_dns_cert`] and
+/// [`supplement_technologies_with_script_text`].
 ///
 /// Technologies with only runtime `js` object patterns (and no other signals) are not detected.
 ///
@@ -309,10 +310,12 @@ pub(crate) fn supplement_technologies_with_dns_cert(
     finalize_detections(detected, ruleset)
 }
 
-/// Matches Wappalyzer `scripts` patterns against fetched (or inline) script text
+/// Matches Wappalyzer `scripts` patterns against fetched (or other) script text
 /// and merges into an existing detection set, then re-runs implies / excludes.
 ///
-/// Used after `--scan-external-scripts` returns concatenated first-party bodies.
+/// Uses the same matcher as inline script text in the first tech pass
+/// ([`check_scripts_with_ruleset`]). Intended after `--scan-external-scripts`
+/// returns concatenated first-party bodies.
 pub(crate) fn supplement_technologies_with_script_text(
     ruleset: &FingerprintRuleset,
     already_detected: Vec<DetectedTechnology>,
@@ -322,33 +325,14 @@ pub(crate) fn supplement_technologies_with_script_text(
         return already_detected;
     }
 
-    let mut detected = detected_to_map(&already_detected);
-    let mut added_any = false;
-    for (tech_name, tech) in &ruleset.technologies {
-        if tech.scripts.is_empty() {
-            continue;
-        }
-        let mut matched = false;
-        let mut version: Option<String> = None;
-        for pattern in &tech.scripts {
-            let result = crate::fingerprint::patterns::matches_pattern(pattern, script_text);
-            if result.matched {
-                matched = true;
-                if version.is_none() && result.version.is_some() {
-                    version = result.version;
-                }
-                if version.is_some() {
-                    break;
-                }
-            }
-        }
-        if matched {
-            merge_observed(&mut detected, tech_name.clone(), version);
-            added_any = true;
-        }
-    }
-    if !added_any {
+    let supplemental = check_scripts_with_ruleset(ruleset, script_text);
+    if supplemental.is_empty() {
         return already_detected;
+    }
+
+    let mut detected = detected_to_map(&already_detected);
+    for result in supplemental {
+        merge_observed(&mut detected, result.tech_name, result.version);
     }
     expand_implies(&mut detected, ruleset);
     finalize_detections(detected, ruleset)
