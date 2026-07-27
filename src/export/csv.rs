@@ -91,6 +91,8 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "url",
         "initial_domain",
         "final_domain",
+        "initial_url",
+        "final_url",
         "ip_address",
         "reverse_dns",
         "status",
@@ -99,6 +101,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         "title",
         "keywords",
         "description",
+        "meta_robots",
         "is_mobile_friendly",
         "body_sha256",
         "content_length",
@@ -202,6 +205,8 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
             url,
             export_row.main.initial_domain.clone(),
             export_row.main.final_domain.clone(),
+            export_row.main.initial_url.clone().unwrap_or_default(),
+            export_row.main.final_url.clone().unwrap_or_default(),
             export_row.main.ip_address.clone(),
             export_row.main.reverse_dns.clone().unwrap_or_default(),
             export_row.main.status.to_string(),
@@ -210,6 +215,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
             export_row.main.title.clone(),
             export_row.main.keywords.clone().unwrap_or_default(),
             export_row.main.description.clone().unwrap_or_default(),
+            export_row.main.meta_robots.clone().unwrap_or_default(),
             if export_row.main.is_mobile_friendly {
                 "true"
             } else {

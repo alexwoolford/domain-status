@@ -90,6 +90,7 @@ mod tests {
 
     fn create_test_response_data() -> ResponseData {
         ResponseData {
+            initial_url: "https://example.com".to_string(),
             final_url: "https://example.com".to_string(),
             initial_domain: "example.com".to_string(),
             final_domain: "example.com".to_string(),

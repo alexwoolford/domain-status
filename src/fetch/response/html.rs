@@ -311,6 +311,12 @@ pub(crate) fn parse_html_content(
     // Body-domain extraction disabled (CDN/social noise). Table retained; leave empty.
     let body_domains = Vec::new();
 
+    let meta_robots = meta_tags
+        .get("name:robots")
+        .and_then(|values| values.first())
+        .filter(|v| !v.is_empty())
+        .cloned();
+
     HtmlData {
         title,
         keywords_str,
@@ -330,6 +336,7 @@ pub(crate) fn parse_html_content(
         favicon_url,
         canonical_url,
         meta_refresh_url,
+        meta_robots,
         resource_hints,
         body_domains,
     }
@@ -364,6 +371,19 @@ mod tests {
         assert_eq!(result.title, "Test Page");
         assert_eq!(result.keywords_str, None);
         assert_eq!(result.description, Some("A test page".to_string()));
+    }
+
+    #[test]
+    fn test_parse_html_meta_robots() {
+        let html = r#"
+            <html><head>
+                <title>t</title>
+                <meta name="robots" content="noindex, nofollow">
+            </head><body></body></html>
+        "#;
+        let stats = test_error_stats();
+        let result = parse_html_content(html, "example.com", &stats);
+        assert_eq!(result.meta_robots.as_deref(), Some("noindex, nofollow"));
     }
 
     #[test]

@@ -47,6 +47,8 @@ pub struct BatchRecord {
     pub cookies: Vec<CookieInfo>,
     pub resource_hints: Vec<(String, String)>, // (hint_type, href); hint_type: preconnect/dns-prefetch/preload/prefetch/modulepreload
     pub body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain)
+    /// Unique hosts from `<script src>` (resolved against final URL)
+    pub script_hosts: Vec<ScriptHostInfo>,
 }
 
 /// Parsed cookie security attributes.
@@ -58,4 +60,12 @@ pub struct CookieInfo {
     pub same_site: Option<String>,
     pub domain: Option<String>,
     pub path: Option<String>,
+}
+
+/// Host inventory entry from a page's `<script src>` attributes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptHostInfo {
+    pub host: String,
+    pub registrable_domain: Option<String>,
+    pub is_first_party: bool,
 }

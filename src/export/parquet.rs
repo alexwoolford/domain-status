@@ -34,6 +34,8 @@ fn build_schema() -> Schema {
         Field::new("url", DataType::Utf8, false),
         Field::new("initial_domain", DataType::Utf8, false),
         Field::new("final_domain", DataType::Utf8, false),
+        Field::new("initial_url", DataType::Utf8, true),
+        Field::new("final_url", DataType::Utf8, true),
         Field::new("ip_address", DataType::Utf8, false),
         Field::new("reverse_dns", DataType::Utf8, true),
         // HTTP response
@@ -43,6 +45,7 @@ fn build_schema() -> Schema {
         Field::new("title", DataType::Utf8, false),
         Field::new("keywords", DataType::Utf8, true),
         Field::new("description", DataType::Utf8, true),
+        Field::new("meta_robots", DataType::Utf8, true),
         Field::new("is_mobile_friendly", DataType::Boolean, false),
         // Content metrics
         Field::new("body_sha256", DataType::Utf8, true),
@@ -422,6 +425,8 @@ fn write_batch(
     let mut url_b = StringBuilder::new();
     let mut initial_domain_b = StringBuilder::new();
     let mut final_domain_b = StringBuilder::new();
+    let mut initial_url_b = StringBuilder::new();
+    let mut final_url_b = StringBuilder::new();
     let mut ip_address_b = StringBuilder::new();
     let mut reverse_dns_b = StringBuilder::new();
     let mut http_status_b = Int32Builder::new();
@@ -430,6 +435,7 @@ fn write_batch(
     let mut title_b = StringBuilder::new();
     let mut keywords_b = StringBuilder::new();
     let mut description_b = StringBuilder::new();
+    let mut meta_robots_b = StringBuilder::new();
     let mut is_mobile_friendly_b = BooleanBuilder::new();
     let mut body_sha256_b = StringBuilder::new();
     let mut content_length_b = Int64Builder::new();
@@ -604,6 +610,8 @@ fn write_batch(
         url_b.append_value(&url);
         initial_domain_b.append_value(&row.main.initial_domain);
         final_domain_b.append_value(&row.main.final_domain);
+        append_opt_str(&mut initial_url_b, row.main.initial_url.as_ref());
+        append_opt_str(&mut final_url_b, row.main.final_url.as_ref());
         ip_address_b.append_value(&row.main.ip_address);
         append_opt_str(&mut reverse_dns_b, row.main.reverse_dns.as_ref());
 
@@ -615,6 +623,7 @@ fn write_batch(
         title_b.append_value(&row.main.title);
         append_opt_str(&mut keywords_b, row.main.keywords.as_ref());
         append_opt_str(&mut description_b, row.main.description.as_ref());
+        append_opt_str(&mut meta_robots_b, row.main.meta_robots.as_ref());
         is_mobile_friendly_b.append_value(row.main.is_mobile_friendly);
         append_opt_str(&mut body_sha256_b, row.main.body_sha256.as_ref());
         append_opt_i64(&mut content_length_b, row.main.content_length);
@@ -1029,6 +1038,8 @@ fn write_batch(
         Arc::new(url_b.finish()),
         Arc::new(initial_domain_b.finish()),
         Arc::new(final_domain_b.finish()),
+        Arc::new(initial_url_b.finish()),
+        Arc::new(final_url_b.finish()),
         Arc::new(ip_address_b.finish()),
         Arc::new(reverse_dns_b.finish()),
         Arc::new(http_status_b.finish()),
@@ -1037,6 +1048,7 @@ fn write_batch(
         Arc::new(title_b.finish()),
         Arc::new(keywords_b.finish()),
         Arc::new(description_b.finish()),
+        Arc::new(meta_robots_b.finish()),
         Arc::new(is_mobile_friendly_b.finish()),
         Arc::new(body_sha256_b.finish()),
         Arc::new(content_length_b.finish()),
@@ -1432,8 +1444,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(
             batch.num_columns(),
-            69,
-            "Should have 69 columns matching schema (68 + body_truncated)"
+            72,
+            "Should have 72 columns matching schema (69 + initial_url + final_url + meta_robots)"
         );
 
         // Verify the 'url' column

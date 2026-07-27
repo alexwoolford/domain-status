@@ -35,6 +35,7 @@ fn root_domain(fqdn: &str) -> Option<String> {
         })
 }
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
+use crate::fetch::external_scripts::collect_script_hosts;
 use crate::fetch::response::{HtmlData, ResponseData};
 use crate::storage::{BatchRecord, CookieInfo};
 
@@ -149,6 +150,8 @@ pub(crate) fn build_url_record(
     UrlRecord {
         initial_domain: resp_data.initial_domain.clone(),
         final_domain: resp_data.final_domain.clone(),
+        initial_url: Some(resp_data.initial_url.clone()),
+        final_url: Some(resp_data.final_url.clone()),
         ip_address: tls_dns_data.ip_address.clone().unwrap_or_default(),
         reverse_dns_name: tls_dns_data.reverse_dns_name.clone(),
         status: resp_data.status,
@@ -163,6 +166,7 @@ pub(crate) fn build_url_record(
             .as_ref()
             .filter(|d| !d.is_empty())
             .cloned(),
+        meta_robots: html_data.meta_robots.clone(),
         tls_version: tls_dns_data.tls_version,
         ssl_cert_subject: tls_dns_data.subject.clone(),
         ssl_cert_issuer: tls_dns_data.issuer.clone(),
@@ -294,6 +298,11 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
     // Extract cookie security info from Set-Cookie headers
     let cookies = extract_cookies(&params.resp_data.headers);
 
+    let script_hosts = collect_script_hosts(
+        &params.resp_data.final_url,
+        &params.html_data.script_sources,
+    );
+
     // Body domains extraction is disabled by default (CDN/social noise; prefer
     // analytics/social/CSP satellites). Column/table retained for back-compat.
     let body_domains = Vec::new();
@@ -348,6 +357,7 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         cookies,
         resource_hints: std::mem::take(&mut params.html_data.resource_hints),
         body_domains,
+        script_hosts,
     }
 }
 
@@ -372,6 +382,7 @@ mod tests {
             "default-src 'self'".parse().unwrap(),
         );
         ResponseData {
+            initial_url: "https://example.com".to_string(),
             final_url: "https://example.com".to_string(),
             initial_domain: "example.com".to_string(),
             final_domain: "example.com".to_string(),
@@ -412,6 +423,7 @@ mod tests {
             favicon_url: None,
             canonical_url: None,
             meta_refresh_url: None,
+            meta_robots: None,
             resource_hints: Vec::new(),
             body_domains: Vec::new(),
         }

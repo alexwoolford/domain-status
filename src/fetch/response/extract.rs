@@ -345,6 +345,7 @@ pub(crate) async fn extract_response_data(
         // Preserve metadata (status, headers, TLS, DNS) like the 2MB-exceeded path.
         log::info!("Empty response body for {final_domain}, recording metadata only");
         return Ok(Some(ResponseData {
+            initial_url: original_url.to_string(),
             final_url,
             initial_domain,
             final_domain,
@@ -383,6 +384,7 @@ pub(crate) async fn extract_response_data(
     let body_line_count = None;
 
     Ok(Some(ResponseData {
+        initial_url: original_url.to_string(),
         final_url,
         initial_domain,
         final_domain,

@@ -41,6 +41,7 @@ erDiagram
     url_status ||--o{ url_csp_domains : has
     url_status ||--o{ url_cookies : has
     url_status ||--o{ url_resource_hints : has
+    url_status ||--o{ url_script_hosts : has
     url_status ||--o{ url_body_domains : has
 
     url_exposed_secrets ||--o| url_jwt_claims : has
@@ -87,6 +88,8 @@ Important characteristics:
 | `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Surrogate key |
 | `initial_domain` | `TEXT NOT NULL` | Domain from the input URL |
 | `final_domain` | `TEXT NOT NULL` | Domain after redirects |
+| `initial_url` | `TEXT` | Original request URL (scheme/host/path/query) before redirects |
+| `final_url` | `TEXT` | Final URL after redirects (scheme/host/path/query) |
 | `ip_address` | `TEXT NOT NULL` | Resolved IP address; empty string is possible when no IP was persisted |
 | `reverse_dns_name` | `TEXT` | PTR result when available |
 | `http_status` | `INTEGER NOT NULL` | HTTP status code |
@@ -95,6 +98,7 @@ Important characteristics:
 | `title` | `TEXT NOT NULL` | Empty string when missing |
 | `keywords` | `TEXT` | **Deprecated — no longer written.** Column retained for old DBs. Previously `<meta name="keywords">` (obsolete SEO). |
 | `description` | `TEXT` | Optional meta description |
+| `meta_robots` | `TEXT` | Content of `<meta name="robots">` when present |
 | `is_mobile_friendly` | `BOOLEAN NOT NULL DEFAULT 0` | **Deprecated — always written as `0`.** Previously a viewport-meta heuristic only. |
 | `tls_version` | `TEXT` | Nullable for HTTP-only or missing TLS data |
 | `cipher_suite` | `TEXT` | Captured TLS cipher suite |
@@ -177,6 +181,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_csp_domains` | Domains from Content-Security-Policy | `directive`, `fqdn`, `registrable_domain` |
 | `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
 | `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload (`hint_type` stored lowercase) | `hint_type`, `href` |
+| `url_script_hosts` | Unique hosts from `<script src>` (resolved against final URL) | `host`, `registrable_domain`, `is_first_party` |
 | `url_body_domains` | **Deprecated — no longer populated.** Table retained for old DBs. Prefer `url_csp_domains`, `url_analytics_ids`, `url_social_media_links`. | `fqdn`, `registrable_domain` |
 
 > **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
