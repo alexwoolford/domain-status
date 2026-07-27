@@ -96,12 +96,12 @@ pub struct ScanCommand {
     #[arg(long, value_parser, env = "DOMAIN_STATUS_CACHE_DIR")]
     pub cache_dir: Option<PathBuf>,
 
-    /// Fetch first-party external `<script src>` URLs and scan their content
-    /// for exposed secrets. Off by default because it expands the threat
-    /// surface and adds per-URL latency. Only scripts on the same registrable
-    /// domain as the page are fetched (known third-party CDNs are skipped).
-    /// Fetches are capped at 10 scripts per page, size/timeout limited, and
-    /// SSRF-validated like the primary URL.
+    /// Fetch first-party external `<script src>` URLs for secret detection and
+    /// static technology fingerprints (`scripts` patterns). Off by default because
+    /// it expands the threat surface and adds per-URL latency. Only scripts on the
+    /// same registrable domain as the page are fetched (known third-party CDNs are
+    /// skipped). Fetches are capped at 10 scripts per page, size/timeout limited,
+    /// and SSRF-validated like the primary URL.
     #[arg(long, env = "DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS")]
     pub scan_external_scripts: bool,
 

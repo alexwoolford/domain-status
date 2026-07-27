@@ -5,7 +5,8 @@
 //! 1. HTML patterns (via `matchString(body, htmlPart)`)
 //! 2. Script sources (via `matchString(scriptSrc, scriptPart)`)
 //! 3. Meta tags (via `matchKeyValueString(name, content, metaPart)`)
-//! 4. Inline script text (Wappalyzer `scripts` field — static text only)
+//! 4. Script source text (Wappalyzer `scripts` field — static text only;
+//!    shared with post-join fetched-body matching via [`check_scripts_with_ruleset`])
 
 use std::collections::HashMap;
 
@@ -111,6 +112,35 @@ pub(crate) fn check_body_with_ruleset(
             let _ = match_patterns_against_text(&tech.url, url, &mut matched, &mut version);
         }
 
+        if matched {
+            results.push(BodyMatchResult {
+                tech_name: tech_name.clone(),
+                version,
+            });
+        }
+    }
+    results
+}
+
+/// Matches only Wappalyzer `scripts` patterns against script source text.
+///
+/// Shared by the first-pass body matcher (inline `<script>` text) and the
+/// post-join supplement for fetched first-party bodies — one field, one path.
+pub(crate) fn check_scripts_with_ruleset(
+    ruleset: &FingerprintRuleset,
+    script_text: &str,
+) -> Vec<BodyMatchResult> {
+    if script_text.is_empty() {
+        return Vec::new();
+    }
+    let mut results = Vec::new();
+    for (tech_name, tech) in &ruleset.technologies {
+        if tech.scripts.is_empty() {
+            continue;
+        }
+        let mut matched = false;
+        let mut version: Option<String> = None;
+        let _ = match_patterns_against_text(&tech.scripts, script_text, &mut matched, &mut version);
         if matched {
             results.push(BodyMatchResult {
                 tech_name: tech_name.clone(),
@@ -251,6 +281,22 @@ mod tests {
         );
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tech_name, "Webpack");
+    }
+
+    /// Shared `scripts` matcher used by the post-join external-body supplement.
+    #[test]
+    fn test_check_scripts_with_ruleset_matches() {
+        let mut tech = empty_tech();
+        tech.scripts
+            .push(r"function webpackJsonpCallback\(data\) \{".to_string());
+        let ruleset = ruleset_with(HashMap::from([("Webpack".into(), tech)]));
+        let results = check_scripts_with_ruleset(
+            &ruleset,
+            "function webpackJsonpCallback(data) { return data; }",
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tech_name, "Webpack");
+        assert!(check_scripts_with_ruleset(&ruleset, "").is_empty());
     }
 
     /// HTML pattern detection (`WordPress` via `/wp-content/`).

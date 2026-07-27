@@ -171,6 +171,14 @@ async fn parallel_enrich(
 }
 
 /// Merge DNS/cert and fetched-script-body signals into the first tech pass.
+///
+/// Official **late-signal** pattern for technology detection:
+/// `parallel_enrich` runs the first tech pass in parallel with DNS/TLS and
+/// (optionally) external script fetch. Signals those stages produce are not
+/// available during pass 1, so fold them here afterward (DNS/cert first, then
+/// script bodies). New late signals should extend this function rather than
+/// inventing a second pipeline. ADR 0005 still forbids JS *execution*; matching
+/// static text from already-fetched bodies is in scope.
 async fn supplement_technologies_after_enrichment(
     ctx: &ProcessingContext,
     technologies_vec: Vec<DetectedTechnology>,

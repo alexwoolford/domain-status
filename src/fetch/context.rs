@@ -42,8 +42,9 @@ pub struct RuntimeContext {
     pub enable_whois: bool,
     /// Directory for WHOIS/RDAP disk cache (under the shared cache root)
     pub whois_cache_dir: PathBuf,
-    /// Whether first-party external `<script src>` URLs should be fetched and
-    /// scanned for secrets. Mirrors `Config::scan_external_scripts`. Off by default.
+    /// Whether first-party external `<script src>` URLs should be fetched for
+    /// secret detection and static `scripts` technology patterns. Mirrors
+    /// `Config::scan_external_scripts`. Off by default.
     pub scan_external_scripts: bool,
     /// Live runtime counters for retries and degradation paths
     pub runtime_metrics: Arc<RuntimeMetrics>,
