@@ -27,7 +27,11 @@ pub(crate) struct ResponseData {
     pub(crate) body_truncated: bool,
     pub(crate) content_length: Option<i64>,
     pub(crate) http_version: Option<String>,
+    /// Deprecated — no longer persisted on new scans.
+    #[allow(dead_code)]
     pub(crate) body_word_count: Option<i64>,
+    /// Deprecated — no longer persisted on new scans.
+    #[allow(dead_code)]
     pub(crate) body_line_count: Option<i64>,
     pub(crate) content_type: Option<String>,
 }
@@ -36,8 +40,12 @@ pub(crate) struct ResponseData {
 #[derive(Debug)]
 pub(crate) struct HtmlData {
     pub(crate) title: String,
+    /// Deprecated — no longer extracted.
+    #[allow(dead_code)]
     pub(crate) keywords_str: Option<String>,
     pub(crate) description: Option<String>,
+    /// Deprecated — always false on new scans.
+    #[allow(dead_code)]
     pub(crate) is_mobile_friendly: bool,
     pub(crate) structured_data: crate::parse::StructuredData,
     pub(crate) social_media_links: Vec<crate::parse::SocialMediaLink>,
@@ -55,5 +63,7 @@ pub(crate) struct HtmlData {
     pub(crate) canonical_url: Option<String>, // Canonical URL from <link rel="canonical">
     pub(crate) meta_refresh_url: Option<String>, // Meta refresh redirect URL
     pub(crate) resource_hints: Vec<(String, String)>, // (hint_type, href) for preconnect/dns-prefetch/preload/prefetch/modulepreload
+    /// Deprecated — body-domain capture disabled; always empty on new scans.
+    #[allow(dead_code)]
     pub(crate) body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain) from href/src attrs
 }

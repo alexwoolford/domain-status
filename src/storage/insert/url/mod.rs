@@ -463,7 +463,10 @@ async fn insert_resource_hints(
     );
     let mut qb = sqlx::query(&query);
     for (hint_type, href) in hints {
-        qb = qb.bind(url_status_id).bind(hint_type).bind(href);
+        qb = qb
+            .bind(url_status_id)
+            .bind(hint_type.to_ascii_lowercase())
+            .bind(href);
     }
     if let Err(e) = qb.execute(&mut **tx).await {
         log::warn!("Failed to insert resource hints for {url_status_id}: {e}");

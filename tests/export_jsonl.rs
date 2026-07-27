@@ -44,6 +44,7 @@ async fn test_export_jsonl_body_truncated_field_present() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");
@@ -90,6 +91,7 @@ async fn test_export_jsonl_body_truncated_false_by_default() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("Export should succeed");

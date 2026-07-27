@@ -5,8 +5,8 @@ use scraper::Html;
 use std::collections::{HashMap, HashSet};
 
 use crate::parse::{
-    detect_exposed_secrets, extract_contact_links, extract_meta_description, extract_meta_keywords,
-    extract_social_media_links, extract_structured_data, extract_title, is_mobile_friendly,
+    detect_exposed_secrets, extract_contact_links, extract_meta_description,
+    extract_social_media_links, extract_structured_data, extract_title,
 };
 
 use super::types::HtmlData;
@@ -34,14 +34,14 @@ pub(crate) fn parse_html_content(
     let title = extract_title(&document, error_stats);
     debug!("Extracted title for {final_domain}: {title:?}");
 
-    let keywords = extract_meta_keywords(&document, error_stats);
-    let keywords_str = keywords.map(|kw| kw.join(", "));
-    debug!("Extracted keywords for {final_domain}: {keywords_str:?}");
+    // Meta keywords are deprecated (obsolete SEO signal) — do not extract.
+    let keywords_str = None;
 
     let description = extract_meta_description(&document, error_stats);
     debug!("Extracted description for {final_domain}: {description:?}");
 
-    let is_mobile_friendly = is_mobile_friendly(body);
+    // Viewport-meta "mobile friendly" heuristic is deprecated — always false.
+    let is_mobile_friendly = false;
 
     // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
     let structured_data = extract_structured_data(&document, body);
@@ -241,7 +241,8 @@ pub(crate) fn parse_html_content(
         .filter_map(|el| {
             let rel = el.value().attr("rel")?;
             let href = el.value().attr("href").filter(|h| !h.is_empty())?;
-            let value = if matches!(rel, "preconnect" | "dns-prefetch") {
+            let rel_lower = rel.to_ascii_lowercase();
+            let value = if matches!(rel_lower.as_str(), "preconnect" | "dns-prefetch") {
                 // Extract hostname from href (handles https://host, //host, and bare host)
                 let hostname = if href.starts_with("//") {
                     url::Url::parse(&format!("https:{href}"))
@@ -264,7 +265,7 @@ pub(crate) fn parse_html_content(
                 // (typically a same-origin path, not a hostname).
                 href.to_string()
             };
-            Some((rel.to_string(), value))
+            Some((rel_lower, value))
         })
         .collect();
     debug!(
@@ -285,50 +286,8 @@ pub(crate) fn parse_html_content(
     });
     debug!("Extracted favicon URL for {final_domain}: {favicon_url:?}");
 
-    // Extract body domains from href/src/action attributes (reuses existing DOM parse)
-    let body_domain_selector = crate::utils::parse_selector_with_fallback(
-        "[href], [src], [action]",
-        "body domain extraction",
-    );
-    let mut body_domain_seen = std::collections::HashSet::new();
-    let mut body_domains = Vec::new();
-    for element in document.select(&body_domain_selector) {
-        if body_domains.len() >= 200 {
-            break;
-        }
-        let url_str = element
-            .value()
-            .attr("href")
-            .or_else(|| element.value().attr("src"))
-            .or_else(|| element.value().attr("action"));
-        if let Some(url_str) = url_str {
-            let host = if url_str.starts_with("//") {
-                url::Url::parse(&format!("https:{url_str}"))
-                    .ok()
-                    .and_then(|u| u.host_str().map(str::to_lowercase))
-            } else if url_str.starts_with("http://") || url_str.starts_with("https://") {
-                url::Url::parse(url_str)
-                    .ok()
-                    .and_then(|u| u.host_str().map(str::to_lowercase))
-            } else {
-                None
-            };
-            if let Some(fqdn) = host {
-                if fqdn.len() >= 4 && body_domain_seen.insert(fqdn.clone()) {
-                    let reg = psl::domain_str(&fqdn)
-                        .map(std::string::ToString::to_string)
-                        .or_else(|| psl::suffix_str(&fqdn).map(|_| fqdn.clone()));
-                    if reg.is_some() {
-                        body_domains.push((fqdn, reg));
-                    }
-                }
-            }
-        }
-    }
-    debug!(
-        "Extracted {} body domains for {final_domain}",
-        body_domains.len()
-    );
+    // Body-domain extraction disabled (CDN/social noise). Table retained; leave empty.
+    let body_domains = Vec::new();
 
     HtmlData {
         title,
@@ -380,7 +339,7 @@ mod tests {
         let result = parse_html_content(html, "example.com", &stats);
 
         assert_eq!(result.title, "Test Page");
-        assert_eq!(result.keywords_str, Some("test, page".to_string()));
+        assert_eq!(result.keywords_str, None);
         assert_eq!(result.description, Some("A test page".to_string()));
     }
 
@@ -570,7 +529,10 @@ mod tests {
         let stats = test_error_stats();
 
         let result_with = parse_html_content(html_with_viewport, "example.com", &stats);
-        assert!(result_with.is_mobile_friendly);
+        assert!(
+            !result_with.is_mobile_friendly,
+            "viewport meta no longer sets is_mobile_friendly"
+        );
 
         let result_without = parse_html_content(html_without_viewport, "example.com", &stats);
         assert!(!result_without.is_mobile_friendly);
@@ -742,10 +704,13 @@ mod tests {
 
         // Should extract data successfully
         assert_eq!(result.title, "Test");
-        assert!(result.keywords_str.is_some());
+        assert!(
+            result.keywords_str.is_none(),
+            "keywords extraction is deprecated"
+        );
         assert!(result.description.is_some());
 
-        // Error stats are passed to extract_title, extract_meta_keywords, extract_meta_description
+        // Error stats are passed to extract_title / extract_meta_description
         // If any of those functions encounter errors, they should update error_stats
         // The key is that error_stats is accessible to those functions
         // We can't easily trigger errors in those functions, but we verify the parameter is passed

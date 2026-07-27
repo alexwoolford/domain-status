@@ -155,13 +155,8 @@ pub(crate) fn build_url_record(
         status_desc: resp_data.status_desc.clone(),
         response_time: elapsed,
         title: html_data.title.clone(),
-        // Normalize empty strings to None for consistency with database queries
-        // Use filter_map to avoid unnecessary clone when string is empty
-        keywords: html_data
-            .keywords_str
-            .as_ref()
-            .filter(|k| !k.is_empty())
-            .cloned(),
+        // Deprecated low-signal field: stop persisting meta keywords (column retained).
+        keywords: None,
         // Normalize empty strings to None for consistency with database queries
         description: html_data
             .description
@@ -173,7 +168,8 @@ pub(crate) fn build_url_record(
         ssl_cert_issuer: tls_dns_data.issuer.clone(),
         ssl_cert_valid_from: tls_dns_data.valid_from,
         ssl_cert_valid_to: tls_dns_data.valid_to,
-        is_mobile_friendly: html_data.is_mobile_friendly,
+        // Deprecated: viewport-meta heuristic only — always store false.
+        is_mobile_friendly: false,
         timestamp,
         nameservers: additional_dns.nameservers.clone(),
         txt_records: additional_dns.txt_records.clone(),
@@ -189,8 +185,9 @@ pub(crate) fn build_url_record(
         external_scripts_scanned: html_data.external_scripts_scanned,
         content_length: resp_data.content_length,
         http_version: resp_data.http_version.clone(),
-        body_word_count: resp_data.body_word_count,
-        body_line_count: resp_data.body_line_count,
+        // Deprecated low-signal metrics: prefer content_length + body_sha256.
+        body_word_count: None,
+        body_line_count: None,
         content_type: resp_data.content_type.clone(),
         canonical_url: html_data.canonical_url.clone(),
         cert_fingerprint_sha256: tls_dns_data.cert_fingerprint_sha256.clone(),
@@ -297,8 +294,9 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
     // Extract cookie security info from Set-Cookie headers
     let cookies = extract_cookies(&params.resp_data.headers);
 
-    // Body domains already extracted during HTML parsing (avoids re-parsing the DOM)
-    let body_domains = std::mem::take(&mut params.html_data.body_domains);
+    // Body domains extraction is disabled by default (CDN/social noise; prefer
+    // analytics/social/CSP satellites). Column/table retained for back-compat.
+    let body_domains = Vec::new();
 
     // Compute cert_is_mismatched: check if host matches any SAN or CN.
     // Uses sans_vec (not tls_dns_data.subject_alternative_names which was already .take()'d).
@@ -478,7 +476,8 @@ mod tests {
         assert_eq!(record.ip_address, "192.0.2.1");
         assert_eq!(record.status, 200);
         assert_eq!(record.title, "Test Page");
-        assert_eq!(record.keywords, Some("test, keywords".to_string()));
+        assert_eq!(record.keywords, None, "keywords are no longer persisted");
+        assert!(!record.is_mobile_friendly);
         assert_eq!(record.description, Some("Test description".to_string()));
         assert_eq!(record.tls_version, Some(crate::models::TlsVersion::Tls13));
         assert_eq!(record.run_id, run_id);
@@ -758,7 +757,9 @@ mod tests {
 
         // Whitespace-only strings should be preserved (not normalized to None)
         // This is intentional - only truly empty strings are normalized
-        assert_eq!(record.keywords, Some("   ".to_string()));
+        // Keywords are no longer persisted regardless of HTML input.
+        assert_eq!(record.keywords, None);
+        // Description still normalizes empty but preserves whitespace-only.
         assert_eq!(record.description, Some("\t\n".to_string()));
     }
 

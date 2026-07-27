@@ -49,6 +49,7 @@ async fn snapshot_csv_export_minimal() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("export_csv");
@@ -87,6 +88,7 @@ async fn snapshot_jsonl_export_minimal() {
         domain: None,
         status: None,
         since: None,
+        include_implied_tech: false,
     })
     .await
     .expect("export_jsonl");

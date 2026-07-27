@@ -308,6 +308,7 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
         domain: export_cmd.domain.clone(),
         status: export_cmd.status,
         since: export_cmd.since,
+        include_implied_tech: export_cmd.include_implied_tech,
     };
 
     let (count, format_name) = match export_cmd.format {

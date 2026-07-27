@@ -24,7 +24,11 @@ pub async fn insert_favicon_data(
         .bind(url_status_id)
         .bind(&favicon.favicon_url)
         .bind(favicon.hash)
-        .bind(&favicon.base64_data)
+        .bind(if favicon.base64_data.is_empty() {
+            None
+        } else {
+            Some(favicon.base64_data.as_str())
+        })
         .execute(pool)
         .await
         .map_err(DatabaseError::SqlError)?;
