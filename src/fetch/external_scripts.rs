@@ -1,4 +1,5 @@
-//! Optional external `<script src="...">` fetching for secret detection.
+//! Optional external `<script src="...">` fetching for secret detection and
+//! static technology fingerprinting (`scripts` patterns).
 //!
 //! Off by default; enabled by [`crate::config::Config::scan_external_scripts`].
 //!
@@ -7,10 +8,10 @@
 //! **first-party** bundles (same registrable domain / eTLD+1 as the page,
 //! minus a denylist of known third-party CDN hosts), SSRF-validates them,
 //! fetches up to [`MAX_SCRIPT_FETCH_PER_PAGE`] scripts in parallel under tight
-//! size/timeout caps, decodes each with charset detection, and runs
-//! [`crate::parse::detect_exposed_secrets`] over each body. Findings are tagged
-//! with a `location` of the form `external_script:<url>` so analysts can see
-//! which bundle leaked.
+//! size/timeout caps, decodes each with charset detection, and:
+//! - runs [`crate::parse::detect_exposed_secrets`] over each body (findings
+//!   tagged `external_script:<url>`)
+//! - concatenates lowercase bodies for Wappalyzer `scripts` pattern matching
 //!
 //! Third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped
 //! because they dominate false positives while almost never containing the
@@ -65,7 +66,7 @@ const KNOWN_THIRD_PARTY_SCRIPT_HOST_SUFFIXES: &[&str] = &[
     "cdn.weglot.com",
 ];
 
-/// Result of an optional external-script secret scan, including coverage counts.
+/// Result of an optional external-script scan, including coverage counts.
 #[derive(Debug, Default)]
 pub struct ExternalScriptScanResult {
     pub secrets: Vec<ExposedSecret>,
@@ -73,10 +74,13 @@ pub struct ExternalScriptScanResult {
     pub eligible: u32,
     /// Scripts successfully fetched and scanned (may be less than eligible due to cap/errors).
     pub scanned: u32,
+    /// Lowercase concatenation of successfully fetched bodies (for `scripts` tech patterns).
+    pub script_bodies_text: String,
 }
 
 /// Fetches external scripts referenced by a page and returns secrets found
-/// in their bodies, each tagged with `location = "external_script:<url>"`.
+/// in their bodies (tagged `external_script:<url>`) plus concatenated body
+/// text for static technology fingerprinting.
 ///
 /// Only first-party scripts (same registrable domain as `page_url`) are
 /// fetched. Errors during individual fetches are logged at debug and
@@ -110,6 +114,7 @@ pub async fn scan_external_scripts(
             secrets: Vec::new(),
             eligible: eligible_count,
             scanned: 0,
+            script_bodies_text: String::new(),
         };
     }
 
@@ -127,10 +132,15 @@ pub async fn scan_external_scripts(
     let results = futures::future::join_all(fetches).await;
 
     let mut all_secrets: Vec<ExposedSecret> = Vec::new();
+    let mut body_parts: Vec<String> = Vec::new();
     let mut scanned: u32 = 0;
     for fetched in results.into_iter().flatten() {
         scanned = scanned.saturating_add(1);
         let (url, body) = fetched;
+        // Always retain body text for tech fingerprints (even when no secrets).
+        if !body.is_empty() {
+            body_parts.push(body.to_lowercase());
+        }
         let mut found = crate::parse::detect_exposed_secrets(&body);
         if found.is_empty() {
             continue;
@@ -147,6 +157,7 @@ pub async fn scan_external_scripts(
         secrets: all_secrets,
         eligible: eligible_count,
         scanned,
+        script_bodies_text: body_parts.join("\n"),
     }
 }
 
@@ -459,6 +470,41 @@ mod tests {
         assert!(found.location.contains(&server_url));
         assert_eq!(result.eligible, 1);
         assert_eq!(result.scanned, 1);
+        assert!(
+            result.script_bodies_text.contains("var aws"),
+            "fetched body text must be retained for tech fingerprints; got {:?}",
+            result.script_bodies_text
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scan_external_scripts_retains_body_without_secrets() {
+        let server = Server::run();
+        let marker = "function webpackJsonpCallback(data) { return data; }";
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/app.js")).respond_with(
+                status_code(200)
+                    .insert_header("Content-Type", "application/javascript")
+                    .body(marker),
+            ),
+        );
+
+        let client = reqwest::Client::new();
+        let server_url = server.url("/app.js").to_string();
+        let page_url = server.url("/page").to_string();
+        let result =
+            scan_external_scripts(&client, &page_url, std::slice::from_ref(&server_url), true)
+                .await;
+
+        assert!(result.secrets.is_empty());
+        assert_eq!(result.scanned, 1);
+        assert!(
+            result
+                .script_bodies_text
+                .contains("function webpackjsonpcallback"),
+            "lowercase body haystack expected; got {:?}",
+            result.script_bodies_text
+        );
     }
 
     #[tokio::test]

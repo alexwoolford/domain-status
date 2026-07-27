@@ -44,9 +44,14 @@ Subdirectories:
 
 `--status-port N` binds `127.0.0.1:N` with `/health`, `/status`, and Prometheus `/metrics`.
 
-## External script secret scanning
+## External script scanning
 
-`--scan-external-scripts` fetches first-party `<script src>` URLs only (same eTLD+1; CDN denylist) and runs **secret detection** on their bodies. Off by default; expands latency and fetch surface. It does **not** feed technology fingerprinting — fingerprints use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/DNS/cert issuer.
+`--scan-external-scripts` fetches first-party `<script src>` URLs only (same eTLD+1; CDN denylist). Off by default; expands latency and fetch surface. Fetched bodies are used for:
+
+- **Secret detection** (findings tagged `external_script:<url>`)
+- **Technology fingerprints** via static Wappalyzer `scripts` patterns (no JS execution)
+
+Without the flag, fingerprints still use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/DNS/cert issuer.
 
 ## TLS certificate capture
 

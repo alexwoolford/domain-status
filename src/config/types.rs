@@ -138,10 +138,9 @@ pub struct Config {
     /// and log file are separate outputs (`db_path` / `log_file`).
     pub cache_dir: Option<PathBuf>,
 
-    /// Fetch external `<script src>` URLs and scan their content for
-    /// exposed secrets. Off by default. When enabled, fetches are
-    /// SSRF-validated, bounded by `MAX_RESPONSE_BODY_SIZE` and
-    /// `timeout_seconds`, and capped at 10 scripts per page.
+    /// Fetch first-party `<script src>` bodies for secret detection and static
+    /// `scripts` technology patterns. Off by default. When enabled, fetches are
+    /// SSRF-validated, size/timeout capped, and limited to 10 scripts per page.
     pub scan_external_scripts: bool,
 
     /// Exit code policy for handling failures
