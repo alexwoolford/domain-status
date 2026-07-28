@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use url::form_urlencoded;
 
-use crate::geoip::metadata::load_metadata;
+use crate::geoip::metadata::{cleanup_geoip_tmp_orphans, load_metadata};
 use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self, GEOIP_CITY_READER};
 
@@ -126,6 +126,8 @@ pub async fn init_geoip(
         || crate::cache_paths::geoip_dir(&crate::cache_paths::resolve_cache_root(None)),
         std::path::Path::to_path_buf,
     );
+
+    cleanup_geoip_tmp_orphans(&cache_path).await;
 
     let Some(path) = resolve_geoip_source(geoip_path, &cache_path).await? else {
         return Ok(None);

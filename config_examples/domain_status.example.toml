@@ -12,7 +12,7 @@
 
 # file          = "urls.txt"
 # db_path       = "./domain_status.db"
-# cache_dir     = "/var/cache/domain_status"   # optional; else XDG ~/.cache/domain_status
+# cache_dir     = "/var/cache/domain_status"   # optional; else platform cache (Linux ~/.cache/domain_status, macOS ~/Library/Caches/domain_status)
 # max_concurrency = 30
 # timeout_seconds = 10
 # user_agent    = "domain_status/0.1"

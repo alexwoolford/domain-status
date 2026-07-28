@@ -127,7 +127,37 @@ pub(crate) async fn save_to_cache(
     let categories_json = serde_json::to_string_pretty(&ruleset.categories)?;
     fs::write(&categories_path, categories_json).await?;
 
+    // Drop superseded hash directories so the fingerprints cache does not grow forever
+    // when sources / schema keys change. The just-written `cache_key` is retained.
+    prune_superseded_fingerprint_dirs(cache_dir, cache_key).await;
+
     Ok(())
+}
+
+/// Remove fingerprint cache subdirs other than `keep_key` (best-effort).
+async fn prune_superseded_fingerprint_dirs(cache_dir: &Path, keep_key: &str) {
+    let Ok(mut entries) = fs::read_dir(cache_dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if name == keep_key {
+            continue;
+        }
+        match fs::remove_dir_all(&path).await {
+            Ok(()) => log::debug!("Pruned superseded fingerprint cache dir {}", path.display()),
+            Err(e) => log::warn!(
+                "Failed to prune fingerprint cache dir {}: {e}",
+                path.display()
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +368,28 @@ mod tests {
         assert!(cache_subdir.join("metadata.json").exists());
         assert!(cache_subdir.join("technologies.json").exists());
         assert!(cache_subdir.join("categories.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_save_to_cache_prunes_superseded_hash_dirs() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_dir = temp_dir.path();
+
+        let old = create_test_ruleset("old-source");
+        save_to_cache(&old, cache_dir, "old-hash")
+            .await
+            .expect("save old");
+        assert!(cache_dir.join("old-hash").exists());
+
+        let new = create_test_ruleset("new-source");
+        save_to_cache(&new, cache_dir, "new-hash")
+            .await
+            .expect("save new");
+
+        assert!(cache_dir.join("new-hash").exists());
+        assert!(
+            !cache_dir.join("old-hash").exists(),
+            "superseded fingerprint hash dir should be pruned"
+        );
     }
 }

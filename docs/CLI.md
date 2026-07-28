@@ -15,14 +15,14 @@ domain_status export                # Optional flatten (csv|jsonl|parquet)
 | Flag | Default | Notes |
 |------|---------|--------|
 | `--db-path` | `./domain_status.db` | Primary output |
-| `--log-file` | `domain_status.log` | Scan log (progress bar uses stderr) |
+| `--log-file` | `domain_status.log` / `DOMAIN_STATUS_LOG_FILE` | Scan log (progress bar uses stderr) |
 | `-v` / `-q` | Info baseline | Preferred verbosity; overrides `--log-level` when set |
 | `--log-level` | `info` | Baseline when not using `-v`/`-q` |
 | `--log-format` | `plain` | Format of `--log-file` (`plain` or `json`) |
 | `--max-concurrency` | `30` | Cap 500 |
 | `--rate-limit-rps` | `15` | `0` disables |
 | `--timeout-seconds` | `10` | Per-request HTTP timeout (per-URL budget is separate, 35s) |
-| `--cache-dir` | XDG / env | Shared root for fingerprints/geoip/whois/UA |
+| `--cache-dir` | platform cache / env | Shared root for fingerprints/geoip/whois/UA |
 | `--fingerprints` | GitHub defaults | Local path or URL |
 | `--geoip` | off | Path/URL; or `MAXMIND_LICENSE_KEY` auto-download |
 | `--enable-whois` | off | Opt-in |

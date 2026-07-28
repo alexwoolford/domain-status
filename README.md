@@ -40,7 +40,7 @@ Default scans try to refresh Wappalyzer-compatible rules from GitHub (set `GITHU
 domain_status scan urls.txt --fingerprints /path/to/technologies
 ```
 
-Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cache-dir`, or `DOMAIN_STATUS_CACHE_DIR`, or `~/.cache/domain_status/` (XDG). The SQLite DB and log file stay under `--db-path` / `--log-file` (cwd by default).
+Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cache-dir`, or `DOMAIN_STATUS_CACHE_DIR`, or the platform cache directory + `domain_status/` (Linux `~/.cache/…`, macOS `~/Library/Caches/…`). The SQLite DB and log file stay under `--db-path` / `--log-file` (cwd by default).
 
 ### Optional enrichments
 

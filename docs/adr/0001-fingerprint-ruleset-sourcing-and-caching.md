@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-03-01
-- Updated: 2026-07-24
+- Updated: 2026-07-28
 
 ## Context
 
@@ -52,7 +52,7 @@ Trade-offs:
 ## Operational Notes
 
 - `GITHUB_TOKEN` is optional but recommended to reduce GitHub API rate-limit issues during metadata lookup
-- the cache is part of the working-directory contract and should be treated as a local runtime artifact
+- Fingerprint cache files live under the shared platform cache root (`…/domain_status/fingerprints/`), not the process working directory (see [docs/ADVANCED.md](../ADVANCED.md)). Treat them as regenerable runtime artifacts.
 - for fully deterministic CI, prefer an explicit `--fingerprints` path over relying on the vendored fallback
 
 ## Related Code

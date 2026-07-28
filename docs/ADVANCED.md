@@ -8,19 +8,35 @@ Fingerprints, GeoIP, WHOIS, and User-Agent refresh data share one root:
 
 1. `--cache-dir` / `Config.cache_dir`
 2. `DOMAIN_STATUS_CACHE_DIR`
-3. Platform XDG cache: `~/.cache/domain_status/` (Linux/macOS) or equivalent
+3. Platform cache dir (`dirs::cache_dir`) + `domain_status/`:
+   - Linux: `~/.cache/domain_status` (or `$XDG_CACHE_HOME/domain_status`)
+   - macOS: `~/Library/Caches/domain_status`
+   - Windows: `%LOCALAPPDATA%\domain_status`
 4. Fallback: `./domain_status/…` under the process cwd when no cache home exists
 
 Subdirectories:
 
 | Subdir | Contents |
 |--------|----------|
-| `fingerprints/` | Merged ruleset cache (7-day TTL) |
-| `geoip/` | GeoLite2 City/ASN MMDB + metadata |
+| `fingerprints/` | Merged ruleset cache (7-day TTL); superseded hash dirs pruned after a successful refresh |
+| `geoip/` | GeoLite2 City/ASN MMDB + metadata (orphaned `.*.tmp` cleaned on init) |
 | `whois/` | Per-domain WHOIS/RDAP JSON (7-day TTL) |
 | `user_agent/` | Chrome version cache (30-day TTL) |
 
 **Not caches:** `--db-path` (SQLite) and `--log-file` remain explicit outputs (cwd by default).
+
+### Recommended production layout
+
+Keep regenerable caches under the platform cache root (or `--cache-dir`). Point durable scan outputs somewhere deliberate, for example:
+
+```bash
+domain_status scan urls.txt \
+  --db-path /var/lib/domain_status/scan.db \
+  --log-file /var/log/domain_status/scan.log \
+  --cache-dir /var/cache/domain_status
+```
+
+Defaults leave DB/log in the working directory so interactive runs keep results next to the command.
 
 ## Fingerprints
 

@@ -26,7 +26,7 @@ Uses `just` as the task runner (install: `cargo install just`).
 | Security audit | `just audit` / `just deny` |
 | Update snapshots | `cargo insta review` |
 
-Caches (fingerprints/GeoIP/WHOIS/UA) default under XDG `~/.cache/domain_status/` or `--cache-dir` / `DOMAIN_STATUS_CACHE_DIR`. See [docs/ADVANCED.md](docs/ADVANCED.md) and [docs/TESTING.md](docs/TESTING.md).
+Caches (fingerprints/GeoIP/WHOIS/UA) default under the platform cache dir + `domain_status/` (or `--cache-dir` / `DOMAIN_STATUS_CACHE_DIR`). See [docs/ADVANCED.md](docs/ADVANCED.md) and [docs/TESTING.md](docs/TESTING.md).
 
 ## Architecture
 

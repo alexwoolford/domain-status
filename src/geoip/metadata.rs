@@ -51,6 +51,32 @@ pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Best-effort removal of orphaned atomic-write staging files (`.{name}.tmp`).
+///
+/// A crash between writing the temp file and renaming it can leave these behind
+/// in the `geoip/` cache directory.
+pub(crate) async fn cleanup_geoip_tmp_orphans(cache_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(cache_dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !(name.starts_with('.') && name.ends_with(".tmp")) {
+            continue;
+        }
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => log::debug!("Removed orphaned GeoIP staging file {}", path.display()),
+            Err(e) => log::warn!(
+                "Failed to remove orphaned GeoIP staging file {}: {e}",
+                path.display()
+            ),
+        }
+    }
+}
+
 /// Saves metadata to cache file
 pub(crate) async fn save_metadata(metadata: &GeoIpMetadata, metadata_file: &Path) -> Result<()> {
     let content = serde_json::to_string_pretty(metadata)?;
@@ -433,5 +459,22 @@ mod tests {
         // After save completes, should be able to load
         let final_load = load_metadata(&metadata_file).await;
         assert!(final_load.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_geoip_tmp_orphans_removes_staging_files() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let cache_dir = temp_dir.path();
+        let orphan = cache_dir.join(".GeoLite2-City.mmdb.tmp");
+        let keep = cache_dir.join("GeoLite2-City.mmdb");
+        tokio::fs::write(&orphan, b"partial")
+            .await
+            .expect("write orphan");
+        tokio::fs::write(&keep, b"keep").await.expect("write keep");
+
+        cleanup_geoip_tmp_orphans(cache_dir).await;
+
+        assert!(!orphan.exists(), "orphan .tmp should be removed");
+        assert!(keep.exists(), "real MMDB should remain");
     }
 }
