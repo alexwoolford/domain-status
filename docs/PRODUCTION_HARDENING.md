@@ -125,30 +125,30 @@ When `--status-port` is set, the status server:
 - has no authentication
 - is intended for local scraping only
 
-`/health` returns 200 OK when the server is up; use it for Kubernetes liveness probes, load balancers, or reverse proxies. Do not treat the status server as an internet-facing service. If remote access is required, use an SSH tunnel or a local reverse proxy with explicit access controls.
+`/health` returns 200 OK when the server is up (liveness only; it does not reflect scan success). Do not treat the status server as an internet-facing service. If remote access is required, use an SSH tunnel or a local reverse proxy with explicit access controls.
 
 ## Observability Signals
 
-The live status endpoints now expose more than basic progress:
+The live status endpoints expose progress and runtime health for long-running scans:
 
-- attempted URLs
-- active URLs
-- current adaptive RPS
-- retry counts
-- non-retriable failure counts
-- database write failure counts
-- skipped failure writes while the DB circuit breaker is open
-- circuit-breaker state
+- attempted / pending / active URLs
+- successful / failed / skipped URLs (aligned with finalize and the `runs` table)
+- finished vs dispatched percentage
+- lifetime and windowed throughput, plus ETA
+- scan phase (`scanning` / `draining` / `finalizing`)
+- configured RPS limit (`current_rps`) and concurrency in use
+- retry counts and non-retriable failure counts
 - average timing metrics for major processing stages
 
 If you monitor production scans, prefer scraping `/metrics` and alerting on:
 
-- sustained low `domain_status_current_rps`
+- sustained low measured throughput (`domain_status_rate_per_second` / `domain_status_windowed_rate_per_second`) relative to configured `domain_status_current_rps`
 - growth in `domain_status_runtime_non_retriable_failures_total`
-- growth in `domain_status_db_write_failures_total`
-- `domain_status_db_circuit_open == 1`
+- unexpected growth in `domain_status_failed_urls` or `domain_status_skipped_urls`
 
 For fleet or multi-instance runs, `domain_status_run_info{run_id="..."}`, `domain_status_elapsed_seconds`, and `domain_status_start_time_seconds` let you correlate metrics with a specific scan run (e.g. in the database or logs) and build time-based dashboards.
+
+The status server is scan-scoped: it shuts down during finalize. Use SQLite / `ScanReport` for post-run truth.
 
 ## Failure Policy Guidance
 
@@ -168,4 +168,4 @@ Remember that `pct>` returns exit code `3` when zero URLs were processed.
 - Provide `MAXMIND_LICENSE_KEY` only when GeoIP is required.
 - Keep the status server local-only.
 - Plan retention and SQLite maintenance for large historical datasets.
-- Monitor DB circuit-breaker metrics and runtime retry metrics on long-running scans.
+- Monitor runtime retry metrics and failed/skipped rates on long-running scans.

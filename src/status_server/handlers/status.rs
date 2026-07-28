@@ -7,6 +7,7 @@ use axum::{
 };
 use std::sync::atomic::Ordering;
 
+use super::super::progress::{concurrency_in_use, phase_label, progress_snapshot};
 use super::super::types::{
     ErrorCounts, InfoCounts, StatusResponse, StatusState, TimingMetrics, TimingSummary,
     WarningCounts,
@@ -17,47 +18,57 @@ fn micros_to_ms(micros: u64) -> u64 {
     (micros + 500) / 1000
 }
 
+fn refine_eta(
+    lifetime_eta: Option<f64>,
+    total_urls: usize,
+    finished: usize,
+    windowed_rate: f64,
+) -> Option<f64> {
+    let remaining = total_urls.saturating_sub(finished);
+    if remaining == 0 && total_urls > 0 {
+        return Some(0.0);
+    }
+    if remaining > 0 && windowed_rate > 0.0 {
+        #[allow(clippy::cast_precision_loss)]
+        return Some(remaining as f64 / windowed_rate);
+    }
+    lifetime_eta
+}
+
 /// Builds the structured `/status` response from the current state and elapsed time.
 #[allow(clippy::too_many_lines)] // Assembles all status fields from atomic counters into a single response struct
 pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> StatusResponse {
-    let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
-    let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
-    let completed = state.completed_urls.load(Ordering::SeqCst);
-    let failed = state.failed_urls.load(Ordering::SeqCst);
-    let _skipped = state.skipped_urls.load(Ordering::SeqCst);
-    // completed already includes skipped (both incremented in handle_success),
-    // so don't add skipped again or it gets double-counted.
-    let processed = completed + failed;
-    let active_urls = attempted.saturating_sub(processed);
-    // Progress is based on lines dealt with (attempted or skipped), so the bar reaches 100% when done
-    #[allow(clippy::cast_precision_loss)]
-    let percentage = if total_urls_in_file > 0 {
-        (attempted as f64 / total_urls_in_file as f64) * 100.0
-    } else {
-        0.0
-    };
-    #[allow(clippy::cast_precision_loss)]
-    let rate = if elapsed > 0.0 {
-        completed as f64 / elapsed
-    } else {
-        0.0
-    };
-    let pending_urls = total_urls_in_file.saturating_sub(attempted);
+    let snap = progress_snapshot(state, elapsed);
+    let windowed_rate = state.throughput_window.observe(snap.finished);
+    let eta_seconds = refine_eta(
+        snap.eta_seconds,
+        snap.total_urls,
+        snap.finished,
+        windowed_rate,
+    );
 
     StatusResponse {
-        total_urls: total_urls_in_file,
-        total_urls_attempted: attempted,
-        completed_urls: completed,
-        failed_urls: failed,
-        active_urls,
-        pending_urls: Some(pending_urls),
-        percentage_complete: percentage,
+        total_urls: snap.total_urls,
+        total_urls_attempted: snap.attempted,
+        completed_urls: snap.completed,
+        successful_urls: snap.successful,
+        failed_urls: snap.failed,
+        skipped_urls: snap.skipped,
+        active_urls: snap.active_urls,
+        pending_urls: Some(snap.pending_urls),
+        percentage_complete: snap.percentage_complete,
+        percentage_dispatched: snap.percentage_dispatched,
         elapsed_seconds: elapsed,
-        rate_per_second: rate,
+        rate_per_second: snap.rate_per_second,
+        windowed_rate_per_second: windowed_rate,
+        eta_seconds,
+        phase: phase_label(state).to_string(),
         current_rps: state
             .request_limiter
             .as_ref()
             .map(|limiter| limiter.current_rps()),
+        concurrency_limit: state.max_concurrency,
+        concurrency_in_use: concurrency_in_use(state),
         retried_requests: state.runtime_metrics.retried_requests(),
         non_retriable_failures: state.runtime_metrics.non_retriable_failures(),
         errors: ErrorCounts {
@@ -221,38 +232,17 @@ pub async fn status_handler(State(state): State<StatusState>) -> Response {
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::status_server::StatusState;
+    use crate::status_server::types::test_status_state;
     use crate::utils::{TimingStats, UrlTimingMetrics};
-    use pretty_assertions::assert_eq;
-    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
-    use std::time::Instant;
-
-    fn create_test_state() -> StatusState {
-        StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-            request_limiter: None,
-            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        }
-    }
 
     #[tokio::test]
     async fn test_status_handler_returns_json() {
-        let state = create_test_state();
+        let state = test_status_state(100, 100, 50, 50, 10, 0);
         let response = status_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        // Verify content-type header
         let headers = response.headers();
         assert_eq!(
             headers.get("content-type"),
@@ -262,144 +252,98 @@ mod tests {
 
     #[test]
     fn test_build_status_response_returns_exact_contract() {
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(80)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new({
-                let stats = ProcessingStats::new();
-                stats.increment_error(ErrorType::ProcessUrlTimeout);
-                stats.increment_error(ErrorType::HttpRequestTimeoutError);
-                stats.increment_error(ErrorType::DnsNsLookupError);
-                stats.increment_warning(WarningType::MissingMetaDescription);
-                stats.increment_info(InfoType::HttpRedirect);
-                stats
-            }),
-            timing_stats: Some(Arc::new({
-                let stats = TimingStats::new();
-                stats.record(&UrlTimingMetrics {
-                    http_request_us: 1500,
-                    dns_forward_us: 499,
-                    total_us: 2000,
-                    ..Default::default()
-                });
-                stats
-            })),
-            request_limiter: None,
-            runtime_metrics: Arc::new({
-                let metrics = crate::runtime_metrics::RuntimeMetrics::default();
-                metrics.record_retry();
-                metrics.record_non_retriable_failure();
-                metrics
-            }),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        };
+        let mut state = test_status_state(100, 80, 50, 50, 10, 0);
+        state.error_stats = Arc::new({
+            let stats = ProcessingStats::new();
+            stats.increment_error(ErrorType::ProcessUrlTimeout);
+            stats.increment_error(ErrorType::HttpRequestTimeoutError);
+            stats.increment_error(ErrorType::DnsNsLookupError);
+            stats.increment_warning(WarningType::MissingMetaDescription);
+            stats.increment_info(InfoType::HttpRedirect);
+            stats
+        });
+        state.timing_stats = Some(Arc::new({
+            let stats = TimingStats::new();
+            stats.record(&UrlTimingMetrics {
+                http_request_us: 1500,
+                dns_forward_us: 499,
+                total_us: 2000,
+                ..Default::default()
+            });
+            stats
+        }));
+        state.runtime_metrics = Arc::new({
+            let metrics = crate::runtime_metrics::RuntimeMetrics::default();
+            metrics.record_retry();
+            metrics.record_non_retriable_failure();
+            metrics
+        });
 
         let response = build_status_response(&state, 5.0);
-        assert_eq!(
-            response,
-            StatusResponse {
-                total_urls: 100,
-                total_urls_attempted: 80,
-                completed_urls: 50,
-                failed_urls: 10,
-                active_urls: 20,
-                pending_urls: Some(20), // total - attempted (lines not yet dealt with)
-                percentage_complete: 80.0, // attempted / total (progress reaches 100% when done)
-                elapsed_seconds: 5.0,
-                rate_per_second: 10.0,
-                current_rps: None,
-                retried_requests: 1,
-                non_retriable_failures: 1,
-                errors: ErrorCounts {
-                    total: 3,
-                    timeout: 2,
-                    connection_error: 0,
-                    http_error: 0,
-                    dns_error: 1,
-                    tls_error: 0,
-                    parse_error: 0,
-                    other_error: 0,
-                },
-                warnings: WarningCounts {
-                    total: 1,
-                    missing_meta_keywords: 0,
-                    missing_meta_description: 1,
-                    missing_title: 0,
-                },
-                info: InfoCounts {
-                    total: 1,
-                    http_redirect: 1,
-                    https_redirect: 0,
-                    bot_detection_403: 0,
-                    multiple_redirects: 0,
-                },
-                timing: Some(TimingSummary {
-                    count: 1,
-                    averages: TimingMetrics {
-                        http_request_ms: 2,
-                        dns_forward_ms: 0,
-                        dns_reverse_ms: 0,
-                        dns_additional_ms: 0,
-                        tls_handshake_ms: 0,
-                        html_parsing_ms: 0,
-                        tech_detection_ms: 0,
-                        geoip_lookup_ms: 0,
-                        whois_lookup_ms: 0,
-                        security_analysis_ms: 0,
-                        total_ms: 2,
-                    },
-                }),
-            }
-        );
+        assert_eq!(response.total_urls, 100);
+        assert_eq!(response.total_urls_attempted, 80);
+        assert_eq!(response.completed_urls, 50);
+        assert_eq!(response.successful_urls, 50);
+        assert_eq!(response.failed_urls, 10);
+        assert_eq!(response.skipped_urls, 0);
+        assert_eq!(response.active_urls, 20);
+        assert_eq!(response.pending_urls, Some(20));
+        // finished = 60 / 100
+        assert!((response.percentage_complete - 60.0).abs() < f64::EPSILON);
+        assert!((response.percentage_dispatched - 80.0).abs() < f64::EPSILON);
+        assert!((response.rate_per_second - 12.0).abs() < f64::EPSILON);
+        assert_eq!(response.phase, "scanning");
+        assert_eq!(response.retried_requests, 1);
+        assert_eq!(response.non_retriable_failures, 1);
+        assert_eq!(response.errors.total, 3);
+        assert_eq!(response.errors.timeout, 2);
+        assert_eq!(response.errors.dns_error, 1);
+        assert_eq!(response.warnings.missing_meta_description, 1);
+        assert_eq!(response.info.http_redirect, 1);
+        let timing = response.timing.expect("timing present");
+        assert_eq!(timing.count, 1);
+        assert_eq!(timing.averages.http_request_ms, 2);
+        assert_eq!(timing.averages.total_ms, 2);
+    }
+
+    #[test]
+    fn test_early_skips_do_not_inflate_active_urls() {
+        // Early invalid/SSRF skip: attempted++ and skipped++, not completed.
+        let state = test_status_state(10, 3, 0, 0, 0, 3);
+        let response = build_status_response(&state, 1.0);
+        assert_eq!(response.skipped_urls, 3);
+        assert_eq!(response.active_urls, 0);
+        assert!((response.percentage_complete - 30.0).abs() < f64::EPSILON);
+        assert!((response.percentage_dispatched - 30.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_build_status_response_handles_zero_total_urls() {
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(0)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
-            completed_urls: Arc::new(AtomicUsize::new(0)),
-            failed_urls: Arc::new(AtomicUsize::new(0)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-            request_limiter: None,
-            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        };
-
+        let state = test_status_state(0, 0, 0, 0, 0, 0);
         let response = build_status_response(&state, 0.0);
         assert_eq!(response.pending_urls, Some(0));
         assert!(response.percentage_complete.abs() < f64::EPSILON);
         assert!(response.rate_per_second.abs() < f64::EPSILON);
         assert_eq!(response.timing, None);
+        assert!(response.eta_seconds.is_none());
     }
 
     #[test]
     fn test_build_status_response_uses_saturating_pending_urls() {
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(150)),
-            failed_urls: Arc::new(AtomicUsize::new(50)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-            request_limiter: None,
-            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        };
-
+        let state = test_status_state(100, 100, 150, 150, 50, 0);
         let response = build_status_response(&state, 1.0);
         assert_eq!(response.pending_urls, Some(0));
+    }
+
+    #[test]
+    fn test_mid_process_skip_counts_once_in_finished() {
+        // Mid-process skip increments skipped only (not completed).
+        let state = test_status_state(10, 2, 1, 1, 0, 1);
+        let response = build_status_response(&state, 2.0);
+        assert_eq!(response.active_urls, 0);
+        assert_eq!(response.successful_urls, 1);
+        assert_eq!(response.skipped_urls, 1);
+        assert!((response.percentage_complete - 20.0).abs() < f64::EPSILON);
+        assert!((response.rate_per_second - 1.0).abs() < f64::EPSILON);
     }
 }

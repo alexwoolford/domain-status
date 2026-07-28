@@ -40,6 +40,10 @@ pub async fn finalize_scan(
     resources: ScanResources,
     loop_result: ScanLoopResult,
 ) -> Result<ScanReport> {
+    resources
+        .phase
+        .set(crate::status_server::ScanPhase::Finalizing);
+
     let ScanLoopResult {
         cancel,
         logging_task,
@@ -55,12 +59,13 @@ pub async fn finalize_scan(
     )
     .await;
 
-    // Log final progress
+    // Log final progress against the input file total (not attempted-only).
     log_progress(
         resources.start_time,
         &resources.completed_urls,
         &resources.failed_urls,
-        Some(&resources.total_urls_attempted),
+        &resources.skipped_urls,
+        Some(&resources.total_urls_in_file),
     );
 
     let elapsed_seconds = resources.start_time.elapsed().as_secs_f64();
@@ -241,6 +246,8 @@ mod tests {
             failed_urls,
             total_urls_attempted,
             total_urls_in_file: Arc::new(AtomicUsize::new(10)),
+            phase: Arc::new(crate::status_server::AtomicPhase::default()),
+            throughput_window: Arc::new(crate::status_server::ThroughputWindow::new()),
             run_id: run_id.to_string(),
             start_time_epoch: start_time_ms,
             start_time,

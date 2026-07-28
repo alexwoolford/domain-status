@@ -264,6 +264,8 @@ pub async fn init_scan_resources(
         failed_urls,
         total_urls_attempted,
         total_urls_in_file,
+        phase: Arc::new(crate::status_server::AtomicPhase::default()),
+        throughput_window: Arc::new(crate::status_server::ThroughputWindow::new()),
         run_id,
         start_time_epoch,
         start_time,

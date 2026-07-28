@@ -9,17 +9,17 @@
 
 mod error;
 mod handlers;
+mod progress;
 mod types;
 
 pub use error::StatusServerLifecycleError;
+pub use types::{AtomicPhase, ScanPhase, StatusState, ThroughputWindow};
 
 use axum::routing::get;
 use axum::Router;
 use tokio_util::sync::CancellationToken;
 
 use handlers::{health_handler, metrics_handler, status_handler};
-pub use types::StatusState;
-
 /// Managed background status server with explicit shutdown semantics.
 #[derive(Debug)]
 pub struct StatusServerHandle {
@@ -86,29 +86,12 @@ pub async fn spawn_status_server(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error_handling::ProcessingStats;
     use axum::body::Body;
     use axum::http::Request;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::Arc;
-    use std::time::Instant;
     use tower::ServiceExt;
 
     fn create_test_state() -> StatusState {
-        StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-            request_limiter: None,
-            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        }
+        crate::status_server::types::test_status_state(100, 100, 50, 50, 10, 0)
     }
 
     #[tokio::test]

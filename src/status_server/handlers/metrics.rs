@@ -2,11 +2,11 @@
 
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::sync::atomic::Ordering;
 
+use super::super::progress::{concurrency_in_use, phase_label, progress_snapshot};
 use super::super::types::StatusState;
 
 fn micros_to_ms(micros: u64) -> u64 {
@@ -23,18 +23,19 @@ fn escape_prometheus_label_value(s: &str) -> String {
 /// Renders the Prometheus metrics payload for the given state and elapsed time.
 #[allow(clippy::too_many_lines)] // Prometheus text format requires one line per metric; splitting would fragment the output
 pub(crate) fn render_metrics(state: &StatusState, elapsed: f64) -> String {
-    let total_urls_in_file = state.total_urls.load(Ordering::SeqCst);
-    let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
-    let completed = state.completed_urls.load(Ordering::SeqCst);
-    let failed = state.failed_urls.load(Ordering::SeqCst);
-    // completed already includes skipped (handle_success increments both),
-    // so don't subtract skipped again or active will underflow.
-    let active = attempted.saturating_sub(completed + failed);
+    let snap = progress_snapshot(state, elapsed);
+    let windowed_rate = state.throughput_window.observe(snap.finished);
+    let phase = phase_label(state);
+    let concurrency_in_use = concurrency_in_use(state).unwrap_or(0);
+    let concurrency_limit = state.max_concurrency.unwrap_or(0);
+    let remaining = snap.total_urls.saturating_sub(snap.finished);
     #[allow(clippy::cast_precision_loss)]
-    let rate = if elapsed > 0.0 {
-        completed as f64 / elapsed
-    } else {
+    let eta = if remaining == 0 && snap.total_urls > 0 {
         0.0
+    } else if remaining > 0 && windowed_rate > 0.0 {
+        remaining as f64 / windowed_rate
+    } else {
+        snap.eta_seconds.unwrap_or(0.0)
     };
 
     let total_errors = state.error_stats.total_errors();
@@ -42,7 +43,9 @@ pub(crate) fn render_metrics(state: &StatusState, elapsed: f64) -> String {
     let total_info = state.error_stats.total_info();
 
     let timing_metrics = if let Some(timing_stats) = &state.timing_stats {
-        let count = timing_stats.count.load(Ordering::Relaxed);
+        let count = timing_stats
+            .count
+            .load(std::sync::atomic::Ordering::Relaxed);
         if count > 0 {
             let avg = timing_stats.averages();
 
@@ -121,325 +124,229 @@ domain_status_timing_total_ms {}
     format!(
         r#"# HELP domain_status_run_info Run identifier for correlating with database and logs
 # TYPE domain_status_run_info gauge
-domain_status_run_info{{run_id="{}"}} 1
+domain_status_run_info{{run_id="{run_id_label}"}} 1
 
 # HELP domain_status_elapsed_seconds Seconds since the current run started
 # TYPE domain_status_elapsed_seconds gauge
-domain_status_elapsed_seconds {}
+domain_status_elapsed_seconds {elapsed}
 
 # HELP domain_status_start_time_seconds Unix timestamp when the run started
 # TYPE domain_status_start_time_seconds gauge
-domain_status_start_time_seconds {}
+domain_status_start_time_seconds {start_time_secs}
 
 # HELP domain_status_total_urls Total number of URLs to process
 # TYPE domain_status_total_urls gauge
-domain_status_total_urls {}
+domain_status_total_urls {total}
 
-# HELP domain_status_completed_urls Number of URLs successfully processed
+# HELP domain_status_completed_urls URLs finished via the success path (persisted inserts; excludes skips)
 # TYPE domain_status_completed_urls gauge
-domain_status_completed_urls {}
+domain_status_completed_urls {completed}
+
+# HELP domain_status_successful_urls URLs that produced a persisted url_status row
+# TYPE domain_status_successful_urls gauge
+domain_status_successful_urls {successful}
 
 # HELP domain_status_failed_urls Number of URLs that failed to process
 # TYPE domain_status_failed_urls gauge
-domain_status_failed_urls {}
+domain_status_failed_urls {failed}
 
-# HELP domain_status_attempted_urls Number of URLs that have entered processing
+# HELP domain_status_skipped_urls URLs skipped (invalid, SSRF-unsafe, or intentional mid-process skip)
+# TYPE domain_status_skipped_urls gauge
+domain_status_skipped_urls {skipped}
+
+# HELP domain_status_attempted_urls Number of URLs that have entered processing or early-skip
 # TYPE domain_status_attempted_urls gauge
-domain_status_attempted_urls {}
+domain_status_attempted_urls {attempted}
 
 # HELP domain_status_active_urls Number of URLs currently in flight
 # TYPE domain_status_active_urls gauge
-domain_status_active_urls {}
+domain_status_active_urls {active}
 
-# HELP domain_status_percentage_complete Percentage of URLs completed (0-100)
+# HELP domain_status_percentage_complete Percentage of URLs finished (successful+failed+skipped)/total (0-100)
 # TYPE domain_status_percentage_complete gauge
-domain_status_percentage_complete {}
+domain_status_percentage_complete {pct_complete}
 
-# HELP domain_status_rate_per_second URLs processed per second
+# HELP domain_status_percentage_dispatched Percentage of URLs dispatched (attempted)/total (0-100)
+# TYPE domain_status_percentage_dispatched gauge
+domain_status_percentage_dispatched {pct_dispatched}
+
+# HELP domain_status_rate_per_second Lifetime finished URLs per second
 # TYPE domain_status_rate_per_second gauge
-domain_status_rate_per_second {}
+domain_status_rate_per_second {rate}
+
+# HELP domain_status_windowed_rate_per_second Recent finished URLs per second (approx 1s+ window)
+# TYPE domain_status_windowed_rate_per_second gauge
+domain_status_windowed_rate_per_second {windowed_rate}
+
+# HELP domain_status_eta_seconds Estimated seconds remaining (0 when unknown or complete)
+# TYPE domain_status_eta_seconds gauge
+domain_status_eta_seconds {eta}
+
+# HELP domain_status_phase Scan lifecycle phase (1=scanning, 2=draining, 3=finalizing)
+# TYPE domain_status_phase gauge
+domain_status_phase{{phase="{phase}"}} {phase_num}
+
+# HELP domain_status_concurrency_limit Configured max concurrent URL tasks
+# TYPE domain_status_concurrency_limit gauge
+domain_status_concurrency_limit {concurrency_limit}
+
+# HELP domain_status_concurrency_in_use Concurrent URL tasks currently holding a semaphore permit
+# TYPE domain_status_concurrency_in_use gauge
+domain_status_concurrency_in_use {concurrency_in_use}
 
 # HELP domain_status_errors_total Total number of errors encountered
 # TYPE domain_status_errors_total counter
-domain_status_errors_total {}
+domain_status_errors_total {total_errors}
 
 # HELP domain_status_warnings_total Total number of warnings encountered
 # TYPE domain_status_warnings_total counter
-domain_status_warnings_total {}
+domain_status_warnings_total {total_warnings}
 
 # HELP domain_status_info_total Total number of info events
 # TYPE domain_status_info_total counter
-domain_status_info_total {}
+domain_status_info_total {total_info}
 
 # HELP domain_status_runtime_retries_total Total retry attempts consumed
 # TYPE domain_status_runtime_retries_total counter
-domain_status_runtime_retries_total {}
+domain_status_runtime_retries_total {retries}
 
 # HELP domain_status_runtime_non_retriable_failures_total Total failures classified as terminal at the retry boundary
 # TYPE domain_status_runtime_non_retriable_failures_total counter
-domain_status_runtime_non_retriable_failures_total {}
+domain_status_runtime_non_retriable_failures_total {non_retriable}
 
-# HELP domain_status_current_rps Current effective configured request rate
+# HELP domain_status_current_rps Configured request-rate limit (not measured throughput)
 # TYPE domain_status_current_rps gauge
-domain_status_current_rps {}
-{}"#,
-        run_id_label,
-        elapsed,
-        start_time_secs,
-        total_urls_in_file,
-        completed,
-        failed,
-        attempted,
-        active,
-        if total_urls_in_file > 0 {
-            #[allow(clippy::cast_precision_loss)]
-            {
-                (attempted as f64 / total_urls_in_file as f64) * 100.0
-            }
-        } else {
-            0.0
+domain_status_current_rps {current_rps}
+{timing_metrics}"#,
+        total = snap.total_urls,
+        completed = snap.completed,
+        successful = snap.successful,
+        failed = snap.failed,
+        skipped = snap.skipped,
+        attempted = snap.attempted,
+        active = snap.active_urls,
+        pct_complete = snap.percentage_complete,
+        pct_dispatched = snap.percentage_dispatched,
+        rate = snap.rate_per_second,
+        phase_num = match phase {
+            "draining" => 2,
+            "finalizing" => 3,
+            _ => 1,
         },
-        rate,
-        total_errors,
-        total_warnings,
-        total_info,
-        state.runtime_metrics.retried_requests(),
-        state.runtime_metrics.non_retriable_failures(),
-        state
+        retries = state.runtime_metrics.retried_requests(),
+        non_retriable = state.runtime_metrics.non_retriable_failures(),
+        current_rps = state
             .request_limiter
             .as_ref()
             .map_or(0, |limiter| limiter.current_rps()),
-        timing_metrics
     )
 }
 
 /// Prometheus-compatible metrics endpoint
 pub async fn metrics_handler(State(state): State<StatusState>) -> Response {
     let elapsed = state.start_time.elapsed().as_secs_f64();
-    (StatusCode::OK, render_metrics(&state, elapsed)).into_response()
+    let body = render_metrics(&state, elapsed);
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+    );
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use crate::status_server::StatusState;
+    use crate::status_server::types::test_status_state;
     use crate::utils::{TimingStats, UrlTimingMetrics};
-    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
-    use std::time::Instant;
-
-    fn create_test_state() -> StatusState {
-        StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(100)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: None,
-            request_limiter: None,
-            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        }
-    }
 
     #[tokio::test]
     async fn test_metrics_handler_returns_text() {
-        let state = create_test_state();
+        let state = test_status_state(100, 100, 50, 50, 10, 0);
         let response = metrics_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
     }
 
     #[tokio::test]
     async fn test_metrics_handler_includes_basic_metrics() {
-        let state = create_test_state();
+        let state = test_status_state(100, 100, 50, 50, 10, 0);
         let response = metrics_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        // Extract body to verify metrics format
         let (_parts, body) = response.into_parts();
         let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        // Verify Prometheus format
         assert!(body_str.contains("domain_status_total_urls"));
         assert!(body_str.contains("domain_status_completed_urls"));
+        assert!(body_str.contains("domain_status_successful_urls"));
+        assert!(body_str.contains("domain_status_skipped_urls"));
         assert!(body_str.contains("domain_status_failed_urls"));
         assert!(body_str.contains("domain_status_percentage_complete"));
+        assert!(body_str.contains("domain_status_percentage_dispatched"));
+        assert!(body_str.contains("domain_status_windowed_rate_per_second"));
+        assert!(body_str.contains("domain_status_eta_seconds"));
+        assert!(body_str.contains("domain_status_phase"));
         assert!(body_str.contains("domain_status_rate_per_second"));
         assert!(body_str.contains("domain_status_errors_total"));
-        assert!(body_str.contains("domain_status_warnings_total"));
-        assert!(body_str.contains("domain_status_info_total"));
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
-    fn test_render_metrics_exact_output_with_timing() {
+    fn test_render_metrics_early_skip_active_zero() {
+        let state = test_status_state(10, 3, 0, 0, 0, 3);
+        let metrics = render_metrics(&state, 1.0);
+        assert!(metrics.contains("domain_status_active_urls 0"));
+        assert!(metrics.contains("domain_status_skipped_urls 3"));
+        assert!(metrics.contains("domain_status_percentage_complete 30"));
+    }
+
+    #[test]
+    fn test_render_metrics_includes_timing_when_present() {
         let timing_stats = Arc::new(TimingStats::new());
         timing_stats.record(&UrlTimingMetrics {
             http_request_us: 1500,
             total_us: 2000,
             ..Default::default()
         });
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(100)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(60)),
-            completed_urls: Arc::new(AtomicUsize::new(50)),
-            failed_urls: Arc::new(AtomicUsize::new(10)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new({
-                let stats = ProcessingStats::new();
-                stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
-                stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
-                stats.increment_info(crate::error_handling::InfoType::HttpsRedirect);
-                stats
-            }),
-            timing_stats: Some(timing_stats),
-            request_limiter: None,
-            runtime_metrics: Arc::new({
-                let metrics = crate::runtime_metrics::RuntimeMetrics::default();
-                metrics.record_retry();
-                metrics
-            }),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        };
+        let mut state = test_status_state(100, 60, 50, 50, 10, 0);
+        state.error_stats = Arc::new({
+            let stats = ProcessingStats::new();
+            stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
+            stats.increment_warning(crate::error_handling::WarningType::MissingTitle);
+            stats.increment_info(crate::error_handling::InfoType::HttpsRedirect);
+            stats
+        });
+        state.timing_stats = Some(timing_stats);
+        state.runtime_metrics = Arc::new({
+            let metrics = crate::runtime_metrics::RuntimeMetrics::default();
+            metrics.record_retry();
+            metrics
+        });
 
         let metrics = render_metrics(&state, 5.0);
-        assert_eq!(
-            metrics.trim(),
-            r#"# HELP domain_status_run_info Run identifier for correlating with database and logs
-# TYPE domain_status_run_info gauge
-domain_status_run_info{run_id=""} 1
-
-# HELP domain_status_elapsed_seconds Seconds since the current run started
-# TYPE domain_status_elapsed_seconds gauge
-domain_status_elapsed_seconds 5
-
-# HELP domain_status_start_time_seconds Unix timestamp when the run started
-# TYPE domain_status_start_time_seconds gauge
-domain_status_start_time_seconds 0
-
-# HELP domain_status_total_urls Total number of URLs to process
-# TYPE domain_status_total_urls gauge
-domain_status_total_urls 100
-
-# HELP domain_status_completed_urls Number of URLs successfully processed
-# TYPE domain_status_completed_urls gauge
-domain_status_completed_urls 50
-
-# HELP domain_status_failed_urls Number of URLs that failed to process
-# TYPE domain_status_failed_urls gauge
-domain_status_failed_urls 10
-
-# HELP domain_status_attempted_urls Number of URLs that have entered processing
-# TYPE domain_status_attempted_urls gauge
-domain_status_attempted_urls 60
-
-# HELP domain_status_active_urls Number of URLs currently in flight
-# TYPE domain_status_active_urls gauge
-domain_status_active_urls 0
-
-# HELP domain_status_percentage_complete Percentage of URLs completed (0-100)
-# TYPE domain_status_percentage_complete gauge
-domain_status_percentage_complete 60
-
-# HELP domain_status_rate_per_second URLs processed per second
-# TYPE domain_status_rate_per_second gauge
-domain_status_rate_per_second 10
-
-# HELP domain_status_errors_total Total number of errors encountered
-# TYPE domain_status_errors_total counter
-domain_status_errors_total 1
-
-# HELP domain_status_warnings_total Total number of warnings encountered
-# TYPE domain_status_warnings_total counter
-domain_status_warnings_total 1
-
-# HELP domain_status_info_total Total number of info events
-# TYPE domain_status_info_total counter
-domain_status_info_total 1
-
-# HELP domain_status_runtime_retries_total Total retry attempts consumed
-# TYPE domain_status_runtime_retries_total counter
-domain_status_runtime_retries_total 1
-
-# HELP domain_status_runtime_non_retriable_failures_total Total failures classified as terminal at the retry boundary
-# TYPE domain_status_runtime_non_retriable_failures_total counter
-domain_status_runtime_non_retriable_failures_total 0
-
-# HELP domain_status_current_rps Current effective configured request rate
-# TYPE domain_status_current_rps gauge
-domain_status_current_rps 0
-
-# HELP domain_status_timing_http_request_ms Average HTTP request time in milliseconds
-# TYPE domain_status_timing_http_request_ms gauge
-domain_status_timing_http_request_ms 2
-
-# HELP domain_status_timing_dns_forward_ms Average DNS forward lookup time in milliseconds
-# TYPE domain_status_timing_dns_forward_ms gauge
-domain_status_timing_dns_forward_ms 0
-
-# HELP domain_status_timing_dns_reverse_ms Average DNS reverse lookup time in milliseconds
-# TYPE domain_status_timing_dns_reverse_ms gauge
-domain_status_timing_dns_reverse_ms 0
-
-# HELP domain_status_timing_dns_additional_ms Average DNS additional records lookup time in milliseconds
-# TYPE domain_status_timing_dns_additional_ms gauge
-domain_status_timing_dns_additional_ms 0
-
-# HELP domain_status_timing_tls_handshake_ms Average TLS handshake time in milliseconds
-# TYPE domain_status_timing_tls_handshake_ms gauge
-domain_status_timing_tls_handshake_ms 0
-
-# HELP domain_status_timing_html_parsing_ms Average HTML parsing time in milliseconds
-# TYPE domain_status_timing_html_parsing_ms gauge
-domain_status_timing_html_parsing_ms 0
-
-# HELP domain_status_timing_tech_detection_ms Average technology detection time in milliseconds
-# TYPE domain_status_timing_tech_detection_ms gauge
-domain_status_timing_tech_detection_ms 0
-
-# HELP domain_status_timing_geoip_lookup_ms Average GeoIP lookup time in milliseconds
-# TYPE domain_status_timing_geoip_lookup_ms gauge
-domain_status_timing_geoip_lookup_ms 0
-
-# HELP domain_status_timing_whois_lookup_ms Average WHOIS lookup time in milliseconds
-# TYPE domain_status_timing_whois_lookup_ms gauge
-domain_status_timing_whois_lookup_ms 0
-
-# HELP domain_status_timing_security_analysis_ms Average security analysis time in milliseconds
-# TYPE domain_status_timing_security_analysis_ms gauge
-domain_status_timing_security_analysis_ms 0
-
-# HELP domain_status_timing_total_ms Average total processing time in milliseconds
-# TYPE domain_status_timing_total_ms gauge
-domain_status_timing_total_ms 2"#.trim()
-        );
+        assert!(metrics.contains("domain_status_completed_urls 50"));
+        assert!(metrics.contains("domain_status_successful_urls 50"));
+        assert!(metrics.contains("domain_status_percentage_complete 60"));
+        assert!(metrics.contains("domain_status_percentage_dispatched 60"));
+        assert!(metrics.contains("domain_status_rate_per_second 12"));
+        assert!(metrics.contains("domain_status_timing_http_request_ms 2"));
+        assert!(metrics.contains("domain_status_timing_total_ms 2"));
+        assert!(metrics.contains("domain_status_runtime_retries_total 1"));
+        assert!(metrics.contains(r#"domain_status_phase{phase="scanning"} 1"#));
     }
 
     #[test]
     fn test_render_metrics_omits_timing_when_empty() {
-        let state = StatusState {
-            total_urls: Arc::new(AtomicUsize::new(0)),
-            total_urls_attempted: Arc::new(AtomicUsize::new(0)),
-            completed_urls: Arc::new(AtomicUsize::new(0)),
-            failed_urls: Arc::new(AtomicUsize::new(0)),
-            skipped_urls: Arc::new(AtomicUsize::new(0)),
-            start_time: Arc::new(Instant::now()),
-            error_stats: Arc::new(ProcessingStats::new()),
-            timing_stats: Some(Arc::new(TimingStats::new())),
-            request_limiter: None,
-            runtime_metrics: Arc::new(crate::runtime_metrics::RuntimeMetrics::default()),
-            run_id: None,
-            run_start_time_unix_secs: None,
-        };
+        let mut state = test_status_state(0, 0, 0, 0, 0, 0);
+        state.timing_stats = Some(Arc::new(TimingStats::new()));
 
         let metrics = render_metrics(&state, 0.0);
         assert!(metrics.contains("domain_status_percentage_complete 0"));
