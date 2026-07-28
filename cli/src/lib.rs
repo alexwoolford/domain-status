@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use clap::CommandFactory;
 use clap::Parser;
 
-const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/// Default User-Agent for HTTP requests when the caller does not override `--user-agent`.
+///
+/// The main crate may auto-refresh Chrome's version at startup when this default is still in use.
+pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /// Root CLI command (subcommand required).
 #[derive(Debug, Parser, Clone)]
@@ -62,28 +65,28 @@ pub struct ScanCommand {
     )]
     pub db_path: PathBuf,
 
-    #[arg(long, default_value_t = 30)]
+    #[arg(long, default_value_t = 30, env = "DOMAIN_STATUS_MAX_CONCURRENCY")]
     pub max_concurrency: usize,
 
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 10, env = "DOMAIN_STATUS_TIMEOUT_SECONDS")]
     pub timeout_seconds: u64,
 
-    #[arg(long, default_value = DEFAULT_USER_AGENT)]
+    #[arg(long, default_value = DEFAULT_USER_AGENT, env = "DOMAIN_STATUS_USER_AGENT")]
     pub user_agent: String,
 
-    #[arg(long, default_value_t = 15)]
+    #[arg(long, default_value_t = 15, env = "DOMAIN_STATUS_RATE_LIMIT_RPS")]
     pub rate_limit_rps: u32,
 
-    #[arg(long)]
+    #[arg(long, env = "DOMAIN_STATUS_FINGERPRINTS")]
     pub fingerprints: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, env = "DOMAIN_STATUS_GEOIP")]
     pub geoip: Option<String>,
 
     #[arg(long, env = "DOMAIN_STATUS_STATUS_PORT")]
     pub status_port: Option<u16>,
 
-    #[arg(long)]
+    #[arg(long, env = "DOMAIN_STATUS_ENABLE_WHOIS")]
     pub enable_whois: bool,
 
     /// Disable WHOIS even if enabled in TOML / env (`enable_whois = true`).
@@ -106,14 +109,15 @@ pub struct ScanCommand {
     #[arg(long, env = "DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS")]
     pub scan_external_scripts: bool,
 
-    #[arg(long, value_enum, default_value_t = FailOn::Never)]
+    #[arg(long, value_enum, default_value_t = FailOn::Never, env = "DOMAIN_STATUS_FAIL_ON")]
     pub fail_on: FailOn,
 
     #[arg(
         long,
         default_value_t = 10,
         value_parser = clap::value_parser!(u8).range(0..=100),
-        requires_if("pct>", "fail_on")
+        requires_if("pct>", "fail_on"),
+        env = "DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD"
     )]
     pub fail_on_pct_threshold: u8,
 
@@ -128,7 +132,7 @@ pub struct ScanCommand {
     /// input queue is exhausted. Tasks still running after this window are
     /// aborted and recorded in `url_failures` with the timeout reason.
     /// Raise this for WHOIS-heavy small batches if scans report drain timeouts.
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 10, env = "DOMAIN_STATUS_DRAIN_TIMEOUT_SECS")]
     pub drain_timeout_secs: u64,
 }
 
@@ -197,6 +201,7 @@ pub enum FailOn {
     #[default]
     Never,
     /// Exit with error if any URL failed.
+    #[value(name = "any-failure")]
     AnyFailure,
     /// Exit with error if failure percentage exceeds threshold (`pct>`).
     #[value(name = "pct>")]

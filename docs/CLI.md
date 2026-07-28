@@ -10,35 +10,45 @@ domain_status summary               # Last (or --run-id) run digest
 domain_status export                # Optional flatten (csv|jsonl|parquet)
 ```
 
-## Scan essentials
-
-| Flag | Default | Notes |
-|------|---------|--------|
-| `--db-path` | `./domain_status.db` | Primary output |
-| `--log-file` | `domain_status.log` / `DOMAIN_STATUS_LOG_FILE` | Scan log (progress bar uses stderr) |
-| `-v` / `-q` | Info baseline | Preferred verbosity; overrides `--log-level` when set |
-| `--log-level` | `info` | Baseline when not using `-v`/`-q` |
-| `--log-format` | `plain` | Format of `--log-file` (`plain` or `json`) |
-| `--max-concurrency` | `30` | Cap 500 |
-| `--rate-limit-rps` | `15` | `0` disables |
-| `--timeout-seconds` | `10` | Per-request HTTP timeout (per-URL budget is separate, 35s) |
-| `--cache-dir` | platform cache / env | Shared root for fingerprints/geoip/whois/UA |
-| `--fingerprints` | GitHub defaults | Local path or URL |
-| `--geoip` | off | Path/URL; or `MAXMIND_LICENSE_KEY` auto-download |
-| `--enable-whois` | off | Opt-in |
-| `--no-whois` | — | Force-disable if TOML enabled WHOIS |
-| `--fail-on` | `never` | `any-failure` \| `pct>` (+ `--fail-on-pct-threshold`) |
-| `--status-port` | off | Local Axum `/health` `/status` `/metrics` |
-| `--drain-timeout-secs` | `10` | Abort in-flight after queue drain |
-| `--scan-external-scripts` | off | Fetch first-party scripts for **secrets** and static `scripts` tech patterns |
-
 ## Config precedence
 
 `CLI flags` > `DOMAIN_STATUS_*` env (and clap-bound env) > TOML file > defaults.
 
-Config file path: `--config` **wins** over `DOMAIN_STATUS_CONFIG_FILE`; else cwd `domain_status.toml` if present.
+- Config file path: `--config` **wins** over `DOMAIN_STATUS_CONFIG_FILE`; else cwd `domain_status.toml` if present.
+- `.env` (cwd, else next to the binary) seeds the process environment before clap/config run; it does not override already-set env vars.
+- Secrets stay env / `.env` only: `MAXMIND_LICENSE_KEY`, `GITHUB_TOKEN` (no CLI flags).
+
+## Scan config matrix
+
+| Flag | Env | TOML key | Default |
+|------|-----|----------|---------|
+| positional `file` | — | `file` (library/TOML only; CLI requires the positional) | `urls.txt` (library) |
+| `--config` | `DOMAIN_STATUS_CONFIG_FILE` | — | cwd `domain_status.toml` if present |
+| `--db-path` | `DOMAIN_STATUS_DB_PATH` | `db_path` | `./domain_status.db` |
+| `--log-file` | `DOMAIN_STATUS_LOG_FILE` | `log_file` | `domain_status.log` |
+| `--log-level` | `DOMAIN_STATUS_LOG_LEVEL` | `log_level` | `info` |
+| `-v` / `-q` | — | — | Info baseline (overrides `--log-level`) |
+| `--log-format` | `DOMAIN_STATUS_LOG_FORMAT` | `log_format` | `plain` |
+| `--max-concurrency` | `DOMAIN_STATUS_MAX_CONCURRENCY` | `max_concurrency` | `30` |
+| `--timeout-seconds` | `DOMAIN_STATUS_TIMEOUT_SECONDS` | `timeout_seconds` | `10` |
+| `--user-agent` | `DOMAIN_STATUS_USER_AGENT` | `user_agent` | Chrome UA (auto-refresh if default) |
+| `--rate-limit-rps` | `DOMAIN_STATUS_RATE_LIMIT_RPS` | `rate_limit_rps` | `15` (`0` disables) |
+| `--fingerprints` | `DOMAIN_STATUS_FINGERPRINTS` | `fingerprints` | GitHub defaults |
+| `--geoip` | `DOMAIN_STATUS_GEOIP` | `geoip` | off (or MaxMind auto via license) |
+| `--status-port` | `DOMAIN_STATUS_STATUS_PORT` | `status_port` | off |
+| `--enable-whois` | `DOMAIN_STATUS_ENABLE_WHOIS` | `enable_whois` | off |
+| `--no-whois` | — | — | Force-disable if TOML/env enabled WHOIS |
+| `--cache-dir` | `DOMAIN_STATUS_CACHE_DIR` | `cache_dir` | platform cache + `domain_status/` |
+| `--scan-external-scripts` | `DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS` | `scan_external_scripts` | off |
+| `--fail-on` | `DOMAIN_STATUS_FAIL_ON` | `fail_on` | `never` (`any-failure` \| `pct>`) |
+| `--fail-on-pct-threshold` | `DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD` | `fail_on_pct_threshold` | `10` |
+| `--drain-timeout-secs` | `DOMAIN_STATUS_DRAIN_TIMEOUT_SECS` | `drain_timeout_secs` | `10` |
+
+TOML/`DOMAIN_STATUS_FAIL_ON` also accept `any_failure` / `anyfailure` as aliases of `any-failure`.
 
 ## Export / summary
+
+Mostly CLI-only (plus shared `--db-path` / `DOMAIN_STATUS_DB_PATH`):
 
 ```bash
 domain_status summary --top 20

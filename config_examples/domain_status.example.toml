@@ -8,13 +8,18 @@
 # Copy to domain_status.toml in the cwd, or:
 #   domain_status scan --config ./domain_status.toml urls.txt
 #
-# Prefer CLI for day-to-day use; use TOML *or* env for repeatable jobs—not both equally.
+# Prefer CLI for day-to-day use; use TOML and/or env for repeatable jobs.
+# Secrets (MAXMIND_LICENSE_KEY, GITHUB_TOKEN) belong in env / .env — not here.
+#
+# Note: `file` is used by the library Config default / non-CLI embeds.
+# The CLI scan command always requires a positional URL list (`urls.txt` or `-`).
 
-# file          = "urls.txt"
+# file          = "urls.txt"           # library / embeds only; CLI uses positional arg
 # db_path       = "./domain_status.db"
 # cache_dir     = "/var/cache/domain_status"   # optional; else platform cache (Linux ~/.cache/domain_status, macOS ~/Library/Caches/domain_status)
 # max_concurrency = 30
 # timeout_seconds = 10
+# drain_timeout_secs = 10
 # user_agent    = "domain_status/0.1"
 # rate_limit_rps = 15
 # log_level     = "info"               # or use CLI -v / -q
@@ -24,5 +29,6 @@
 # geoip         = "/path/to/GeoLite2-City.mmdb"
 # status_port   = 8080
 # enable_whois  = false                # CLI --no-whois forces off
-# fail_on       = "never"              # never | any_failure | pct>
+# scan_external_scripts = false
+# fail_on       = "never"              # never | any-failure | any_failure | pct>
 # fail_on_pct_threshold = 10

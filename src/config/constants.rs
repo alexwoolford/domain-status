@@ -46,24 +46,10 @@ pub const WHOIS_TIMEOUT_SECS: u64 = 5;
 
 /// Default User-Agent string for HTTP requests.
 ///
-/// **Note:** This is a fallback value. The actual User-Agent is automatically
-/// fetched at startup from Chrome's release API and cached locally for 30 days.
-/// This ensures the User-Agent stays current over time without manual updates.
-///
-/// Users can override this via the `--user-agent` CLI flag.
-///
-/// The auto-update mechanism:
-/// - Fetches latest Chrome version from Chrome's release API at startup
-/// - Caches the version under the shared cache root (`user_agent/`, 30 days)
-/// - Falls back to this hardcoded value if fetch fails
-/// - Only updates if user didn't provide `--user-agent` flag
-///
-/// For better bot evasion, consider:
-/// - Letting the auto-update mechanism keep it current (default behavior)
-/// - Rotating between different User-Agent strings
-/// - Customizing per target site via `--user-agent` flag
-pub const DEFAULT_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/// Defined once in [`domain_status_cli::DEFAULT_USER_AGENT`] so CLI defaults and
+/// library `Config` defaults cannot drift. The scanner may auto-refresh Chrome's
+/// version at startup when this default is still in use (see `user_agent` cache).
+pub use domain_status_cli::DEFAULT_USER_AGENT;
 
 // Response and body size limits
 /// Maximum response body size in bytes (2MB)

@@ -12,12 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--no-whois` to force-disable WHOIS when enabled via TOML/env.
 - Slim end-user docs: SQLite-first [README](README.md), [docs/CLI.md](docs/CLI.md), [docs/ADVANCED.md](docs/ADVANCED.md).
 - `DOMAIN_STATUS_LOG_FILE` env binding for `--log-file` (parity with db/cache env vars).
+- Clap `env=` bindings for remaining scan knobs (`MAX_CONCURRENCY`, `TIMEOUT_SECONDS`, `USER_AGENT`, `RATE_LIMIT_RPS`, `FINGERPRINTS`, `GEOIP`, `ENABLE_WHOIS`, `FAIL_ON`, `FAIL_ON_PCT_THRESHOLD`, `DRAIN_TIMEOUT_SECS`) so `--help` matches env behavior.
 
 ### Changed
 - Config file path: CLI `--config` wins over `DOMAIN_STATUS_CONFIG_FILE` (matches documented precedence).
 - `--log-format` now applies to the scan `--log-file` (plain or JSON lines); prefer `-v`/`-q` for verbosity.
 - Default cache locations moved off cwd-relative `.fingerprints_cache` / `.geoip_cache` / `.whois_cache` / `.user_agent_cache` into the shared root subdirs (Linux `~/.cache/domain_status`, macOS `~/Library/Caches/domain_status`, Windows `%LOCALAPPDATA%\domain_status`).
 - Startup logs the resolved cache root; superseded fingerprint hash dirs are pruned after a successful cache write; GeoIP cleans orphaned `.*.tmp` staging files on init.
+- `DOMAIN_STATUS_FAIL_ON` / TOML `fail_on` accept CLI-style `any-failure` (plus `any_failure` / `anyfailure`); invalid bools in file/env are skipped instead of forced false.
+- Single `DEFAULT_USER_AGENT` owned by `domain_status_cli` and re-exported from the library.
+- [docs/CLI.md](docs/CLI.md) scan config matrix (flag / env / TOML / default).
 
 ## [0.1.26] - 2026-07-25
 
