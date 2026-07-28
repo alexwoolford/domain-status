@@ -32,7 +32,7 @@ fn parse_log_format(s: &str) -> Option<LogFormat> {
 fn parse_fail_on(s: &str) -> Option<FailOn> {
     match s.to_lowercase().as_str() {
         "never" => Some(FailOn::Never),
-        "any_failure" | "anyfailure" => Some(FailOn::AnyFailure),
+        "any-failure" | "any_failure" | "anyfailure" => Some(FailOn::AnyFailure),
         "pct>" => Some(FailOn::PctGreaterThan),
         _ => None,
     }
@@ -95,13 +95,17 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
                 }
             }
             "enable_whois" => {
-                config.enable_whois = parse_bool(value).unwrap_or(false);
+                if let Some(b) = parse_bool(value) {
+                    config.enable_whois = b;
+                }
             }
             "cache_dir" => {
                 config.cache_dir = Some(PathBuf::from(value));
             }
             "scan_external_scripts" => {
-                config.scan_external_scripts = parse_bool(value).unwrap_or(false);
+                if let Some(b) = parse_bool(value) {
+                    config.scan_external_scripts = b;
+                }
             }
             "fail_on" => {
                 if let Some(f) = parse_fail_on(value) {
@@ -324,7 +328,7 @@ mod tests {
             "explicit CLI fail_on must override file"
         );
 
-        // Invalid bool for enable_whois is skipped
+        // Invalid bool for enable_whois is skipped (default false preserved)
         let mut bad_bool = HashMap::new();
         bad_bool.insert("enable_whois".to_string(), "maybe".to_string());
         let merged_bool = merge_file_env_and_cli(
@@ -339,6 +343,43 @@ mod tests {
         assert!(
             !merged_bool.enable_whois,
             "invalid enable_whois must leave default false"
+        );
+
+        // CLI-style any-failure must parse from env/TOML
+        let mut any_failure = HashMap::new();
+        any_failure.insert("fail_on".to_string(), "any-failure".to_string());
+        let merged_any = merge_file_env_and_cli(
+            Some(&any_failure),
+            Config {
+                fail_on: FailOn::Never,
+                ..Default::default()
+            },
+            Some(&[]),
+        );
+        assert!(
+            matches!(merged_any.fail_on, FailOn::AnyFailure),
+            "fail_on=any-failure must apply from file/env"
+        );
+    }
+
+    #[test]
+    fn test_invalid_bool_skipped_preserves_existing_value() {
+        let mut config = Config {
+            enable_whois: true,
+            scan_external_scripts: true,
+            ..Default::default()
+        };
+        let mut map = HashMap::new();
+        map.insert("enable_whois".to_string(), "maybe".to_string());
+        map.insert("scan_external_scripts".to_string(), " nah ".to_string());
+        apply_file_env_map_to_config(&mut config, &map);
+        assert!(
+            config.enable_whois,
+            "invalid enable_whois must not force false over an existing true"
+        );
+        assert!(
+            config.scan_external_scripts,
+            "invalid scan_external_scripts must not force false over an existing true"
         );
     }
 
