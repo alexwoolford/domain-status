@@ -15,7 +15,7 @@ Most of the suite is still **characterization** (mirrors “code as written”).
 
 - Leaf correctness: parsers, fingerprint matching helpers, storage inserts, secrets corpus
 - Orchestration / integrity contracts that must not soft-skip:
-  - UPSERT clears stale satellite rows (including full `SATELLITE_TABLES` sweep)
+  - UPSERT clears stale satellite rows (including full `URL_STATUS_SATELLITE_TABLES` sweep)
   - Offline `implies` / exclude detection (fixture rulesets, no network)
   - Offline `run_scan` with local fingerprints + wiremock (status, counters, satellites, versions/`is_implied`)
   - Config merge (`fail_on`, `--no-whois`, bool synonyms)
@@ -37,7 +37,7 @@ Most of the suite is still **characterization** (mirrors “code as written”).
 
 | Command | Behavior |
 |---------|----------|
-| GitHub CI e2e job | `cargo test -- --ignored --skip stress_` |
+| GitHub CI e2e job | `cargo test --all-features --all-targets --locked -- --ignored --skip stress_` |
 | `just test-e2e` | Same: ignored tests **excluding** `stress_*` |
 | Manual stress demos | `cargo test --test 'stress_*' -- --ignored --nocapture` |
 
