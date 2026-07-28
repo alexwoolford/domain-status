@@ -2,7 +2,7 @@
 //!
 //! This module handles inserting URL status records and related satellite tables.
 //! In-transaction satellites and the UPSERT cleanup list live in
-//! `URL_STATUS_SATELLITE_TABLES`; enrichment satellites (GeoIP, WHOIS, secrets, etc.)
+//! `URL_STATUS_SATELLITE_TABLES`; enrichment satellites (`GeoIP`, WHOIS, secrets, etc.)
 //! are inserted after that transaction commits.
 
 mod satellite;
@@ -447,7 +447,7 @@ impl<'a> UrlRecordInsertParams<'a> {
 /// `SQLITE_BUSY` and `SQLITE_LOCKED` errors are retried with exponential backoff.
 ///
 /// Multi-valued fields are stored in normalized child tables (not as JSON on `url_status`).
-/// Enrichment satellites (GeoIP, WHOIS, secrets, …) are written after this transaction.
+/// Enrichment satellites (`GeoIP`, WHOIS, secrets, …) are written after this transaction.
 ///
 /// # Arguments
 ///
