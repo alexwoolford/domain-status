@@ -8,14 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Shared cache root (`--cache-dir` / `DOMAIN_STATUS_CACHE_DIR` / XDG `~/.cache/domain_status`) for fingerprints, GeoIP, WHOIS, and User-Agent data.
+- Shared cache root (`--cache-dir` / `DOMAIN_STATUS_CACHE_DIR` / platform cache dir + `domain_status/`) for fingerprints, GeoIP, WHOIS, and User-Agent data.
 - `--no-whois` to force-disable WHOIS when enabled via TOML/env.
 - Slim end-user docs: SQLite-first [README](README.md), [docs/CLI.md](docs/CLI.md), [docs/ADVANCED.md](docs/ADVANCED.md).
+- `DOMAIN_STATUS_LOG_FILE` env binding for `--log-file` (parity with db/cache env vars).
 
 ### Changed
 - Config file path: CLI `--config` wins over `DOMAIN_STATUS_CONFIG_FILE` (matches documented precedence).
 - `--log-format` now applies to the scan `--log-file` (plain or JSON lines); prefer `-v`/`-q` for verbosity.
-- Default cache locations moved off cwd-relative `.fingerprints_cache` / `.geoip_cache` / `.whois_cache` / `.user_agent_cache` into the shared root subdirs.
+- Default cache locations moved off cwd-relative `.fingerprints_cache` / `.geoip_cache` / `.whois_cache` / `.user_agent_cache` into the shared root subdirs (Linux `~/.cache/domain_status`, macOS `~/Library/Caches/domain_status`, Windows `%LOCALAPPDATA%\domain_status`).
+- Startup logs the resolved cache root; superseded fingerprint hash dirs are pruned after a successful cache write; GeoIP cleans orphaned `.*.tmp` staging files on init.
 
 ## [0.1.26] - 2026-07-25
 

@@ -91,8 +91,9 @@ pub struct ScanCommand {
     pub no_whois: bool,
 
     /// Shared cache root for fingerprints, GeoIP, WHOIS, and User-Agent data.
-    /// Defaults to `$DOMAIN_STATUS_CACHE_DIR` or the XDG cache dir
-    /// (`~/.cache/domain_status`). Database and log paths are separate.
+    /// Defaults to `$DOMAIN_STATUS_CACHE_DIR` or the platform cache dir +
+    /// `domain_status/` (Linux `~/.cache/…`, macOS `~/Library/Caches/…`).
+    /// Database and log paths are separate.
     #[arg(long, value_parser, env = "DOMAIN_STATUS_CACHE_DIR")]
     pub cache_dir: Option<PathBuf>,
 
@@ -116,7 +117,11 @@ pub struct ScanCommand {
     )]
     pub fail_on_pct_threshold: u8,
 
-    #[arg(long, default_value = "domain_status.log")]
+    #[arg(
+        long,
+        default_value = "domain_status.log",
+        env = "DOMAIN_STATUS_LOG_FILE"
+    )]
     pub log_file: PathBuf,
 
     /// Maximum time (seconds) to wait for in-flight tasks to finish after the

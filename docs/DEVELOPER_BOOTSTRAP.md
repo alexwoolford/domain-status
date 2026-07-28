@@ -126,7 +126,7 @@ The process expects write access for:
 
 - `./domain_status.db` unless `--db-path` is overridden
 - `./domain_status.log` during `scan`
-- Shared cache root (`DOMAIN_STATUS_CACHE_DIR` or `~/.cache/domain_status/`)
+- Shared cache root (`DOMAIN_STATUS_CACHE_DIR` or platform cache + `domain_status/`)
 
 If you run inside a sandboxed or read-only environment, set `--cache-dir` / `--db-path` / `--log-file` or pre-create the writable directories you need.
 

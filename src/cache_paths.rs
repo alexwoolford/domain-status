@@ -3,7 +3,10 @@
 //! Resolution order for the cache root:
 //! 1. Explicit `--cache-dir` / [`Config::cache_dir`](crate::config::Config::cache_dir)
 //! 2. `DOMAIN_STATUS_CACHE_DIR` environment variable
-//! 3. XDG cache home: `~/.cache/domain_status` (macOS/Linux) or platform equivalent
+//! 3. Platform cache directory from [`dirs::cache_dir`] plus `domain_status/`:
+//!    - Linux: `~/.cache/domain_status` (or `$XDG_CACHE_HOME/domain_status`)
+//!    - macOS: `~/Library/Caches/domain_status`
+//!    - Windows: `%LOCALAPPDATA%\domain_status`
 //! 4. Fallback: `./domain_status` under the process cwd when no cache home exists
 //!
 //! The `SQLite` database and log file are **outputs**, not caches — they stay
@@ -11,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Env var that overrides the default XDG cache root.
+/// Env var that overrides the default platform cache root.
 pub const CACHE_DIR_ENV: &str = "DOMAIN_STATUS_CACHE_DIR";
 
 /// Resolve the shared cache root.

@@ -133,8 +133,9 @@ pub struct Config {
 
     /// Shared cache root for fingerprints / `GeoIP` / WHOIS / User-Agent.
     ///
-    /// When `None`, resolves via `DOMAIN_STATUS_CACHE_DIR` or the platform XDG
-    /// cache directory (`~/.cache/domain_status` on Linux/macOS). The `SQLite` DB
+    /// When `None`, resolves via `DOMAIN_STATUS_CACHE_DIR` or the platform cache
+    /// directory (`dirs::cache_dir`) plus `domain_status/` (Linux `~/.cache/…`,
+    /// macOS `~/Library/Caches/…`, Windows `%LOCALAPPDATA%\…`). The `SQLite` DB
     /// and log file are separate outputs (`db_path` / `log_file`).
     pub cache_dir: Option<PathBuf>,
 

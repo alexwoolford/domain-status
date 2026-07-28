@@ -70,7 +70,7 @@ pub async fn init_scan_resources(
     let geoip_cache = crate::cache_paths::geoip_dir(&cache_root);
     let ua_cache = crate::cache_paths::user_agent_dir(&cache_root);
     let whois_cache = crate::cache_paths::whois_dir(&cache_root);
-    log::debug!("Cache root: {}", cache_root.display());
+    log::info!("Cache root: {}", cache_root.display());
 
     // Update user agent if using default
     if config.user_agent == DEFAULT_USER_AGENT {
