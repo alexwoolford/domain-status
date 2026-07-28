@@ -2,12 +2,17 @@
 
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
-The schema is created by migrations (`migrations/0001_initial_schema.sql` through `migrations/0008_jwt_claims.sql`) and follows a simple pattern:
+The schema is created by migrations (`migrations/0001_initial_schema.sql` through
+`migrations/0011_high_value_capture.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
 - `url_failures` stores failed URL attempts
 - most other tables are satellite tables hanging off `url_status` or `url_failures`
+
+When adding columns or satellite tables, follow the **Adding a Captured Field**
+checklist in [`CONTRIBUTING.md`](CONTRIBUTING.md) so insert binds, UPSERT cleanup,
+and export stay in sync.
 
 ## High-Level Shape
 

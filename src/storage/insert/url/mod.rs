@@ -19,65 +19,228 @@ use satellite::{
     insert_redirect_chain, insert_security_headers, insert_technologies, insert_txt_records,
 };
 
-/// Column names for `url_status` INSERT / UPSERT (single source of truth).
+/// One `url_status` column paired with its bind extractor.
+///
+/// SQL column order and `.bind(...)` values are derived from the same table so
+/// adding/removing/reordering a column is a single edit — the previous dual list
+/// (`URL_STATUS_COLUMNS` + a parallel bind chain) could silently mis-assign values.
+pub(crate) struct UrlStatusColumn {
+    pub name: &'static str,
+    pub extract: for<'a> fn(&'a UrlRecord, Option<i64>, Option<i64>) -> UrlStatusBind<'a>,
+}
+
+/// Bindable value for one `url_status` placeholder.
+pub(crate) enum UrlStatusBind<'a> {
+    Text(&'a str),
+    OptText(Option<&'a str>),
+    U16(u16),
+    U32(u32),
+    I64(i64),
+    OptI64(Option<i64>),
+    F64(f64),
+    Bool(bool),
+    OptBool(Option<bool>),
+}
+
+/// `url_status` INSERT / UPSERT columns + binds (single source of truth).
 ///
 /// `final_domain` is part of the conflict key and is omitted from the UPDATE SET
 /// clause; every other column is refreshed on conflict.
+#[allow(clippy::too_many_lines)] // One entry per url_status column; intentional registry
+pub(crate) const URL_STATUS_COLUMN_DEFS: &[UrlStatusColumn] = &[
+    UrlStatusColumn {
+        name: "initial_domain",
+        extract: |r, _, _| UrlStatusBind::Text(r.initial_domain.as_str()),
+    },
+    UrlStatusColumn {
+        name: "final_domain",
+        extract: |r, _, _| UrlStatusBind::Text(r.final_domain.as_str()),
+    },
+    UrlStatusColumn {
+        name: "initial_url",
+        extract: |r, _, _| UrlStatusBind::OptText(r.initial_url.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "final_url",
+        extract: |r, _, _| UrlStatusBind::OptText(r.final_url.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "ip_address",
+        extract: |r, _, _| UrlStatusBind::Text(r.ip_address.as_str()),
+    },
+    UrlStatusColumn {
+        name: "reverse_dns_name",
+        extract: |r, _, _| UrlStatusBind::OptText(r.reverse_dns_name.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "http_status",
+        extract: |r, _, _| UrlStatusBind::U16(r.status),
+    },
+    UrlStatusColumn {
+        name: "http_status_text",
+        extract: |r, _, _| UrlStatusBind::Text(r.status_desc.as_str()),
+    },
+    UrlStatusColumn {
+        name: "response_time_seconds",
+        extract: |r, _, _| UrlStatusBind::F64(r.response_time),
+    },
+    UrlStatusColumn {
+        name: "title",
+        extract: |r, _, _| UrlStatusBind::Text(r.title.as_str()),
+    },
+    UrlStatusColumn {
+        name: "keywords",
+        extract: |r, _, _| UrlStatusBind::OptText(r.keywords.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "description",
+        extract: |r, _, _| UrlStatusBind::OptText(r.description.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "meta_robots",
+        extract: |r, _, _| UrlStatusBind::OptText(r.meta_robots.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "tls_version",
+        extract: |r, _, _| {
+            UrlStatusBind::OptText(
+                r.tls_version
+                    .as_ref()
+                    .map(crate::models::TlsVersion::as_str),
+            )
+        },
+    },
+    UrlStatusColumn {
+        name: "ssl_cert_subject",
+        extract: |r, _, _| UrlStatusBind::OptText(r.ssl_cert_subject.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "ssl_cert_issuer",
+        extract: |r, _, _| UrlStatusBind::OptText(r.ssl_cert_issuer.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "ssl_cert_valid_from_ms",
+        extract: |_, valid_from_ms, _| UrlStatusBind::OptI64(valid_from_ms),
+    },
+    UrlStatusColumn {
+        name: "ssl_cert_valid_to_ms",
+        extract: |_, _, valid_to_ms| UrlStatusBind::OptI64(valid_to_ms),
+    },
+    UrlStatusColumn {
+        name: "is_mobile_friendly",
+        extract: |r, _, _| UrlStatusBind::Bool(r.is_mobile_friendly),
+    },
+    UrlStatusColumn {
+        name: "observed_at_ms",
+        extract: |r, _, _| UrlStatusBind::I64(r.timestamp),
+    },
+    UrlStatusColumn {
+        name: "spf_record",
+        extract: |r, _, _| UrlStatusBind::OptText(r.spf_record.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "dmarc_record",
+        extract: |r, _, _| UrlStatusBind::OptText(r.dmarc_record.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "cipher_suite",
+        extract: |r, _, _| UrlStatusBind::OptText(r.cipher_suite.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "key_algorithm",
+        extract: |r, _, _| {
+            UrlStatusBind::OptText(
+                r.key_algorithm
+                    .as_ref()
+                    .map(crate::models::KeyAlgorithm::as_str),
+            )
+        },
+    },
+    UrlStatusColumn {
+        name: "run_id",
+        extract: |r, _, _| UrlStatusBind::OptText(r.run_id.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "body_sha256",
+        extract: |r, _, _| UrlStatusBind::OptText(r.body_sha256.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "body_truncated",
+        extract: |r, _, _| UrlStatusBind::Bool(r.body_truncated),
+    },
+    UrlStatusColumn {
+        name: "external_scripts_eligible",
+        extract: |r, _, _| UrlStatusBind::U32(r.external_scripts_eligible),
+    },
+    UrlStatusColumn {
+        name: "external_scripts_scanned",
+        extract: |r, _, _| UrlStatusBind::U32(r.external_scripts_scanned),
+    },
+    UrlStatusColumn {
+        name: "content_length",
+        extract: |r, _, _| UrlStatusBind::OptI64(r.content_length),
+    },
+    UrlStatusColumn {
+        name: "http_version",
+        extract: |r, _, _| UrlStatusBind::OptText(r.http_version.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "body_word_count",
+        extract: |r, _, _| UrlStatusBind::OptI64(r.body_word_count),
+    },
+    UrlStatusColumn {
+        name: "body_line_count",
+        extract: |r, _, _| UrlStatusBind::OptI64(r.body_line_count),
+    },
+    UrlStatusColumn {
+        name: "content_type",
+        extract: |r, _, _| UrlStatusBind::OptText(r.content_type.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "canonical_url",
+        extract: |r, _, _| UrlStatusBind::OptText(r.canonical_url.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "cert_fingerprint_sha256",
+        extract: |r, _, _| UrlStatusBind::OptText(r.cert_fingerprint_sha256.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "cert_serial_number",
+        extract: |r, _, _| UrlStatusBind::OptText(r.cert_serial_number.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "cert_is_self_signed",
+        extract: |r, _, _| UrlStatusBind::OptBool(r.cert_is_self_signed),
+    },
+    UrlStatusColumn {
+        name: "cert_is_wildcard",
+        extract: |r, _, _| UrlStatusBind::OptBool(r.cert_is_wildcard),
+    },
+    UrlStatusColumn {
+        name: "cert_is_mismatched",
+        extract: |r, _, _| UrlStatusBind::OptBool(r.cert_is_mismatched),
+    },
+    UrlStatusColumn {
+        name: "meta_refresh_url",
+        extract: |r, _, _| UrlStatusBind::OptText(r.meta_refresh_url.as_deref()),
+    },
+];
+
+/// Column names derived from [`URL_STATUS_COLUMN_DEFS`] (same order as binds).
 ///
 /// `pub(crate)` so export/field-inventory tests can assert capture ↔ schema sync
 /// without duplicating this list.
-pub(crate) const URL_STATUS_COLUMNS: &[&str] = &[
-    "initial_domain",
-    "final_domain",
-    "initial_url",
-    "final_url",
-    "ip_address",
-    "reverse_dns_name",
-    "http_status",
-    "http_status_text",
-    "response_time_seconds",
-    "title",
-    "keywords",
-    "description",
-    "meta_robots",
-    "tls_version",
-    "ssl_cert_subject",
-    "ssl_cert_issuer",
-    "ssl_cert_valid_from_ms",
-    "ssl_cert_valid_to_ms",
-    "is_mobile_friendly",
-    "observed_at_ms",
-    "spf_record",
-    "dmarc_record",
-    "cipher_suite",
-    "key_algorithm",
-    "run_id",
-    "body_sha256",
-    "body_truncated",
-    "external_scripts_eligible",
-    "external_scripts_scanned",
-    "content_length",
-    "http_version",
-    "body_word_count",
-    "body_line_count",
-    "content_type",
-    "canonical_url",
-    "cert_fingerprint_sha256",
-    "cert_serial_number",
-    "cert_is_self_signed",
-    "cert_is_wildcard",
-    "cert_is_mismatched",
-    "meta_refresh_url",
-];
+pub(crate) fn url_status_column_names() -> impl Iterator<Item = &'static str> {
+    URL_STATUS_COLUMN_DEFS.iter().map(|c| c.name)
+}
 
 fn url_status_upsert_sql() -> String {
-    let columns = URL_STATUS_COLUMNS.join(", ");
-    let placeholders = std::iter::repeat_n("?", URL_STATUS_COLUMNS.len())
+    let columns = url_status_column_names().collect::<Vec<_>>().join(", ");
+    let placeholders = std::iter::repeat_n("?", URL_STATUS_COLUMN_DEFS.len())
         .collect::<Vec<_>>()
         .join(", ");
-    let updates = URL_STATUS_COLUMNS
-        .iter()
-        .filter(|&&col| col != "final_domain")
+    let updates = url_status_column_names()
+        .filter(|&col| col != "final_domain")
         .map(|col| format!("{col}=excluded.{col}"))
         .collect::<Vec<_>>()
         .join(",\n            ");
@@ -90,6 +253,65 @@ fn url_status_upsert_sql() -> String {
         RETURNING id"
     )
 }
+
+fn bind_url_status_query<'q>(
+    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>>,
+    record: &'q UrlRecord,
+    valid_from_millis: Option<i64>,
+    valid_to_millis: Option<i64>,
+) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
+    let mut q = query;
+    for col in URL_STATUS_COLUMN_DEFS {
+        q = match (col.extract)(record, valid_from_millis, valid_to_millis) {
+            UrlStatusBind::Text(v) => q.bind(v),
+            UrlStatusBind::OptText(v) => q.bind(v),
+            UrlStatusBind::U16(v) => q.bind(v),
+            UrlStatusBind::U32(v) => q.bind(v),
+            UrlStatusBind::I64(v) => q.bind(v),
+            UrlStatusBind::OptI64(v) => q.bind(v),
+            UrlStatusBind::F64(v) => q.bind(v),
+            UrlStatusBind::Bool(v) => q.bind(v),
+            UrlStatusBind::OptBool(v) => q.bind(v),
+        };
+    }
+    q
+}
+
+/// Satellite and enrichment tables hanging off `url_status.id`.
+///
+/// Cleaned before re-insert on UPSERT so rescans do not leave stale child rows.
+/// Shared by production cleanup and upsert-clear tests — do not mirror this list.
+pub(crate) const URL_STATUS_SATELLITE_TABLES: &[&str] = &[
+    // Core satellites (inserted inside the url_status transaction)
+    "url_technologies",
+    "url_nameservers",
+    "url_txt_records",
+    "url_mx_records",
+    "url_security_headers",
+    "url_http_headers",
+    "url_certificate_oids",
+    "url_redirect_chain",
+    "url_certificate_sans",
+    "url_cname_records",
+    "url_ipv6_addresses",
+    "url_caa_records",
+    "url_csp_domains",
+    "url_cookies",
+    "url_resource_hints",
+    "url_body_domains",
+    "url_script_hosts",
+    // Enrichment tables (inserted after that transaction, but cleaned here)
+    "url_analytics_ids",
+    "url_structured_data",
+    "url_social_media_links",
+    "url_security_warnings",
+    "url_contact_links",
+    "url_exposed_secrets",
+    "url_partial_failures",
+    "url_favicons",
+    "url_geoip",
+    "url_whois",
+];
 
 /// Parameters for inserting a URL record.
 ///
@@ -257,48 +479,12 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
     // This eliminates the need for a separate SELECT query and improves performance
     let upsert_sql = url_status_upsert_sql();
-    let url_status_id_result = sqlx::query_scalar::<_, i64>(&upsert_sql)
-    .bind(&params.record.initial_domain)
-    .bind(&params.record.final_domain)
-    .bind(&params.record.initial_url)
-    .bind(&params.record.final_url)
-    .bind(&params.record.ip_address)
-    .bind(&params.record.reverse_dns_name)
-    .bind(params.record.status)
-    .bind(&params.record.status_desc)
-    .bind(params.record.response_time)
-    .bind(&params.record.title)
-    .bind(&params.record.keywords)
-    .bind(&params.record.description)
-    .bind(&params.record.meta_robots)
-    .bind(params.record.tls_version.as_ref().map(crate::models::TlsVersion::as_str))
-    .bind(&params.record.ssl_cert_subject)
-    .bind(&params.record.ssl_cert_issuer)
-    .bind(valid_from_millis)
-    .bind(valid_to_millis)
-    .bind(params.record.is_mobile_friendly)
-    .bind(params.record.timestamp)
-    .bind(&params.record.spf_record)
-    .bind(&params.record.dmarc_record)
-    .bind(&params.record.cipher_suite)
-    .bind(params.record.key_algorithm.as_ref().map(crate::models::KeyAlgorithm::as_str))
-    .bind(&params.record.run_id)
-    .bind(&params.record.body_sha256)
-    .bind(params.record.body_truncated)
-    .bind(params.record.external_scripts_eligible)
-    .bind(params.record.external_scripts_scanned)
-    .bind(params.record.content_length)
-    .bind(&params.record.http_version)
-    .bind(params.record.body_word_count)
-    .bind(params.record.body_line_count)
-    .bind(&params.record.content_type)
-    .bind(&params.record.canonical_url)
-    .bind(&params.record.cert_fingerprint_sha256)
-    .bind(&params.record.cert_serial_number)
-    .bind(params.record.cert_is_self_signed)
-    .bind(params.record.cert_is_wildcard)
-    .bind(params.record.cert_is_mismatched)
-    .bind(&params.record.meta_refresh_url)
+    let url_status_id_result = bind_url_status_query(
+        sqlx::query_scalar::<_, i64>(&upsert_sql),
+        params.record,
+        valid_from_millis,
+        valid_to_millis,
+    )
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -346,40 +532,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     // case where the same (run_id, final_domain) is scanned twice: the main url_status row
     // is updated, but old satellite rows (e.g., redirect hops from a previous scan) would
     // remain orphaned without this cleanup.
-    // All satellite AND enrichment tables that hang off url_status.id.
-    // Both are cleaned before re-inserting to prevent stale data on UPSERT.
-    static SATELLITE_TABLES: &[&str] = &[
-        // Core satellites (inserted inside this transaction)
-        "url_technologies",
-        "url_nameservers",
-        "url_txt_records",
-        "url_mx_records",
-        "url_security_headers",
-        "url_http_headers",
-        "url_certificate_oids",
-        "url_redirect_chain",
-        "url_certificate_sans",
-        "url_cname_records",
-        "url_ipv6_addresses",
-        "url_caa_records",
-        "url_csp_domains",
-        "url_cookies",
-        "url_resource_hints",
-        "url_body_domains",
-        "url_script_hosts",
-        // Enrichment tables (inserted after this transaction, but cleaned here)
-        "url_analytics_ids",
-        "url_structured_data",
-        "url_social_media_links",
-        "url_security_warnings",
-        "url_contact_links",
-        "url_exposed_secrets",
-        "url_partial_failures",
-        "url_favicons",
-        "url_geoip",
-        "url_whois",
-    ];
-    for table in SATELLITE_TABLES {
+    for table in URL_STATUS_SATELLITE_TABLES {
         let sql = format!("DELETE FROM {table} WHERE url_status_id = ?");
         if let Err(e) = sqlx::query(&sql)
             .bind(url_status_id)
@@ -590,6 +743,18 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use crate::storage::migrations::run_migrations;
+
+    #[test]
+    fn url_status_column_defs_are_unique_and_ordered_with_names_iter() {
+        let names: Vec<_> = url_status_column_names().collect();
+        assert_eq!(names.len(), URL_STATUS_COLUMN_DEFS.len());
+        let mut seen = HashSet::new();
+        for (i, name) in names.iter().enumerate() {
+            assert_eq!(*name, URL_STATUS_COLUMN_DEFS[i].name);
+            assert!(seen.insert(*name), "duplicate url_status column: {name}");
+        }
+        assert_eq!(names.len(), 41, "url_status column count drifted");
+    }
 
     /// Creates an in-memory `SQLite` database pool for testing
     async fn create_test_pool() -> SqlitePool {
@@ -1102,7 +1267,7 @@ mod tests {
     }
 
     /// Adversarial: UPSERT must DELETE stale satellite rows before re-inserting.
-    /// Without the `SATELLITE_TABLES` cleanup, rescans leave orphan techs/redirects.
+    /// Without the `URL_STATUS_SATELLITE_TABLES` cleanup, rescans leave orphan techs/redirects.
     #[tokio::test]
     async fn test_upsert_clears_stale_satellite_rows() {
         let pool = create_test_pool().await;
@@ -1214,40 +1379,6 @@ mod tests {
             "stale redirect hops must be deleted on UPSERT with empty chain"
         );
     }
-
-    /// Every table hanging off `url_status.id` that `insert_url_record` cleans before
-    /// re-inserting on UPSERT (mirrors the `SATELLITE_TABLES` list in
-    /// `insert_url_record_impl`, including the enrichment tables populated outside this
-    /// transaction but still cleaned here).
-    const ALL_SATELLITE_TABLES: &[&str] = &[
-        "url_technologies",
-        "url_nameservers",
-        "url_txt_records",
-        "url_mx_records",
-        "url_security_headers",
-        "url_http_headers",
-        "url_certificate_oids",
-        "url_redirect_chain",
-        "url_certificate_sans",
-        "url_cname_records",
-        "url_ipv6_addresses",
-        "url_caa_records",
-        "url_csp_domains",
-        "url_cookies",
-        "url_resource_hints",
-        "url_body_domains",
-        "url_script_hosts",
-        "url_analytics_ids",
-        "url_structured_data",
-        "url_social_media_links",
-        "url_security_warnings",
-        "url_contact_links",
-        "url_exposed_secrets",
-        "url_partial_failures",
-        "url_favicons",
-        "url_geoip",
-        "url_whois",
-    ];
 
     /// DNS/header/cert satellites: `url_technologies`, `url_nameservers`, `url_txt_records`,
     /// `url_mx_records`, `url_security_headers`, `url_http_headers`, `url_certificate_oids`.
@@ -1528,7 +1659,7 @@ mod tests {
             .expect("seed url_whois");
     }
 
-    /// Inserts one minimal, schema-valid row into every table in `ALL_SATELLITE_TABLES`
+    /// Inserts one minimal, schema-valid row into every table in [`URL_STATUS_SATELLITE_TABLES`]
     /// for the given `url_status_id`, using the columns required by each table's schema
     /// (see `migrations/`).
     async fn seed_one_row_per_satellite_table(pool: &SqlitePool, url_status_id: i64) {
@@ -1575,7 +1706,7 @@ mod tests {
 
         seed_one_row_per_satellite_table(&pool, id1).await;
 
-        for table in ALL_SATELLITE_TABLES {
+        for table in URL_STATUS_SATELLITE_TABLES {
             let count: i64 = sqlx::query_scalar(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
@@ -1612,7 +1743,7 @@ mod tests {
         .expect("upsert");
         assert_eq!(id1, id2, "UPSERT must reuse the same url_status id");
 
-        for table in ALL_SATELLITE_TABLES {
+        for table in URL_STATUS_SATELLITE_TABLES {
             let count: i64 = sqlx::query_scalar(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
