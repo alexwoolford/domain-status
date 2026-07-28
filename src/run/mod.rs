@@ -210,6 +210,7 @@ pub async fn run_scan(
             total_urls: Arc::clone(&resources.total_urls_in_file),
             total_urls_attempted: Arc::clone(&resources.total_urls_attempted),
             completed_urls: Arc::clone(&resources.completed_urls),
+            successful_urls: Arc::clone(&resources.successful_urls),
             failed_urls: Arc::clone(&resources.failed_urls),
             skipped_urls: Arc::clone(&resources.skipped_urls),
             start_time: Arc::new(resources.start_time),
@@ -225,6 +226,10 @@ pub async fn run_scan(
                     (resources.start_time_epoch as f64) / 1000.0
                 }
             }),
+            phase: Arc::clone(&resources.phase),
+            throughput_window: Arc::clone(&resources.throughput_window),
+            max_concurrency: Some(resources.config.max_concurrency),
+            semaphore: Some(Arc::clone(&resources.semaphore)),
         };
         Some(
             crate::status_server::spawn_status_server(port, status_state)
@@ -247,7 +252,8 @@ pub async fn run_scan(
 
     let completed_urls_for_logging = Arc::clone(&resources.completed_urls);
     let failed_urls_for_logging = Arc::clone(&resources.failed_urls);
-    let total_urls_for_logging = Arc::clone(&resources.total_urls_attempted);
+    let skipped_urls_for_logging = Arc::clone(&resources.skipped_urls);
+    let total_urls_for_logging = Arc::clone(&resources.total_urls_in_file);
     let start_time = resources.start_time;
 
     let logging_interval_secs = if resources.config.status_port.is_none() {
@@ -262,7 +268,13 @@ pub async fn run_scan(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    log_progress(start_time, &completed_urls_for_logging, &failed_urls_for_logging, Some(&total_urls_for_logging));
+                    log_progress(
+                        start_time,
+                        &completed_urls_for_logging,
+                        &failed_urls_for_logging,
+                        &skipped_urls_for_logging,
+                        Some(&total_urls_for_logging),
+                    );
                 }
                 () = cancel_logging.cancelled() => {
                     break;
@@ -426,6 +438,9 @@ pub async fn run_scan(
     // Phase 5: Drain remaining tasks with timeout so Ctrl-C doesn't hang indefinitely.
     // Use a single wall-clock deadline for the entire drain, not per-task timeouts,
     // so N slow tasks can't extend the shutdown to N * timeout.
+    resources
+        .phase
+        .set(crate::status_server::ScanPhase::Draining);
     let drain_timeout_secs = resources.config.drain_timeout_secs;
     let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs);
     let drain_deadline = tokio::time::Instant::now() + drain_timeout;

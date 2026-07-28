@@ -61,6 +61,11 @@ pub struct ScanResources {
     /// Total number of URLs in the input file (0 for stdin)
     pub total_urls_in_file: Arc<AtomicUsize>,
 
+    /// Live scan phase for status/metrics (`scanning` / `draining` / `finalizing`)
+    pub phase: Arc<crate::status_server::AtomicPhase>,
+    /// Shared windowed-throughput tracker for status/metrics ETA
+    pub throughput_window: Arc<crate::status_server::ThroughputWindow>,
+
     // Run metadata
     /// Unique run identifier (format: `run_<timestamp_millis>`)
     pub run_id: String,

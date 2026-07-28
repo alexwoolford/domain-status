@@ -122,12 +122,15 @@ pub async fn process_url_task(params: UrlTaskParams) {
 
 /// Handle successful URL processing.
 fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskProgress<'_>) {
-    progress.completed_urls.fetch_add(1, Ordering::Relaxed);
     match outcome {
         UrlProcessOutcome::Inserted => {
+            // Keep completed_urls in sync with successful_urls for progress bars / legacy fields.
+            progress.completed_urls.fetch_add(1, Ordering::Relaxed);
             progress.successful_urls.fetch_add(1, Ordering::Relaxed);
         }
         UrlProcessOutcome::Skipped => {
+            // Skips are finished work but not successes; counting them only in skipped_urls
+            // keeps successful + failed + skipped ≈ attempted and avoids progress double-count.
             progress.skipped_urls.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -334,7 +337,7 @@ mod tests {
 
         handle_success(&url, UrlProcessOutcome::Skipped, &progress);
 
-        assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(completed_urls.load(Ordering::SeqCst), 0);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
         assert_eq!(skipped_urls.load(Ordering::SeqCst), 1);
     }

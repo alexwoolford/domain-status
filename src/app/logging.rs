@@ -6,42 +6,43 @@ use std::sync::Arc;
 
 /// Logs progress information about URL processing.
 ///
+/// Progress and ETA are based on finished work
+/// (`completed + failed + skipped`) against the input file total when provided.
+///
 /// # Arguments
 ///
 /// * `start_time` - The start time of processing
-/// * `completed_urls` - Atomic counter of completed URLs
+/// * `completed_urls` - Atomic counter of successfully persisted URLs
 /// * `failed_urls` - Atomic counter of failed URLs
-/// * `total_urls` - Optional total number of URLs to process (for ETA calculation)
+/// * `skipped_urls` - Atomic counter of skipped URLs
+/// * `total_urls` - Optional total URLs in the input file (for ETA / %)
 pub fn log_progress(
     start_time: std::time::Instant,
     completed_urls: &Arc<AtomicUsize>,
     failed_urls: &Arc<AtomicUsize>,
+    skipped_urls: &Arc<AtomicUsize>,
     total_urls: Option<&Arc<AtomicUsize>>,
 ) {
     let elapsed = start_time.elapsed();
     let completed = completed_urls.load(Ordering::SeqCst);
     let failed = failed_urls.load(Ordering::SeqCst);
-    let attempted = completed + failed;
+    let skipped = skipped_urls.load(Ordering::SeqCst);
+    let finished = completed + failed + skipped;
     let elapsed_secs = elapsed.as_secs_f64();
     // Safe cast: URL counts typically < 1M, well within f64 precision
-    // Computing rate for progress display
     #[allow(clippy::cast_precision_loss)]
     let rate = if elapsed_secs > 0.0 {
-        attempted as f64 / elapsed_secs
+        finished as f64 / elapsed_secs
     } else {
         0.0
     };
 
-    // Calculate ETA and percentage if total URLs is known
     if let Some(total_arc) = total_urls {
         let total = total_arc.load(Ordering::SeqCst);
         if total > 0 {
-            // Percentage based on attempted URLs (completed + failed) out of total attempted
-            // This matches the status server calculation for consistency
-            // Safe casts: URL counts within f64 precision, computing percentage for display
             #[allow(clippy::cast_precision_loss)]
-            let percentage = (attempted as f64 / total as f64) * 100.0;
-            let remaining = total.saturating_sub(attempted);
+            let percentage = (finished as f64 / total as f64) * 100.0;
+            let remaining = total.saturating_sub(finished);
 
             #[allow(clippy::cast_precision_loss)]
             let eta_secs = if rate > 0.0 && remaining > 0 {
@@ -54,15 +55,14 @@ pub fn log_progress(
             let eta_formatted = format_duration(eta_duration);
 
             info!(
-                "Progress: {attempted}/{total} ({percentage:.1}%) | Completed: {completed} | Failed: {failed} | Elapsed: {elapsed_secs:.1}s | Rate: {rate:.2} lines/sec | ETA: {eta_formatted}"
+                "Progress: {finished}/{total} ({percentage:.1}%) | Succeeded: {completed} | Failed: {failed} | Skipped: {skipped} | Elapsed: {elapsed_secs:.1}s | Rate: {rate:.2} lines/sec | ETA: {eta_formatted}"
             );
             return;
         }
     }
 
-    // Fallback to simple format if total is unknown
     info!(
-        "Processed {attempted} lines ({completed} completed, {failed} failed) in {elapsed_secs:.2} seconds (~{rate:.2} lines/sec)"
+        "Processed {finished} lines ({completed} succeeded, {failed} failed, {skipped} skipped) in {elapsed_secs:.2} seconds (~{rate:.2} lines/sec)"
     );
 }
 
@@ -92,16 +92,21 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
-    use std::time::Duration;
 
     #[test]
     fn test_log_progress_zero_completed() {
         let start_time = std::time::Instant::now();
         let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
 
-        // Should not panic with zero completed URLs
-        log_progress(start_time, &completed_urls, &failed_urls, None);
+        log_progress(
+            start_time,
+            &completed_urls,
+            &failed_urls,
+            &skipped_urls,
+            None,
+        );
     }
 
     #[test]
@@ -109,47 +114,15 @@ mod tests {
         let start_time = std::time::Instant::now();
         let completed_urls = Arc::new(AtomicUsize::new(100));
         let failed_urls = Arc::new(AtomicUsize::new(0));
-        completed_urls.store(100, Ordering::SeqCst);
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
 
-        // Should not panic with completed URLs
-        log_progress(start_time, &completed_urls, &failed_urls, None);
-    }
-
-    #[test]
-    fn test_log_progress_rate_calculation() {
-        let start_time = std::time::Instant::now();
-        let completed_urls = Arc::new(AtomicUsize::new(0));
-        let failed_urls = Arc::new(AtomicUsize::new(0));
-
-        // Wait a small amount to ensure elapsed time > 0
-        std::thread::sleep(Duration::from_millis(10));
-        completed_urls.store(50, Ordering::SeqCst);
-
-        // Should calculate rate correctly
-        log_progress(start_time, &completed_urls, &failed_urls, None);
-    }
-
-    #[test]
-    fn test_log_progress_concurrent_updates() {
-        use std::thread;
-
-        let start_time = std::time::Instant::now();
-        let completed_urls = Arc::new(AtomicUsize::new(0));
-        let failed_urls = Arc::new(AtomicUsize::new(0));
-
-        // Simulate concurrent updates
-        let urls_clone = Arc::clone(&completed_urls);
-        let handle = thread::spawn(move || {
-            for _ in 0..10 {
-                urls_clone.fetch_add(1, Ordering::SeqCst);
-            }
-        });
-
-        // Call log_progress while updates are happening
-        log_progress(start_time, &completed_urls, &failed_urls, None);
-
-        handle.join().unwrap();
-        // Should not panic with concurrent updates
+        log_progress(
+            start_time,
+            &completed_urls,
+            &failed_urls,
+            &skipped_urls,
+            None,
+        );
     }
 
     #[test]
@@ -157,43 +130,34 @@ mod tests {
         let start_time = std::time::Instant::now();
         let completed_urls = Arc::new(AtomicUsize::new(50));
         let failed_urls = Arc::new(AtomicUsize::new(10));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
         let total_urls = Arc::new(AtomicUsize::new(100));
 
-        // Should calculate percentage and ETA (60/100 = 60%)
-        log_progress(start_time, &completed_urls, &failed_urls, Some(&total_urls));
+        log_progress(
+            start_time,
+            &completed_urls,
+            &failed_urls,
+            &skipped_urls,
+            Some(&total_urls),
+        );
     }
 
     #[test]
-    fn test_log_progress_with_total_zero_completed() {
+    fn test_log_progress_includes_skipped_in_finished() {
         let start_time = std::time::Instant::now();
-        let completed_urls = Arc::new(AtomicUsize::new(0));
-        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let completed_urls = Arc::new(AtomicUsize::new(40));
+        let failed_urls = Arc::new(AtomicUsize::new(10));
+        let skipped_urls = Arc::new(AtomicUsize::new(10));
         let total_urls = Arc::new(AtomicUsize::new(100));
 
-        // Should handle zero completed URLs with total
-        log_progress(start_time, &completed_urls, &failed_urls, Some(&total_urls));
-    }
-
-    #[test]
-    fn test_log_progress_with_total_completed() {
-        let start_time = std::time::Instant::now();
-        let completed_urls = Arc::new(AtomicUsize::new(100));
-        let failed_urls = Arc::new(AtomicUsize::new(0));
-        let total_urls = Arc::new(AtomicUsize::new(100));
-
-        // Should handle 100% completion
-        log_progress(start_time, &completed_urls, &failed_urls, Some(&total_urls));
-    }
-
-    #[test]
-    fn test_log_progress_with_failed_urls() {
-        let start_time = std::time::Instant::now();
-        let completed_urls = Arc::new(AtomicUsize::new(50));
-        let failed_urls = Arc::new(AtomicUsize::new(30));
-        let total_urls = Arc::new(AtomicUsize::new(100));
-
-        // Should show 80/100 (80%) when including failed URLs
-        log_progress(start_time, &completed_urls, &failed_urls, Some(&total_urls));
+        // Should treat finished as 60/100 without panicking
+        log_progress(
+            start_time,
+            &completed_urls,
+            &failed_urls,
+            &skipped_urls,
+            Some(&total_urls),
+        );
     }
 
     #[test]

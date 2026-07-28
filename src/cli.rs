@@ -229,6 +229,7 @@ fn create_progress_callback(
     pb: Arc<ProgressBar>,
 ) -> Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync> {
     Arc::new(move |completed, failed, skipped, total| {
+        // completed == successful persisted inserts; skips are counted only in skipped.
         pb.set_length(total as u64);
         pb.set_position((completed + failed + skipped) as u64);
         pb.set_message(format!("✓{completed} ✗{failed} ⊘{skipped}"));
