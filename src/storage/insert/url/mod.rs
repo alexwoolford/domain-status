@@ -1,7 +1,9 @@
 //! Main URL record insertion.
 //!
-//! This module handles inserting URL status records and all related satellite tables
-//! (technologies, nameservers, TXT records, MX records, headers, OIDs, redirect chain, SANs).
+//! This module handles inserting URL status records and related satellite tables.
+//! In-transaction satellites and the UPSERT cleanup list live in
+//! `URL_STATUS_SATELLITE_TABLES`; enrichment satellites (GeoIP, WHOIS, secrets, etc.)
+//! are inserted after that transaction commits.
 
 mod satellite;
 
@@ -22,8 +24,8 @@ use satellite::{
 /// One `url_status` column paired with its bind extractor.
 ///
 /// SQL column order and `.bind(...)` values are derived from the same table so
-/// adding/removing/reordering a column is a single edit — the previous dual list
-/// (`URL_STATUS_COLUMNS` + a parallel bind chain) could silently mis-assign values.
+/// adding/removing/reordering a column is a single edit — a previous dual list
+/// (column names + a parallel bind chain) could silently mis-assign values.
 pub(crate) struct UrlStatusColumn {
     pub name: &'static str,
     pub extract: for<'a> fn(&'a UrlRecord, Option<i64>, Option<i64>) -> UrlStatusBind<'a>,
@@ -42,7 +44,7 @@ pub(crate) enum UrlStatusBind<'a> {
     OptBool(Option<bool>),
 }
 
-/// `url_status` INSERT / UPSERT columns + binds (single source of truth).
+/// `url_status` INSERT / UPSERT columns + binds (canonical column/bind registry).
 ///
 /// `final_domain` is part of the conflict key and is omitted from the UPDATE SET
 /// clause; every other column is refreshed on conflict.
@@ -327,7 +329,7 @@ pub struct UrlRecordInsertParams<'a> {
     pub security_headers: &'a std::collections::HashMap<String, String>,
     /// HTTP headers `HashMap` (will be inserted into `url_http_headers` table)
     pub http_headers: &'a std::collections::HashMap<String, String>,
-    /// Vector of OID strings (will be inserted into `url_oids` table)
+    /// Vector of OID strings (will be inserted into `url_certificate_oids` table)
     pub oids: &'a std::collections::HashSet<String>,
     /// Redirect chain (URL, HTTP status) per hop (will be inserted into `url_redirect_chain` table)
     pub redirect_chain: &'a [(String, u16)],
@@ -435,15 +437,17 @@ impl<'a> UrlRecordInsertParams<'a> {
 /// Inserts a `UrlRecord` into the database with retry logic for transient errors.
 ///
 /// This function inserts data into:
-/// 1. The main `url_status` table (fact table with atomic fields)
-/// 2. Normalized child tables (`url_technologies`, `url_nameservers`, `url_txt_records`, `url_mx_records`, `url_security_headers`, `url_http_headers`, `url_oids`, `url_redirect_chain`)
+/// 1. The main `url_status` table (fact table)
+/// 2. In-transaction satellite tables listed under the core section of
+///    `URL_STATUS_SATELLITE_TABLES` (DNS, headers, TLS OIDs/SANs, redirects, CSP,
+///    cookies, resource hints, script hosts, etc.)
 ///
-/// All inserts are wrapped in a transaction for atomicity. `SQLITE_BUSY` and `SQLITE_LOCKED`
-/// errors are automatically retried with exponential backoff.
+/// The main `url_status` row and those in-transaction satellites share one transaction;
+/// individual satellite insert failures are logged and do not roll back the main row.
+/// `SQLITE_BUSY` and `SQLITE_LOCKED` errors are retried with exponential backoff.
 ///
-/// Note: Multi-valued fields (technologies, nameservers, `txt_records`, `mx_records`, `security_headers`, `http_headers`,
-/// oids, `redirect_chain`) are stored only in normalized child tables, not as JSON in the main table.
-/// This eliminates data duplication and establishes a single source of truth.
+/// Multi-valued fields are stored in normalized child tables (not as JSON on `url_status`).
+/// Enrichment satellites (GeoIP, WHOIS, secrets, …) are written after this transaction.
 ///
 /// # Arguments
 ///
@@ -461,7 +465,7 @@ pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64,
 }
 
 /// Internal implementation of `insert_url_record` (without retry logic).
-#[allow(clippy::too_many_lines)] // Inserts main record + ~15 satellite tables in a single transaction
+#[allow(clippy::too_many_lines)] // Main record + ~17 in-txn satellite inserts
 #[allow(clippy::cognitive_complexity)] // Each satellite table has distinct insert logic
 async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
@@ -514,7 +518,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
         }
     };
 
-    // 2-10. Insert into satellite tables
+    // Insert into satellite tables (see URL_STATUS_SATELLITE_TABLES for the full set).
     //
     // DESIGN DECISION: Satellite insert functions return () and handle errors internally.
     // This design prioritizes partial success over atomicity:

@@ -164,6 +164,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 
 | Column | Type | Notes |
 |--------|------|-------|
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Row id |
 | `url_status_id` | `INTEGER NOT NULL` | FK to `url_status.id` |
 | `error_type` | `TEXT NOT NULL` | Supplemental failure type |
 | `error_message` | `TEXT NOT NULL` | Failure detail |
@@ -219,7 +220,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_security_warnings` | Real, observed security issues only — see note below | `warning_code`, `warning_description` |
 | `url_technologies` | Directly observed fingerprint matches. `HTTP/3` and `HSTS` are **not** inserted (use headers / `http_version` / TLS). Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
-| `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `header_json`, `payload_json`, `algorithm`, `issuer`, `subject`, `expiration_ms` |
+| `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `id`, `exposed_secret_id`, `header_json`, `payload_json`, `algorithm`, `token_type`, `issuer`, `subject`, `audience`, `expiration_ms`, `issued_at_ms`, `not_before_ms`, `jwt_id` |
 
 ## Failure Satellites
 

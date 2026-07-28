@@ -52,7 +52,7 @@ cargo test --doc
 
 - These are intentionally `#[ignore]` and are not part of the deterministic CI signal.
 - Includes bug-repro or environmental checks such as `tests/http_timeout_bug.rs`, `tests/whois_timeout_bug.rs`, and live/stress scans.
-- Run them explicitly with `cargo test -- --ignored`.
+- Prefer `just test-e2e` (or `cargo test --all-features --all-targets --locked -- --ignored --skip stress_`) for network e2e; stress demos stay separate via `--skip stress_`.
 - If one of these finds a real bug, add or update a deterministic regression test before fixing the implementation.
 
 ### Stress and resilience tests
@@ -112,13 +112,13 @@ Optional: add `--status-port 8080` to exercise the status server during the run 
 
 **2. Database validation** (e.g. with `sqlite3 validation_scan.db`)
 
-- **runs:** One row; `run_id`, `start_time_ms`, `end_time_ms`, `elapsed_seconds`, `total_urls`, `successful_urls`, `failed_urls` populated; `elapsed_seconds` > 0 and roughly matches wall-clock.
+- **runs:** One row; `run_id`, `start_time_ms`, `end_time_ms`, `elapsed_seconds`, `total_urls`, `successful_urls`, `failed_urls`, `skipped_urls` populated; `successful_urls + failed_urls + skipped_urls ≈ total_urls`; `elapsed_seconds` > 0 and roughly matches wall-clock.
 - **url_status:** Row count = successful URLs (≤ input size); each row has `initial_domain`, `final_domain`, `http_status` in a sensible range (e.g. 200–599), `response_time_seconds` ≥ 0, `observed_at_ms` and `run_id` set; `ip_address` may be empty when DNS failed.
-- **url_failures:** Rows for failed URLs; `runs.successful_urls + runs.failed_urls` should match total attempted.
+- **url_failures:** Rows for failed URLs; `runs.successful_urls + runs.failed_urls + runs.skipped_urls` should match `total_urls` (attempted + skipped).
 - **Satellite tables:** At least some rows in `url_technologies`, `url_whois` (where WHOIS succeeded), and optionally `url_exposed_secrets`; `url_exposed_secrets.secret_type` uses gitleaks-style rule ids. Spot-check `url_geoip`, `url_nameservers`, `url_txt_records`, `url_mx_records`, `url_security_headers` where applicable.
 - **Timings:** `runs.elapsed_seconds` and `url_status.response_time_seconds` present and sensible; no null/negative where NOT NULL.
 
-Reference: [DATABASE.md](DATABASE.md) and `migrations/0001_initial_schema.sql` for schema.
+Reference: [DATABASE.md](DATABASE.md) and `migrations/` (`0001`–`0011`) for schema.
 
 **3. Export format validation**
 

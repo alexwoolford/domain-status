@@ -32,6 +32,7 @@ These are not required for every code change, but parts of the docs, local workf
 
 - `pre-commit`
 - `cargo-audit`
+- `cargo-deny`
 - `cargo-tarpaulin`
 - `cargo-outdated`
 - `sqlite3`
@@ -59,7 +60,7 @@ just outdated   # dependency drift check
 Run the relevant local gates for your change. Before submitting, run format, lint, docs, and tests so CI passes:
 
 - **Recommended:** `just check` (runs `cargo fmt`, clippy, docs-check, and tests).
-- **Or manually:** `cargo fmt`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked`, and `cargo test --all-features --all-targets --locked`.
+- **Or manually:** `cargo fmt`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, `cargo test --doc --all-features --locked`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked`, and `cargo test --all-features --all-targets --locked`.
 
 In most cases:
 

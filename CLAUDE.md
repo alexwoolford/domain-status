@@ -41,10 +41,11 @@ Caches (fingerprints/GeoIP/WHOIS/UA) default under XDG `~/.cache/domain_status/`
 
 ### Key Source Modules
 
-- **`src/cli.rs`** — CLI parsing and command dispatch (clap derive)
+- **`cli/`** (`domain_status_cli`) — clap derive CLI argument definitions
+- **`src/cli.rs`** — CLI dispatch and conversion into `Config`
 - **`src/run/`** — Scan orchestration (entry: `run_scan()`)
 - **`src/fetch/`** — HTTP requests, redirect resolution, DNS, favicon hashing
-- **`src/fingerprint/`** — Technology detection via pattern matching (`patterns.rs` has all rules)
+- **`src/fingerprint/`** — Technology detection against a loaded/vendored Wappalyzer-compatible ruleset (`patterns.rs` has matching helpers, not the rule catalog)
 - **`src/storage/`** — SQLite layer (pool, migrations, insert/, failure/)
 - **`src/export/`** — CSV, JSONL, Parquet export with query builders
 - **`src/whois/`** — WHOIS/RDAP lookup with disk-based caching
@@ -57,7 +58,7 @@ Caches (fingerprints/GeoIP/WHOIS/UA) default under XDG `~/.cache/domain_status/`
 
 ### Database
 
-SQLite with WAL mode. Schema in `migrations/` (9 migration files). Main tables: `runs`, `url_status` (fact table), `url_failures`, plus ~25 satellite tables for DNS records, TLS certs, headers, technologies, WHOIS, GeoIP, secrets, etc. Full schema documented in `DATABASE.md`.
+SQLite with WAL mode. Schema in `migrations/` (11 migration files, `0001`–`0011`). Main tables: `runs`, `url_status` (fact table), `url_failures`, plus satellite tables for DNS, TLS, headers, technologies, WHOIS, GeoIP, secrets, etc. (see `URL_STATUS_SATELLITE_TABLES` and `DATABASE.md`).
 
 ### Workspace Structure
 
@@ -67,9 +68,9 @@ Cargo workspace with a `cli/` member (`domain_status_cli`) for CLI argument defi
 
 - **MSRV**: Rust 1.85+ (Edition 2021)
 - **No unsafe code** — `#![deny(unsafe_code)]` in `lib.rs`
-- **No `.unwrap()`** — use `Result`/`anyhow` throughout
+- **Prefer `Result`/`anyhow` in production code** — avoid `.unwrap()` outside tests
 - **Line length**: 100 chars (`rustfmt.toml`)
-- **Clippy**: 40+ deny-level lints including `too_many_lines` (>100), `cognitive_complexity`, `cast_possible_truncation`, `needless_pass_by_value`
+- **Clippy**: 17 deny-level lints in root `Cargo.toml`, including `too_many_lines` (>100), `cognitive_complexity`, `cast_possible_truncation`, `needless_pass_by_value`
 - **TLS**: rustls only (no native-tls/OpenSSL dependency)
 - **Tests**: `#[ignore]` for network-dependent tests; `proptest` for property-based; `insta` for snapshots (text `.snap`); `wiremock`/`httpmock` for HTTP mocking; `rstest` for parameterized
 

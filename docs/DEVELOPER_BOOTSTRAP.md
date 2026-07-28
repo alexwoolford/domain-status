@@ -22,6 +22,7 @@ These are used by CI-equivalent recipes, docs, or local investigation workflows:
 
 - `pre-commit`
 - `cargo-audit`
+- `cargo-deny`
 - `cargo-tarpaulin`
 - `cargo-outdated`
 - `sqlite3`
@@ -33,6 +34,7 @@ Suggested installs:
 
 ```bash
 cargo install cargo-audit --locked
+cargo install cargo-deny --locked
 cargo install cargo-tarpaulin --locked
 cargo install cargo-outdated --locked
 pip install pre-commit
@@ -61,7 +63,7 @@ Use `just` as the primary interface:
 
 | Command | Purpose |
 |--------|---------|
-| `just check` | Local fast path: format, lint, tests |
+| `just check` | Local fast path: format, lint, docs-check, tests |
 | `just docs-check` | Doctests plus rustdoc warning gate |
 | `just ci` | Main local CI equivalent |
 | `just test` | Deterministic unit and integration tests |
