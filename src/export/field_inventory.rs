@@ -27,7 +27,7 @@ mod tests {
     use super::URL_STATUS_REQUIRED_IN_FLAT_EXPORT;
     use crate::export::csv::CSV_COLUMN_DEFS;
     use crate::export::parquet::build_schema;
-    use crate::storage::insert::url::URL_STATUS_COLUMNS;
+    use crate::storage::insert::url::URL_STATUS_COLUMN_DEFS;
 
     /// Captured on `url_status` but intentionally omitted from flat CSV/Parquet.
     ///
@@ -56,7 +56,7 @@ mod tests {
     }
 
     fn url_status_has(name: &str) -> bool {
-        URL_STATUS_COLUMNS.contains(&name)
+        URL_STATUS_COLUMN_DEFS.iter().any(|c| c.name == name)
     }
 
     #[test]
@@ -64,7 +64,7 @@ mod tests {
         for name in URL_STATUS_REQUIRED_IN_FLAT_EXPORT {
             assert!(
                 url_status_has(name),
-                "{name} missing from URL_STATUS_COLUMNS"
+                "{name} missing from URL_STATUS_COLUMN_DEFS"
             );
         }
     }
@@ -116,7 +116,7 @@ mod tests {
         for name in URL_STATUS_DB_ONLY {
             assert!(
                 url_status_has(name),
-                "documented DB-only field {name} missing from URL_STATUS_COLUMNS"
+                "documented DB-only field {name} missing from URL_STATUS_COLUMN_DEFS"
             );
             assert!(
                 !csv_has_column(name),

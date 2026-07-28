@@ -217,4 +217,37 @@ mod tests {
             "Migrations should succeed on fresh database"
         );
     }
+
+    /// Keep [`DATABASE.md`](../../../DATABASE.md) migration range honest when
+    /// new SQL files land under `migrations/`.
+    #[test]
+    fn database_md_documents_latest_migration_file() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sql_names: Vec<String> = std::fs::read_dir(root.join("migrations"))
+            .expect("migrations dir")
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                name.ends_with(".sql").then_some(name)
+            })
+            .collect();
+        sql_names.sort();
+        assert!(
+            !sql_names.is_empty(),
+            "expected at least one migration SQL file"
+        );
+        let latest = sql_names.last().expect("non-empty");
+        let database_md =
+            std::fs::read_to_string(root.join("DATABASE.md")).expect("read DATABASE.md");
+        assert!(
+            database_md.contains(latest),
+            "DATABASE.md must mention the latest migration file `{latest}` (found {} migrations)",
+            sql_names.len()
+        );
+        assert_eq!(
+            sql_names.len(),
+            11,
+            "migration count changed — update DATABASE.md intro and this assertion"
+        );
+    }
 }
