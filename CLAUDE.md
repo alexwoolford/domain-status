@@ -13,7 +13,7 @@ Uses `just` as the task runner (install: `cargo install just`).
 | Task | Command |
 |------|---------|
 | Build release | `just build` or `cargo build --release --locked` |
-| Run all checks | `just check` (fmt + lint + test) |
+| Run all checks | `just check` (fmt + lint + docs + test) |
 | Format | `just fmt` |
 | Lint | `just lint` (clippy with `--locked -D warnings`) |
 | Run tests | `just test` (excludes network-dependent / `#[ignore]`) |

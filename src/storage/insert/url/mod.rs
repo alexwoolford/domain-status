@@ -176,8 +176,8 @@ impl<'a> UrlRecordInsertParams<'a> {
     ///
     /// Prefer this in integration tests that only exercise the main row /
     /// pool / transaction behavior. New satellite fields then default here
-    /// (and in [`Self::from_batch`]) instead of breaking every
-    /// `UrlRecordInsertParams { ... }` literal under `tests/`.
+    /// (and in the crate-internal `from_batch` constructor) instead of
+    /// breaking every `UrlRecordInsertParams { ... }` literal under `tests/`.
     ///
     /// Unit tests that need non-empty satellites should still construct the
     /// struct literally (or start from this and override after copying fields).

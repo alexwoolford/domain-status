@@ -6,8 +6,9 @@
 default:
     @just --list
 
-# Run all checks (formatting, linting, tests)
-check: fmt lint test
+# Run all checks (formatting, linting, docs, tests)
+# Matches the Lint + Test Suite gates that catch most CI surprises locally.
+check: fmt lint docs-check test
     @echo "✅ All checks passed!"
 
 # Format code
