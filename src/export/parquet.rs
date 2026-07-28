@@ -27,8 +27,11 @@ use super::row::{build_export_row, extract_main_row_data};
 const BATCH_SIZE: usize = 10_000;
 
 /// Build the Arrow schema for the Parquet file.
+///
+/// `pub(crate)` so field-inventory tests can assert schema contents without
+/// duplicating the Field list.
 #[allow(clippy::too_many_lines)] // Schema definition: one Field per export column (~80 columns)
-fn build_schema() -> Schema {
+pub(crate) fn build_schema() -> Schema {
     Schema::new(vec![
         // Core identity
         Field::new("url", DataType::Utf8, false),
@@ -1109,6 +1112,13 @@ fn write_batch(
         Arc::new(run_id_b.finish()),
     ];
 
+    anyhow::ensure!(
+        columns.len() == schema.fields().len(),
+        "Parquet columns ({}) must match schema fields ({})",
+        columns.len(),
+        schema.fields().len()
+    );
+
     let batch = RecordBatch::try_new(Arc::clone(schema), columns)
         .context("Failed to create RecordBatch")?;
 
@@ -1225,7 +1235,7 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::super::types::{ExportFormat, ExportOptions};
-    use super::export_parquet;
+    use super::{build_schema, export_parquet};
     use crate::storage::migrations::run_migrations;
     use arrow::array::Array;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -1444,8 +1454,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(
             batch.num_columns(),
-            72,
-            "Should have 72 columns matching schema (69 + initial_url + final_url + meta_robots)"
+            build_schema().fields().len(),
+            "Parquet file column count must match build_schema()"
         );
 
         // Verify the 'url' column

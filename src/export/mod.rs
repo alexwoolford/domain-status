@@ -4,6 +4,7 @@
 //! into various formats (CSV, JSONL, Parquet) for different use cases.
 
 mod csv;
+mod field_inventory;
 mod jsonl;
 mod parquet;
 mod queries;

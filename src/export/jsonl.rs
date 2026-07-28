@@ -431,6 +431,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_jsonl_includes_required_flat_export_keys() {
+        use crate::export::field_inventory::URL_STATUS_REQUIRED_IN_FLAT_EXPORT;
+
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        create_test_url_status(&pool, "example.com", 200).await;
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let output_path = temp_file.path().to_path_buf();
+
+        export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect("Should export successfully");
+
+        let mut contents = String::new();
+        std::fs::File::open(&output_path)
+            .expect("open")
+            .read_to_string(&mut contents)
+            .expect("read");
+        let json_obj: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("valid JSON");
+
+        // JSONL nests some TLS fields under `tls` (unlike flat CSV/Parquet).
+        fn jsonl_has_required_field(obj: &serde_json::Value, name: &str) -> bool {
+            if obj.get(name).is_some() {
+                return true;
+            }
+            if name == "cert_fingerprint_sha256" {
+                return obj.pointer("/tls/cert_fingerprint_sha256").is_some();
+            }
+            false
+        }
+
+        let mut missing = Vec::new();
+        for key in URL_STATUS_REQUIRED_IN_FLAT_EXPORT {
+            if !jsonl_has_required_field(&json_obj, key) {
+                missing.push(*key);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "JSONL missing required fields: {missing:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_export_jsonl_filter_by_run_id() {
         let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
         let db_path = temp_db.path();

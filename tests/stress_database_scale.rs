@@ -102,23 +102,13 @@ async fn test_database_growth_moderate() {
         let http_headers = std::collections::HashMap::new();
         let oids = std::collections::HashSet::new();
 
-        insert_url_record(UrlRecordInsertParams {
-            pool: pool.as_ref(),
-            record: &record,
-            security_headers: &security_headers,
-            http_headers: &http_headers,
-            oids: &oids,
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            body_domains: &[],
-        })
+        insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+            pool.as_ref(),
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+        ))
         .await
         .expect("Failed to insert record");
 
@@ -251,23 +241,13 @@ async fn test_database_performance_degradation() {
         let http_headers = std::collections::HashMap::new();
         let oids = std::collections::HashSet::new();
 
-        insert_url_record(UrlRecordInsertParams {
-            pool: pool.as_ref(),
-            record: &record,
-            security_headers: &security_headers,
-            http_headers: &http_headers,
-            oids: &oids,
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            body_domains: &[],
-        })
+        insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+            pool.as_ref(),
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+        ))
         .await
         .expect("Failed to insert record");
 
@@ -358,23 +338,13 @@ async fn test_wal_growth_without_checkpointing() {
         let http_headers = std::collections::HashMap::new();
         let oids = std::collections::HashSet::new();
 
-        insert_url_record(UrlRecordInsertParams {
-            pool: pool.as_ref(),
-            record: &record,
-            security_headers: &security_headers,
-            http_headers: &http_headers,
-            oids: &oids,
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            body_domains: &[],
-        })
+        insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+            pool.as_ref(),
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+        ))
         .await
         .expect("Failed to insert record");
 

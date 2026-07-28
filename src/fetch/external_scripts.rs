@@ -461,10 +461,7 @@ mod tests {
             "GTM must be third-party; got {hosts:?}"
         );
         assert_eq!(
-            hosts
-                .iter()
-                .filter(|h| h.host == "www.example.com")
-                .count(),
+            hosts.iter().filter(|h| h.host == "www.example.com").count(),
             1,
             "duplicate hosts collapsed"
         );
