@@ -23,7 +23,10 @@ use satellite::{
 ///
 /// `final_domain` is part of the conflict key and is omitted from the UPDATE SET
 /// clause; every other column is refreshed on conflict.
-const URL_STATUS_COLUMNS: &[&str] = &[
+///
+/// `pub(crate)` so export/field-inventory tests can assert capture ↔ schema sync
+/// without duplicating this list.
+pub(crate) const URL_STATUS_COLUMNS: &[&str] = &[
     "initial_domain",
     "final_domain",
     "initial_url",
@@ -134,14 +137,11 @@ impl<'a> UrlRecordInsertParams<'a> {
     ///
     /// The production scan pipeline collects everything that goes into a
     /// URL row into a `BatchRecord`, then calls `insert_url_record`. Mapping
-    /// the 14 individual fields manually at the call site (the previous
+    /// the individual fields manually at the call site (the previous
     /// shape) made every new field a two-place edit — the struct definition
     /// here, plus the manual field assignment in `insert_batch_record`. By
     /// putting the mapping in one place, the call site stays a one-liner
     /// and the struct can grow without churning callers.
-    ///
-    /// Test code constructs `UrlRecordInsertParams` directly to exercise
-    /// specific scenarios; that path is unchanged.
     ///
     /// Crate-internal (`pub(crate)`) because `BatchRecord` is itself a
     /// crate-internal aggregate — exposing this constructor publicly would
@@ -169,6 +169,43 @@ impl<'a> UrlRecordInsertParams<'a> {
             resource_hints: &batch.resource_hints,
             body_domains: &batch.body_domains,
             script_hosts: &batch.script_hosts,
+        }
+    }
+
+    /// Insert params with empty satellite collections.
+    ///
+    /// Prefer this in integration tests that only exercise the main row /
+    /// pool / transaction behavior. New satellite fields then default here
+    /// (and in [`Self::from_batch`]) instead of breaking every
+    /// `UrlRecordInsertParams { ... }` literal under `tests/`.
+    ///
+    /// Unit tests that need non-empty satellites should still construct the
+    /// struct literally (or start from this and override after copying fields).
+    #[must_use]
+    pub fn with_empty_satellites(
+        pool: &'a SqlitePool,
+        record: &'a UrlRecord,
+        security_headers: &'a std::collections::HashMap<String, String>,
+        http_headers: &'a std::collections::HashMap<String, String>,
+        oids: &'a std::collections::HashSet<String>,
+    ) -> Self {
+        Self {
+            pool,
+            record,
+            security_headers,
+            http_headers,
+            oids,
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            body_domains: &[],
+            script_hosts: &[],
         }
     }
 }
@@ -696,13 +733,12 @@ mod tests {
         .await
         .expect("insert");
 
-        let row = sqlx::query(
-            "SELECT initial_url, final_url, meta_robots FROM url_status WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch");
+        let row =
+            sqlx::query("SELECT initial_url, final_url, meta_robots FROM url_status WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch");
         assert_eq!(
             row.get::<Option<String>, _>("initial_url").as_deref(),
             Some("http://example.com/start")
@@ -1384,7 +1420,6 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed url_script_hosts");
-
 
         sqlx::query(
             "INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (?, ?, ?)",

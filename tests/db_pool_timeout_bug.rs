@@ -80,23 +80,13 @@ async fn test_db_pool_default_acquire_timeout_blocks() {
             // This will either:
             // - Complete immediately if connection available
             // - Block for up to 30s if pool exhausted
-            let result = insert_url_record(UrlRecordInsertParams {
-                pool: pool_clone.as_ref(),
-                record: &record,
-                security_headers: &security_headers,
-                http_headers: &http_headers,
-                oids: &oids,
-                redirect_chain: &[],
-                technologies: &[],
-                subject_alternative_names: &[],
-                cname_records: None,
-                aaaa_records: None,
-                caa_records: None,
-                csp_domains: &[],
-                cookies: &[],
-                resource_hints: &[],
-                body_domains: &[],
-            })
+            let result = insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                pool_clone.as_ref(),
+                &record,
+                &security_headers,
+                &http_headers,
+                &oids,
+            ))
             .await;
 
             let elapsed = start.elapsed();
@@ -202,23 +192,13 @@ async fn test_db_pool_with_explicit_acquire_timeout() {
             // With 5s acquire_timeout, this fails fast instead of blocking 30s
             let result = timeout(
                 Duration::from_secs(10),
-                insert_url_record(UrlRecordInsertParams {
-                    pool: &pool_clone,
-                    record: &record,
-                    security_headers: &security_headers,
-                    http_headers: &http_headers,
-                    oids: &oids,
-                    redirect_chain: &[],
-                    technologies: &[],
-                    subject_alternative_names: &[],
-                    cname_records: None,
-                    aaaa_records: None,
-                    caa_records: None,
-                    csp_domains: &[],
-                    cookies: &[],
-                    resource_hints: &[],
-                    body_domains: &[],
-                }),
+                insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                    &pool_clone,
+                    &record,
+                    &security_headers,
+                    &http_headers,
+                    &oids,
+                )),
             )
             .await;
 

@@ -88,23 +88,13 @@ async fn test_connection_pool_exhaustion_during_cancellation() {
             // Cancel after tiny delay - should trigger rollback
             timeout(
                 Duration::from_micros(100),
-                insert_url_record(UrlRecordInsertParams {
-                    pool: &pool_clone,
-                    record: &record,
-                    security_headers: &security_headers,
-                    http_headers: &http_headers,
-                    oids: &oids,
-                    redirect_chain: &[],
-                    technologies: &[],
-                    subject_alternative_names: &[],
-                    cname_records: None,
-                    aaaa_records: None,
-                    caa_records: None,
-                    csp_domains: &[],
-                    cookies: &[],
-                    resource_hints: &[],
-                    body_domains: &[],
-                }),
+                insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                    &pool_clone,
+                    &record,
+                    &security_headers,
+                    &http_headers,
+                    &oids,
+                )),
             )
             .await
         });
@@ -168,23 +158,13 @@ async fn test_checkpoint_during_active_transactions() {
             let http_headers = std::collections::HashMap::new();
             let oids = std::collections::HashSet::new();
 
-            insert_url_record(UrlRecordInsertParams {
-                pool: &pool_clone,
-                record: &record,
-                security_headers: &security_headers,
-                http_headers: &http_headers,
-                oids: &oids,
-                redirect_chain: &[],
-                technologies: &[],
-                subject_alternative_names: &[],
-                cname_records: None,
-                aaaa_records: None,
-                caa_records: None,
-                csp_domains: &[],
-                cookies: &[],
-                resource_hints: &[],
-                body_domains: &[],
-            })
+            insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                &pool_clone,
+                &record,
+                &security_headers,
+                &http_headers,
+                &oids,
+            ))
             .await
         });
         write_tasks.push(task);
@@ -251,23 +231,13 @@ async fn test_cascade_cancellation_timing_attack() {
 
             let result = timeout(
                 Duration::from_micros(timeout_micros),
-                insert_url_record(UrlRecordInsertParams {
-                    pool: &pool_clone,
-                    record: &record,
-                    security_headers: &security_headers,
-                    http_headers: &http_headers,
-                    oids: &oids,
-                    redirect_chain: &[],
-                    technologies: &[],
-                    subject_alternative_names: &[],
-                    cname_records: None,
-                    aaaa_records: None,
-                    caa_records: None,
-                    csp_domains: &[],
-                    cookies: &[],
-                    resource_hints: &[],
-                    body_domains: &[],
-                }),
+                insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                    &pool_clone,
+                    &record,
+                    &security_headers,
+                    &http_headers,
+                    &oids,
+                )),
             )
             .await;
 
@@ -341,23 +311,13 @@ async fn test_connection_leak_from_cancellations() {
 
             timeout(
                 Duration::from_micros(1),
-                insert_url_record(UrlRecordInsertParams {
-                    pool: &pool_clone,
-                    record: &record,
-                    security_headers: &security_headers,
-                    http_headers: &http_headers,
-                    oids: &oids,
-                    redirect_chain: &[],
-                    technologies: &[],
-                    subject_alternative_names: &[],
-                    cname_records: None,
-                    aaaa_records: None,
-                    caa_records: None,
-                    csp_domains: &[],
-                    cookies: &[],
-                    resource_hints: &[],
-                    body_domains: &[],
-                }),
+                insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                    &pool_clone,
+                    &record,
+                    &security_headers,
+                    &http_headers,
+                    &oids,
+                )),
             )
             .await
         });
@@ -373,23 +333,13 @@ async fn test_connection_leak_from_cancellations() {
 
     let final_insert = tokio::time::timeout(
         Duration::from_secs(2),
-        insert_url_record(UrlRecordInsertParams {
-            pool: &pool,
-            record: &record,
-            security_headers: &security_headers,
-            http_headers: &http_headers,
-            oids: &oids,
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            body_domains: &[],
-        }),
+        insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+            &pool,
+            &record,
+            &security_headers,
+            &http_headers,
+            &oids,
+        )),
     )
     .await;
 
@@ -426,23 +376,13 @@ async fn test_read_consistency_during_rollback() {
 
             timeout(
                 Duration::from_micros(50),
-                insert_url_record(UrlRecordInsertParams {
-                    pool: &pool_clone,
-                    record: &record,
-                    security_headers: &security_headers,
-                    http_headers: &http_headers,
-                    oids: &oids,
-                    redirect_chain: &[],
-                    technologies: &[],
-                    subject_alternative_names: &[],
-                    cname_records: None,
-                    aaaa_records: None,
-                    caa_records: None,
-                    csp_domains: &[],
-                    cookies: &[],
-                    resource_hints: &[],
-                    body_domains: &[],
-                }),
+                insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                    &pool_clone,
+                    &record,
+                    &security_headers,
+                    &http_headers,
+                    &oids,
+                )),
             )
             .await
         });

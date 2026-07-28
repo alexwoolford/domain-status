@@ -12,7 +12,408 @@ use crate::storage::init_db_pool_with_path;
 use crate::utils::IoErrorContext;
 
 use super::queries::{build_export_query, IgnoreBrokenPipe};
-use super::row::{build_export_row, build_url, extract_main_row_data};
+use super::row::{build_export_row, build_url, extract_main_row_data, ExportRow};
+
+/// One flat CSV column: name paired with its cell extractor.
+///
+/// Header and cell values are derived from the same table so adding/removing a
+/// column is a single edit — order cannot drift between header and row writer.
+pub(crate) struct CsvColumn {
+    pub name: &'static str,
+    pub extract: fn(&ExportRow) -> String,
+}
+
+/// Flat CSV columns (single source of truth for header + cells + inventory tests).
+#[allow(clippy::too_many_lines)] // One entry per export column; intentional registry
+pub(crate) const CSV_COLUMN_DEFS: &[CsvColumn] = &[
+    CsvColumn {
+        name: "url",
+        extract: |row| build_url(&row.main.final_domain),
+    },
+    CsvColumn {
+        name: "initial_domain",
+        extract: |row| row.main.initial_domain.clone(),
+    },
+    CsvColumn {
+        name: "final_domain",
+        extract: |row| row.main.final_domain.clone(),
+    },
+    CsvColumn {
+        name: "initial_url",
+        extract: |row| row.main.initial_url.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "final_url",
+        extract: |row| row.main.final_url.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "ip_address",
+        extract: |row| row.main.ip_address.clone(),
+    },
+    CsvColumn {
+        name: "reverse_dns",
+        extract: |row| row.main.reverse_dns.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "status",
+        extract: |row| row.main.status.to_string(),
+    },
+    CsvColumn {
+        name: "status_description",
+        extract: |row| row.main.status_desc.clone(),
+    },
+    CsvColumn {
+        name: "response_time_ms",
+        extract: |row| format!("{:.2}", row.main.response_time),
+    },
+    CsvColumn {
+        name: "title",
+        extract: |row| row.main.title.clone(),
+    },
+    CsvColumn {
+        name: "keywords",
+        extract: |row| row.main.keywords.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "description",
+        extract: |row| row.main.description.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "meta_robots",
+        extract: |row| row.main.meta_robots.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "is_mobile_friendly",
+        extract: |row| row.main.is_mobile_friendly.to_string(),
+    },
+    CsvColumn {
+        name: "body_sha256",
+        extract: |row| row.main.body_sha256.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "content_length",
+        extract: |row| {
+            row.main
+                .content_length
+                .map_or(String::new(), |v| v.to_string())
+        },
+    },
+    CsvColumn {
+        name: "http_version",
+        extract: |row| row.main.http_version.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "body_word_count",
+        extract: |row| {
+            row.main
+                .body_word_count
+                .map_or(String::new(), |v| v.to_string())
+        },
+    },
+    CsvColumn {
+        name: "body_line_count",
+        extract: |row| {
+            row.main
+                .body_line_count
+                .map_or(String::new(), |v| v.to_string())
+        },
+    },
+    CsvColumn {
+        name: "content_type",
+        extract: |row| row.main.content_type.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "canonical_url",
+        extract: |row| row.main.canonical_url.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "body_truncated",
+        extract: |row| row.main.body_truncated.to_string(),
+    },
+    CsvColumn {
+        name: "redirect_count",
+        extract: |row| row.redirect_count.to_string(),
+    },
+    CsvColumn {
+        name: "final_redirect_url",
+        extract: |row| row.final_redirect_url.clone(),
+    },
+    CsvColumn {
+        name: "technologies",
+        extract: |row| row.technologies_str.clone(),
+    },
+    CsvColumn {
+        name: "technology_categories",
+        extract: |row| row.technology_categories_str.clone(),
+    },
+    CsvColumn {
+        name: "technology_count",
+        extract: |row| row.technology_count.to_string(),
+    },
+    CsvColumn {
+        name: "tls_version",
+        extract: |row| row.main.tls_version.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "ssl_cert_subject",
+        extract: |row| row.main.ssl_cert_subject.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "ssl_cert_issuer",
+        extract: |row| row.main.ssl_cert_issuer.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "ssl_cert_valid_to",
+        extract: |row| format_date(row.main.ssl_cert_valid_to_ms),
+    },
+    CsvColumn {
+        name: "cipher_suite",
+        extract: |row| row.main.cipher_suite.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "key_algorithm",
+        extract: |row| row.main.key_algorithm.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "cert_fingerprint_sha256",
+        extract: |row| row.main.cert_fingerprint_sha256.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "certificate_sans",
+        extract: |row| row.certificate_sans_str.clone(),
+    },
+    CsvColumn {
+        name: "certificate_san_count",
+        extract: |row| row.certificate_san_count.to_string(),
+    },
+    CsvColumn {
+        name: "oids",
+        extract: |row| row.oids_str.clone(),
+    },
+    CsvColumn {
+        name: "oid_count",
+        extract: |row| row.oid_count.to_string(),
+    },
+    CsvColumn {
+        name: "nameserver_count",
+        extract: |row| row.nameserver_count.to_string(),
+    },
+    CsvColumn {
+        name: "txt_record_count",
+        extract: |row| row.txt_count.to_string(),
+    },
+    CsvColumn {
+        name: "mx_record_count",
+        extract: |row| row.mx_count.to_string(),
+    },
+    CsvColumn {
+        name: "cname_records",
+        extract: |row| row.cname_records.join(", "),
+    },
+    CsvColumn {
+        name: "cname_count",
+        extract: |row| row.cname_count.to_string(),
+    },
+    CsvColumn {
+        name: "ipv6_addresses",
+        extract: |row| row.ipv6_addresses.join(", "),
+    },
+    CsvColumn {
+        name: "ipv6_count",
+        extract: |row| row.ipv6_count.to_string(),
+    },
+    CsvColumn {
+        name: "caa_records",
+        extract: format_caa_records,
+    },
+    CsvColumn {
+        name: "caa_count",
+        extract: |row| row.caa_count.to_string(),
+    },
+    CsvColumn {
+        name: "spf_record",
+        extract: |row| row.main.spf_record.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "dmarc_record",
+        extract: |row| row.main.dmarc_record.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "analytics_ids",
+        extract: |row| row.analytics_ids_str.clone(),
+    },
+    CsvColumn {
+        name: "analytics_count",
+        extract: |row| row.analytics_count.to_string(),
+    },
+    CsvColumn {
+        name: "social_media_links",
+        extract: |row| row.social_media_links_str.clone(),
+    },
+    CsvColumn {
+        name: "social_media_count",
+        extract: |row| row.social_media_count.to_string(),
+    },
+    CsvColumn {
+        name: "security_warnings",
+        extract: |row| row.security_warnings_str.clone(),
+    },
+    CsvColumn {
+        name: "security_warning_count",
+        extract: |row| row.security_warning_count.to_string(),
+    },
+    CsvColumn {
+        name: "structured_data_types",
+        extract: |row| row.structured_data_types_str.clone(),
+    },
+    CsvColumn {
+        name: "structured_data_count",
+        extract: |row| row.structured_data_count.to_string(),
+    },
+    CsvColumn {
+        name: "http_headers",
+        extract: |row| row.http_headers_str.clone(),
+    },
+    CsvColumn {
+        name: "http_header_count",
+        extract: |row| row.http_header_count.to_string(),
+    },
+    CsvColumn {
+        name: "security_headers",
+        extract: |row| row.security_headers_str.clone(),
+    },
+    CsvColumn {
+        name: "security_header_count",
+        extract: |row| row.security_header_count.to_string(),
+    },
+    CsvColumn {
+        name: "geoip_country_code",
+        extract: |row| row.geoip.country_code.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "geoip_country_name",
+        extract: |row| row.geoip.country_name.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "geoip_region",
+        extract: |row| row.geoip.region.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "geoip_city",
+        extract: |row| row.geoip.city.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "geoip_latitude",
+        extract: |row| {
+            row.geoip
+                .latitude
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        },
+    },
+    CsvColumn {
+        name: "geoip_longitude",
+        extract: |row| {
+            row.geoip
+                .longitude
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        },
+    },
+    CsvColumn {
+        name: "geoip_asn",
+        extract: |row| row.geoip.asn.map(|v| v.to_string()).unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "geoip_asn_org",
+        extract: |row| row.geoip.asn_org.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "whois_registrar",
+        extract: |row| row.whois.registrar.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "whois_creation_date",
+        extract: |row| format_date(row.whois.creation_date_ms),
+    },
+    CsvColumn {
+        name: "whois_expiration_date",
+        extract: |row| format_date(row.whois.expiration_date_ms),
+    },
+    CsvColumn {
+        name: "whois_registrant_country",
+        extract: |row| row.whois.registrant_country.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "favicon_hash",
+        extract: |row| row.favicon_hash.map(|h| h.to_string()).unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "favicon_url",
+        extract: |row| row.favicon_url.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "timestamp",
+        extract: |row| row.main.timestamp.to_string(),
+    },
+    CsvColumn {
+        name: "run_id",
+        extract: |row| row.main.run_id.clone().unwrap_or_default(),
+    },
+    CsvColumn {
+        name: "nameservers",
+        extract: format_nameservers,
+    },
+    CsvColumn {
+        name: "txt_records",
+        extract: format_txt_records,
+    },
+    CsvColumn {
+        name: "mx_records",
+        extract: format_mx_records,
+    },
+    CsvColumn {
+        name: "structured_data_entries",
+        extract: format_structured_data_entries,
+    },
+    CsvColumn {
+        name: "social_media_identifiers",
+        extract: format_social_media_identifiers,
+    },
+    CsvColumn {
+        name: "partial_failure_count",
+        extract: |row| row.partial_failures.len().to_string(),
+    },
+    CsvColumn {
+        name: "partial_failures",
+        extract: format_partial_failures,
+    },
+    CsvColumn {
+        name: "contact_links",
+        extract: format_contact_links,
+    },
+    CsvColumn {
+        name: "contact_link_count",
+        extract: |row| row.contact_link_count.to_string(),
+    },
+    CsvColumn {
+        name: "exposed_secrets",
+        extract: format_exposed_secrets,
+    },
+    CsvColumn {
+        name: "exposed_secret_count",
+        extract: |row| row.exposed_secret_count.to_string(),
+    },
+];
+
+/// Column names derived from [`CSV_COLUMN_DEFS`] (same order as cell extractors).
+pub(crate) fn csv_column_names() -> impl Iterator<Item = &'static str> {
+    CSV_COLUMN_DEFS.iter().map(|c| c.name)
+}
+
+fn csv_record_cells(row: &ExportRow) -> Vec<String> {
+    CSV_COLUMN_DEFS.iter().map(|c| (c.extract)(row)).collect()
+}
 
 /// Format a timestamp (milliseconds since epoch) as a date string.
 fn format_date(ts_ms: Option<i64>) -> String {
@@ -20,6 +421,93 @@ fn format_date(ts_ms: Option<i64>) -> String {
         .and_then(|ts| chrono::DateTime::from_timestamp(ts / 1000, 0))
         .map(|dt| dt.format("%Y-%m-%d").to_string())
         .unwrap_or_default()
+}
+
+fn format_caa_records(row: &ExportRow) -> String {
+    row.caa_records
+        .iter()
+        .map(|r| format!("{}:{}:{}", r.flag, r.tag, r.value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_nameservers(row: &ExportRow) -> String {
+    row.nameservers
+        .iter()
+        .map(|ns| ns.nameserver.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_txt_records(row: &ExportRow) -> String {
+    row.txt_records
+        .iter()
+        .map(|r| format!("{}|{}", r.record_type, r.record_value))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_mx_records(row: &ExportRow) -> String {
+    row.mx_records
+        .iter()
+        .map(|r| format!("{}:{}", r.priority, r.mail_exchange))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_structured_data_entries(row: &ExportRow) -> String {
+    row.structured_data_entries
+        .iter()
+        .map(|e| format!("{}|{}|{}", e.data_type, e.property_name, e.property_value))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_social_media_identifiers(row: &ExportRow) -> String {
+    row.social_media_links
+        .iter()
+        .filter_map(|l| {
+            l.identifier
+                .as_ref()
+                .map(|id| format!("{}:{}", l.platform, id))
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_partial_failures(row: &ExportRow) -> String {
+    row.partial_failures
+        .iter()
+        .map(|f| format!("{}|{}", f.error_type, f.error_message))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_contact_links(row: &ExportRow) -> String {
+    row.contact_links
+        .iter()
+        .map(|c| format!("{}:{}", c.contact_type, c.contact_value))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_exposed_secrets(row: &ExportRow) -> String {
+    row.exposed_secrets
+        .iter()
+        .map(|s| {
+            let base = format!(
+                "[{}] {}|{}|{}",
+                s.severity, s.secret_type, s.location, s.matched_value
+            );
+            match (&s.jwt_algorithm, &s.jwt_issuer) {
+                (Some(alg), Some(iss)) => format!("{base}|alg={alg}|iss={iss}"),
+                (Some(alg), None) => format!("{base}|alg={alg}"),
+                (None, Some(iss)) => format!("{base}|iss={iss}"),
+                (None, None) => base,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Exports data to CSV format.
@@ -62,7 +550,6 @@ fn format_date(ts_ms: Option<i64>) -> String {
 ///
 /// # Errors
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
-#[allow(clippy::too_many_lines)] // Sequential export: DB setup, query, ~80 CSV columns written in order
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let pool = init_db_pool_with_path(&opts.db_path, 5)
         .await
@@ -86,103 +573,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         Writer::from_writer(Box::new(IgnoreBrokenPipe::new(io::stdout())) as Box<dyn Write>)
     };
 
-    // Write CSV header
-    writer.write_record([
-        "url",
-        "initial_domain",
-        "final_domain",
-        "initial_url",
-        "final_url",
-        "ip_address",
-        "reverse_dns",
-        "status",
-        "status_description",
-        "response_time_ms",
-        "title",
-        "keywords",
-        "description",
-        "meta_robots",
-        "is_mobile_friendly",
-        "body_sha256",
-        "content_length",
-        "http_version",
-        "body_word_count",
-        "body_line_count",
-        "content_type",
-        "canonical_url",
-        "body_truncated",
-        "redirect_count",
-        "final_redirect_url",
-        "technologies",
-        "technology_categories",
-        "technology_count",
-        "tls_version",
-        "ssl_cert_subject",
-        "ssl_cert_issuer",
-        "ssl_cert_valid_to",
-        "cipher_suite",
-        "key_algorithm",
-        "cert_fingerprint_sha256",
-        "certificate_sans",
-        "certificate_san_count",
-        "oids",
-        "oid_count",
-        "nameserver_count",
-        "txt_record_count",
-        "mx_record_count",
-        "cname_records",
-        "cname_count",
-        "ipv6_addresses",
-        "ipv6_count",
-        "caa_records",
-        "caa_count",
-        "spf_record",
-        "dmarc_record",
-        "analytics_ids",
-        "analytics_count",
-        "social_media_links",
-        "social_media_count",
-        "security_warnings",
-        "security_warning_count",
-        "structured_data_types",
-        "structured_data_count",
-        "http_headers",
-        "http_header_count",
-        "security_headers",
-        "security_header_count",
-        "geoip_country_code",
-        "geoip_country_name",
-        "geoip_region",
-        "geoip_city",
-        "geoip_latitude",
-        "geoip_longitude",
-        "geoip_asn",
-        "geoip_asn_org",
-        "whois_registrar",
-        "whois_creation_date",
-        "whois_expiration_date",
-        "whois_registrant_country",
-        "favicon_hash",
-        "favicon_url",
-        "timestamp",
-        "run_id",
-        // New columns: actual DNS records
-        "nameservers",
-        "txt_records",
-        "mx_records",
-        // New columns: detailed structured data
-        "structured_data_entries",
-        // New columns: social media identifiers
-        "social_media_identifiers",
-        // New columns: partial failures
-        "partial_failure_count",
-        "partial_failures",
-        // New columns: contact links and exposed secrets
-        "contact_links",
-        "contact_link_count",
-        "exposed_secrets",
-        "exposed_secret_count",
-    ])?;
+    writer.write_record(csv_column_names().collect::<Vec<_>>())?;
 
     let query = query_builder.build();
     let mut rows = query.fetch(pool.as_ref());
@@ -190,218 +581,9 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let mut record_count = 0;
 
     while let Some(row) = rows.try_next().await? {
-        // Extract main row data and build the complete export row
         let main = extract_main_row_data(&row);
         let export_row = build_export_row(&pool, main, opts.include_implied_tech).await?;
-
-        // Build URL. `final_redirect_url` mirrors JSONL: empty when redirect_count == 0
-        // (no redirects means there is no "final redirect" to report), never a fallback
-        // to final_domain — callers that want the effective URL already have `final_domain`.
-        let url = build_url(&export_row.main.final_domain);
-        let final_redirect_url = export_row.final_redirect_url.clone();
-
-        // Write CSV row
-        writer.write_record(&[
-            url,
-            export_row.main.initial_domain.clone(),
-            export_row.main.final_domain.clone(),
-            export_row.main.initial_url.clone().unwrap_or_default(),
-            export_row.main.final_url.clone().unwrap_or_default(),
-            export_row.main.ip_address.clone(),
-            export_row.main.reverse_dns.clone().unwrap_or_default(),
-            export_row.main.status.to_string(),
-            export_row.main.status_desc.clone(),
-            format!("{:.2}", export_row.main.response_time),
-            export_row.main.title.clone(),
-            export_row.main.keywords.clone().unwrap_or_default(),
-            export_row.main.description.clone().unwrap_or_default(),
-            export_row.main.meta_robots.clone().unwrap_or_default(),
-            if export_row.main.is_mobile_friendly {
-                "true"
-            } else {
-                "false"
-            }
-            .to_string(),
-            export_row.main.body_sha256.clone().unwrap_or_default(),
-            export_row
-                .main
-                .content_length
-                .map_or(String::new(), |v| v.to_string()),
-            export_row.main.http_version.clone().unwrap_or_default(),
-            export_row
-                .main
-                .body_word_count
-                .map_or(String::new(), |v| v.to_string()),
-            export_row
-                .main
-                .body_line_count
-                .map_or(String::new(), |v| v.to_string()),
-            export_row.main.content_type.clone().unwrap_or_default(),
-            export_row.main.canonical_url.clone().unwrap_or_default(),
-            if export_row.main.body_truncated {
-                "true"
-            } else {
-                "false"
-            }
-            .to_string(),
-            export_row.redirect_count.to_string(),
-            final_redirect_url,
-            export_row.technologies_str.clone(),
-            export_row.technology_categories_str.clone(),
-            export_row.technology_count.to_string(),
-            export_row.main.tls_version.clone().unwrap_or_default(),
-            export_row.main.ssl_cert_subject.clone().unwrap_or_default(),
-            export_row.main.ssl_cert_issuer.clone().unwrap_or_default(),
-            format_date(export_row.main.ssl_cert_valid_to_ms),
-            export_row.main.cipher_suite.clone().unwrap_or_default(),
-            export_row.main.key_algorithm.clone().unwrap_or_default(),
-            export_row
-                .main
-                .cert_fingerprint_sha256
-                .clone()
-                .unwrap_or_default(),
-            export_row.certificate_sans_str.clone(),
-            export_row.certificate_san_count.to_string(),
-            export_row.oids_str.clone(),
-            export_row.oid_count.to_string(),
-            export_row.nameserver_count.to_string(),
-            export_row.txt_count.to_string(),
-            export_row.mx_count.to_string(),
-            export_row.cname_records.join(", "),
-            export_row.cname_count.to_string(),
-            export_row.ipv6_addresses.join(", "),
-            export_row.ipv6_count.to_string(),
-            export_row
-                .caa_records
-                .iter()
-                .map(|r| format!("{}:{}:{}", r.flag, r.tag, r.value))
-                .collect::<Vec<_>>()
-                .join(", "),
-            export_row.caa_count.to_string(),
-            export_row.main.spf_record.clone().unwrap_or_default(),
-            export_row.main.dmarc_record.clone().unwrap_or_default(),
-            export_row.analytics_ids_str.clone(),
-            export_row.analytics_count.to_string(),
-            export_row.social_media_links_str.clone(),
-            export_row.social_media_count.to_string(),
-            export_row.security_warnings_str.clone(),
-            export_row.security_warning_count.to_string(),
-            export_row.structured_data_types_str.clone(),
-            export_row.structured_data_count.to_string(),
-            export_row.http_headers_str.clone(),
-            export_row.http_header_count.to_string(),
-            export_row.security_headers_str.clone(),
-            export_row.security_header_count.to_string(),
-            export_row.geoip.country_code.clone().unwrap_or_default(),
-            export_row.geoip.country_name.clone().unwrap_or_default(),
-            export_row.geoip.region.clone().unwrap_or_default(),
-            export_row.geoip.city.clone().unwrap_or_default(),
-            export_row
-                .geoip
-                .latitude
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
-            export_row
-                .geoip
-                .longitude
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
-            export_row
-                .geoip
-                .asn
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
-            export_row.geoip.asn_org.clone().unwrap_or_default(),
-            export_row.whois.registrar.clone().unwrap_or_default(),
-            format_date(export_row.whois.creation_date_ms),
-            format_date(export_row.whois.expiration_date_ms),
-            export_row
-                .whois
-                .registrant_country
-                .clone()
-                .unwrap_or_default(),
-            export_row
-                .favicon_hash
-                .map(|h| h.to_string())
-                .unwrap_or_default(),
-            export_row.favicon_url.clone().unwrap_or_default(),
-            export_row.main.timestamp.to_string(),
-            export_row.main.run_id.clone().unwrap_or_default(),
-            // New columns: actual DNS records
-            export_row
-                .nameservers
-                .iter()
-                .map(|ns| ns.nameserver.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            export_row
-                .txt_records
-                .iter()
-                .map(|r| format!("{}|{}", r.record_type, r.record_value))
-                .collect::<Vec<_>>()
-                .join(","),
-            export_row
-                .mx_records
-                .iter()
-                .map(|r| format!("{}:{}", r.priority, r.mail_exchange))
-                .collect::<Vec<_>>()
-                .join(","),
-            // New columns: detailed structured data
-            export_row
-                .structured_data_entries
-                .iter()
-                .map(|e| format!("{}|{}|{}", e.data_type, e.property_name, e.property_value))
-                .collect::<Vec<_>>()
-                .join(","),
-            // New columns: social media identifiers
-            export_row
-                .social_media_links
-                .iter()
-                .filter_map(|l| {
-                    l.identifier
-                        .as_ref()
-                        .map(|id| format!("{}:{}", l.platform, id))
-                })
-                .collect::<Vec<_>>()
-                .join(","),
-            // New columns: partial failures
-            export_row.partial_failures.len().to_string(),
-            export_row
-                .partial_failures
-                .iter()
-                .map(|f| format!("{}|{}", f.error_type, f.error_message))
-                .collect::<Vec<_>>()
-                .join(","),
-            // New columns: contact links
-            export_row
-                .contact_links
-                .iter()
-                .map(|c| format!("{}:{}", c.contact_type, c.contact_value))
-                .collect::<Vec<_>>()
-                .join(","),
-            export_row.contact_link_count.to_string(),
-            // New columns: exposed secrets
-            export_row
-                .exposed_secrets
-                .iter()
-                .map(|s| {
-                    let base = format!(
-                        "[{}] {}|{}|{}",
-                        s.severity, s.secret_type, s.location, s.matched_value
-                    );
-                    // Append decoded JWT summary when available
-                    match (&s.jwt_algorithm, &s.jwt_issuer) {
-                        (Some(alg), Some(iss)) => format!("{base}|alg={alg}|iss={iss}"),
-                        (Some(alg), None) => format!("{base}|alg={alg}"),
-                        (None, Some(iss)) => format!("{base}|iss={iss}"),
-                        (None, None) => base,
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("; "),
-            export_row.exposed_secret_count.to_string(),
-        ])?;
-
+        writer.write_record(csv_record_cells(&export_row))?;
         record_count += 1;
     }
 

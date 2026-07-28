@@ -106,23 +106,13 @@ async fn test_pool_exhaustion_moderate() {
             let http_headers = std::collections::HashMap::new();
             let oids = std::collections::HashSet::new();
 
-            let result = insert_url_record(UrlRecordInsertParams {
-                pool: pool_clone.as_ref(),
-                record: &record,
-                security_headers: &security_headers,
-                http_headers: &http_headers,
-                oids: &oids,
-                redirect_chain: &[],
-                technologies: &[],
-                subject_alternative_names: &[],
-                cname_records: None,
-                aaaa_records: None,
-                caa_records: None,
-                csp_domains: &[],
-                cookies: &[],
-                resource_hints: &[],
-                body_domains: &[],
-            })
+            let result = insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                pool_clone.as_ref(),
+                &record,
+                &security_headers,
+                &http_headers,
+                &oids,
+            ))
             .await;
 
             let elapsed = worker_start.elapsed();
@@ -237,23 +227,13 @@ async fn test_pool_exhaustion_severe() {
             let http_headers = std::collections::HashMap::new();
             let oids = std::collections::HashSet::new();
 
-            let result = insert_url_record(UrlRecordInsertParams {
-                pool: pool_clone.as_ref(),
-                record: &record,
-                security_headers: &security_headers,
-                http_headers: &http_headers,
-                oids: &oids,
-                redirect_chain: &[],
-                technologies: &[],
-                subject_alternative_names: &[],
-                cname_records: None,
-                aaaa_records: None,
-                caa_records: None,
-                csp_domains: &[],
-                cookies: &[],
-                resource_hints: &[],
-                body_domains: &[],
-            })
+            let result = insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                pool_clone.as_ref(),
+                &record,
+                &security_headers,
+                &http_headers,
+                &oids,
+            ))
             .await;
 
             let elapsed = worker_start.elapsed();
@@ -381,23 +361,13 @@ async fn test_pool_exhaustion_extreme() {
             let http_headers = std::collections::HashMap::new();
             let oids = std::collections::HashSet::new();
 
-            let result = insert_url_record(UrlRecordInsertParams {
-                pool: pool_clone.as_ref(),
-                record: &record,
-                security_headers: &security_headers,
-                http_headers: &http_headers,
-                oids: &oids,
-                redirect_chain: &[],
-                technologies: &[],
-                subject_alternative_names: &[],
-                cname_records: None,
-                aaaa_records: None,
-                caa_records: None,
-                csp_domains: &[],
-                cookies: &[],
-                resource_hints: &[],
-                body_domains: &[],
-            })
+            let result = insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+                pool_clone.as_ref(),
+                &record,
+                &security_headers,
+                &http_headers,
+                &oids,
+            ))
             .await;
 
             let elapsed = worker_start.elapsed();
