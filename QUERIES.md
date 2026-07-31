@@ -415,17 +415,33 @@ WHERE tls_version IS NULL
 ORDER BY final_domain;
 ```
 
-### 30. Find domains with security warnings
+### 30. Security signals (formerly `url_security_warnings`)
+
+`url_security_warnings` was removed in migration 0012. Use fact columns instead:
 
 ```sql
-SELECT
-    us.initial_domain,
-    us.final_domain,
-    usw.warning_code,
-    usw.warning_description
-FROM url_status us
-JOIN url_security_warnings usw ON us.id = usw.url_status_id
-ORDER BY us.final_domain, usw.warning_code;
+-- No HTTPS
+SELECT initial_domain, final_domain, final_url
+FROM url_status
+WHERE final_url NOT LIKE 'https://%'
+ORDER BY final_domain;
+
+-- Weak TLS
+SELECT initial_domain, final_domain, tls_version
+FROM url_status
+WHERE tls_version IS NOT NULL
+  AND tls_version NOT IN ('TLS 1.2', 'TLS 1.3', 'TLSv1.2', 'TLSv1.3')
+ORDER BY final_domain;
+
+-- Suspicious / invalid-looking certificates
+SELECT initial_domain, final_domain,
+       cert_is_self_signed, cert_is_mismatched, ssl_cert_valid_to_ms
+FROM url_status
+WHERE cert_is_self_signed = 1
+   OR cert_is_mismatched = 1
+   OR (ssl_cert_valid_to_ms IS NOT NULL
+       AND ssl_cert_valid_to_ms < (CAST(strftime('%s','now') AS INTEGER) * 1000))
+ORDER BY final_domain;
 ```
 
 ### 31. Find exposed secrets (sorted by severity)
@@ -592,7 +608,7 @@ Queries were run against a SQLite DB via the SQLite MCP. Failures are due to **s
 | 38  | **FAIL** | `no such table: url_jwt_claims` — table created in **0008_jwt_claims.sql**. |
 | 39  | **FAIL** | `no such table: url_jwt_claims` — same as 38. |
 
-**Summary:** All failures are from running against a DB that has not had the full migration set applied. The queries are correct for the current schema. Apply migrations through `0011_high_value_capture.sql` (full set `0001`–`0011`) and all 39 queries should run.
+**Summary:** All failures are from running against a DB that has not had the full migration set applied. The queries are correct for the current schema. Apply migrations through `0012_drop_deprecated_satellites.sql` (full set `0001`–`0012`) and all 39 queries should run.
 
 ## Tips
 

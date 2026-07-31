@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-07-31
+
+### Removed
+- Tables `url_security_warnings`, `url_body_domains`, and `url_failure_request_headers` (migration `0012_drop_deprecated_satellites.sql`). Derive former security-warning signals from `url_status` / `url_security_headers` (see DATABASE.md / QUERIES.md §30).
+- Export columns `security_warnings` and `security_warning_count` (**breaking** for consumers of those fields).
+- `analyze_security` / `SecurityWarning` analysis path (findings were only persisted to the dropped table).
+
 ### Added
 - Shared cache root (`--cache-dir` / `DOMAIN_STATUS_CACHE_DIR` / platform cache dir + `domain_status/`) for fingerprints, GeoIP, WHOIS, and User-Agent data.
 - `--no-whois` to force-disable WHOIS when enabled via TOML/env.
@@ -297,7 +304,8 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.26...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.27...HEAD
+[0.1.27]: https://github.com/alexwoolford/domain_status/compare/v0.1.26...v0.1.27
 [0.1.26]: https://github.com/alexwoolford/domain_status/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/alexwoolford/domain_status/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/alexwoolford/domain_status/compare/v0.1.23...v0.1.24

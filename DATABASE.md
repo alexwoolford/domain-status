@@ -3,7 +3,7 @@
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
 The schema is created by migrations (`migrations/0001_initial_schema.sql` through
-`migrations/0011_high_value_capture.sql`) and follows a simple pattern:
+`migrations/0012_drop_deprecated_satellites.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
@@ -35,7 +35,6 @@ erDiagram
     url_status ||--o{ url_structured_data : has
     url_status ||--o{ url_social_media_links : has
     url_status ||--o{ url_analytics_ids : has
-    url_status ||--o{ url_security_warnings : has
     url_status ||--o| url_favicons : has
     url_status ||--o{ url_contact_links : has
     url_status ||--o{ url_exposed_secrets : has
@@ -47,13 +46,11 @@ erDiagram
     url_status ||--o{ url_cookies : has
     url_status ||--o{ url_resource_hints : has
     url_status ||--o{ url_script_hosts : has
-    url_status ||--o{ url_body_domains : has
 
     url_exposed_secrets ||--o| url_jwt_claims : has
 
     url_failures ||--o{ url_failure_redirect_chain : has
     url_failures ||--o{ url_failure_response_headers : has
-    url_failures ||--o{ url_failure_request_headers : has
 ```
 
 ## Core Tables
@@ -188,7 +185,6 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
 | `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload (`hint_type` stored lowercase) | `hint_type`, `href` |
 | `url_script_hosts` | Unique hosts from `<script src>` (resolved against final URL) | `host`, `registrable_domain`, `is_first_party` |
-| `url_body_domains` | **Deprecated — no longer populated.** Table retained for old DBs. Prefer `url_csp_domains`, `url_analytics_ids`, `url_social_media_links`. | `fqdn`, `registrable_domain` |
 
 > **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
 > a zone apex (e.g. `example.com`), so this table is typically empty for
@@ -217,7 +213,6 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_social_media_links` | Social profile links | `platform`, `profile_url`, `identifier` |
 | `url_analytics_ids` | Analytics/tracking IDs | `provider`, `tracking_id` |
 | `url_contact_links` | `mailto:` and `tel:` links | `contact_type`, `contact_value`, `raw_href` |
-| `url_security_warnings` | Real, observed security issues only — see note below | `warning_code`, `warning_description` |
 | `url_technologies` | Directly observed fingerprint matches. `HTTP/3` and `HSTS` are **not** inserted (use headers / `http_version` / TLS). Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
 | `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `id`, `exposed_secret_id`, `header_json`, `payload_json`, `algorithm`, `token_type`, `issuer`, `subject`, `audience`, `expiration_ms`, `issued_at_ms`, `not_before_ms`, `jwt_id` |
@@ -230,7 +225,6 @@ These tables hang off `url_failures.id`:
 |------|---------|
 | `url_failure_redirect_chain` | Redirect history captured before failure |
 | `url_failure_response_headers` | Response headers observed before failure |
-| `url_failure_request_headers` | **Deprecated — no longer written** on new failures (echo of scanner outbound headers). Table retained for old DBs. |
 
 ## Relationship Semantics
 
@@ -254,19 +248,26 @@ The current `url_whois` schema uses:
 
 These names replace older or more ambiguous variants that may appear in stale docs or old queries.
 
-### Security warnings
+### Security signals (no dedicated warnings table)
 
-`url_security_warnings` only stores warnings for issues actually observed on the
-target: `no_https`, `weak_tls`, and `invalid_certificate`. It does **not** store a
-"missing header" finding for absent `Strict-Transport-Security`,
-`Content-Security-Policy`, `X-Content-Type-Options`, or `X-Frame-Options` headers —
-those are checklist/absence checks, not evidence of a problem, and every plain site
-without those headers would otherwise produce the same four rows, drowning out the
-warnings that represent something actually wrong. Header presence is fully
-queryable without a precomputed warning: absence of a given `header_name` for a
-`url_status_id` in `url_security_headers` **is** the "missing header" signal, e.g.:
+As of migration **0012** / v0.1.27, `url_security_warnings` is dropped. Derive
+equivalent signals from fact columns and headers:
+
+| Former warning | Query substitute |
+|----------------|------------------|
+| `no_https` | `final_url` (or `initial_url`) not starting with `https://` |
+| `weak_tls` | `tls_version` in weak set (`TLS 1.0`, `TLS 1.1`, `SSL 3.0`, …) |
+| `invalid_certificate` | `cert_is_self_signed`, `cert_is_mismatched`, or expired `ssl_cert_valid_to_ms` |
+| Missing HSTS/CSP/… | Absence of `header_name` in `url_security_headers` for that `url_status_id` |
 
 ```sql
+-- Sites not on HTTPS
+SELECT final_domain, final_url
+FROM url_status
+WHERE final_url NOT LIKE 'https://%'
+ORDER BY final_domain;
+
+-- Missing Strict-Transport-Security
 SELECT s.final_domain
 FROM url_status s
 WHERE NOT EXISTS (
@@ -276,27 +277,18 @@ WHERE NOT EXISTS (
 ```
 
 The raw `Strict-Transport-Security` header value (when present) is stored verbatim
-in `url_security_headers`, e.g. `max-age=31536000; includeSubDomains; preload`. Its
-`max-age` / `includeSubDomains` / `preload` directives aren't broken out into
-separate columns (to avoid schema churn for a header most sites don't send), but
-they're straightforward to parse from that single value if needed for analysis.
+in `url_security_headers`, e.g. `max-age=31536000; includeSubDomains; preload`.
 
-### Legacy databases (pre–data-capture cleanup)
+### Legacy databases (pre–0012 / pre–data-capture cleanup)
 
-Scans produced with **v0.1.26 and earlier** may still contain:
+Scans produced with **v0.1.26 and earlier** may still contain (until migrated):
 
-- `missing_csp` / `missing_hsts` / `missing_frame_options` / `missing_content_type_options` in `url_security_warnings` (checklist noise). Filter with:
-
-```sql
-SELECT * FROM url_security_warnings
-WHERE warning_code NOT LIKE 'missing_%';
-```
-
+- Rows in `url_security_warnings`, `url_body_domains`, and `url_failure_request_headers`
+  (dropped by migration `0012_drop_deprecated_satellites.sql`).
 - Empty TLS on rows whose `ip_address` is IPv6 (no IPv4 fallback yet). Prefer newer binaries for dual-stack cert coverage.
-- Populated `keywords`, `body_word_count` / `body_line_count`, `url_body_domains`, favicon `base64_data`, and `url_failure_request_headers`.
+- Populated `keywords`, `body_word_count` / `body_line_count`, and favicon `base64_data`.
 
 Optional maintenance to reclaim disk from old favicon payloads:
-
 ```sql
 UPDATE url_favicons SET base64_data = NULL WHERE base64_data IS NOT NULL AND base64_data != '';
 VACUUM;

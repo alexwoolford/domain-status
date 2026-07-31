@@ -136,7 +136,6 @@ mod tests {
             meta_refresh_url: None,
             meta_robots: None,
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
         }
     }
 

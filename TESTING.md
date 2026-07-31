@@ -118,7 +118,7 @@ Optional: add `--status-port 8080` to exercise the status server during the run 
 - **Satellite tables:** At least some rows in `url_technologies`, `url_whois` (where WHOIS succeeded), and optionally `url_exposed_secrets`; `url_exposed_secrets.secret_type` uses gitleaks-style rule ids. Spot-check `url_geoip`, `url_nameservers`, `url_txt_records`, `url_mx_records`, `url_security_headers` where applicable.
 - **Timings:** `runs.elapsed_seconds` and `url_status.response_time_seconds` present and sensible; no null/negative where NOT NULL.
 
-Reference: [DATABASE.md](DATABASE.md) and `migrations/` (`0001`–`0011`) for schema.
+Reference: [DATABASE.md](DATABASE.md) and `migrations/` (`0001`–`0012`) for schema.
 
 **3. Export format validation**
 

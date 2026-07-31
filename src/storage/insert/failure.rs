@@ -17,7 +17,7 @@ use super::utils::insert_key_value_batch;
 /// This prevents failures when the database is temporarily unavailable due to high concurrency.
 ///
 /// This function inserts the main failure record and all associated satellite data
-/// (redirect chain, response headers, request headers) in a transaction.
+/// (redirect chain, response headers) in a transaction.
 ///
 /// # Arguments
 ///
@@ -115,57 +115,10 @@ async fn insert_failure_response_headers(
     })
 }
 
-/// Inserts request headers for a failure record.
-///
-/// # Arguments
-///
-/// * `tx` - Database transaction
-/// * `failure_id` - The ID of the failure record
-/// * `request_headers` - Vector of (`header_name`, `header_value`) tuples
-///
-/// # Returns
-///
-/// `Ok(())` if successful, `DatabaseError` if insertion fails
-/// Inserts request headers into `url_failure_request_headers` table.
-///
-/// Retained for schema/back-compat tooling; new failures no longer call this
-/// (outbound request headers are low-value once the scanner UA is known).
-#[allow(dead_code)]
-async fn insert_failure_request_headers(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    failure_id: i64,
-    request_headers: &[(String, String)],
-) -> Result<(), DatabaseError> {
-    if request_headers.is_empty() {
-        return Ok(());
-    }
-
-    insert_key_value_batch(
-        tx,
-        "url_failure_request_headers",
-        "url_failure_id",
-        "header_name",
-        "header_value",
-        failure_id,
-        request_headers,
-        Some("ON CONFLICT(url_failure_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
-    )
-    .await
-    .map_err(|e| {
-        log::error!(
-            "Failed to insert {} request headers for failure_id {}: {}",
-            request_headers.len(),
-            failure_id,
-            e
-        );
-        DatabaseError::SqlError(e)
-    })
-}
-
 /// Inserts all satellite data for a failure record.
 ///
-/// This function inserts redirect chain, response headers, and request headers
-/// within a transaction. All inserts must succeed or the transaction is rolled back.
+/// This function inserts redirect chain and response headers within a transaction.
+/// All inserts must succeed or the transaction is rolled back.
 ///
 /// # Arguments
 ///
@@ -187,8 +140,8 @@ async fn insert_failure_satellite_data(
     // Insert response headers
     insert_failure_response_headers(tx, failure_id, &failure.response_headers).await?;
 
-    // Request headers are no longer persisted (echo of our outbound UA/headers).
-    // Table retained for old DBs; skip insert on new failures.
+    // Request headers (echo of our outbound UA/headers) are no longer persisted;
+    // `url_failure_request_headers` was dropped (migration 0012).
 
     Ok(())
 }
@@ -498,20 +451,6 @@ mod tests {
             "Content-Type"
         );
         assert_eq!(response_rows[1].get::<String, _>("header_name"), "Server");
-
-        // Request headers are no longer persisted on new failures.
-        let request_rows = sqlx::query(
-            "SELECT header_name, header_value FROM url_failure_request_headers WHERE url_failure_id = ? ORDER BY header_name",
-        )
-        .bind(failure_id)
-        .fetch_all(&pool)
-        .await
-        .expect("Failed to fetch request headers");
-
-        assert!(
-            request_rows.is_empty(),
-            "url_failure_request_headers should not be written for new failures"
-        );
     }
 
     #[tokio::test]
@@ -877,65 +816,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_failure_request_headers_helper_conflict_handling() {
-        // Helper retained for back-compat; verify ON CONFLICT DO UPDATE still works if called.
-        let pool = create_test_pool().await;
-        create_test_run(&pool, "test-run-req-headers", 1704067200000i64).await;
-
-        let failure = UrlFailureRecord {
-            url: "http://example.com".to_string(),
-            final_url: None,
-            domain: "example.com".to_string(),
-            final_domain: None,
-            error_type: ErrorType::HttpRequestOtherError,
-            error_message: "Test error".to_string(),
-            http_status: None,
-            retry_count: 0,
-            elapsed_time_seconds: None,
-            timestamp: 1704067200000,
-            run_id: Some("test-run-req-headers".to_string()),
-            redirect_chain: vec![],
-            response_headers: vec![],
-            request_headers: vec![],
-        };
-
-        let failure_id = insert_url_failure(&pool, &failure).await.expect("insert");
-
-        let mut tx = pool.begin().await.expect("begin");
-        insert_failure_request_headers(
-            &mut tx,
-            failure_id,
-            &[
-                ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
-                ("User-Agent".to_string(), "Chrome/91.0".to_string()),
-            ],
-        )
-        .await
-        .expect("insert request headers");
-        tx.commit().await.expect("commit");
-
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM url_failure_request_headers WHERE url_failure_id = ? AND header_name = 'User-Agent'",
-        )
-        .bind(failure_id)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to count User-Agent headers");
-
-        assert_eq!(count, 1);
-
-        let row = sqlx::query(
-            "SELECT header_value FROM url_failure_request_headers WHERE url_failure_id = ? AND header_name = 'User-Agent'",
-        )
-        .bind(failure_id)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to fetch User-Agent header");
-
-        assert_eq!(row.get::<String, _>("header_value"), "Chrome/91.0");
-    }
-
-    #[tokio::test]
     async fn test_insert_url_failure_all_satellite_data_empty() {
         // Test that all satellite data being empty is handled correctly
         // This is critical - edge case where no satellite data exists
@@ -981,16 +861,7 @@ mod tests {
         .await
         .expect("Failed to count response headers");
 
-        let request_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM url_failure_request_headers WHERE url_failure_id = ?",
-        )
-        .bind(failure_id)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to count request headers");
-
         assert_eq!(redirect_count, 0);
         assert_eq!(response_count, 0);
-        assert_eq!(request_count, 0);
     }
 }

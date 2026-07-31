@@ -13,7 +13,6 @@ use std::collections::HashSet;
 
 use crate::geoip::GeoIpResult;
 use crate::parse::{AnalyticsId, ContactLink, ExposedSecret, SocialMediaLink, StructuredData};
-use crate::security::SecurityWarning;
 use crate::whois::WhoisResult;
 
 use crate::storage::models::{UrlPartialFailureRecord, UrlRecord};
@@ -36,7 +35,6 @@ pub struct BatchRecord {
     pub social_media_links: Vec<SocialMediaLink>,
     pub contact_links: Vec<ContactLink>,
     pub exposed_secrets: Vec<ExposedSecret>,
-    pub security_warnings: Vec<SecurityWarning>,
     pub whois: Option<WhoisResult>,
     pub partial_failures: Vec<UrlPartialFailureRecord>, // DNS/TLS errors that didn't prevent processing
     pub favicon: Option<crate::fetch::favicon::FaviconData>, // Favicon hash + base64 for Shodan-compatible threat intel
@@ -46,7 +44,6 @@ pub struct BatchRecord {
     pub csp_domains: Vec<(String, String, Option<String>)>, // (directive, fqdn, registrable_domain)
     pub cookies: Vec<CookieInfo>,
     pub resource_hints: Vec<(String, String)>, // (hint_type, href); hint_type: preconnect/dns-prefetch/preload/prefetch/modulepreload
-    pub body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain)
     /// Unique hosts from `<script src>` (resolved against final URL)
     pub script_hosts: Vec<ScriptHostInfo>,
 }
