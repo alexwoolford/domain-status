@@ -34,10 +34,6 @@ pub struct EnrichmentInsertSummary {
     pub social_media_inserted: bool,
     /// Whether social media links insertion failed
     pub social_media_failed: bool,
-    /// Whether security warnings were successfully inserted
-    pub security_warnings_inserted: bool,
-    /// Whether security warnings insertion failed
-    pub security_warnings_failed: bool,
     /// Whether WHOIS data was successfully inserted
     pub whois_inserted: bool,
     /// Whether WHOIS data insertion failed
@@ -67,7 +63,6 @@ impl EnrichmentInsertSummary {
             + usize::from(self.geoip_failed)
             + usize::from(self.structured_data_failed)
             + usize::from(self.social_media_failed)
-            + usize::from(self.security_warnings_failed)
             + usize::from(self.whois_failed)
             + usize::from(self.analytics_ids_failed)
             + usize::from(self.favicon_failed)
@@ -123,7 +118,7 @@ pub async fn insert_batch_record(
     // Log summary if there were any failures (for monitoring/debugging)
     if enrichment_summary.has_failures() {
         log::warn!(
-            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, contact_links={}, exposed_secrets={}, security_warnings={}, whois={}, analytics_ids={}, favicon={}",
+            "Enrichment data insertion completed with {} failures for url_status_id {} (domain: {}): partial_failures={}/{}, geoip={}, structured_data={}, social_media={}, contact_links={}, exposed_secrets={}, whois={}, analytics_ids={}, favicon={}",
             enrichment_summary.total_failures(),
             url_status_id,
             domain,
@@ -134,7 +129,6 @@ pub async fn insert_batch_record(
             if enrichment_summary.social_media_inserted { "ok" } else if enrichment_summary.social_media_failed { "failed" } else { "n/a" },
             if enrichment_summary.contact_links_inserted { "ok" } else if enrichment_summary.contact_links_failed { "failed" } else { "n/a" },
             if enrichment_summary.exposed_secrets_inserted { "ok" } else if enrichment_summary.exposed_secrets_failed { "failed" } else { "n/a" },
-            if enrichment_summary.security_warnings_inserted { "ok" } else if enrichment_summary.security_warnings_failed { "failed" } else { "n/a" },
             if enrichment_summary.whois_inserted { "ok" } else if enrichment_summary.whois_failed { "failed" } else { "n/a" },
             if enrichment_summary.analytics_ids_inserted { "ok" } else if enrichment_summary.analytics_ids_failed { "failed" } else { "n/a" },
             if enrichment_summary.favicon_inserted { "ok" } else if enrichment_summary.favicon_failed { "failed" } else { "n/a" }
@@ -247,33 +241,6 @@ async fn insert_social_media_enrichment(
                 summary.social_media_failed = true;
                 log::warn!(
                     "Failed to insert social media links for url_status_id {url_status_id}: {e}"
-                );
-            }
-        }
-    }
-}
-
-/// Inserts security warnings for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `security_warnings` - Vector of security warnings
-/// * `summary` - Summary to update with insertion results
-async fn insert_security_warnings_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    security_warnings: &[crate::security::SecurityWarning],
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if !security_warnings.is_empty() {
-        match insert::insert_security_warnings(pool, url_status_id, security_warnings).await {
-            Ok(()) => summary.security_warnings_inserted = true,
-            Err(e) => {
-                summary.security_warnings_failed = true;
-                log::warn!(
-                    "Failed to insert security warnings for url_status_id {url_status_id}: {e}"
                 );
             }
         }
@@ -452,13 +419,6 @@ async fn insert_enrichment_data(
         &mut summary,
     )
     .await;
-    insert_security_warnings_enrichment(
-        pool,
-        url_status_id,
-        &record.security_warnings,
-        &mut summary,
-    )
-    .await;
     insert_whois_enrichment(pool, url_status_id, record.whois.as_ref(), &mut summary).await;
     insert_contact_links_enrichment(pool, url_status_id, &record.contact_links, &mut summary).await;
     insert_exposed_secrets_enrichment(pool, url_status_id, &record.exposed_secrets, &mut summary)
@@ -476,7 +436,6 @@ mod tests {
     use crate::parse::{
         AnalyticsId, AnalyticsProvider, SocialMediaLink, SocialPlatform, StructuredData,
     };
-    use crate::security::SecurityWarning;
     use crate::storage::models::UrlRecord;
     use crate::whois::WhoisResult;
     use chrono::{DateTime, NaiveDate};
@@ -546,7 +505,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
             favicon: None,
@@ -556,7 +514,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -629,7 +586,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
             favicon: None,
@@ -639,7 +595,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -761,7 +716,6 @@ mod tests {
             }],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![SecurityWarning::NoHttps],
             whois: Some(WhoisResult {
                 creation_date: Some(DateTime::from_timestamp(946684800, 0).unwrap()),
                 expiration_date: None,
@@ -781,7 +735,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -823,16 +776,6 @@ mod tests {
         .expect("Failed to count social media links");
         assert_eq!(social_count, 1);
 
-        // Verify security warnings
-        let security_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM url_security_warnings WHERE url_status_id = ?",
-        )
-        .bind(url_status_id)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to count security warnings");
-        assert_eq!(security_count, 1);
-
         // Verify WHOIS
         let whois_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM url_whois WHERE url_status_id = ?")
@@ -862,7 +805,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
             favicon: None,
@@ -872,7 +814,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -928,7 +869,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -950,7 +890,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![], // Empty for this test
             favicon: None,
@@ -960,7 +899,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -1008,7 +946,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
             favicon: None,
@@ -1018,7 +955,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -1064,7 +1000,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
             favicon: None,
@@ -1074,7 +1009,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -1107,7 +1041,6 @@ mod tests {
             social_media_links: vec![],
             contact_links: vec![],
             exposed_secrets: vec![],
-            security_warnings: vec![],
             whois: None,
             partial_failures: vec![],
             favicon: None,
@@ -1117,7 +1050,6 @@ mod tests {
             csp_domains: Vec::new(),
             cookies: Vec::new(),
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
             script_hosts: vec![],
         };
 
@@ -1135,14 +1067,13 @@ mod tests {
             geoip_failed: true,
             structured_data_failed: true,
             social_media_failed: false,
-            security_warnings_failed: true,
             whois_failed: false,
             analytics_ids_failed: true,
             ..Default::default()
         };
 
-        // Should count: 2 (partial) + 1 (geoip) + 1 (structured) + 1 (security) + 1 (analytics) = 6
-        assert_eq!(summary.total_failures(), 6);
+        // Should count: 2 (partial) + 1 (geoip) + 1 (structured) + 1 (analytics) = 5
+        assert_eq!(summary.total_failures(), 5);
     }
 
     #[test]
@@ -1190,13 +1121,12 @@ mod tests {
             geoip_failed: true,
             structured_data_failed: true,
             social_media_failed: true,
-            security_warnings_failed: true,
             whois_failed: true,
             analytics_ids_failed: true,
             ..Default::default()
         };
-        // Should count: 3 (partial) + 6 (all other types) = 9
-        assert_eq!(summary.total_failures(), 9);
+        // Should count: 3 (partial) + 5 (all other types) = 8
+        assert_eq!(summary.total_failures(), 8);
         assert!(summary.has_failures());
     }
 
@@ -1213,8 +1143,6 @@ mod tests {
             structured_data_failed: true,
             social_media_inserted: true,
             social_media_failed: false,
-            security_warnings_inserted: false,
-            security_warnings_failed: true,
             whois_inserted: true,
             whois_failed: false,
             analytics_ids_inserted: false,
@@ -1226,8 +1154,8 @@ mod tests {
             exposed_secrets_inserted: false,
             exposed_secrets_failed: false,
         };
-        // Should count: 1 (partial) + 1 (structured) + 1 (security) + 1 (analytics) = 4
-        assert_eq!(summary.total_failures(), 4);
+        // Should count: 1 (partial) + 1 (structured) + 1 (analytics) = 3
+        assert_eq!(summary.total_failures(), 3);
         assert!(summary.has_failures());
     }
 
@@ -1256,8 +1184,6 @@ mod tests {
             structured_data_failed: false,
             social_media_inserted: true,
             social_media_failed: false,
-            security_warnings_inserted: true,
-            security_warnings_failed: false,
             whois_inserted: true,
             whois_failed: false,
             analytics_ids_inserted: true,

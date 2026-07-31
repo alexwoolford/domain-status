@@ -40,7 +40,9 @@ pub struct RecordPreparationParams<'a> {
 ///
 /// Orchestrates enrichment lookups and batch record building.
 /// Technology detection is now done in parallel with DNS/TLS fetching.
-/// Returns the batch record and timing metrics in microseconds: (`geoip_lookup_us`, `whois_lookup_us`, `security_analysis_us`)
+/// Returns the batch record and timing metrics in microseconds: (`geoip_lookup_us`, `whois_lookup_us`, `security_analysis_us`).
+/// `security_analysis_us` is always `0` now that `analyze_security`/`url_security_warnings`
+/// have been removed; the timing bucket is retained for metrics/status-server compatibility.
 ///
 /// This function takes **ownership** of the response, HTML, and TLS/DNS data
 /// to enable moving large collections (`HashMaps`, Vecs) into the final `BatchRecord`
@@ -68,10 +70,10 @@ pub async fn prepare_record_for_insertion(
     );
 
     // Perform enrichment lookups in parallel where possible
-    // GeoIP and security analysis are synchronous and fast, WHOIS is async
-    // All can run in parallel since they're independent
+    // GeoIP is synchronous and fast, WHOIS is async
+    // Both can run in parallel since they're independent
     // Note: These borrow specific fields from params, which is still valid here
-    let (geoip_data, security_warnings, whois_data) = tokio::join!(
+    let (geoip_data, whois_data) = tokio::join!(
         // GeoIP lookup (synchronous, very fast)
         async {
             let geoip_start = Instant::now();
@@ -95,21 +97,6 @@ pub async fn prepare_record_for_insertion(
                 );
             }
             (geoip_data, geoip_lookup_us)
-        },
-        // Security analysis (synchronous, very fast)
-        async {
-            let security_start = Instant::now();
-            let security_warnings = crate::security::analyze_security(
-                &params.resp_data.final_url,
-                params.tls_dns_data.tls_version,
-                &params.resp_data.security_headers,
-                params.tls_dns_data.subject.as_deref(),
-                params.tls_dns_data.issuer.as_deref(),
-                params.tls_dns_data.valid_to.as_ref(),
-                params.tls_dns_data.subject_alternative_names.as_deref(),
-            );
-            let security_analysis_us = duration_to_us(security_start.elapsed());
-            (security_warnings, security_analysis_us)
         },
         // WHOIS lookup (async, can be slow)
         async {
@@ -161,8 +148,10 @@ pub async fn prepare_record_for_insertion(
     );
 
     let (geoip_data, geoip_lookup_us) = geoip_data;
-    let (security_warnings, security_analysis_us) = security_warnings;
     let (whois_data, whois_lookup_us) = whois_data;
+    // `analyze_security`/`url_security_warnings` were removed; the timing bucket is
+    // retained for metrics/status-server compatibility but is always zero now.
+    let security_analysis_us = 0;
 
     // Build batch record - takes ownership and MOVES large collections instead of cloning
     // This eliminates ~5-10KB of heap allocations per URL (HashMaps, Vecs)
@@ -175,7 +164,6 @@ pub async fn prepare_record_for_insertion(
         redirect_chain: params.redirect_chain,
         partial_failures: params.partial_failures,
         geoip_data,
-        security_warnings,
         whois_data,
         timestamp: params.timestamp,
         run_id: params.ctx.runtime.run_id.clone(),
@@ -296,7 +284,6 @@ mod tests {
             meta_refresh_url: None,
             meta_robots: None,
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
         }
     }
 

@@ -300,13 +300,11 @@ pub(crate) const URL_STATUS_SATELLITE_TABLES: &[&str] = &[
     "url_csp_domains",
     "url_cookies",
     "url_resource_hints",
-    "url_body_domains",
     "url_script_hosts",
     // Enrichment tables (inserted after that transaction, but cleaned here)
     "url_analytics_ids",
     "url_structured_data",
     "url_social_media_links",
-    "url_security_warnings",
     "url_contact_links",
     "url_exposed_secrets",
     "url_partial_failures",
@@ -350,8 +348,6 @@ pub struct UrlRecordInsertParams<'a> {
     /// Resource hints (`hint_type`, href); `hint_type` includes preconnect, dns-prefetch,
     /// preload, prefetch, and modulepreload
     pub resource_hints: &'a [(String, String)],
-    /// Body domains (fqdn, `registrable_domain`)
-    pub body_domains: &'a [(String, Option<String>)],
     /// Script `src` host inventory
     pub script_hosts: &'a [crate::storage::ScriptHostInfo],
 }
@@ -391,7 +387,6 @@ impl<'a> UrlRecordInsertParams<'a> {
             csp_domains: &batch.csp_domains,
             cookies: &batch.cookies,
             resource_hints: &batch.resource_hints,
-            body_domains: &batch.body_domains,
             script_hosts: &batch.script_hosts,
         }
     }
@@ -428,7 +423,6 @@ impl<'a> UrlRecordInsertParams<'a> {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         }
     }
@@ -564,7 +558,6 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     insert_csp_domains(&mut tx, url_status_id, params.csp_domains).await;
     insert_cookies(&mut tx, url_status_id, params.cookies).await;
     insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await;
-    insert_body_domains(&mut tx, url_status_id, params.body_domains).await;
     insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await;
 
     // Commit transaction - all inserts succeeded
@@ -715,30 +708,6 @@ async fn insert_resource_hints(
     }
 }
 
-/// Inserts body domains into `url_body_domains` table.
-async fn insert_body_domains(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    url_status_id: i64,
-    domains: &[(String, Option<String>)],
-) {
-    if domains.is_empty() {
-        return;
-    }
-    let query = super::utils::build_batch_insert_query(
-        "url_body_domains",
-        &["url_status_id", "fqdn", "registrable_domain"],
-        domains.len(),
-        Some("ON CONFLICT(url_status_id, fqdn) DO NOTHING"),
-    );
-    let mut qb = sqlx::query(&query);
-    for (fqdn, reg_domain) in domains {
-        qb = qb.bind(url_status_id).bind(fqdn).bind(reg_domain);
-    }
-    if let Err(e) = qb.execute(&mut **tx).await {
-        log::warn!("Failed to insert body domains for {url_status_id}: {e}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,7 +811,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await;
@@ -896,7 +864,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &script_hosts,
         })
         .await
@@ -954,7 +921,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -993,7 +959,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1055,7 +1020,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1108,7 +1072,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1166,7 +1129,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1226,7 +1188,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1250,7 +1211,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1307,7 +1267,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1351,7 +1310,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1521,9 +1479,8 @@ mod tests {
         .expect("seed url_cookies");
     }
 
-    /// Body-content satellites: `url_resource_hints`, `url_body_domains`, `url_analytics_ids`,
-    /// `url_structured_data`, `url_social_media_links`, `url_security_warnings`,
-    /// `url_contact_links`.
+    /// Body-content satellites: `url_resource_hints`, `url_script_hosts`, `url_analytics_ids`,
+    /// `url_structured_data`, `url_social_media_links`, `url_contact_links`.
     async fn seed_body_content_satellite_tables(pool: &SqlitePool, url_status_id: i64) {
         sqlx::query(
             "INSERT INTO url_resource_hints (url_status_id, hint_type, href) VALUES (?, ?, ?)",
@@ -1534,16 +1491,6 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed url_resource_hints");
-
-        sqlx::query(
-            "INSERT INTO url_body_domains (url_status_id, fqdn, registrable_domain) VALUES (?, ?, ?)",
-        )
-        .bind(url_status_id)
-        .bind("linked.seed.example")
-        .bind("seed.example")
-        .execute(pool)
-        .await
-        .expect("seed url_body_domains");
 
         sqlx::query(
             "INSERT INTO url_script_hosts (url_status_id, host, registrable_domain, is_first_party) VALUES (?, ?, ?, ?)",
@@ -1587,16 +1534,6 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed url_social_media_links");
-
-        sqlx::query(
-            "INSERT INTO url_security_warnings (url_status_id, warning_code, warning_description) VALUES (?, ?, ?)",
-        )
-        .bind(url_status_id)
-        .bind("seed_warning")
-        .bind("Seed warning description")
-        .execute(pool)
-        .await
-        .expect("seed url_security_warnings");
 
         sqlx::query(
             "INSERT INTO url_contact_links (url_status_id, contact_type, contact_value, raw_href) VALUES (?, ?, ?, ?)",
@@ -1702,7 +1639,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1740,7 +1676,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await
@@ -1804,7 +1739,6 @@ mod tests {
             csp_domains: &[],
             cookies: &[],
             resource_hints: &[],
-            body_domains: &[],
             script_hosts: &[],
         })
         .await;

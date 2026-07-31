@@ -129,9 +129,6 @@ fn extract_cookies(headers: &reqwest::header::HeaderMap) -> Vec<CookieInfo> {
         .collect()
 }
 
-// Body domain extraction now happens in parse_html_content (html.rs) to avoid
-// parsing the DOM twice. Results flow through HtmlData.body_domains.
-
 /// Builds a `UrlRecord` from extracted response data.
 ///
 /// This function clones string fields from the input data. While this involves
@@ -225,8 +222,6 @@ pub struct BatchRecordParams {
     pub partial_failures: Vec<(crate::error_handling::ErrorType, String)>,
     /// `GeoIP` lookup result (IP address and data)
     pub geoip_data: Option<(String, crate::geoip::GeoIpResult)>,
-    /// Security warnings
-    pub security_warnings: Vec<crate::security::SecurityWarning>,
     /// WHOIS lookup result
     pub whois_data: Option<crate::whois::WhoisResult>,
     /// Timestamp for the record
@@ -303,10 +298,6 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         &params.html_data.script_sources,
     );
 
-    // Body domains extraction is disabled by default (CDN/social noise; prefer
-    // analytics/social/CSP satellites). Column/table retained for back-compat.
-    let body_domains = Vec::new();
-
     // Compute cert_is_mismatched: check if host matches any SAN or CN.
     // Uses sans_vec (not tls_dns_data.subject_alternative_names which was already .take()'d).
     let domain = &params.resp_data.host;
@@ -346,7 +337,6 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         social_media_links,
         contact_links,
         exposed_secrets,
-        security_warnings: params.security_warnings,
         whois: params.whois_data,
         partial_failures: partial_failure_records,
         favicon: params.favicon,
@@ -356,7 +346,6 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         csp_domains,
         cookies,
         resource_hints: std::mem::take(&mut params.html_data.resource_hints),
-        body_domains,
         script_hosts,
     }
 }
@@ -369,7 +358,6 @@ mod tests {
     use crate::fetch::response::{HtmlData, ResponseData};
     use crate::geoip::GeoIpResult;
     use crate::parse::StructuredData;
-    use crate::security::SecurityWarning;
     use crate::whois::WhoisResult;
     use chrono::NaiveDateTime;
     use reqwest::header::HeaderMap;
@@ -425,7 +413,6 @@ mod tests {
             meta_refresh_url: None,
             meta_robots: None,
             resource_hints: Vec::new(),
-            body_domains: Vec::new(),
         }
     }
 
@@ -585,7 +572,6 @@ mod tests {
                 ..Default::default()
             },
         ));
-        let security_warnings = vec![SecurityWarning::NoHttps];
         let whois_data = Some(WhoisResult {
             registrar: Some("Example Registrar".to_string()),
             ..Default::default()
@@ -600,7 +586,6 @@ mod tests {
             redirect_chain,
             partial_failures,
             geoip_data,
-            security_warnings,
             whois_data,
             timestamp: 1234567890,
             run_id,
@@ -614,7 +599,6 @@ mod tests {
         assert_eq!(batch_record.redirect_chain.len(), 1);
         assert_eq!(batch_record.partial_failures.len(), 1);
         assert!(batch_record.geoip.is_some());
-        assert_eq!(batch_record.security_warnings.len(), 1);
         assert!(batch_record.whois.is_some());
     }
 
@@ -645,7 +629,6 @@ mod tests {
             redirect_chain: vec![],
             partial_failures: vec![],
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
@@ -683,7 +666,6 @@ mod tests {
             redirect_chain: vec![],
             partial_failures: vec![],
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
@@ -728,7 +710,6 @@ mod tests {
             redirect_chain: vec![],
             partial_failures,
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
@@ -808,7 +789,6 @@ mod tests {
             redirect_chain: vec![],
             partial_failures: vec![],
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
@@ -854,7 +834,6 @@ mod tests {
             redirect_chain: vec![],
             partial_failures: vec![],
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
@@ -900,7 +879,6 @@ mod tests {
             redirect_chain,
             partial_failures: vec![],
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: None,
@@ -950,7 +928,6 @@ mod tests {
             redirect_chain: vec![],
             partial_failures,
             geoip_data: None,
-            security_warnings: vec![],
             whois_data: None,
             timestamp: 1234567890,
             run_id: run_id.clone(),

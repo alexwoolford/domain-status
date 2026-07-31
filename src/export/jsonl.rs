@@ -153,9 +153,6 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             })
             .collect();
 
-        // Parse security warnings
-        let security_warnings = parse_string_list(&export_row.security_warnings_str);
-
         // Parse structured data types
         let structured_data_types = parse_string_list(&export_row.structured_data_types_str);
 
@@ -256,8 +253,6 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "analytics_count": export_row.analytics_count,
             "social_media_links": social_media_links,
             "social_media_count": export_row.social_media_count,
-            "security_warnings": security_warnings,
-            "security_warning_count": export_row.security_warning_count,
             "structured_data": {
                 "types": structured_data_types,
                 "count": export_row.structured_data_count,

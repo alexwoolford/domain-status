@@ -255,14 +255,6 @@ pub(crate) const CSV_COLUMN_DEFS: &[CsvColumn] = &[
         extract: |row| row.social_media_count.to_string(),
     },
     CsvColumn {
-        name: "security_warnings",
-        extract: |row| row.security_warnings_str.clone(),
-    },
-    CsvColumn {
-        name: "security_warning_count",
-        extract: |row| row.security_warning_count.to_string(),
-    },
-    CsvColumn {
         name: "structured_data_types",
         extract: |row| row.structured_data_types_str.clone(),
     },

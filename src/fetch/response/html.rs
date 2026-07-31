@@ -308,9 +308,6 @@ pub(crate) fn parse_html_content(
     });
     debug!("Extracted favicon URL for {final_domain}: {favicon_url:?}");
 
-    // Body-domain extraction disabled (CDN/social noise). Table retained; leave empty.
-    let body_domains = Vec::new();
-
     let meta_robots = meta_tags
         .get("name:robots")
         .and_then(|values| values.first())
@@ -338,7 +335,6 @@ pub(crate) fn parse_html_content(
         meta_refresh_url,
         meta_robots,
         resource_hints,
-        body_domains,
     }
 }
 

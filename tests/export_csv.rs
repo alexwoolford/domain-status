@@ -97,17 +97,6 @@ async fn create_test_url_with_enrichment(
     .await
     .expect("Failed to insert social media link");
 
-    // Add security warnings
-    sqlx::query(
-        "INSERT INTO url_security_warnings (url_status_id, warning_code, warning_description) VALUES (?, ?, ?)",
-    )
-    .bind(url_id)
-    .bind("missing_csp")
-    .bind("Content-Security-Policy header is missing")
-    .execute(pool)
-    .await
-        .expect("Failed to insert security warning");
-
     // Add certificate SANs
     sqlx::query("INSERT INTO url_certificate_sans (url_status_id, san_value) VALUES (?, ?)")
         .bind(url_id)
@@ -468,10 +457,6 @@ async fn test_export_csv_all_enrichment_data() {
     assert!(
         csv_content.contains("LinkedIn"),
         "CSV should contain social media links"
-    );
-    assert!(
-        csv_content.contains("missing_csp"),
-        "CSV should contain security warnings"
     );
 }
 
@@ -853,8 +838,6 @@ async fn test_export_csv_all_columns_present() {
         "analytics_count",
         "social_media_links",
         "social_media_count",
-        "security_warnings",
-        "security_warning_count",
         "structured_data_types",
         "structured_data_count",
         "http_headers",

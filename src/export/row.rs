@@ -239,10 +239,6 @@ pub struct ExportRow {
     /// Social media links with identifiers
     pub social_media_links: Vec<SocialMediaLink>,
 
-    /// Security warnings
-    pub security_warnings_str: String,
-    pub security_warning_count: usize,
-
     /// Structured data
     pub structured_data_types_str: String,
     pub structured_data_count: usize,
@@ -689,14 +685,6 @@ pub async fn build_export_row(
     let (social_media_links, structured_data_entries) =
         fetch_social_and_structured(pool, url_status_id).await?;
 
-    // Fetch security warnings
-    let (security_warnings_str, security_warning_count) = fetch_string_list(
-        pool,
-        "SELECT warning_code FROM url_security_warnings WHERE url_status_id = ? ORDER BY warning_code",
-        url_status_id,
-    )
-    .await?;
-
     // Fetch structured data types
     let (structured_data_types_str, _) = fetch_string_list(
         pool,
@@ -874,8 +862,6 @@ pub async fn build_export_row(
         social_media_links_str,
         social_media_count,
         social_media_links,
-        security_warnings_str,
-        security_warning_count,
         structured_data_types_str,
         structured_data_count: structured_data_count as usize,
         structured_data_entries,

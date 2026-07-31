@@ -58,7 +58,7 @@ Caches (fingerprints/GeoIP/WHOIS/UA) default under the platform cache dir + `dom
 
 ### Database
 
-SQLite with WAL mode. Schema in `migrations/` (11 migration files, `0001`–`0011`). Main tables: `runs`, `url_status` (fact table), `url_failures`, plus satellite tables for DNS, TLS, headers, technologies, WHOIS, GeoIP, secrets, etc. (see `URL_STATUS_SATELLITE_TABLES` and `DATABASE.md`).
+SQLite with WAL mode. Schema in `migrations/` (12 migration files, `0001`–`0012`). Main tables: `runs`, `url_status` (fact table), `url_failures`, plus satellite tables for DNS, TLS, headers, technologies, WHOIS, GeoIP, secrets, etc. (see `URL_STATUS_SATELLITE_TABLES` and `DATABASE.md`).
 
 ### Workspace Structure
 

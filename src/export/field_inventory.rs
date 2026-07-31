@@ -103,7 +103,7 @@ mod tests {
         }
         assert_eq!(
             CSV_COLUMN_DEFS.len(),
-            89,
+            87,
             "CSV column count drifted — add/remove via CSV_COLUMN_DEFS only"
         );
         assert_eq!(SATELLITE_DB_ONLY, &["url_script_hosts"]);

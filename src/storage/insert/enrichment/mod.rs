@@ -4,7 +4,6 @@
 //! - `GeoIP` data
 //! - Structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
 //! - Social media links
-//! - Security warnings
 //! - WHOIS data
 //! - Analytics/tracking IDs
 
@@ -14,7 +13,6 @@ mod favicon;
 mod geoip;
 mod jwt_claims;
 mod secrets;
-mod security;
 mod social;
 mod structured;
 mod whois;
@@ -25,7 +23,6 @@ pub use favicon::insert_favicon_data;
 pub use geoip::insert_geoip_data;
 pub use jwt_claims::insert_jwt_claims_batch;
 pub use secrets::insert_exposed_secrets;
-pub use security::insert_security_warnings;
 pub use social::insert_social_media_links;
 pub use structured::insert_structured_data;
 pub use whois::insert_whois_data;

@@ -68,7 +68,4 @@ pub(crate) struct HtmlData {
     /// Content of `<meta name="robots">` when present
     pub(crate) meta_robots: Option<String>,
     pub(crate) resource_hints: Vec<(String, String)>, // (hint_type, href) for preconnect/dns-prefetch/preload/prefetch/modulepreload
-    /// Deprecated — body-domain capture disabled; always empty on new scans.
-    #[allow(dead_code)]
-    pub(crate) body_domains: Vec<(String, Option<String>)>, // (fqdn, registrable_domain) from href/src attrs
 }

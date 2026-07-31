@@ -211,12 +211,6 @@ pub(crate) fn build_schema() -> Schema {
             ))),
             false,
         ),
-        // Security
-        Field::new(
-            "security_warnings",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            false,
-        ),
         // Structured data
         Field::new(
             "structured_data",
@@ -563,7 +557,6 @@ fn write_batch(
     let mut cert_sans_b = ListBuilder::new(StringBuilder::new());
     let mut cert_oids_b = ListBuilder::new(StringBuilder::new());
     let mut nameservers_b = ListBuilder::new(StringBuilder::new());
-    let mut security_warnings_b = ListBuilder::new(StringBuilder::new());
 
     // txt_records List<Struct{Utf8, Utf8}>
     let mut txt_records_b = new_two_string_list_builder("record_type", "content");
@@ -826,12 +819,6 @@ fn write_batch(
         }
         social_media_b.append(true);
 
-        // Security warnings
-        for w in super::row::parse_string_list(&row.security_warnings_str) {
-            security_warnings_b.values().append_value(&w);
-        }
-        security_warnings_b.append(true);
-
         // Structured data
         for entry in &row.structured_data_entries {
             structured_data_b
@@ -1085,7 +1072,6 @@ fn write_batch(
         Arc::new(mx_records_b.finish()),
         Arc::new(analytics_ids_b.finish()),
         Arc::new(social_media_b.finish()),
-        Arc::new(security_warnings_b.finish()),
         Arc::new(structured_data_b.finish()),
         Arc::new(http_headers_b.finish()),
         Arc::new(security_headers_b.finish()),
