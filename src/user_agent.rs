@@ -58,11 +58,11 @@ async fn fetch_latest_chrome_version() -> String {
 
 /// Attempts to fetch Chrome version from a specific source.
 async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
-    use anyhow::Context;
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
     use crate::initialization::init_resolver;
     use crate::security::safe_resolver::SafeResolver;
     use crate::security::ssrf_safe_redirect_policy;
+    use anyhow::Context;
     use std::sync::Arc;
 
     // Same SSRF posture as GeoIP/ruleset fetches: SafeResolver before connect +
