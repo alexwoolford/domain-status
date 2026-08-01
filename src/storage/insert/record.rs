@@ -2,7 +2,7 @@
 //!
 //! This module provides functions to insert `BatchRecord` data directly into the
 //! database without buffering. Prefer short per-URL transactions over accumulating
-//! large in-memory batches; SQLite still serializes writers at the database file.
+//! large in-memory batches; `SQLite` still serializes writers at the database file.
 
 use sqlx::SqlitePool;
 
@@ -81,7 +81,7 @@ impl EnrichmentInsertSummary {
 ///
 /// Inserts the main URL record and enrichment data immediately, without buffering
 /// a multi-URL batch. Preferring short per-URL transactions keeps lock hold time
-/// bounded; WAL allows concurrent readers, but writers still serialize at SQLite.
+/// bounded; WAL allows concurrent readers, but writers still serialize at `SQLite`.
 pub async fn insert_batch_record(
     pool: &SqlitePool,
     record: BatchRecord,
