@@ -318,7 +318,7 @@ mod tests {
         assert!(validate_url_safe("http://[fe80::1]").is_err()); // Link-local
         assert!(validate_url_safe("http://[ff00::1]").is_err()); // Multicast
         assert!(validate_url_safe("http://[2001:db8::1]").is_err()); // Documentation
-                                                                 // IPv4-mapped private addresses must be blocked
+                                                                     // IPv4-mapped private addresses must be blocked
         assert!(validate_url_safe("http://[::ffff:127.0.0.1]").is_err());
         assert!(validate_url_safe("http://[::ffff:192.168.1.1]").is_err());
     }
