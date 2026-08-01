@@ -98,9 +98,10 @@ pub async fn init_db_pool_with_path(
 
     let db_url = format!("sqlite:{db_path_str}");
     // Use SqliteConnectOptions::pragma() so that per-connection PRAGMAs
-    // (foreign_keys, synchronous) are applied to EVERY connection the pool
-    // creates, not just the first one. Without this, new pooled connections
-    // revert to SQLite defaults (foreign_keys=OFF, synchronous=FULL).
+    // (foreign_keys, synchronous, busy_timeout) are applied to EVERY connection
+    // the pool creates, not just the first one. Without this, new pooled
+    // connections revert to SQLite defaults (foreign_keys=OFF, synchronous=FULL,
+    // busy_timeout=0).
     let options = SqliteConnectOptions::from_str(&db_url)
         .map_err(|e| {
             error!("Failed to parse database URL: {e}");
@@ -112,7 +113,8 @@ pub async fn init_db_pool_with_path(
         .create_if_missing(true)
         .pragma("foreign_keys", "ON")
         .pragma("synchronous", "NORMAL")
-        .pragma("wal_autocheckpoint", "1000");
+        .pragma("wal_autocheckpoint", "1000")
+        .pragma("busy_timeout", "5000");
 
     let pool = SqlitePoolOptions::new()
         .max_connections(max_connections)
@@ -225,5 +227,22 @@ mod tests {
             .expect("Failed to query foreign keys");
 
         assert_eq!(result, 1, "Foreign keys should be enabled");
+    }
+
+    #[tokio::test]
+    async fn test_init_db_pool_with_path_busy_timeout_enabled() {
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db_path = temp_file.path();
+
+        let pool = init_db_pool_with_path(db_path, 5)
+            .await
+            .expect("Failed to initialize pool");
+
+        let result: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("Failed to query busy_timeout");
+
+        assert_eq!(result, 5000, "busy_timeout should be 5000 ms");
     }
 }

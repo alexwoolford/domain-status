@@ -30,7 +30,7 @@ sqlite3 domain_status.db "SELECT technology_name, COUNT(*) AS n FROM url_technol
 sqlite3 domain_status.db "SELECT secret_type, severity, COUNT(*) FROM url_exposed_secrets GROUP BY 1, 2 ORDER BY 3 DESC;"
 ```
 
-Optional: `domain_status export --format csv` flattens a view for spreadsheets (lossy vs the full schema). See [QUERIES.md](QUERIES.md) and [DATABASE.md](DATABASE.md) for more SQL.
+Optional: `domain_status export --format csv` flattens a view for spreadsheets (lossy vs the full schema). Pipe JSONL with `export --format jsonl --output -` (payload on stdout; logs/banners on stderr — see [docs/CLI.md](docs/CLI.md)). See [QUERIES.md](QUERIES.md) and [DATABASE.md](DATABASE.md) for more SQL.
 
 ### Offline / air-gapped fingerprints
 

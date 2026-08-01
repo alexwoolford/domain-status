@@ -185,13 +185,14 @@ pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
     }
 }
 
-/// Checks if an IPv6 address is private/internal (RFC 4193, RFC 4291).
+/// Checks if an IPv6 address is private/internal (RFC 4193, RFC 4291, RFC 3849).
 ///
-/// Private ranges:
+/// Private / non-routable ranges:
 /// - `::1` (loopback)
 /// - `fc00::/7` (unique local addresses)
 /// - `fe80::/10` (link-local)
 /// - `ff00::/8` (multicast)
+/// - `2001:db8::/32` (documentation, RFC 3849) — parity with blocked IPv4 doc nets
 pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     // IPv4-mapped addresses (::ffff:x.x.x.x) — delegate to IPv4 check
     if let Some(ipv4) = ip.to_ipv4_mapped() {
@@ -221,6 +222,11 @@ pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
 
     // ff00::/8 (multicast)
     if segments[0] & 0xff00 == 0xff00 {
+        return true;
+    }
+
+    // 2001:db8::/32 (documentation, RFC 3849)
+    if segments[0] == 0x2001 && segments[1] == 0x0db8 {
         return true;
     }
 
@@ -280,6 +286,8 @@ mod tests {
         assert!(validate_url_safe("http://192.0.2.1").is_err());
         assert!(validate_url_safe("http://198.51.100.1").is_err());
         assert!(validate_url_safe("http://203.0.113.1").is_err());
+        // RFC 3849 IPv6 documentation prefix
+        assert!(validate_url_safe("http://[2001:db8::1]").is_err());
     }
 
     #[test]
@@ -309,6 +317,7 @@ mod tests {
         assert!(validate_url_safe("http://[fc00::1]").is_err()); // Unique local
         assert!(validate_url_safe("http://[fe80::1]").is_err()); // Link-local
         assert!(validate_url_safe("http://[ff00::1]").is_err()); // Multicast
+        assert!(validate_url_safe("http://[2001:db8::1]").is_err()); // Documentation
                                                                  // IPv4-mapped private addresses must be blocked
         assert!(validate_url_safe("http://[::ffff:127.0.0.1]").is_err());
         assert!(validate_url_safe("http://[::ffff:192.168.1.1]").is_err());
@@ -384,10 +393,15 @@ mod tests {
             0, 0, 0, 0, 0, 0xffff, 0xc0a8, 0x0101
         ))); // ::ffff:192.168.1.1
 
-        // Public IPs
-        assert!(!is_private_ipv6(Ipv6Addr::new(
+        // Documentation prefix (RFC 3849) — blocked for SSRF parity with IPv4 doc nets
+        assert!(is_private_ipv6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
         ))); // 2001:db8::1
+
+        // Public IPs
+        assert!(!is_private_ipv6(Ipv6Addr::new(
+            0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e
+        )));
         assert!(!is_private_ipv6(Ipv6Addr::new(
             0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808
         ))); // ::ffff:8.8.8.8

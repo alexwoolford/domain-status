@@ -50,10 +50,23 @@ Distributed binaries also need a writable temp directory because embedded SQL mi
 `init_db_pool_with_path()` currently enables:
 
 - `PRAGMA journal_mode=WAL`
+- `PRAGMA synchronous=NORMAL`
 - `PRAGMA wal_autocheckpoint=1000`
 - `PRAGMA foreign_keys=ON`
+- `PRAGMA busy_timeout=5000` (milliseconds; per pooled connection)
 
 These settings are part of the operational contract and should be preserved unless deliberately changed.
+
+### Concurrent writes and the async runtime
+
+SQLite allows concurrent readers in WAL mode but still serializes writers at the database file. Scan tasks insert through a shared `SqlitePool` sized to `--max-concurrency`, so many connections may contend for that single writer lock. Mitigations:
+
+- WAL + `synchronous=NORMAL` for typical scan write patterns
+- `busy_timeout` so SQLite waits briefly before returning BUSY
+- Pool `acquire_timeout` (5s) so connection waits fail fast
+- Application `with_sqlite_retry` for transient `SQLITE_BUSY` / `SQLITE_LOCKED`
+
+Tasks waiting on the pool or lock **park** on async futures; they do not busy-spin Tokio worker threads the way CPU-bound work on an async worker would. Residual risk under extreme insert pile-up is write latency or exhausted retries—not reactor starvation. A dedicated single-writer queue remains a possible future optimization if profiling shows DB writes dominate; see [ADR 0004](adr/0004-sqlite-first-analytical-storage.md).
 
 ### Pool sizing
 

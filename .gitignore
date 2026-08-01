@@ -119,3 +119,6 @@ rust-cache/
 # Sample data files (user-specific)
 url-list.txt
 url-list.txt
+
+# Local E2E validation scratch (DBs, caches, reports — never commit)
+validation_e2e/

@@ -58,13 +58,22 @@ async fn fetch_latest_chrome_version() -> String {
 
 /// Attempts to fetch Chrome version from a specific source.
 async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
+    use anyhow::Context;
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    use crate::initialization::init_resolver;
+    use crate::security::safe_resolver::SafeResolver;
     use crate::security::ssrf_safe_redirect_policy;
+    use std::sync::Arc;
 
+    // Same SSRF posture as GeoIP/ruleset fetches: SafeResolver before connect +
+    // redirect policy that re-checks each Location with validate_url_safe.
+    let resolver =
+        init_resolver().context("Failed to initialize DNS resolver for User-Agent fetch")?;
     let client = reqwest::Client::builder()
+        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .redirect(ssrf_safe_redirect_policy())
         .timeout(Duration::from_secs(5))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
+        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
         .build()?;
 
     let response = client.get(url).send().await?;

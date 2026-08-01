@@ -57,4 +57,16 @@ domain_status export --format jsonl --run-id run_…
 domain_status export --include-implied-tech   # include is_implied=1 fingerprint rows (off by default)
 ```
 
+### Stdout / stderr
+
+- **Diagnostics** (logs, progress, scan/export banners) go to **stderr**, or to the scan `--log-file` when the progress bar is active. The logger uses `env_logger` with `Target::Stderr` on export/summary.
+- **Machine-readable export data** goes to **stdout** only when you pass `--output -` (CSV or JSONL). Otherwise export writes a file (`domain_status_export.{csv|jsonl|parquet}` by default).
+- Pipe-friendly example:
+
+```bash
+domain_status export --format jsonl --output - | jq .
+```
+
+Stderr still shows version INFO and “Exported N records”; silence with `2>/dev/null` if needed. Log lines are not mixed into the JSONL/CSV stream.
+
 See [ADVANCED.md](ADVANCED.md) for enrichments and cache layout.
