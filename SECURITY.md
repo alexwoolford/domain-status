@@ -4,6 +4,8 @@
 
 - **Never commit** `.db` files, export files (CSV, JSONL, or Parquet from scans), or `.env` (or other env files containing secrets). These are listed in `.gitignore`; keep them out of version control.
 - **Exposed secrets detected on scanned sites** and all collected data (URLs, headers) are **stored and logged in full**. No redaction is applied; this is a data collection tool. The security boundary is: do not commit `.db` files or export files (CSV/JSONL/Parquet), and protect them and config with file permissions.
+- **Secret-scan CPU posture:** gitleaks-derived rules use Rust’s linear-time `regex` crate (not a backtracking engine) and run on Tokio’s blocking pool; see [THREAT_MODEL_UNTRUSTED_INPUT.md §5](docs/THREAT_MODEL_UNTRUSTED_INPUT.md#5-secret-detection-html-body-headers-external-scripts). Residual risk is bounded CPU cost on large bodies, not indefinite ReDoS.
+- **Fingerprint CPU posture:** Wappalyzer-compatible matching likewise uses linear-time `regex` on the blocking pool (`spawn_blocking`), not on async workers; see [THREAT_MODEL_UNTRUSTED_INPUT.md §6](docs/THREAT_MODEL_UNTRUSTED_INPUT.md#6-technology-fingerprinting-wappalyzer-compatible-ruleset).
 
 ## GitHub secret scanning
 
@@ -14,4 +16,5 @@ For full security and secret-management details (gitleaks, pre-commit, CI, envir
 ## Security posture and remediation
 
 - **Transport trust:** Page-fetch HTTP clients use strict TLS (see [ADR 0003](docs/adr/0003-tls-capture-versus-validation.md)); TLS capture for observation uses a separate path in `src/tls/`.
+- **SSRF / outbound routing:** Scan clients disable automatic redirects, validate every hop, and resolve DNS through `SafeResolver` (blocks loopback, private, link-local/metadata). See [THREAT_MODEL_UNTRUSTED_INPUT.md §7](docs/THREAT_MODEL_UNTRUSTED_INPUT.md#7-ssrf--outbound-request-routing).
 - **Prioritized actions and threat model:** [docs/SECURITY_REMEDIATION_ROADMAP.md](docs/SECURITY_REMEDIATION_ROADMAP.md) (links to threat model, secret retention audit, and supply chain posture).

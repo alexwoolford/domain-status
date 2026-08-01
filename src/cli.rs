@@ -255,7 +255,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
     let report = run_scan(config.clone())
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!(
+    eprintln!(
         "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
         report.total_urls,
         if report.total_urls == 1 { "" } else { "s" },
@@ -263,8 +263,8 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
         report.failed,
         report.elapsed_seconds
     );
-    println!("Results saved in {}", report.db_path.display());
-    println!(
+    eprintln!("Results saved in {}", report.db_path.display());
+    eprintln!(
         "💡 Tip: Use `domain_status summary` for a quick report, `domain_status export --format csv` to export, or query the database directly."
     );
 

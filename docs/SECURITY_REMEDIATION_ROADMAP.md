@@ -2,7 +2,7 @@
 
 Prioritized security findings and actions from the Security Posture Report implementation. Use this as the single place to track and schedule remediation work.
 
-**Last reviewed:** 2026-03-01
+**Last reviewed:** 2026-07-31
 
 **Related:** [ADR 0003 – TLS capture versus validation](adr/0003-tls-capture-versus-validation.md), [SECURITY.md](../SECURITY.md), [THREAT_MODEL_UNTRUSTED_INPUT.md](THREAT_MODEL_UNTRUSTED_INPUT.md), [SUPPLY_CHAIN_POSTURE.md](SUPPLY_CHAIN_POSTURE.md).
 
@@ -13,6 +13,7 @@ Prioritized security findings and actions from the Security Posture Report imple
 | Area | Finding | Status |
 |------|---------|--------|
 | Transport trust | Page-fetch uses strict TLS; TLS capture is separate (AcceptAllVerifier only in `src/tls/`). | Documented; test added |
+| SSRF / outbound | `Policy::none` + hop `validate_url_safe` + `SafeResolver` (private/link-local/metadata blocked before connect). | Documented in threat model §7 |
 | Untrusted input | WHOIS, TLS, GeoIP, HTML/body have size caps and fallible parsing; one constant expect in GeoIP. | Documented in threat model |
 | Secret retention | Exposed secrets and all collected data (URLs, headers) are stored and logged in full by design; this is a data collection tool. No redaction is used. | By design |
 | Supply chain | cargo audit + cargo deny in CI; action SHA pinning; deny.toml and audit ignores documented. | Documented |

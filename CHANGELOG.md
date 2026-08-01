@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Document SSRF / outbound request routing in the untrusted-input threat model and SECURITY.md.
+- Chrome User-Agent version fetch uses `SafeResolver` (same SSRF DNS filter as scan/GeoIP clients).
+- Block IPv6 documentation prefix `2001:db8::/32` in SSRF checks (parity with IPv4 doc nets).
+- Clarify secret-scan threat model: Rust `regex` is linear-time (not classic ReDoS); document `spawn_blocking` posture in SECURITY.md.
+- Run external-script and response-header secret scans on Tokio’s blocking pool (same as HTML body secrets).
+- Document technology fingerprinting on `spawn_blocking` + linear-time `regex` in the threat model and SECURITY.md.
+- Move fingerprint body lowercasing and DNS/cert tech supplement onto Tokio’s blocking pool (with script-text supplement).
+- Document SQLite single-writer / pool contention posture (PRODUCTION_HARDENING, ADR 0004, ARCHITECTURE).
+- Set `PRAGMA busy_timeout=5000` on pooled SQLite connections; clarify that WAL does not parallelize writers.
+- Document stdout/stderr pipe contract for export (`--output -`) in CLI.md and README.
+- Route scan completion banners to stderr (same as export banners).
+- UPSERT `url_status` on `(run_id, initial_domain)` instead of `(run_id, final_domain)` so distinct inputs that share a parked/final host are not collapsed (migration `0013_url_status_unique_initial_domain.sql`).
+
 ## [0.1.27] - 2026-07-31
 
 ### Removed

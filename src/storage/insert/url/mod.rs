@@ -46,8 +46,8 @@ pub(crate) enum UrlStatusBind<'a> {
 
 /// `url_status` INSERT / UPSERT columns + binds (canonical column/bind registry).
 ///
-/// `final_domain` is part of the conflict key and is omitted from the UPDATE SET
-/// clause; every other column is refreshed on conflict.
+/// `initial_domain` is part of the conflict key and is omitted from the UPDATE SET
+/// clause; every other column (including `final_domain`) is refreshed on conflict.
 #[allow(clippy::too_many_lines)] // One entry per url_status column; intentional registry
 pub(crate) const URL_STATUS_COLUMN_DEFS: &[UrlStatusColumn] = &[
     UrlStatusColumn {
@@ -242,7 +242,7 @@ fn url_status_upsert_sql() -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let updates = url_status_column_names()
-        .filter(|&col| col != "final_domain")
+        .filter(|&col| col != "initial_domain")
         .map(|col| format!("{col}=excluded.{col}"))
         .collect::<Vec<_>>()
         .join(",\n            ");
@@ -250,7 +250,7 @@ fn url_status_upsert_sql() -> String {
         "INSERT INTO url_status (
             {columns}
         ) VALUES ({placeholders})
-        ON CONFLICT(run_id, final_domain) DO UPDATE SET
+        ON CONFLICT(run_id, initial_domain) DO UPDATE SET
             {updates}
         RETURNING id"
     )
@@ -527,7 +527,7 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
     // If any satellite insert panics, the transaction will be rolled back by Drop.
     //
     // Clean up stale satellite data before inserting fresh rows. This handles the UPSERT
-    // case where the same (run_id, final_domain) is scanned twice: the main url_status row
+    // case where the same (run_id, initial_domain) is scanned twice: the main url_status row
     // is updated, but old satellite rows (e.g., redirect hops from a previous scan) would
     // remain orphaned without this cleanup.
     for table in URL_STATUS_SATELLITE_TABLES {
@@ -1230,6 +1230,77 @@ mod tests {
         assert_eq!(row.get::<i64, _>("http_status"), 301);
     }
 
+    #[tokio::test]
+    async fn test_insert_url_record_same_final_different_initial_keeps_two_rows() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let redirect_chain = Vec::new();
+        let technologies = Vec::new();
+        let sans = Vec::new();
+
+        let mut a = create_test_url_record();
+        a.initial_domain = "parked-a.com".to_string();
+        a.final_domain = "parked.example.com".to_string();
+        a.initial_url = Some("https://parked-a.com".to_string());
+        a.final_url = Some("https://parked.example.com/a".to_string());
+
+        let mut b = create_test_url_record();
+        b.initial_domain = "parked-b.com".to_string();
+        b.final_domain = "parked.example.com".to_string();
+        b.initial_url = Some("https://parked-b.com".to_string());
+        b.final_url = Some("https://parked.example.com/b".to_string());
+
+        let id_a = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &a,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            script_hosts: &[],
+        })
+        .await
+        .expect("insert a");
+
+        let id_b = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &b,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &redirect_chain,
+            technologies: &technologies,
+            subject_alternative_names: &sans,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            script_hosts: &[],
+        })
+        .await
+        .expect("insert b");
+
+        assert_ne!(id_a, id_b);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 2);
+    }
+
     /// Adversarial: UPSERT must DELETE stale satellite rows before re-inserting.
     /// Without the `URL_STATUS_SATELLITE_TABLES` cleanup, rescans leave orphan techs/redirects.
     #[tokio::test]
@@ -1660,7 +1731,7 @@ mod tests {
             );
         }
 
-        // Second UPSERT with the same (run_id, final_domain) and empty satellites/tech.
+        // Second UPSERT with the same (run_id, initial_domain) and empty satellites/tech.
         let id2 = insert_url_record(UrlRecordInsertParams {
             pool: &pool,
             record: &record,

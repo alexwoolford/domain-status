@@ -40,7 +40,8 @@ Positive:
 
 Trade-offs:
 
-- write scalability is intentionally bounded by SQLite characteristics
+- write scalability is intentionally bounded by SQLite characteristics (one writer at the DB file even in WAL mode)
+- many scan tasks may contend via a shared connection pool; the runtime parks waiters rather than spinning Tokio workers—see `docs/PRODUCTION_HARDENING.md` (Concurrent writes and the async runtime)
 - operational maintenance such as retention and VACUUM remains a local concern
 - advanced multi-user serving patterns are out of scope for the default architecture
 

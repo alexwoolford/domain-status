@@ -15,10 +15,9 @@ pub(crate) async fn detect_technologies_safely(
     error_stats: &crate::error_handling::ProcessingStats,
     ruleset: &Arc<FingerprintRuleset>,
 ) -> Vec<crate::fingerprint::DetectedTechnology> {
-    // wappalyzergo normalizes body to lowercase: normalizedBody := bytes.ToLower(body)
-    let normalized_body = resp_data.body.to_lowercase();
-
     // Clone data for use inside spawn_blocking (closure must own values).
+    // Body lowercasing (wappalyzergo-compatible) is CPU/alloc-heavy on large
+    // HTML — keep it inside spawn_blocking with the regex work.
     let ruleset = Arc::clone(ruleset);
     let headers = resp_data.headers.clone();
     let meta_tags = html_data.meta_tags.clone();
@@ -26,9 +25,11 @@ pub(crate) async fn detect_technologies_safely(
     let url = resp_data.final_url.clone();
     let script_tag_ids = html_data.script_tag_ids.clone();
     let inline_script_text = html_data.inline_script_text.clone();
+    let body = Arc::clone(&resp_data.body);
 
     // Run CPU-bound regex work on blocking thread pool to avoid executor starvation.
     let result = tokio::task::spawn_blocking(move || {
+        let normalized_body = body.to_lowercase();
         crate::fingerprint::detect_technologies_blocking(
             &ruleset,
             &headers,

@@ -9,8 +9,8 @@
 //! minus a denylist of known third-party CDN hosts), SSRF-validates them,
 //! fetches up to [`MAX_SCRIPT_FETCH_PER_PAGE`] scripts in parallel under tight
 //! size/timeout caps, decodes each with charset detection, and:
-//! - runs [`crate::parse::detect_exposed_secrets`] over each body (findings
-//!   tagged `external_script:<url>`)
+//! - runs [`crate::parse::detect_exposed_secrets`] over each body on
+//!   `spawn_blocking` (findings tagged `external_script:<url>`)
 //! - concatenates lowercase bodies for Wappalyzer `scripts` pattern matching
 //!
 //! Third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped
@@ -131,33 +131,42 @@ pub async fn scan_external_scripts(
     });
     let results = futures::future::join_all(fetches).await;
 
-    let mut all_secrets: Vec<ExposedSecret> = Vec::new();
-    let mut body_parts: Vec<String> = Vec::new();
-    let mut scanned: u32 = 0;
-    for fetched in results.into_iter().flatten() {
-        scanned = scanned.saturating_add(1);
-        let (url, body) = fetched;
-        // Always retain body text for tech fingerprints (even when no secrets).
-        if !body.is_empty() {
-            body_parts.push(body.to_lowercase());
+    // Own fetched bodies, then run CPU-bound secret regex work on the blocking
+    // pool (same posture as HTML `parse_html_content` / tech detection).
+    let owned: Vec<(String, String)> = results.into_iter().flatten().collect();
+    let scanned = u32::try_from(owned.len()).unwrap_or(u32::MAX);
+
+    let (all_secrets, script_bodies_text) = tokio::task::spawn_blocking(move || {
+        let mut all_secrets: Vec<ExposedSecret> = Vec::new();
+        let mut body_parts: Vec<String> = Vec::new();
+        for (url, body) in owned {
+            if !body.is_empty() {
+                body_parts.push(body.to_lowercase());
+            }
+            let mut found = crate::parse::detect_exposed_secrets(&body);
+            if found.is_empty() {
+                continue;
+            }
+            let location: std::borrow::Cow<'static, str> =
+                std::borrow::Cow::Owned(format!("external_script:{url}"));
+            for secret in &mut found {
+                secret.location = location.clone();
+            }
+            all_secrets.extend(found);
         }
-        let mut found = crate::parse::detect_exposed_secrets(&body);
-        if found.is_empty() {
-            continue;
-        }
-        let location: std::borrow::Cow<'static, str> =
-            std::borrow::Cow::Owned(format!("external_script:{url}"));
-        for secret in &mut found {
-            secret.location = location.clone();
-        }
-        all_secrets.extend(found);
-    }
+        (all_secrets, body_parts.join("\n"))
+    })
+    .await
+    .unwrap_or_else(|e| {
+        log::warn!("External-script secret scan join failed: {e}");
+        (Vec::new(), String::new())
+    });
 
     ExternalScriptScanResult {
         secrets: all_secrets,
         eligible: eligible_count,
         scanned,
-        script_bodies_text: body_parts.join("\n"),
+        script_bodies_text,
     }
 }
 

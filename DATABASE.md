@@ -133,8 +133,10 @@ Important characteristics:
 Constraint:
 
 ```sql
-UNIQUE(final_domain, observed_at_ms)
+UNIQUE(run_id, initial_domain)  -- via idx_url_status_run_initial_domain (migration 0013)
 ```
+
+(The older `UNIQUE(final_domain, observed_at_ms)` and `UNIQUE(run_id, final_domain)` indexes were removed in migration **0013** so distinct inputs that redirect to the same final host are not collapsed.)
 
 ### `url_failures`
 
@@ -232,7 +234,7 @@ These tables hang off `url_failures.id`:
 - `url_status.run_id` and `url_failures.run_id` reference `runs(run_id)`.
 - `url_whois` and `url_geoip` are one-to-one enrichments per successful observation.
 - `url_jwt_claims` is a one-to-one enrichment per `url_exposed_secrets` row (only populated for `jwt`/`jwt-base64` secret types).
-- `UNIQUE(run_id, final_domain)` ensures at most one `url_status` row per domain per run.
+- `UNIQUE(run_id, initial_domain)` ensures at most one `url_status` row per input domain per run (duplicate input lines upsert; distinct inputs that redirect to the same final host remain separate rows).
 - Several multi-valued concepts are normalized into child tables rather than stored inline.
 
 ## Schema Notes That Commonly Matter

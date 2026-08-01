@@ -23,7 +23,7 @@ At a high level:
 | GeoIP | `src/geoip/` | MaxMind loading, caching, lookup | `docs/PRODUCTION_HARDENING.md` |
 | WHOIS/RDAP | `src/whois/` | best-effort WHOIS lookup and caching | [ADR 0002](adr/0002-enrichment-failure-policy.md) |
 | TLS capture and analysis | `src/tls/`, `src/security/` | certificate capture and security interpretation | [ADR 0003](adr/0003-tls-capture-versus-validation.md) |
-| Storage | `src/storage/` | SQLite pool, migrations, inserts, query helpers | `DATABASE.md`, [ADR 0004](adr/0004-sqlite-first-analytical-storage.md) |
+| Storage | `src/storage/` | SQLite pool, migrations, inserts, query helpers | `DATABASE.md`, [ADR 0004](adr/0004-sqlite-first-analytical-storage.md), `docs/PRODUCTION_HARDENING.md` (concurrent writes) |
 | Export | `src/export/` | CSV, JSONL, Parquet transforms | `README.md`, `DATABASE.md` |
 | Status server | `src/status_server/` | `/health`, `/status`, and `/metrics` | [ADR 0006](adr/0006-local-only-status-server.md), `docs/PRODUCTION_HARDENING.md` |
 | Tests and CI signal | `tests/`, `.github/workflows/ci.yml` | deterministic tests, ignored network tests, CI gates | `TESTING.md`, `CONTRIBUTING.md` |

@@ -39,27 +39,35 @@ impl Resolve for SafeResolver {
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
 
-            let safe_addrs: Vec<SocketAddr> = lookup
-                .iter()
-                .map(|ip| SocketAddr::new(ip, 0))
-                .filter(|addr| is_public_ip(addr.ip()))
-                .collect();
-
-            if safe_addrs.is_empty() {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!(
-                        "SSRF blocked: all resolved IPs for '{}' are private/reserved",
-                        name.as_str()
-                    ),
-                ))
-                    as Box<dyn std::error::Error + Send + Sync>);
-            }
-
+            let safe_addrs = filter_public_socket_addrs(lookup.iter(), name.as_str())?;
             let addrs: Addrs = Box::new(safe_addrs.into_iter());
             Ok(addrs)
         })
     }
+}
+
+/// Filters resolved IPs to public addresses only.
+///
+/// Returns an error when every answer is private/reserved — the DNS-rebinding
+/// failure mode where a later lookup yields only internal addresses.
+pub(crate) fn filter_public_socket_addrs(
+    ips: impl IntoIterator<Item = IpAddr>,
+    name: &str,
+) -> Result<Vec<SocketAddr>, Box<dyn std::error::Error + Send + Sync>> {
+    let safe_addrs: Vec<SocketAddr> = ips
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, 0))
+        .filter(|addr| is_public_ip(addr.ip()))
+        .collect();
+
+    if safe_addrs.is_empty() {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("SSRF blocked: all resolved IPs for '{name}' are private/reserved"),
+        )) as Box<dyn std::error::Error + Send + Sync>);
+    }
+
+    Ok(safe_addrs)
 }
 
 /// Public iff not private; uses shared logic from `url_validation` (single source of truth).
@@ -71,6 +79,7 @@ pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::str::FromStr;
 
     #[test]
     fn test_public_ipv4() {
@@ -93,9 +102,6 @@ mod tests {
     #[test]
     fn test_public_ipv6() {
         assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
-        ))));
-        assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e
         ))));
     }
@@ -114,6 +120,10 @@ mod tests {
         assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
             0, 0, 0, 0, 0, 0, 0, 0
         ))));
+        // RFC 3849 documentation prefix
+        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
+        ))));
     }
 
     #[test]
@@ -126,9 +136,54 @@ mod tests {
         assert!(is_public_ip(IpAddr::V6(mapped_public)));
     }
 
+    #[test]
+    fn test_filter_keeps_only_public_from_mixed_answers() {
+        let ips = [
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+        ];
+        let addrs = filter_public_socket_addrs(ips, "mixed.example").expect("public present");
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0].ip(), IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+    }
+
+    #[test]
+    fn test_filter_rejects_private_only_answers() {
+        let ips = [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+        ];
+        let err = filter_public_socket_addrs(ips, "evil.example").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF blocked") && msg.contains("evil.example"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    /// Models DNS rebinding: first lookup returns a public IP (allowed), a later
+    /// lookup for the same name returns only private/metadata IPs (blocked).
+    #[test]
+    fn test_filter_rebinding_style_second_lookup_private_only() {
+        let first = [IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))];
+        let first_addrs =
+            filter_public_socket_addrs(first, "rebind.example").expect("first lookup public");
+        assert_eq!(first_addrs.len(), 1);
+
+        let second = [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+        ];
+        assert!(
+            filter_public_socket_addrs(second, "rebind.example").is_err(),
+            "second (rebinding) lookup must be blocked"
+        );
+    }
+
     #[tokio::test]
     async fn test_safe_resolver_public_domain() {
-        use std::str::FromStr;
         let hickory = crate::initialization::init_resolver().expect("resolver");
         let resolver = SafeResolver::new(hickory);
         let name = Name::from_str("example.com").unwrap();
@@ -147,7 +202,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_safe_resolver_localhost_blocked() {
-        use std::str::FromStr;
         let hickory = crate::initialization::init_resolver().expect("resolver");
         let resolver = SafeResolver::new(hickory);
         let name = Name::from_str("localhost").unwrap();

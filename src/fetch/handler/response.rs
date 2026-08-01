@@ -187,6 +187,9 @@ async fn supplement_technologies_after_enrichment(
     external_script_scan: &crate::fetch::external_scripts::ExternalScriptScanResult,
     final_domain: &str,
 ) -> Vec<DetectedTechnology> {
+    // Build the DNS haystack on the async task (cheap string assembly), then run
+    // DNS/cert + optional script-text matching on the blocking pool with the
+    // main fingerprint pass.
     let dns_haystack = crate::fingerprint::dns_records_haystack(
         additional_dns.nameservers.as_deref(),
         additional_dns.txt_records.as_deref(),
@@ -195,24 +198,24 @@ async fn supplement_technologies_after_enrichment(
         additional_dns.spf_record.as_deref(),
         additional_dns.dmarc_record.as_deref(),
     );
-    let technologies_vec = crate::fingerprint::supplement_technologies_with_dns_cert(
-        ctx.ruleset.as_ref(),
-        technologies_vec,
-        &dns_haystack,
-        tls_dns_data.issuer.as_deref(),
-    );
-
-    if external_script_scan.script_bodies_text.is_empty() {
-        return technologies_vec;
-    }
-
     let ruleset = Arc::clone(&ctx.ruleset);
+    let cert_issuer = tls_dns_data.issuer.clone();
     let script_text = external_script_scan.script_bodies_text.clone();
     let fallback = technologies_vec.clone();
+
     match tokio::task::spawn_blocking(move || {
-        crate::fingerprint::supplement_technologies_with_script_text(
+        let techs = crate::fingerprint::supplement_technologies_with_dns_cert(
             ruleset.as_ref(),
             technologies_vec,
+            &dns_haystack,
+            cert_issuer.as_deref(),
+        );
+        if script_text.is_empty() {
+            return techs;
+        }
+        crate::fingerprint::supplement_technologies_with_script_text(
+            ruleset.as_ref(),
+            techs,
             &script_text,
         )
     })
@@ -220,14 +223,17 @@ async fn supplement_technologies_after_enrichment(
     {
         Ok(techs) => techs,
         Err(e) => {
-            log::warn!("External-script tech supplement join failed for {final_domain}: {e}");
+            log::warn!("Technology late-signal supplement join failed for {final_domain}: {e}");
             fallback
         }
     }
 }
 
 /// Merge external-script and response-header secret findings into `html_data`.
-fn merge_secrets(
+///
+/// Header secret regex work runs on `spawn_blocking` so it does not occupy a
+/// Tokio async worker (same posture as HTML / external-script secret scans).
+async fn merge_secrets(
     html_data: &mut HtmlData,
     resp_data: &ResponseData,
     external_script_scan: crate::fetch::external_scripts::ExternalScriptScanResult,
@@ -245,8 +251,16 @@ fn merge_secrets(
             .extend(external_script_scan.secrets);
     }
 
-    let header_secrets =
-        crate::parse::detect_exposed_secrets_in_headers(&serialize_headers(&resp_data.headers));
+    let headers_blob = serialize_headers(&resp_data.headers);
+    let final_domain = resp_data.final_domain.clone();
+    let header_secrets = tokio::task::spawn_blocking(move || {
+        crate::parse::detect_exposed_secrets_in_headers(&headers_blob)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        log::warn!("Header secret scan join failed for {final_domain}: {e}");
+        Vec::new()
+    });
     if !header_secrets.is_empty() {
         log::info!(
             "Detected {} secret(s) in response headers for {}",
@@ -364,7 +378,7 @@ pub async fn handle_response(
     metrics.tech_detection_us = enrichment.tech_detection_us;
 
     let external_script_scan = std::mem::take(&mut enrichment.external_script_scan);
-    merge_secrets(&mut html_data, &resp_data, external_script_scan);
+    merge_secrets(&mut html_data, &resp_data, external_script_scan).await;
 
     let (geoip_lookup_us, whois_lookup_us, security_analysis_us) = persist(
         resp_data,
