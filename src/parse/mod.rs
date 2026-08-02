@@ -1,11 +1,10 @@
 //! HTML parsing and data extraction.
 //!
 //! This module extracts structured data from HTML content including:
-//! - Meta tags (keywords, description, Open Graph, Twitter Cards)
+//! - Meta tags (description, Open Graph, Twitter Cards)
 //! - Structured data (JSON-LD, microdata)
 //! - Analytics IDs (Google Analytics, Facebook Pixel, GTM, `AdSense`)
 //! - Social media links
-//! - Mobile-friendliness indicators
 //!
 //! All parsing is done using CSS selectors via the `scraper` crate.
 
@@ -23,10 +22,8 @@ mod structured;
 pub use analytics::{extract_analytics_ids, AnalyticsId, AnalyticsProvider};
 #[allow(unused_imports)] // Public API re-export
 pub use contact::{extract_contact_links, ContactLink, ContactType};
-#[allow(unused_imports)] // Public API re-export (still used by parse::tests)
-pub use html::{
-    extract_meta_description, extract_meta_keywords, extract_title, is_mobile_friendly,
-};
+#[allow(unused_imports)] // Public API re-export
+pub use html::{extract_meta_description, extract_title};
 #[allow(unused_imports)] // Public API re-export
 pub use secrets::{
     detect_exposed_secrets, detect_exposed_secrets_in_headers, ExposedSecret, SecretSeverity,

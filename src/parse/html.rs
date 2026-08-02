@@ -2,9 +2,7 @@
 //!
 //! This module provides functions to extract basic HTML elements:
 //! - Page title
-//! - Meta keywords
 //! - Meta description
-//! - Mobile-friendliness detection
 
 use scraper::{Html, Selector};
 use std::sync::LazyLock;
@@ -13,19 +11,10 @@ use crate::error_handling::ProcessingStats;
 
 // CSS selector strings
 const TITLE_SELECTOR_STR: &str = "title";
-#[allow(dead_code)] // used only by deprecated extract_meta_keywords
-const META_KEYWORDS_SELECTOR_STR: &str = "meta[name='keywords']";
 const META_DESCRIPTION_SELECTOR_STR: &str = "meta[name='description']";
 static TITLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse(TITLE_SELECTOR_STR)
         .expect("TITLE_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug")
-});
-
-#[allow(dead_code)] // used only by deprecated extract_meta_keywords
-static META_KEYWORDS_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse(META_KEYWORDS_SELECTOR_STR).expect(
-        "META_KEYWORDS_SELECTOR_STR is a hardcoded valid CSS selector; this is a compile-time bug",
-    )
 });
 
 static META_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
@@ -105,52 +94,6 @@ pub fn extract_title(document: &Html, error_stats: &ProcessingStats) -> String {
     }
 }
 
-/// Extracts meta keywords from an HTML document.
-///
-/// Searches for `<meta name="keywords">` and parses the comma-separated keywords,
-/// trimming whitespace and converting to lowercase.
-///
-/// # Arguments
-///
-/// * `document` - The parsed HTML document
-/// * `error_stats` - Processing statistics tracker for recording extraction issues
-///
-/// # Returns
-///
-/// A vector of keyword strings, or `None` if no keywords meta tag is found or if it's empty.
-///
-/// Deprecated for new scans (meta keywords are no longer persisted); retained for unit tests.
-#[allow(dead_code)]
-pub fn extract_meta_keywords(
-    document: &Html,
-    error_stats: &ProcessingStats,
-) -> Option<Vec<String>> {
-    let meta_keywords = document
-        .select(&META_KEYWORDS_SELECTOR)
-        .next()
-        .and_then(|element| element.value().attr("content"));
-
-    if let Some(content) = meta_keywords {
-        let keywords: Vec<String> = content
-            .split(',')
-            .map(|keyword| keyword.trim().to_lowercase())
-            .filter(|keyword| !keyword.is_empty())
-            .collect();
-
-        if keywords.is_empty() {
-            // Empty keywords - track as warning
-            error_stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
-            None
-        } else {
-            Some(keywords)
-        }
-    } else {
-        // Missing keywords meta tag - track as warning
-        error_stats.increment_warning(crate::error_handling::WarningType::MissingMetaKeywords);
-        None
-    }
-}
-
 /// Extracts the meta description from an HTML document.
 ///
 /// Searches for `<meta name="description">` and returns its content, trimmed of whitespace.
@@ -179,35 +122,6 @@ pub fn extract_meta_description(document: &Html, stats: &ProcessingStats) -> Opt
         stats.increment_warning(crate::error_handling::WarningType::MissingMetaDescription);
     }
     meta_description
-}
-
-/// Checks if an HTML document is mobile-friendly by looking for a viewport meta tag.
-///
-/// Uses DOM parsing and a case-insensitive meta[name="viewport" i] selector so only
-/// a real viewport meta tag counts; body text or script containing "viewport" does not.
-///
-/// # Arguments
-///
-/// * `html` - The raw HTML content
-///
-/// # Returns
-///
-/// `true` if a viewport meta tag is present, `false` otherwise.
-///
-/// Deprecated for new scans (`is_mobile_friendly` is always stored as false); retained for unit tests.
-#[allow(dead_code)]
-pub fn is_mobile_friendly(html: &str) -> bool {
-    // Use a case-insensitive byte search instead of re-parsing the DOM.
-    // The caller (parse_html_content) already parsed the DOM — this avoids a
-    // redundant ~1.5MB DOM allocation per URL.
-    // Also avoids allocating a full lowercase copy of the HTML on the heap.
-    fn contains_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
-        haystack
-            .windows(needle.len())
-            .any(|w| w.eq_ignore_ascii_case(needle))
-    }
-    contains_ignore_case(html.as_bytes(), b"name=\"viewport\"")
-        || contains_ignore_case(html.as_bytes(), b"name='viewport'")
 }
 
 #[cfg(test)]

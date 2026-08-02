@@ -21,7 +21,7 @@ use super::types::HtmlData;
 ///
 /// # Returns
 ///
-/// Extracted HTML data including title, keywords, description, structured data, etc.
+/// Extracted HTML data including title, description, structured data, etc.
 #[allow(clippy::too_many_lines)] // Single-pass HTML tree walk extracting ~15 distinct data types
 #[allow(clippy::cognitive_complexity)] // Each HTML element type requires distinct extraction logic
 pub(crate) fn parse_html_content(
@@ -34,14 +34,8 @@ pub(crate) fn parse_html_content(
     let title = extract_title(&document, error_stats);
     debug!("Extracted title for {final_domain}: {title:?}");
 
-    // Meta keywords are deprecated (obsolete SEO signal) — do not extract.
-    let keywords_str = None;
-
     let description = extract_meta_description(&document, error_stats);
     debug!("Extracted description for {final_domain}: {description:?}");
-
-    // Viewport-meta "mobile friendly" heuristic is deprecated — always false.
-    let is_mobile_friendly = false;
 
     // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
     let structured_data = extract_structured_data(&document, body);
@@ -316,9 +310,7 @@ pub(crate) fn parse_html_content(
 
     HtmlData {
         title,
-        keywords_str,
         description,
-        is_mobile_friendly,
         structured_data,
         social_media_links,
         contact_links,
@@ -365,7 +357,6 @@ mod tests {
         let result = parse_html_content(html, "example.com", &stats);
 
         assert_eq!(result.title, "Test Page");
-        assert_eq!(result.keywords_str, None);
         assert_eq!(result.description, Some("A test page".to_string()));
     }
 
@@ -554,41 +545,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_html_content_mobile_friendly() {
-        let html_with_viewport = r#"
-            <html>
-                <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                </head>
-                <body></body>
-            </html>
-        "#;
-        let html_without_viewport = r#"
-            <html>
-                <head></head>
-                <body></body>
-            </html>
-        "#;
-        let stats = test_error_stats();
-
-        let result_with = parse_html_content(html_with_viewport, "example.com", &stats);
-        assert!(
-            !result_with.is_mobile_friendly,
-            "viewport meta no longer sets is_mobile_friendly"
-        );
-
-        let result_without = parse_html_content(html_without_viewport, "example.com", &stats);
-        assert!(!result_without.is_mobile_friendly);
-    }
-
-    #[test]
     fn test_parse_html_content_empty_html() {
         let html = "<html><head></head><body></body></html>";
         let stats = test_error_stats();
         let result = parse_html_content(html, "example.com", &stats);
 
         assert_eq!(result.title, "");
-        assert_eq!(result.keywords_str, None);
         assert_eq!(result.description, None);
         assert!(result.script_sources.is_empty());
         assert!(result.social_media_links.is_empty());
@@ -747,10 +709,6 @@ mod tests {
 
         // Should extract data successfully
         assert_eq!(result.title, "Test");
-        assert!(
-            result.keywords_str.is_none(),
-            "keywords extraction is deprecated"
-        );
         assert!(result.description.is_some());
 
         // Error stats are passed to extract_title / extract_meta_description

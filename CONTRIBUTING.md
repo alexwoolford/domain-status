@@ -108,7 +108,7 @@ Update clap (`cli/`), `Config` + `Default`, file/env merge arms, and `SCAN_CONFI
 
 ## Testing Expectations
 
-Testing guidance lives in `TESTING.md`. The short version:
+Testing guidance lives in [`docs/TESTING.md`](docs/TESTING.md). The short version:
 
 - default tests must be deterministic and local-only
 - live-network tests stay `#[ignore]`

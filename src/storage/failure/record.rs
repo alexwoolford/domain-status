@@ -165,11 +165,6 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
     } else {
         params.context.response_headers
     };
-    let request_headers = if params.context.request_headers.is_empty() {
-        extracted_context.request_headers
-    } else {
-        params.context.request_headers
-    };
 
     // Log if we had to fall back to extraction (for observability)
     if final_url.is_none() && !redirect_chain.is_empty() {
@@ -178,10 +173,6 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
 
     // Truncate header values to prevent database bloat
     let response_headers: Vec<(String, String)> = response_headers
-        .into_iter()
-        .map(|(name, value)| (name, truncate_header_value(value)))
-        .collect();
-    let request_headers: Vec<(String, String)> = request_headers
         .into_iter()
         .map(|(name, value)| (name, truncate_header_value(value)))
         .collect();
@@ -201,7 +192,6 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
         run_id: params.run_id.map(std::string::ToString::to_string),
         redirect_chain,
         response_headers,
-        request_headers,
     };
 
     // Insert failure record; log on write failure instead of panicking
@@ -270,7 +260,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec!["https://example.org".to_string()],
             response_headers: vec![("server".to_string(), "nginx".to_string())],
-            request_headers: vec![("user-agent".to_string(), "test".to_string())],
         };
 
         // Use attach_failure_context to ensure context is extractable
@@ -314,7 +303,6 @@ mod tests {
             final_url: None,
             redirect_chain: vec![],
             response_headers: vec![("server".to_string(), long_header_value.clone())],
-            request_headers: vec![],
         };
 
         let error = anyhow::anyhow!("Test error");
@@ -359,7 +347,6 @@ mod tests {
             final_url: None,
             redirect_chain: vec![],
             response_headers: vec![("server".to_string(), long_header_value)],
-            request_headers: vec![],
         };
 
         let error = anyhow::anyhow!("unicode header test");
@@ -438,14 +425,12 @@ mod tests {
             final_url: Some("https://provided.com".to_string()),
             redirect_chain: vec!["https://provided.org".to_string()],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let extracted_context = FailureContext {
             final_url: Some("https://extracted.com".to_string()),
             redirect_chain: vec!["https://extracted.org".to_string()],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         // Attach extracted context to error
@@ -492,7 +477,6 @@ mod tests {
             final_url: Some("https://extracted.com".to_string()),
             redirect_chain: vec!["https://extracted.org".to_string()],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         // Use attach_failure_context to ensure context is extractable

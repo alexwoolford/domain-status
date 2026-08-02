@@ -236,7 +236,6 @@ pub enum ErrorType {
 #[non_exhaustive]
 pub enum WarningType {
     // Missing optional metadata
-    MissingMetaKeywords,    // Meta keywords tag is missing
     MissingMetaDescription, // Meta description tag is missing (optional but recommended for SEO)
     MissingTitle,           // Title tag is missing (unusual but not necessarily an error)
 }
@@ -305,7 +304,6 @@ impl WarningType {
     /// Returns a human-readable string representation of the warning type.
     pub fn as_str(self) -> &'static str {
         match self {
-            WarningType::MissingMetaKeywords => "Missing meta keywords",
             WarningType::MissingMetaDescription => "Missing meta description",
             WarningType::MissingTitle => "Missing title",
         }
@@ -386,10 +384,6 @@ mod tests {
             "Missing meta description"
         );
         assert_eq!(WarningType::MissingTitle.as_str(), "Missing title");
-        assert_eq!(
-            WarningType::MissingMetaKeywords.as_str(),
-            "Missing meta keywords"
-        );
     }
 
     #[test]

@@ -93,55 +93,6 @@ fn test_extract_title_rawtext_content_model_preserves_literal_angle_brackets() {
 }
 
 #[test]
-fn test_extract_meta_keywords_basic() {
-    let html = r#"<html><head><meta name="keywords" content="rust, programming, language"></head></html>"#;
-    let document = Html::parse_document(html);
-    let stats = test_error_stats();
-    let keywords = extract_meta_keywords(&document, &stats).unwrap();
-    assert_eq!(keywords, vec!["rust", "programming", "language"]);
-}
-
-#[test]
-fn test_extract_meta_keywords_with_whitespace() {
-    // Common gotcha: keywords with extra spaces
-    let html = r#"<html><head><meta name="keywords" content=" rust , programming , language "></head></html>"#;
-    let document = Html::parse_document(html);
-    let stats = test_error_stats();
-    let keywords = extract_meta_keywords(&document, &stats).unwrap();
-    assert_eq!(keywords, vec!["rust", "programming", "language"]);
-}
-
-#[test]
-fn test_extract_meta_keywords_empty_content() {
-    // Edge case: empty content attribute
-    // Empty keywords - track as warning
-    let html = r#"<html><head><meta name="keywords" content=""></head></html>"#;
-    let document = Html::parse_document(html);
-    let stats = test_error_stats();
-    assert!(extract_meta_keywords(&document, &stats).is_none());
-    // Missing/empty keywords is tracked as a warning, not an error
-}
-
-#[test]
-fn test_extract_meta_keywords_only_whitespace() {
-    // Edge case: content with only spaces/commas
-    let html = r#"<html><head><meta name="keywords" content="  ,  ,  "></head></html>"#;
-    let document = Html::parse_document(html);
-    let stats = test_error_stats();
-    assert!(extract_meta_keywords(&document, &stats).is_none());
-}
-
-#[test]
-fn test_extract_meta_keywords_case_insensitive() {
-    // Keywords should be lowercased
-    let html = r#"<html><head><meta name="keywords" content="RUST, Programming, LANGUAGE"></head></html>"#;
-    let document = Html::parse_document(html);
-    let stats = test_error_stats();
-    let keywords = extract_meta_keywords(&document, &stats).unwrap();
-    assert_eq!(keywords, vec!["rust", "programming", "language"]);
-}
-
-#[test]
 fn test_extract_meta_description_basic() {
     let html =
         r#"<html><head><meta name="description" content="A test description"></head></html>"#;
@@ -172,34 +123,6 @@ fn test_extract_meta_description_missing() {
     let stats = test_error_stats();
     assert!(extract_meta_description(&document, &stats).is_none());
     // Missing meta description is tracked as a warning, not an error
-}
-
-#[test]
-fn test_is_mobile_friendly_with_viewport() {
-    let html =
-        r#"<html><head><meta name="viewport" content="width=device-width"></head></html>"#;
-    assert!(is_mobile_friendly(html));
-}
-
-#[test]
-fn test_is_mobile_friendly_case_insensitive() {
-    // Viewport meta with different case should still be detected (meta[name="viewport" i])
-    let html =
-        r#"<html><head><meta name="Viewport" content="width=device-width"></head></html>"#;
-    assert!(is_mobile_friendly(html));
-}
-
-#[test]
-fn test_is_mobile_friendly_without_viewport() {
-    let html = r#"<html><head><title>Test</title></head></html>"#;
-    assert!(!is_mobile_friendly(html));
-}
-
-#[test]
-fn test_is_mobile_friendly_false_positive() {
-    // Word "viewport" in body text (not in meta tag) must not be detected
-    let html = r#"<html><body><p>This page has a viewport</p></body></html>"#;
-    assert!(!is_mobile_friendly(html));
 }
 
 // Analytics ID extraction tests

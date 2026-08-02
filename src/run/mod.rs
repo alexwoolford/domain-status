@@ -100,7 +100,6 @@ async fn record_drain_timeout_failures(
             run_id: Some(run_id.to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
         match insert_url_failure(pool.as_ref(), &record).await {
             Ok(_) => inserted += 1,

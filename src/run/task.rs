@@ -209,7 +209,6 @@ async fn handle_timeout(
         final_url: None,
         redirect_chain: Vec::new(),
         response_headers: Vec::new(),
-        request_headers: Vec::new(),
     };
 
     // SAFETY: Cast from usize to u32 is safe here.

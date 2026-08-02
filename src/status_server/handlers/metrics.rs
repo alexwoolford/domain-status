@@ -87,10 +87,6 @@ domain_status_timing_geoip_lookup_ms {}
 # TYPE domain_status_timing_whois_lookup_ms gauge
 domain_status_timing_whois_lookup_ms {}
 
-# HELP domain_status_timing_security_analysis_ms Average security analysis time in milliseconds
-# TYPE domain_status_timing_security_analysis_ms gauge
-domain_status_timing_security_analysis_ms {}
-
 # HELP domain_status_timing_total_ms Average total processing time in milliseconds
 # TYPE domain_status_timing_total_ms gauge
 domain_status_timing_total_ms {}
@@ -104,7 +100,6 @@ domain_status_timing_total_ms {}
                 micros_to_ms(avg.tech_detection_us),
                 micros_to_ms(avg.geoip_lookup_us),
                 micros_to_ms(avg.whois_lookup_us),
-                micros_to_ms(avg.security_analysis_us),
                 micros_to_ms(avg.total_us),
             )
         } else {

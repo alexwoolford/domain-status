@@ -191,10 +191,9 @@ clap_mangen = "^0.2"
 tokio = { version = "^1", features = ["test-util"] }
 httptest = "^0.16"
 proptest = "^1.11"          # Property-based testing
-insta = { version = "^1.38", features = ["yaml"] }  # Snapshot/golden testing
+insta = "^1.38"             # Snapshot/golden testing (text snaps)
 pretty_assertions = "^1.4"  # Better test output
 assert_cmd = "^2.2"         # CLI testing
-assert_fs = "^1.1"           # Temp dirs and file layout for tests
 rstest = "^0.26"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
 tower = "^0.5"

@@ -26,7 +26,7 @@ At a high level:
 | Storage | `src/storage/` | SQLite pool, migrations, inserts, query helpers | `DATABASE.md`, [ADR 0004](adr/0004-sqlite-first-analytical-storage.md), `docs/PRODUCTION_HARDENING.md` (concurrent writes) |
 | Export | `src/export/` | CSV, JSONL, Parquet transforms | `README.md`, `DATABASE.md` |
 | Status server | `src/status_server/` | `/health`, `/status`, and `/metrics` | [ADR 0006](adr/0006-local-only-status-server.md), `docs/PRODUCTION_HARDENING.md` |
-| Tests and CI signal | `tests/`, `.github/workflows/ci.yml` | deterministic tests, ignored network tests, CI gates | `TESTING.md`, `CONTRIBUTING.md` |
+| Tests and CI signal | `tests/`, `.github/workflows/ci.yml` | deterministic tests, ignored network tests, CI gates | `docs/TESTING.md`, `CONTRIBUTING.md` |
 
 ## ADR Index
 
@@ -47,4 +47,4 @@ At a high level:
 - `DATABASE.md`
 - `docs/DEVELOPER_BOOTSTRAP.md`
 - `CONTRIBUTING.md`
-- `TESTING.md`
+- `docs/TESTING.md`

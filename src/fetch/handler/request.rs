@@ -72,9 +72,6 @@ pub async fn handle_http_request(
         }
     }
 
-    // Capture actual request headers for failure tracking
-    let request_headers = RequestHeaders::as_vec();
-
     // Reuse the response from redirect resolution when available (avoids a redundant second fetch).
     // resolve_redirect_chain already applied RequestHeaders, so the response has the same headers.
     // When reused_response is None (max-hops, SSRF block, etc.), fall back to a fresh request.
@@ -160,7 +157,6 @@ pub async fn handle_http_request(
                                 .map(|(url, _)| url.clone())
                                 .collect(),
                             response_headers: response_headers.clone(),
-                            request_headers: request_headers.clone(),
                         };
                         let error = Error::from(e);
                         Err(crate::storage::failure::attach_failure_context(
@@ -178,7 +174,6 @@ pub async fn handle_http_request(
                                 .map(|(url, _)| url.clone())
                                 .collect(),
                             response_headers: response_headers.clone(),
-                            request_headers: request_headers.clone(),
                         };
                         Err(crate::storage::failure::attach_failure_context(
                             anyhow::anyhow!(
@@ -219,7 +214,6 @@ pub async fn handle_http_request(
                 final_url: Some(final_url_string),
                 redirect_chain: redirect_chain.iter().map(|(url, _)| url.clone()).collect(),
                 response_headers: Vec::new(), // No response for connection errors
-                request_headers: request_headers.clone(),
             };
             let error = Error::from(e);
             Err(crate::storage::failure::attach_failure_context(

@@ -394,9 +394,7 @@ mod tests {
     fn create_test_html_data() -> HtmlData {
         HtmlData {
             title: "Test Page".to_string(),
-            keywords_str: Some("test, keywords".to_string()),
             description: Some("Test description".to_string()),
-            is_mobile_friendly: true,
             structured_data: StructuredData::default(),
             social_media_links: vec![],
             contact_links: vec![],
@@ -487,7 +485,6 @@ mod tests {
     fn test_build_url_record_empty_strings_normalized() {
         let resp_data = create_test_response_data();
         let mut html_data = create_test_html_data();
-        html_data.keywords_str = Some("".to_string());
         html_data.description = Some("".to_string());
         let tls_dns_data = create_test_tls_dns_data();
         let additional_dns = create_test_additional_dns_data();
@@ -511,7 +508,6 @@ mod tests {
     fn test_build_url_record_none_fields() {
         let resp_data = create_test_response_data();
         let mut html_data = create_test_html_data();
-        html_data.keywords_str = None;
         html_data.description = None;
         let tls_dns_data = create_test_tls_dns_data();
         let additional_dns = create_test_additional_dns_data();
@@ -734,7 +730,6 @@ mod tests {
         // Only empty strings are normalized - whitespace is preserved
         let resp_data = create_test_response_data();
         let mut html_data = create_test_html_data();
-        html_data.keywords_str = Some("   ".to_string()); // Whitespace only
         html_data.description = Some("\t\n".to_string()); // Whitespace only
         let tls_dns_data = create_test_tls_dns_data();
         let additional_dns = create_test_additional_dns_data();
