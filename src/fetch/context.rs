@@ -13,15 +13,13 @@ use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::DbPool;
 use crate::utils::TimingStats;
 
-/// Network-related resources (HTTP clients, DNS resolver, domain extractor).
+/// Network-related resources (HTTP clients and DNS resolver).
 #[derive(Clone)]
 pub struct NetworkContext {
     /// HTTP client for making requests (with redirects enabled)
     pub client: Arc<reqwest::Client>,
     /// HTTP client for redirect resolution (with redirects disabled)
     pub redirect_client: Arc<reqwest::Client>,
-    /// Domain extractor for extracting registrable domains from URLs
-    pub extractor: Arc<psl::List>,
     /// DNS resolver for hostname lookups
     pub resolver: Arc<TokioResolver>,
 }
@@ -75,13 +73,11 @@ impl NetworkContext {
     pub fn new(
         client: Arc<reqwest::Client>,
         redirect_client: Arc<reqwest::Client>,
-        extractor: Arc<psl::List>,
         resolver: Arc<TokioResolver>,
     ) -> Self {
         Self {
             client,
             redirect_client,
-            extractor,
             resolver,
         }
     }
@@ -146,10 +142,6 @@ mod tests {
         )
     }
 
-    fn create_test_extractor() -> Arc<psl::List> {
-        Arc::new(psl::List)
-    }
-
     fn empty_ruleset() -> Arc<FingerprintRuleset> {
         Arc::new(FingerprintRuleset::empty_for_tests())
     }
@@ -167,7 +159,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = create_test_extractor();
         let resolver = create_test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let run_id = Some("test-run-123".to_string());
@@ -181,12 +172,7 @@ mod tests {
         let ruleset = empty_ruleset();
 
         let context = ProcessingContext::new(
-            NetworkContext::new(
-                client.clone(),
-                redirect_client.clone(),
-                extractor.clone(),
-                resolver.clone(),
-            ),
+            NetworkContext::new(client.clone(), redirect_client.clone(), resolver.clone()),
             pool.clone(),
             RuntimeContext::new(
                 error_stats.clone(),
@@ -205,10 +191,6 @@ mod tests {
         assert_eq!(
             Arc::as_ptr(&context.network.redirect_client),
             Arc::as_ptr(&redirect_client)
-        );
-        assert_eq!(
-            Arc::as_ptr(&context.network.extractor),
-            Arc::as_ptr(&extractor)
         );
         assert_eq!(
             Arc::as_ptr(&context.network.resolver),
@@ -241,7 +223,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = create_test_extractor();
         let resolver = create_test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let run_id = None;
@@ -254,7 +235,7 @@ mod tests {
         let timing_stats = Arc::new(TimingStats::new());
 
         let context = ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
+            NetworkContext::new(client, redirect_client, resolver),
             pool,
             RuntimeContext::new(
                 error_stats,

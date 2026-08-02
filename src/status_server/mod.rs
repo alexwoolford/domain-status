@@ -91,7 +91,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn create_test_state() -> StatusState {
-        crate::status_server::types::test_status_state(100, 100, 50, 50, 10, 0)
+        crate::status_server::types::test_status_state(100, 100, 50, 10, 0)
     }
 
     #[tokio::test]

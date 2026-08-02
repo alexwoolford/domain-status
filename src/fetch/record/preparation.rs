@@ -2,14 +2,14 @@
 
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::response::{HtmlData, ResponseData};
-use crate::storage::BatchRecord;
+use crate::storage::PersistedUrlRecord;
 
-use super::builder::{build_batch_record, build_url_record};
+use super::builder::{build_persisted_url_record, build_url_record};
 
 /// Parameters for preparing a record for database insertion.
 ///
 /// This struct **owns** the response, HTML, and TLS/DNS data to enable moving
-/// large collections (`HashMaps`, Vecs) into the final `BatchRecord` without cloning.
+/// large collections (`HashMaps`, Vecs) into the final `PersistedUrlRecord` without cloning.
 /// This eliminates ~5-10KB of heap allocations per URL in the hot path.
 pub struct RecordPreparationParams<'a> {
     /// Response data (headers, status, body, etc.) - owned to move `HashMaps`
@@ -38,21 +38,22 @@ pub struct RecordPreparationParams<'a> {
 
 /// Prepares a complete record for database insertion.
 ///
-/// Orchestrates enrichment lookups and batch record building.
+/// Orchestrates enrichment lookups and persistence-record building.
 /// Technology detection is now done in parallel with DNS/TLS fetching.
-/// Returns the batch record and timing metrics in microseconds: (`geoip_lookup_us`, `whois_lookup_us`).
+/// Returns the persisted record and timing metrics in microseconds:
+/// (`geoip_lookup_us`, `whois_lookup_us`).
 ///
 /// This function takes **ownership** of the response, HTML, and TLS/DNS data
-/// to enable moving large collections (`HashMaps`, Vecs) into the final `BatchRecord`
+/// to enable moving large collections (`HashMaps`, Vecs) into the final `PersistedUrlRecord`
 /// without cloning, saving ~5-10KB of allocations per URL.
 ///
 /// # Arguments
 ///
 /// * `params` - Parameters for record preparation (ownership transferred)
-#[allow(clippy::too_many_lines)] // Assembles BatchRecord from response data, DNS, TLS, fingerprints, and enrichment data
+#[allow(clippy::too_many_lines)] // Assembles PersistedUrlRecord from response data, DNS, TLS, fingerprints, and enrichment data
 pub async fn prepare_record_for_insertion(
     params: RecordPreparationParams<'_>,
-) -> (BatchRecord, (u64, u64)) {
+) -> (PersistedUrlRecord, (u64, u64)) {
     use crate::utils::duration_to_us;
     use std::time::Instant;
 
@@ -148,9 +149,9 @@ pub async fn prepare_record_for_insertion(
     let (geoip_data, geoip_lookup_us) = geoip_data;
     let (whois_data, whois_lookup_us) = whois_data;
 
-    // Build batch record - takes ownership and MOVES large collections instead of cloning
+    // Build the persisted record by moving large collections instead of cloning.
     // This eliminates ~5-10KB of heap allocations per URL (HashMaps, Vecs)
-    let batch_record = build_batch_record(super::builder::BatchRecordParams {
+    let persisted_record = build_persisted_url_record(super::builder::PersistedUrlRecordParams {
         record,
         resp_data: params.resp_data,
         html_data: params.html_data,
@@ -166,7 +167,7 @@ pub async fn prepare_record_for_insertion(
         additional_dns: params.additional_dns,
     });
 
-    (batch_record, (geoip_lookup_us, whois_lookup_us))
+    (persisted_record, (geoip_lookup_us, whois_lookup_us))
 }
 
 #[cfg(test)]
@@ -196,7 +197,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = Arc::new(psl::List);
         let resolver = Arc::new(
             TokioResolver::builder_tokio()
                 .unwrap()
@@ -215,7 +215,7 @@ mod tests {
         );
 
         ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
+            NetworkContext::new(client, redirect_client, resolver),
             pool,
             RuntimeContext::new(
                 error_stats,
@@ -248,8 +248,6 @@ mod tests {
             body_truncated: false,
             content_length: None,
             http_version: None,
-            body_word_count: None,
-            body_line_count: None,
             content_type: None,
         }
     }
@@ -320,7 +318,7 @@ mod tests {
         let tls_dns_data = create_minimal_tls_dns_data();
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (batch_record, (geoip_ms, whois_ms)) =
+        let (persisted_record, (geoip_ms, whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -337,7 +335,7 @@ mod tests {
             .await;
 
         // Should succeed without panicking (create_minimal_resp_data sets final_domain to "example.com")
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
+        assert_eq!(persisted_record.url_record.final_domain, "example.com");
         // Timing metrics should be reasonable
         // Note: GeoIP lookup can be slower in CI environments due to network latency and cold cache
         // Using a more lenient threshold (5 seconds) to account for CI variability
@@ -362,7 +360,7 @@ mod tests {
         tls_dns_data.ip_address = Some("invalid.ip.address".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (batch_record, (geoip_ms, _whois_ms)) =
+        let (persisted_record, (geoip_ms, _whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -379,7 +377,7 @@ mod tests {
             .await;
 
         // Should succeed even with invalid IP (GeoIP lookup returns None)
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
+        assert_eq!(persisted_record.url_record.final_domain, "example.com");
         // GeoIP lookup should complete quickly (returns None for invalid IP)
         // Note: Using lenient threshold for CI environments
         assert!(
@@ -401,7 +399,7 @@ mod tests {
         let additional_dns = create_minimal_additional_dns_data();
 
         let start = std::time::Instant::now();
-        let (batch_record, (geoip_ms, whois_ms)) =
+        let (persisted_record, (geoip_ms, whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -419,7 +417,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // All tasks should complete
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
+        assert_eq!(persisted_record.url_record.final_domain, "example.com");
         // Timing should be reasonable (parallel execution)
         // Note: Using lenient thresholds for CI environments where network latency can be higher
         assert!(
@@ -461,7 +459,7 @@ mod tests {
         ];
 
         let technologies_count = technologies.len();
-        let (batch_record, _) = prepare_record_for_insertion(RecordPreparationParams {
+        let (persisted_record, _) = prepare_record_for_insertion(RecordPreparationParams {
             resp_data,
             html_data,
             tls_dns_data,
@@ -477,7 +475,7 @@ mod tests {
         .await;
 
         // Technologies should be preserved
-        assert_eq!(batch_record.technologies.len(), technologies_count);
+        assert_eq!(persisted_record.technologies.len(), technologies_count);
     }
 
     #[tokio::test]
@@ -495,7 +493,7 @@ mod tests {
         )];
         let partial_failures_count = partial_failures.len();
 
-        let (batch_record, _) = prepare_record_for_insertion(RecordPreparationParams {
+        let (persisted_record, _) = prepare_record_for_insertion(RecordPreparationParams {
             resp_data,
             html_data,
             tls_dns_data,
@@ -511,7 +509,10 @@ mod tests {
         .await;
 
         // Partial failures should be preserved
-        assert_eq!(batch_record.partial_failures.len(), partial_failures_count);
+        assert_eq!(
+            persisted_record.partial_failures.len(),
+            partial_failures_count
+        );
     }
 
     #[tokio::test]
@@ -527,7 +528,7 @@ mod tests {
         let additional_dns = create_minimal_additional_dns_data();
 
         let start = std::time::Instant::now();
-        let (batch_record, (geoip_ms, _whois_ms)) =
+        let (persisted_record, (geoip_ms, _whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -547,7 +548,7 @@ mod tests {
         // WHOIS should be attempted (may succeed or fail, but should take time)
         // WHOIS lookup time should be > 0 if enabled (even if it fails quickly)
         // The key is that the code path was executed
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
+        assert_eq!(persisted_record.url_record.final_domain, "example.com");
         // WHOIS timing should be recorded (may be 0 if lookup fails immediately)
         // But the elapsed time should account for WHOIS attempt
         // elapsed.as_millis() is always >= 0 (u64), so we just verify it doesn't panic
@@ -574,7 +575,7 @@ mod tests {
         tls_dns_data.ip_address = Some("999.999.999.999".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (batch_record, (geoip_ms, whois_ms)) =
+        let (persisted_record, (geoip_ms, whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -591,7 +592,7 @@ mod tests {
             .await;
 
         // Should succeed even with invalid IP (GeoIP returns None)
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
+        assert_eq!(persisted_record.url_record.final_domain, "example.com");
         // GeoIP lookup should complete quickly (returns None for invalid IP)
         // Note: Using lenient threshold for CI environments
         assert!(
@@ -602,6 +603,6 @@ mod tests {
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
                                  // GeoIP data should be None (invalid IP)
-        assert!(batch_record.geoip.is_none());
+        assert!(persisted_record.geoip.is_none());
     }
 }

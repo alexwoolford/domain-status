@@ -42,19 +42,6 @@ pub fn init_semaphore(count: usize) -> Arc<Semaphore> {
     Arc::new(Semaphore::new(count))
 }
 
-/// Initializes the Public Suffix List extractor.
-///
-/// Creates a new `psl::List` instance for extracting registrable domains
-/// from URLs using the Public Suffix List.
-///
-/// # Returns
-///
-/// An `Arc<psl::List>` that can be shared across multiple tasks for domain extraction.
-#[must_use]
-pub fn init_extractor() -> Arc<psl::List> {
-    Arc::new(psl::List)
-}
-
 /// Initializes the crypto provider for TLS operations.
 ///
 /// Configures the global crypto provider for `rustls`. This must be called before

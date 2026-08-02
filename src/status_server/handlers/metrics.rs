@@ -133,10 +133,6 @@ domain_status_start_time_seconds {start_time_secs}
 # TYPE domain_status_total_urls gauge
 domain_status_total_urls {total}
 
-# HELP domain_status_completed_urls URLs finished via the success path (persisted inserts; excludes skips)
-# TYPE domain_status_completed_urls gauge
-domain_status_completed_urls {completed}
-
 # HELP domain_status_successful_urls URLs that produced a persisted url_status row
 # TYPE domain_status_successful_urls gauge
 domain_status_successful_urls {successful}
@@ -214,7 +210,6 @@ domain_status_runtime_non_retriable_failures_total {non_retriable}
 domain_status_current_rps {current_rps}
 {timing_metrics}"#,
         total = snap.total_urls,
-        completed = snap.completed,
         successful = snap.successful,
         failed = snap.failed,
         skipped = snap.skipped,
@@ -259,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_handler_returns_text() {
-        let state = test_status_state(100, 100, 50, 50, 10, 0);
+        let state = test_status_state(100, 100, 50, 10, 0);
         let response = metrics_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -271,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_handler_includes_basic_metrics() {
-        let state = test_status_state(100, 100, 50, 50, 10, 0);
+        let state = test_status_state(100, 100, 50, 10, 0);
         let response = metrics_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -281,7 +276,6 @@ mod tests {
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
         assert!(body_str.contains("domain_status_total_urls"));
-        assert!(body_str.contains("domain_status_completed_urls"));
         assert!(body_str.contains("domain_status_successful_urls"));
         assert!(body_str.contains("domain_status_skipped_urls"));
         assert!(body_str.contains("domain_status_failed_urls"));
@@ -296,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_render_metrics_early_skip_active_zero() {
-        let state = test_status_state(10, 3, 0, 0, 0, 3);
+        let state = test_status_state(10, 3, 0, 0, 3);
         let metrics = render_metrics(&state, 1.0);
         assert!(metrics.contains("domain_status_active_urls 0"));
         assert!(metrics.contains("domain_status_skipped_urls 3"));
@@ -311,7 +305,7 @@ mod tests {
             total_us: 2000,
             ..Default::default()
         });
-        let mut state = test_status_state(100, 60, 50, 50, 10, 0);
+        let mut state = test_status_state(100, 60, 50, 10, 0);
         state.error_stats = Arc::new({
             let stats = ProcessingStats::new();
             stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
@@ -327,7 +321,6 @@ mod tests {
         });
 
         let metrics = render_metrics(&state, 5.0);
-        assert!(metrics.contains("domain_status_completed_urls 50"));
         assert!(metrics.contains("domain_status_successful_urls 50"));
         assert!(metrics.contains("domain_status_percentage_complete 60"));
         assert!(metrics.contains("domain_status_percentage_dispatched 60"));
@@ -340,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_render_metrics_omits_timing_when_empty() {
-        let mut state = test_status_state(0, 0, 0, 0, 0, 0);
+        let mut state = test_status_state(0, 0, 0, 0, 0);
         state.timing_stats = Some(Arc::new(TimingStats::new()));
 
         let metrics = render_metrics(&state, 0.0);

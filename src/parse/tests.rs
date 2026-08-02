@@ -14,10 +14,6 @@ fn test_extract_title_basic() {
     let document = Html::parse_document(html);
     let stats = test_error_stats();
     assert_eq!(extract_title(&document, &stats), "Test Page");
-    assert_eq!(
-        stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError),
-        0
-    );
 }
 
 #[test]
@@ -60,10 +56,6 @@ fn test_extract_title_missing() {
     assert_eq!(
         stats.get_warning_count(crate::error_handling::WarningType::MissingTitle),
         1
-    );
-    assert_eq!(
-        stats.get_error_count(crate::error_handling::ErrorType::TitleExtractError),
-        0
     );
 }
 

@@ -1,12 +1,10 @@
 //! Complete record data structure.
 //!
-//! This module defines the `BatchRecord` type, which contains all data
+//! This module defines the `PersistedUrlRecord` type, which contains all data
 //! needed to insert a complete URL record and its enrichment data.
 //!
-//! **Note:** Despite the name "`BatchRecord`", records are NOT batched.
-//! They are written directly to the database immediately. The name is
-//! historical - it represents a "batch" of related data (URL + enrichment)
-//! that gets inserted together, not a batching optimization.
+//! Records are written directly to the database immediately; the aggregate
+//! groups one URL row with all related enrichment data.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -21,7 +19,7 @@ use crate::storage::models::{UrlPartialFailureRecord, UrlRecord};
 ///
 /// This struct contains all data needed to insert a URL record and
 /// all its associated enrichment data (`GeoIP`, WHOIS, structured data, etc.).
-pub struct BatchRecord {
+pub struct PersistedUrlRecord {
     pub url_record: UrlRecord,
     pub security_headers: HashMap<String, String>,
     pub http_headers: HashMap<String, String>,
@@ -37,10 +35,10 @@ pub struct BatchRecord {
     pub exposed_secrets: Vec<ExposedSecret>,
     pub whois: Option<WhoisResult>,
     pub partial_failures: Vec<UrlPartialFailureRecord>, // DNS/TLS errors that didn't prevent processing
-    pub favicon: Option<crate::fetch::favicon::FaviconData>, // Favicon hash + base64 for Shodan-compatible threat intel
-    pub cname_records: Option<String>,                       // CNAME records JSON (satellite table)
-    pub aaaa_records: Option<String>, // IPv6 addresses JSON (satellite table)
-    pub caa_records: Option<String>,  // CAA records JSON (satellite table)
+    pub favicon: Option<crate::fetch::favicon::FaviconData>, // Shodan-compatible favicon hash + URL
+    pub cname_records: Option<String>,                  // CNAME records JSON (satellite table)
+    pub aaaa_records: Option<String>,                   // IPv6 addresses JSON (satellite table)
+    pub caa_records: Option<String>,                    // CAA records JSON (satellite table)
     pub csp_domains: Vec<(String, String, Option<String>)>, // (directive, fqdn, registrable_domain)
     pub cookies: Vec<CookieInfo>,
     pub resource_hints: Vec<(String, String)>, // (hint_type, href); hint_type: preconnect/dns-prefetch/preload/prefetch/modulepreload

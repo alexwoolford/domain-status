@@ -246,7 +246,7 @@ mod tests {
         );
         assert_eq!(
             sql_names.len(),
-            13,
+            14,
             "migration count changed — update DATABASE.md intro and this assertion"
         );
     }

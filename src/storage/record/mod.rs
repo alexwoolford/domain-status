@@ -1,10 +1,10 @@
 //! Complete record data structure.
 //!
-//! This module defines the `BatchRecord` type, which is a complete record
+//! This module defines the `PersistedUrlRecord` type, which is a complete record
 //! containing all data needed for database insertion. Records are written
 //! directly to the database immediately (no batching - `SQLite` WAL mode handles
 //! concurrency efficiently).
 
 mod types;
 
-pub use types::{BatchRecord, CookieInfo, ScriptHostInfo};
+pub use types::{CookieInfo, PersistedUrlRecord, ScriptHostInfo};

@@ -62,7 +62,7 @@ pub async fn finalize_scan(
     // Log final progress against the input file total (not attempted-only).
     log_progress(
         resources.start_time,
-        &resources.completed_urls,
+        &resources.successful_urls,
         &resources.failed_urls,
         &resources.skipped_urls,
         Some(&resources.total_urls_in_file),
@@ -186,7 +186,6 @@ mod tests {
             .expect("insert run metadata");
 
         let total_urls_attempted = Arc::new(AtomicUsize::new(10));
-        let completed_urls = Arc::new(AtomicUsize::new(8));
         let successful_urls = Arc::new(AtomicUsize::new(8));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(2));
@@ -201,7 +200,6 @@ mod tests {
                 .build()
                 .expect("redirect client"),
         );
-        let extractor = Arc::new(psl::List);
         let resolver = Arc::new(
             TokioResolver::builder_tokio()
                 .unwrap()
@@ -211,7 +209,7 @@ mod tests {
         );
 
         let shared_ctx = Arc::new(ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
+            NetworkContext::new(client, redirect_client, resolver),
             Arc::clone(&pool),
             RuntimeContext::new(
                 Arc::clone(&error_stats),
@@ -240,7 +238,6 @@ mod tests {
             request_limiter: None,
             rate_limiter_shutdown: None,
             in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-            completed_urls,
             successful_urls,
             skipped_urls,
             failed_urls,

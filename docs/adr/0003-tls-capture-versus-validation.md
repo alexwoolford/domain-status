@@ -2,47 +2,45 @@
 
 - Status: Accepted
 - Date: 2026-03-01
+- Updated: 2026-08-02
 
 ## Context
 
-`domain_status` is an observational scanner, not a trust-establishing HTTPS client for end-user traffic. We want to capture certificate and TLS metadata even when a site is misconfigured, expired, hostname-mismatched, or otherwise invalid from a browser trust perspective.
+`domain_status` is an observational scanner. We want certificate and TLS metadata even when a site is misconfigured, expired, hostname-mismatched, or otherwise invalid from a browser trust perspective — without turning the main HTTP client into an insecure browser substitute.
 
-The current HTTP clients are configured in `src/initialization/client.rs`, while security interpretation of the captured data happens elsewhere.
+Page-fetch clients live in `src/initialization/client.rs`. Dedicated TLS observation lives in `src/tls/`.
 
 ## Decision
 
-The scanner will prefer **capture** over **transport validation** during collection:
+Split **page fetch** from **TLS capture**:
 
-- request clients allow invalid certificates
-- request clients allow invalid hostnames
-- redirect handling is still manual and SSRF-aware
-- certificate properties and trust-related concerns are analyzed after capture rather than enforced by the transport layer
-
-In short: the tool is allowed to observe broken TLS so it can report on broken TLS.
+- **Page-fetch HTTP clients** use **strict** rustls verification (invalid certificates and hostnames fail the request). A failed fetch is still a useful observation (recorded as failure / skip), not a reason to disable trust.
+- **TLS capture** uses a separate AcceptAll path so certificate fields, SANs, fingerprints, and related facts can still be collected when the leaf would fail browser trust.
+- Redirect handling remains manual and SSRF-aware (`Policy::none` + hop validation + `SafeResolver`).
+- Trust outcomes are stored as fact columns (`cert_is_self_signed`, `cert_is_wildcard`, `cert_is_mismatched`, `tls_version`, validity timestamps) for SQL / export — not as a separate “security warnings” analysis layer.
 
 ## Consequences
 
 Positive:
 
-- misconfigured or expired HTTPS services remain observable
-- the scanner can inventory certificate details for sites that would fail strict validation
-- TLS security analysis is based on captured evidence rather than early transport rejection
+- Page fetch does not silently accept broken TLS as a successful HTTPS session.
+- Misconfigured HTTPS services remain observable via the capture path and failure records.
+- Consumers query fact columns rather than a precomputed warning table.
 
 Trade-offs:
 
-- these clients are not appropriate as general-purpose "secure browser" clients
-- developers must not assume a successful request implies certificate trustworthiness
-- documentation must be explicit so consumers do not misread collection success as validation success
+- Capture success does not imply the page-fetch client trusted the certificate.
+- Dual paths must stay documented so “we got a cert” is not read as “HTTPS was valid.”
 
 ## Guardrails
 
-- redirects are not automatically followed
-- DNS resolution remains SSRF-aware through the safe resolver path
-- downstream security analysis is responsible for classifying weak or invalid TLS properties
+- Redirects are not automatically followed by reqwest.
+- DNS resolution remains SSRF-aware through the safe resolver path.
+- `src/security/` holds SSRF / HSTS / URL validation helpers — not a post-hoc warning analyzer.
 
 ## Related Code
 
-- `src/initialization/client.rs`
-- `src/tls/mod.rs`
-- `src/security/analysis.rs`
-- `README.md`
+- `src/initialization/client.rs` (strict page-fetch TLS)
+- `src/tls/` (capture path)
+- `src/security/` (SSRF, HSTS, URL validation)
+- `SECURITY.md`

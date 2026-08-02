@@ -22,7 +22,6 @@ use super::types::{TlsDnsData, TlsDnsResult};
 /// * `resolver` - DNS resolver
 /// * `final_domain` - The final domain (for logging)
 /// * `error_stats` - Processing statistics tracker
-/// * `_run_id` - Run identifier for partial failure tracking
 ///
 /// # Returns
 ///
@@ -35,7 +34,6 @@ pub(crate) async fn fetch_tls_and_dns(
     resolver: &hickory_resolver::TokioResolver,
     final_domain: &str,
     error_stats: &crate::error_handling::ProcessingStats,
-    _run_id: Option<&str>, // Reserved for future use (partial failure tracking)
 ) -> Result<(TlsDnsResult, (u64, u64, u64)), Error> {
     // Run TLS and DNS operations in parallel (they're independent).
     // Each branch measures its own timing so metrics are accurate.
@@ -226,7 +224,6 @@ mod tests {
             &resolver,
             "example.com",
             error_stats.as_ref(),
-            None,
         )
         .await;
 
@@ -248,7 +245,6 @@ mod tests {
             &resolver,
             "example.com",
             error_stats.as_ref(),
-            None,
         )
         .await;
 
@@ -268,7 +264,6 @@ mod tests {
             &resolver,
             "this-domain-definitely-does-not-exist-12345.invalid",
             error_stats.as_ref(),
-            None,
         )
         .await;
 
@@ -294,7 +289,6 @@ mod tests {
             &resolver,
             "example.com",
             error_stats.as_ref(),
-            None,
         )
         .await;
 
@@ -322,7 +316,6 @@ mod tests {
             &resolver,
             "this-domain-definitely-does-not-exist-12345.invalid",
             error_stats.as_ref(),
-            None,
         )
         .await;
 

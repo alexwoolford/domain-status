@@ -3,7 +3,7 @@
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
 The schema is created by migrations (`migrations/0001_initial_schema.sql` through
-`migrations/0013_url_status_unique_initial_domain.sql`) and follows a simple pattern:
+`migrations/0014_drop_unpopulated_columns.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
@@ -98,10 +98,8 @@ Important characteristics:
 | `http_status_text` | `TEXT NOT NULL` | Human-readable status |
 | `response_time_seconds` | `REAL NOT NULL` | Response time |
 | `title` | `TEXT NOT NULL` | Empty string when missing |
-| `keywords` | `TEXT` | **Deprecated — no longer written.** Column retained for old DBs. Previously `<meta name="keywords">` (obsolete SEO). |
 | `description` | `TEXT` | Optional meta description |
 | `meta_robots` | `TEXT` | Content of `<meta name="robots">` when present |
-| `is_mobile_friendly` | `BOOLEAN NOT NULL DEFAULT 0` | **Deprecated — always written as `0`.** Previously a viewport-meta heuristic only. |
 | `tls_version` | `TEXT` | Nullable for HTTP-only or missing TLS data |
 | `cipher_suite` | `TEXT` | Captured TLS cipher suite |
 | `key_algorithm` | `TEXT` | Parsed certificate key algorithm |
@@ -117,8 +115,6 @@ Important characteristics:
 | `external_scripts_scanned` | `INTEGER NOT NULL DEFAULT 0` | Scripts successfully fetched/scanned for secrets (capped; 0 when flag off) |
 | `content_length` | `INTEGER` | Response body length in bytes |
 | `http_version` | `TEXT` | HTTP protocol version (`HTTP/1.1`, `HTTP/2`, etc.) |
-| `body_word_count` | `INTEGER` | **Deprecated — no longer written** (prefer `content_length` + `body_sha256`). |
-| `body_line_count` | `INTEGER` | **Deprecated — no longer written.** |
 | `content_type` | `TEXT` | Content-Type header value |
 | `canonical_url` | `TEXT` | URL from `<link rel="canonical">` |
 | `cert_fingerprint_sha256` | `TEXT` | SHA-256 hash of the leaf TLS certificate DER |
@@ -203,7 +199,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_security_headers` | Security-focused header subset | `header_name`, `header_value` |
 | `url_certificate_oids` | Certificate OIDs | `oid` |
 | `url_certificate_sans` | Certificate SANs | `san_value` |
-| `url_favicons` | Favicon URL + Shodan-compatible hash. `base64_data` is **no longer written** (storage bomb; column retained nullable for old DBs). | `favicon_url`, `hash`, `base64_data` |
+| `url_favicons` | Favicon URL + Shodan-compatible hash | `favicon_url`, `hash` |
 
 ### Enrichment satellites
 
@@ -281,20 +277,15 @@ WHERE NOT EXISTS (
 The raw `Strict-Transport-Security` header value (when present) is stored verbatim
 in `url_security_headers`, e.g. `max-age=31536000; includeSubDomains; preload`.
 
-### Legacy databases (pre–0012 / pre–data-capture cleanup)
+### Legacy databases (pre–0012 / pre–0014)
 
-Scans produced with **v0.1.26 and earlier** may still contain (until migrated):
+Scans produced with older binaries may still contain (until migrated):
 
 - Rows in `url_security_warnings`, `url_body_domains`, and `url_failure_request_headers`
   (dropped by migration `0012_drop_deprecated_satellites.sql`).
+- Columns `keywords`, `is_mobile_friendly`, `body_word_count`, `body_line_count`, and
+  `url_favicons.base64_data` (dropped by migration `0014_drop_unpopulated_columns.sql`).
 - Empty TLS on rows whose `ip_address` is IPv6 (no IPv4 fallback yet). Prefer newer binaries for dual-stack cert coverage.
-- Populated `keywords`, `body_word_count` / `body_line_count`, and favicon `base64_data`.
-
-Optional maintenance to reclaim disk from old favicon payloads:
-```sql
-UPDATE url_favicons SET base64_data = NULL WHERE base64_data IS NOT NULL AND base64_data != '';
-VACUUM;
-```
 
 ### Secret findings
 

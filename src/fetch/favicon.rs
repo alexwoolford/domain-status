@@ -18,7 +18,6 @@ use crate::security::validate_url_safe;
 pub(crate) struct FaviconData {
     pub favicon_url: String,
     pub hash: i32,
-    pub base64_data: String,
 }
 
 /// Computes a Shodan-compatible `MurmurHash3` of favicon bytes.
@@ -192,7 +191,7 @@ fn fallback_favicon_url(final_url: &str) -> Option<String> {
 /// 1. If `html_data.favicon_url` is set, resolves it against `final_url`.
 /// 2. Otherwise falls back to `{origin}/favicon.ico`.
 /// 3. Streams the bytes (capped at `MAX_FAVICON_SIZE`).
-/// 4. Returns `FaviconData` with Shodan-compatible hash and base64 encoding.
+/// 4. Returns `FaviconData` with a Shodan-compatible hash.
 pub(crate) async fn fetch_and_hash_favicon(
     client: &Arc<reqwest::Client>,
     favicon_href: Option<&str>,
@@ -215,14 +214,8 @@ pub(crate) async fn fetch_and_hash_favicon(
     };
 
     let hash = compute_shodan_favicon_hash(&bytes);
-    // Do not persist favicon bytes (storage bomb); Shodan interop only needs the hash.
-    let base64_data = String::new();
 
-    Some(FaviconData {
-        favicon_url,
-        hash,
-        base64_data,
-    })
+    Some(FaviconData { favicon_url, hash })
 }
 
 #[cfg(test)]

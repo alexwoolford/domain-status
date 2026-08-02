@@ -1,8 +1,6 @@
 //! Shared progress math for `/status` and `/metrics`.
 //!
 //! Finished work is `successful + failed + skipped` (matches finalize / `runs`).
-//! Mid-process skips increment `skipped` only (not `completed`), so
-//! `completed_urls` tracks the same outcomes as `successful_urls`.
 
 use std::sync::atomic::Ordering;
 
@@ -14,7 +12,6 @@ pub struct ProgressSnapshot {
     pub total_urls: usize,
     pub attempted: usize,
     pub successful: usize,
-    pub completed: usize,
     pub failed: usize,
     pub skipped: usize,
     pub finished: usize,
@@ -31,7 +28,6 @@ pub fn progress_snapshot(state: &StatusState, elapsed: f64) -> ProgressSnapshot 
     let total_urls = state.total_urls.load(Ordering::SeqCst);
     let attempted = state.total_urls_attempted.load(Ordering::SeqCst);
     let successful = state.successful_urls.load(Ordering::SeqCst);
-    let completed = state.completed_urls.load(Ordering::SeqCst);
     let failed = state.failed_urls.load(Ordering::SeqCst);
     let skipped = state.skipped_urls.load(Ordering::SeqCst);
     let finished = successful.saturating_add(failed).saturating_add(skipped);
@@ -71,7 +67,6 @@ pub fn progress_snapshot(state: &StatusState, elapsed: f64) -> ProgressSnapshot 
         total_urls,
         attempted,
         successful,
-        completed,
         failed,
         skipped,
         finished,

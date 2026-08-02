@@ -74,7 +74,7 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 - SQLite fact table + satellite tables; `summary` command
 - Concurrency / rate limiting; `--fail-on` for CI exit policy
 
-**Also available (see docs):** GeoIP, WHOIS, live status/Prometheus server, CSV/JSONL/Parquet export, TOML/`DOMAIN_STATUS_*` config. Low-signal fields such as meta keywords, viewport “mobile-friendly”, body-referenced domains, and body word/line counts are **no longer populated** on new scans (columns kept for old DBs).
+**Also available (see docs):** GeoIP, WHOIS, live status/Prometheus server, CSV/JSONL/Parquet export, TOML/`DOMAIN_STATUS_*` config.
 
 ## Limitations
 

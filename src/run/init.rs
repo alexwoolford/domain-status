@@ -15,8 +15,7 @@ use crate::config::{Config, DEFAULT_USER_AGENT};
 use crate::error_handling::ProcessingStats;
 use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
 use crate::initialization::{
-    init_client, init_extractor, init_rate_limiter, init_redirect_client, init_resolver,
-    init_semaphore,
+    init_client, init_rate_limiter, init_redirect_client, init_resolver, init_semaphore,
 };
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::{init_db_pool_with_path, insert_run_metadata, RunMetadata};
@@ -157,7 +156,6 @@ pub async fn init_scan_resources(
     let redirect_client = init_redirect_client(&config, Arc::clone(&resolver))
         .await
         .context("Failed to initialize redirect client")?;
-    let extractor = init_extractor();
 
     // Run migrations
     crate::storage::run_migrations(&pool)
@@ -220,7 +218,6 @@ pub async fn init_scan_resources(
     let runtime_metrics = Arc::new(RuntimeMetrics::default());
 
     // Initialize counters
-    let completed_urls = Arc::new(AtomicUsize::new(0));
     let successful_urls = Arc::new(AtomicUsize::new(0));
     let skipped_urls = Arc::new(AtomicUsize::new(0));
     let failed_urls = Arc::new(AtomicUsize::new(0));
@@ -235,7 +232,6 @@ pub async fn init_scan_resources(
         NetworkContext::new(
             Arc::clone(&client),
             Arc::clone(&redirect_client),
-            Arc::clone(&extractor),
             Arc::clone(&resolver),
         ),
         Arc::clone(&pool),
@@ -258,7 +254,6 @@ pub async fn init_scan_resources(
         request_limiter,
         rate_limiter_shutdown,
         in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-        completed_urls,
         successful_urls,
         skipped_urls,
         failed_urls,

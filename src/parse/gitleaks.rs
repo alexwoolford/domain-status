@@ -138,8 +138,8 @@ pub struct CompiledRule {
     /// Lowercased at load time. Kept for human inspection / overlay edits; the
     /// hot-path prefilter uses [`Self::keyword_pattern_ids`] instead.
     pub keywords: Option<Vec<String>>,
-    /// Indices into [`KeywordPrefilter::pattern_to_id`] (the global Aho-Corasick
-    /// automaton) for this rule's keywords. If `Some(non-empty)`, the rule is
+    /// Indices into the global Aho-Corasick automaton for this rule's keywords.
+    /// If `Some(non-empty)`, the rule is
     /// gated on at least one of these IDs being present in the body's matched
     /// keyword set; if `None` or empty, the rule has no keyword prefilter and
     /// always runs.
@@ -161,11 +161,6 @@ pub struct CompiledRule {
 /// automaton collapses it to `O(body_len)` independent of rule count.
 pub struct KeywordPrefilter {
     automaton: aho_corasick::AhoCorasick,
-    /// Lowercased keyword -> automaton pattern ID. Used by tests and a future
-    /// diagnostic helper; intentionally `pub` so external callers (e.g. a
-    /// future `--explain-rule` CLI) can introspect.
-    #[allow(dead_code)] // exposed for diagnostics; not yet read on the hot path
-    pub pattern_to_id: std::collections::HashMap<String, u32>,
 }
 
 impl KeywordPrefilter {
@@ -544,10 +539,7 @@ fn build_keyword_prefilter(rules: &mut [CompiledRule]) -> Option<KeywordPrefilte
         }
     };
 
-    Some(KeywordPrefilter {
-        automaton,
-        pattern_to_id,
-    })
+    Some(KeywordPrefilter { automaton })
 }
 
 /// Cached result of loading the bundled gitleaks config. Populated lazily by
@@ -692,7 +684,7 @@ mod tests {
             .as_ref()
             .expect("production config must have a keyword prefilter");
         assert!(
-            !prefilter.pattern_to_id.is_empty(),
+            prefilter.automaton.patterns_len() > 0,
             "prefilter should have populated patterns"
         );
         for rule in &config.rules {
@@ -709,7 +701,7 @@ mod tests {
                     );
                     for id in ids {
                         assert!(
-                            (*id as usize) < prefilter.pattern_to_id.len(),
+                            (*id as usize) < prefilter.automaton.patterns_len(),
                             "rule '{}' has out-of-range pattern id {id}",
                             rule.id
                         );

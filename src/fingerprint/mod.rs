@@ -25,8 +25,6 @@
 //! Third-party CDN scripts are not fetched (denylist). JavaScript is never executed.
 
 mod detection;
-#[cfg(test)]
-mod js_parsing;
 mod models;
 mod patterns;
 mod ruleset;
@@ -51,7 +49,6 @@ pub(crate) use ruleset::get_ruleset;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::js_parsing::strip_js_comments_and_strings;
     use crate::fingerprint::patterns::matches_pattern;
     use reqwest::header::HeaderMap;
     use std::collections::{HashMap, HashSet};
@@ -62,30 +59,6 @@ mod tests {
         assert!(matches_pattern("nginx", "nginx/1.18.0").matched);
         assert!(matches_pattern("", "anything").matched);
         assert!(!matches_pattern("apache", "nginx/1.18.0").matched);
-    }
-
-    #[test]
-    fn test_strip_js_comments_and_strings() {
-        // Test comment stripping
-        let code = r#"var x = 1; // websiteMaximumSuggestFundiinWithPrediction
-        var y = 2; /* lz_chat_execute */"#;
-        let stripped = strip_js_comments_and_strings(code);
-        assert!(!stripped.contains("websiteMaximumSuggestFundiinWithPrediction"));
-        assert!(!stripped.contains("lz_chat_execute"));
-
-        // Test string stripping
-        let code2 = r#"var x = "websiteMaximumSuggestFundiinWithPrediction";
-        var y = 'lz_chat_execute';"#;
-        let stripped2 = strip_js_comments_and_strings(code2);
-        assert!(!stripped2.contains("websiteMaximumSuggestFundiinWithPrediction"));
-        assert!(!stripped2.contains("lz_chat_execute"));
-
-        // Test that actual code is preserved
-        let code3 = r#"window.websiteMaximumSuggestFundiinWithPrediction = true;
-        var lz_chat_execute = function() {};"#;
-        let stripped3 = strip_js_comments_and_strings(code3);
-        assert!(stripped3.contains("websiteMaximumSuggestFundiinWithPrediction"));
-        assert!(stripped3.contains("lz_chat_execute"));
     }
 
     #[test]

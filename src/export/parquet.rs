@@ -46,16 +46,12 @@ pub(crate) fn build_schema() -> Schema {
         Field::new("http_status_text", DataType::Utf8, false),
         Field::new("response_time_seconds", DataType::Float64, false),
         Field::new("title", DataType::Utf8, false),
-        Field::new("keywords", DataType::Utf8, true),
         Field::new("description", DataType::Utf8, true),
         Field::new("meta_robots", DataType::Utf8, true),
-        Field::new("is_mobile_friendly", DataType::Boolean, false),
         // Content metrics
         Field::new("body_sha256", DataType::Utf8, true),
         Field::new("content_length", DataType::Int64, true),
         Field::new("http_version", DataType::Utf8, true),
-        Field::new("body_word_count", DataType::Int64, true),
-        Field::new("body_line_count", DataType::Int64, true),
         Field::new("content_type", DataType::Utf8, true),
         Field::new("canonical_url", DataType::Utf8, true),
         Field::new("body_truncated", DataType::Boolean, false),
@@ -430,15 +426,11 @@ fn write_batch(
     let mut http_status_text_b = StringBuilder::new();
     let mut response_time_b = Float64Builder::new();
     let mut title_b = StringBuilder::new();
-    let mut keywords_b = StringBuilder::new();
     let mut description_b = StringBuilder::new();
     let mut meta_robots_b = StringBuilder::new();
-    let mut is_mobile_friendly_b = BooleanBuilder::new();
     let mut body_sha256_b = StringBuilder::new();
     let mut content_length_b = Int64Builder::new();
     let mut http_version_b = StringBuilder::new();
-    let mut body_word_count_b = Int64Builder::new();
-    let mut body_line_count_b = Int64Builder::new();
     let mut content_type_b = StringBuilder::new();
     let mut canonical_url_b = StringBuilder::new();
     let mut body_truncated_b = BooleanBuilder::new();
@@ -617,15 +609,11 @@ fn write_batch(
         http_status_text_b.append_value(&row.main.status_desc);
         response_time_b.append_value(row.main.response_time);
         title_b.append_value(&row.main.title);
-        append_opt_str(&mut keywords_b, row.main.keywords.as_ref());
         append_opt_str(&mut description_b, row.main.description.as_ref());
         append_opt_str(&mut meta_robots_b, row.main.meta_robots.as_ref());
-        is_mobile_friendly_b.append_value(row.main.is_mobile_friendly);
         append_opt_str(&mut body_sha256_b, row.main.body_sha256.as_ref());
         append_opt_i64(&mut content_length_b, row.main.content_length);
         append_opt_str(&mut http_version_b, row.main.http_version.as_ref());
-        append_opt_i64(&mut body_word_count_b, row.main.body_word_count);
-        append_opt_i64(&mut body_line_count_b, row.main.body_line_count);
         append_opt_str(&mut content_type_b, row.main.content_type.as_ref());
         append_opt_str(&mut canonical_url_b, row.main.canonical_url.as_ref());
         body_truncated_b.append_value(row.main.body_truncated);
@@ -1036,15 +1024,11 @@ fn write_batch(
         Arc::new(http_status_text_b.finish()),
         Arc::new(response_time_b.finish()),
         Arc::new(title_b.finish()),
-        Arc::new(keywords_b.finish()),
         Arc::new(description_b.finish()),
         Arc::new(meta_robots_b.finish()),
-        Arc::new(is_mobile_friendly_b.finish()),
         Arc::new(body_sha256_b.finish()),
         Arc::new(content_length_b.finish()),
         Arc::new(http_version_b.finish()),
-        Arc::new(body_word_count_b.finish()),
-        Arc::new(body_line_count_b.finish()),
         Arc::new(content_type_b.finish()),
         Arc::new(canonical_url_b.finish()),
         Arc::new(body_truncated_b.finish()),
@@ -1246,8 +1230,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO url_status (
                 initial_domain, final_domain, ip_address, http_status, http_status_text,
-                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_time_seconds, title, observed_at_ms, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
         .bind(domain)
@@ -1258,7 +1242,6 @@ mod tests {
         .bind(1.5f64)
         .bind("Test Page")
         .bind(1704067200000i64)
-        .bind(true)
         .bind("test-run-1")
         .fetch_one(pool)
         .await

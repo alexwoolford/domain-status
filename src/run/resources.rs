@@ -48,8 +48,6 @@ pub struct ScanResources {
     pub in_flight_urls: Arc<Mutex<HashSet<String>>>,
 
     // Counters
-    /// Count of successfully processed URLs
-    pub completed_urls: Arc<AtomicUsize>,
     /// Count of URLs that produced a persisted `url_status` row
     pub successful_urls: Arc<AtomicUsize>,
     /// Count of URLs intentionally skipped before insert
@@ -131,8 +129,6 @@ pub struct UrlTaskParams {
     pub permit: OwnedSemaphorePermit,
     /// Optional rate limiter
     pub request_limiter: Option<Arc<RateLimiter>>,
-    /// Completed URL counter
-    pub completed_urls: Arc<AtomicUsize>,
     /// Persisted-success counter
     pub successful_urls: Arc<AtomicUsize>,
     /// Skipped-without-insert counter

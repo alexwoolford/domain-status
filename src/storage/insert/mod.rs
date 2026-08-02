@@ -24,12 +24,12 @@ pub use enrichment::{
     insert_whois_data,
 };
 pub use failure::{insert_url_failure, insert_url_partial_failure};
-pub use record::insert_batch_record;
+pub use record::insert_persisted_url_record;
 pub use run::{
     insert_run_metadata, query_run_history, update_run_stats, RunMetadata, RunStats, RunSummary,
 };
 // Crate-internal re-export: `insert_url_record` is called from
-// `record.rs::insert_batch_record` via `insert::insert_url_record`, so it
+// `record.rs::insert_persisted_url_record` via `insert::insert_url_record`, so it
 // must be visible at this module path — but only inside the crate. The
 // external (downstream-visible) re-export of both `insert_url_record` and
 // `UrlRecordInsertParams` lives in `src/lib.rs` behind the `test-utils`

@@ -8,15 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- Duplicate `completed_urls` progress/status counter and Prometheus gauge; `successful_urls` is now the sole persisted-success counter.
 - Always-zero `security_analysis_us` / `security_analysis_ms` timing channel (status JSON + Prometheus).
 - Unused failure `request_headers` plumbing and `RequestHeaders::as_vec()` (table dropped in migration 0012).
-- Dead `extract_meta_keywords` / `is_mobile_friendly` parsers and `WarningType::MissingMetaKeywords` (SQLite columns retained until a later DROP migration).
+- Dead `extract_meta_keywords` / `is_mobile_friendly` parsers and `WarningType::MissingMetaKeywords`.
+- Unused `url_status` columns `keywords`, `is_mobile_friendly`, `body_word_count`, `body_line_count` and `url_favicons.base64_data` (migration `0014_drop_unpopulated_columns.sql`); matching export fields removed (**breaking**).
+- Unused `ErrorType::TitleExtractError`, `TlsVersion::is_weak()`, and quarantined `fingerprint/js_parsing` test module.
+- Unused call-site parameters (`extract_domain` list, GeoIP insert IP, TLS/DNS fetch `run_id`).
 - Unused dev-dependencies `assert_fs` and `insta` `yaml` feature.
 
 ### Changed
+- Rename the immediate-persistence `BatchRecord` API to `PersistedUrlRecord` (including its builder and parameter type).
 - Narrow `.gitignore` `test_*` patterns to root scratch only (`/test_*`) so new files under `tests/` are not silently ignored.
 - Unify testing docs into [`docs/TESTING.md`](docs/TESTING.md); root `TESTING.md` is a stub.
-- Fix migration count docs (`0001`–`0013`) in CLAUDE.md / QUERIES.md.
+- Fix migration count docs (`0001`–`0014`) in CLAUDE.md / QUERIES.md / DATABASE.md.
+- Rewrite ADR 0003 to match strict page-fetch TLS + separate AcceptAll capture path.
 - Document SSRF / outbound request routing in the untrusted-input threat model and SECURITY.md.
 - Chrome User-Agent version fetch uses `SafeResolver` (same SSRF DNS filter as scan/GeoIP clients).
 - Block IPv6 documentation prefix `2001:db8::/32` in SSRF checks (parity with IPv4 doc nets).
@@ -32,10 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarify README Quick Start: SQLite stays primary; `summary` / JSONL / Parquet called out as complementary paths (including DuckDB-friendly Parquet export).
 
 ### Deferred (separate PRs)
-- DROP deprecated `url_status` columns (`keywords`, `is_mobile_friendly`, body counts) and export fields.
 - Simplify config merge (single env authority; fail-fast TOML).
 - Relocate or delete zero-assert `tests/stress_*.rs` demos.
-- Optional feature-gate for Arrow/Parquet; rename `BatchRecord`.
+- Optional feature-gate for Arrow/Parquet.
 
 ## [0.1.27] - 2026-07-31
 

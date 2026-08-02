@@ -34,8 +34,6 @@ fn truncate_header_value(value: String) -> String {
 pub struct FailureRecordParams<'a> {
     /// Database connection pool
     pub pool: &'a SqlitePool,
-    /// Domain extractor for extracting registrable domains from URLs
-    pub extractor: &'a psl::List,
     /// The original URL that failed
     pub url: &'a str,
     /// The error that occurred
@@ -78,7 +76,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
     };
 
     // Extract domain information
-    let domain = extract_domain(params.extractor, params.url).unwrap_or_else(|e| {
+    let domain = extract_domain(params.url).unwrap_or_else(|e| {
         log::debug!(
             "Failed to extract domain from URL {}: {}. Using 'unknown' as fallback.",
             params.url,
@@ -87,9 +85,7 @@ pub async fn record_url_failure(params: FailureRecordParams<'_>) {
         "unknown".to_string()
     });
 
-    let final_domain = final_url
-        .as_ref()
-        .and_then(|u| extract_domain(params.extractor, u).ok());
+    let final_domain = final_url.as_ref().and_then(|u| extract_domain(u).ok());
 
     // Extract error information
     let error_type = extract_error_type(params.error);
@@ -217,7 +213,6 @@ mod tests {
         // Test that domain extraction failures use "unknown" fallback
         // This is critical - failures should be recorded even if domain extraction fails
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         // Use invalid URL that will fail domain extraction
         let error = anyhow::anyhow!("Test error");
@@ -225,7 +220,6 @@ mod tests {
 
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "not-a-valid-url", // Will fail domain extraction
             error: &error,
             context,
@@ -254,7 +248,6 @@ mod tests {
         // Test that context is extracted from error chain when not provided
         // This is critical - context should be preserved even if not explicitly passed
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         let context = FailureContext {
             final_url: Some("https://example.com".to_string()),
@@ -267,7 +260,6 @@ mod tests {
 
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.org",
             error: &error,
             context: FailureContext::default(), // Empty context - should extract from error
@@ -296,7 +288,6 @@ mod tests {
         // Test that very long header values are truncated
         // This is critical - prevents database bloat from large headers
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         let long_header_value = "x".repeat(2000); // Exceeds MAX_HEADER_VALUE_LENGTH (1000)
         let context = FailureContext {
@@ -308,7 +299,6 @@ mod tests {
         let error = anyhow::anyhow!("Test error");
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context,
@@ -339,7 +329,6 @@ mod tests {
     #[tokio::test]
     async fn test_record_url_failure_header_truncation_handles_unicode() {
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         let long_header_value =
             "测试🚀".repeat((crate::config::MAX_HEADER_VALUE_LENGTH / "测试🚀".len()) + 10);
@@ -352,7 +341,6 @@ mod tests {
         let error = anyhow::anyhow!("unicode header test");
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context,
@@ -379,7 +367,6 @@ mod tests {
         // Test that error messages are sanitized (control characters removed)
         // This is critical - prevents database issues from invalid characters
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         // Create error with control characters
         let error_msg = "Error with control chars: \x00\x01\x02\x03".to_string();
@@ -388,7 +375,6 @@ mod tests {
         let context = FailureContext::default();
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context,
@@ -419,7 +405,6 @@ mod tests {
         // Test that provided context takes precedence over extracted context
         // This is critical - explicit context should not be overridden
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         let provided_context = FailureContext {
             final_url: Some("https://provided.com".to_string()),
@@ -442,7 +427,6 @@ mod tests {
 
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context: provided_context, // Provided context should take precedence
@@ -471,7 +455,6 @@ mod tests {
         // Test that empty provided context falls back to extracted context
         // This is critical - context should be preserved when not explicitly provided
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         let extracted_context = FailureContext {
             final_url: Some("https://extracted.com".to_string()),
@@ -485,7 +468,6 @@ mod tests {
 
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context: FailureContext::default(), // Empty - should use extracted
@@ -514,7 +496,6 @@ mod tests {
         // Test that complex error chains are handled correctly
         // This is critical - long error chains should be summarized, not truncated incorrectly
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         // Create error with long chain
         let error = anyhow::anyhow!("Root cause")
@@ -527,7 +508,6 @@ mod tests {
         let context = FailureContext::default();
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context,
@@ -557,7 +537,6 @@ mod tests {
         // Test that run_id is correctly propagated
         // This is critical - run_id links failures to specific scan runs
         let pool = create_test_pool().await;
-        let extractor = psl::List;
 
         // Create a test run first (run_id might be a foreign key)
         // Use a simple SQL insert instead of the full insert_run_metadata function
@@ -574,7 +553,6 @@ mod tests {
 
         let params = FailureRecordParams {
             pool: &pool,
-            extractor: &extractor,
             url: "https://example.com",
             error: &error,
             context,

@@ -608,7 +608,7 @@ Queries were run against a SQLite DB via the SQLite MCP. Failures are due to **s
 | 38  | **FAIL** | `no such table: url_jwt_claims` — table created in **0008_jwt_claims.sql**. |
 | 39  | **FAIL** | `no such table: url_jwt_claims` — same as 38. |
 
-**Summary:** All failures are from running against a DB that has not had the full migration set applied. The queries are correct for the current schema. Apply migrations through `0013_url_status_unique_initial_domain.sql` (full set `0001`–`0013`) and all 39 queries should run.
+**Summary:** All failures are from running against a DB that has not had the full migration set applied. The queries are correct for the current schema. Apply migrations through `0014_drop_unpopulated_columns.sql` (full set `0001`–`0014`) and all 39 queries should run.
 
 ## Tips
 

@@ -50,7 +50,6 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
     StatusResponse {
         total_urls: snap.total_urls,
         total_urls_attempted: snap.attempted,
-        completed_urls: snap.completed,
         successful_urls: snap.successful,
         failed_urls: snap.failed,
         skipped_urls: snap.skipped,
@@ -138,10 +137,7 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
                 .get_error_count(ErrorType::TlsCertificateError),
             parse_error: state
                 .error_stats
-                .get_error_count(ErrorType::HttpRequestDecodeError)
-                + state
-                    .error_stats
-                    .get_error_count(ErrorType::TitleExtractError),
+                .get_error_count(ErrorType::HttpRequestDecodeError),
             other_error: state
                 .error_stats
                 .get_error_count(ErrorType::HttpRequestOtherError)
@@ -234,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_handler_returns_json() {
-        let state = test_status_state(100, 100, 50, 50, 10, 0);
+        let state = test_status_state(100, 100, 50, 10, 0);
         let response = status_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -248,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_build_status_response_returns_exact_contract() {
-        let mut state = test_status_state(100, 80, 50, 50, 10, 0);
+        let mut state = test_status_state(100, 80, 50, 10, 0);
         state.error_stats = Arc::new({
             let stats = ProcessingStats::new();
             stats.increment_error(ErrorType::ProcessUrlTimeout);
@@ -278,7 +274,6 @@ mod tests {
         let response = build_status_response(&state, 5.0);
         assert_eq!(response.total_urls, 100);
         assert_eq!(response.total_urls_attempted, 80);
-        assert_eq!(response.completed_urls, 50);
         assert_eq!(response.successful_urls, 50);
         assert_eq!(response.failed_urls, 10);
         assert_eq!(response.skipped_urls, 0);
@@ -304,8 +299,8 @@ mod tests {
 
     #[test]
     fn test_early_skips_do_not_inflate_active_urls() {
-        // Early invalid/SSRF skip: attempted++ and skipped++, not completed.
-        let state = test_status_state(10, 3, 0, 0, 0, 3);
+        // Early invalid/SSRF skip: attempted++ and skipped++.
+        let state = test_status_state(10, 3, 0, 0, 3);
         let response = build_status_response(&state, 1.0);
         assert_eq!(response.skipped_urls, 3);
         assert_eq!(response.active_urls, 0);
@@ -315,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_build_status_response_handles_zero_total_urls() {
-        let state = test_status_state(0, 0, 0, 0, 0, 0);
+        let state = test_status_state(0, 0, 0, 0, 0);
         let response = build_status_response(&state, 0.0);
         assert_eq!(response.pending_urls, Some(0));
         assert!(response.percentage_complete.abs() < f64::EPSILON);
@@ -326,15 +321,15 @@ mod tests {
 
     #[test]
     fn test_build_status_response_uses_saturating_pending_urls() {
-        let state = test_status_state(100, 100, 150, 150, 50, 0);
+        let state = test_status_state(100, 100, 150, 50, 0);
         let response = build_status_response(&state, 1.0);
         assert_eq!(response.pending_urls, Some(0));
     }
 
     #[test]
     fn test_mid_process_skip_counts_once_in_finished() {
-        // Mid-process skip increments skipped only (not completed).
-        let state = test_status_state(10, 2, 1, 1, 0, 1);
+        // Mid-process skip increments skipped only.
+        let state = test_status_state(10, 2, 1, 0, 1);
         let response = build_status_response(&state, 2.0);
         assert_eq!(response.active_urls, 0);
         assert_eq!(response.successful_urls, 1);

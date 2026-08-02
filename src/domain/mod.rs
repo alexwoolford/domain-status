@@ -17,11 +17,10 @@
 
 use anyhow::{Context, Result};
 
-/// Extracts the registrable domain from a URL using psl.
+/// Extracts the registrable domain from a URL using PSL.
 ///
 /// # Arguments
 ///
-/// * `_list` - The `psl::List` instance (unused, kept for API compatibility)
 /// * `url` - The URL to extract the domain from
 ///
 /// # Returns
@@ -37,7 +36,7 @@ use anyhow::{Context, Result};
 ///
 /// Uses `psl` to correctly extract the registrable domain, handling
 /// both simple TLDs (e.g., "example.com") and multi-part TLDs (e.g., "example.co.uk").
-pub fn extract_domain(_list: &psl::List, url: &str) -> Result<String> {
+pub fn extract_domain(url: &str) -> Result<String> {
     // First validate that the URL can be parsed
     let parsed = url::Url::parse(url).with_context(|| format!("Failed to parse URL: {url}"))?;
 

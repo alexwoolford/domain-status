@@ -1,13 +1,13 @@
 //! Direct record insertion (non-batched).
 //!
-//! This module provides functions to insert `BatchRecord` data directly into the
+//! This module provides functions to insert `PersistedUrlRecord` data directly into the
 //! database without buffering. Prefer short per-URL transactions over accumulating
 //! large in-memory batches; `SQLite` still serializes writers at the database file.
 
 use sqlx::SqlitePool;
 
 use crate::error_handling::DatabaseError;
-use crate::storage::BatchRecord;
+use crate::storage::PersistedUrlRecord;
 
 use crate::storage::insert;
 
@@ -77,24 +77,24 @@ impl EnrichmentInsertSummary {
     }
 }
 
-/// Inserts a batch record directly into the database.
+/// Inserts a complete URL persistence record directly into the database.
 ///
 /// Inserts the main URL record and enrichment data immediately, without buffering
 /// a multi-URL batch. Preferring short per-URL transactions keeps lock hold time
 /// bounded; WAL allows concurrent readers, but writers still serialize at `SQLite`.
-pub async fn insert_batch_record(
+pub async fn insert_persisted_url_record(
     pool: &SqlitePool,
-    record: BatchRecord,
+    record: PersistedUrlRecord,
 ) -> Result<(), DatabaseError> {
     // Clone domain for error message (record will be moved to insert_enrichment_data)
     let domain = record.url_record.initial_domain.clone();
 
-    // Insert main URL record. Mapping from BatchRecord to url_status insert
-    // params lives in `UrlRecordInsertParams::from_batch` so adding a new
+    // Insert main URL record. Mapping from PersistedUrlRecord to url_status insert
+    // params lives in `UrlRecordInsertParams::from_persisted_record` so adding a new
     // satellite/field doesn't require a parallel edit at every production
     // call site.
     let url_status_id = insert::insert_url_record(
-        insert::url::UrlRecordInsertParams::from_batch(pool, &record),
+        insert::url::UrlRecordInsertParams::from_persisted_record(pool, &record),
     )
     .await
     .map_err(|e| {
@@ -182,7 +182,7 @@ async fn insert_geoip_enrichment(
     summary: &mut EnrichmentInsertSummary,
 ) {
     if let Some((ip_address, geoip_result)) = geoip {
-        match insert::insert_geoip_data(pool, url_status_id, ip_address, geoip_result).await {
+        match insert::insert_geoip_data(pool, url_status_id, geoip_result).await {
             Ok(()) => summary.geoip_inserted = true,
             Err(e) => {
                 summary.geoip_failed = true;
@@ -390,7 +390,7 @@ async fn insert_exposed_secrets_enrichment(
 ///
 /// * `pool` - Database connection pool
 /// * `url_status_id` - The ID of the main URL record
-/// * `record` - The batch record containing enrichment data
+/// * `record` - The persisted URL record containing enrichment data
 ///
 /// # Returns
 ///
@@ -399,7 +399,7 @@ async fn insert_exposed_secrets_enrichment(
 async fn insert_enrichment_data(
     pool: &SqlitePool,
     url_status_id: i64,
-    record: BatchRecord,
+    record: PersistedUrlRecord,
 ) -> EnrichmentInsertSummary {
     let mut summary = EnrichmentInsertSummary::default();
 
@@ -462,7 +462,6 @@ mod tests {
         record.reverse_dns_name = Some("example.com".to_string());
         record.response_time = 0.123;
         record.title = "Example Domain".to_string();
-        record.keywords = Some("example, test".to_string());
         record.description = Some("Example description".to_string());
         record.tls_version = Some(crate::models::TlsVersion::Tls13);
         record.ssl_cert_subject = Some("CN=example.com".to_string());
@@ -473,7 +472,6 @@ mod tests {
         record.ssl_cert_valid_to = NaiveDate::from_ymd_opt(2025, 1, 1)
             .unwrap()
             .and_hms_opt(0, 0, 0);
-        record.is_mobile_friendly = true;
         record.timestamp = 1_704_067_200_000;
         record.nameservers = Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string());
         record.txt_records = Some(r#"["v=spf1 include:_spf.example.com ~all"]"#.to_string());
@@ -488,11 +486,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_batch_record_basic() {
+    async fn test_insert_persisted_url_record_basic() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-123").await;
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -518,7 +516,7 @@ mod tests {
             script_hosts: vec![],
         };
 
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
 
         // Verify main record was inserted
@@ -535,7 +533,7 @@ mod tests {
 
     #[allow(clippy::too_many_lines)]
     #[tokio::test]
-    async fn test_insert_batch_record_with_enrichment() {
+    async fn test_insert_persisted_url_record_with_enrichment() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-123").await;
 
@@ -551,7 +549,7 @@ mod tests {
         let mut oids = HashSet::new();
         oids.insert("1.3.6.1.4.1.311".to_string());
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: security_headers.clone(),
             http_headers: http_headers.clone(),
@@ -599,7 +597,7 @@ mod tests {
             script_hosts: vec![],
         };
 
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
 
         // Verify main record
@@ -674,7 +672,7 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn test_insert_batch_record_with_all_enrichment() {
+    async fn test_insert_persisted_url_record_with_all_enrichment() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-123").await;
 
@@ -699,7 +697,7 @@ mod tests {
             .open_graph
             .insert("og:title".to_string(), "Test".to_string());
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -739,7 +737,7 @@ mod tests {
             script_hosts: vec![],
         };
 
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
 
         // Verify enrichment data was inserted
@@ -788,11 +786,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_batch_record_empty_enrichment() {
+    async fn test_insert_persisted_url_record_empty_enrichment() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-123").await;
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -818,7 +816,7 @@ mod tests {
             script_hosts: vec![],
         };
 
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
 
         // Verify main record exists but no enrichment
@@ -877,7 +875,7 @@ mod tests {
 
         // Create record with partial failures
         // Note: We can't easily simulate insertion failure, but we verify the error handling path exists
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -904,7 +902,7 @@ mod tests {
         };
 
         // Should succeed even if some enrichment fails
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
     }
 
@@ -928,7 +926,7 @@ mod tests {
             asn_org: Some("Google LLC".to_string()),
         };
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -961,7 +959,7 @@ mod tests {
 
         // Should succeed - main record and technologies should be inserted
         // Even if GeoIP insertion fails (which it shouldn't in this test)
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
 
         // Verify technologies were inserted (enrichment failure shouldn't prevent this)
@@ -987,7 +985,7 @@ mod tests {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-123").await;
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -1015,12 +1013,12 @@ mod tests {
 
         // Should succeed even with no enrichment data
         // The function insert_enrichment_data logs warnings but doesn't propagate errors
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_insert_batch_record_main_record_failure_propagates() {
+    async fn test_insert_persisted_url_record_main_record_failure_propagates() {
         // Test that main record insertion failure propagates (unlike enrichment)
         // This is critical - main record failure should be reported
         let pool = create_test_pool().await;
@@ -1028,7 +1026,7 @@ mod tests {
         // Close pool to cause insertion failure
         pool.close().await;
 
-        let record = BatchRecord {
+        let record = PersistedUrlRecord {
             url_record: create_test_url_record(),
             security_headers: HashMap::new(),
             http_headers: HashMap::new(),
@@ -1055,7 +1053,7 @@ mod tests {
         };
 
         // Should fail - main record insertion failure propagates
-        let result = insert_batch_record(&pool, record).await;
+        let result = insert_persisted_url_record(&pool, record).await;
         assert!(result.is_err());
     }
 

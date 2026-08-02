@@ -98,7 +98,7 @@ When extending what a scan persists (or exports), use this checklist so parallel
 
 1. Migration + `DATABASE.md`.
 2. Insert helper under `src/storage/insert/url/satellite/` (core) or `src/storage/insert/enrichment/` (enrichment).
-3. Wire into `BatchRecord` / `build_batch_record`. Core satellites also need `UrlRecordInsertParams`, `from_batch`, and `with_empty_satellites`. Enrichment goes through `insert_enrichment_data` instead.
+3. Wire into `PersistedUrlRecord` / `build_persisted_url_record`. Core satellites also need `UrlRecordInsertParams`, `from_persisted_record`, and `with_empty_satellites`. Enrichment goes through `insert_enrichment_data` instead.
 4. Add the table name to [`URL_STATUS_SATELLITE_TABLES`](src/storage/insert/url/mod.rs) so UPSERT cleanup clears stale rows (production and upsert-clear tests share this list).
 5. Export only if needed (same decision as above; satellite-only tables often stay DB-queryable — document in `SATELLITE_DB_ONLY` when intentional).
 

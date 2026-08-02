@@ -105,10 +105,8 @@ pub struct MainRowData {
     pub status_desc: String,
     pub response_time: f64,
     pub title: String,
-    pub keywords: Option<String>,
     pub description: Option<String>,
     pub meta_robots: Option<String>,
-    pub is_mobile_friendly: bool,
     pub tls_version: Option<String>,
     pub ssl_cert_subject: Option<String>,
     pub ssl_cert_issuer: Option<String>,
@@ -122,8 +120,6 @@ pub struct MainRowData {
     pub body_sha256: Option<String>,
     pub content_length: Option<i64>,
     pub http_version: Option<String>,
-    pub body_word_count: Option<i64>,
-    pub body_line_count: Option<i64>,
     pub content_type: Option<String>,
     pub canonical_url: Option<String>,
     pub cert_fingerprint_sha256: Option<String>,
@@ -200,7 +196,8 @@ pub struct ExportRow {
     pub redirect_count: usize,
     pub final_redirect_url: String,
 
-    /// Technologies (as "name:version" strings — legacy, use `technologies` for structured access)
+    /// Technologies formatted as comma-separated `name:version` values for CSV export.
+    /// JSONL uses [`Self::technologies`] for structured output.
     pub technologies_str: String,
     /// Categories for detected technologies (comma-separated, parallel to `technologies_str` order)
     pub technology_categories_str: String,
@@ -226,7 +223,8 @@ pub struct ExportRow {
     pub txt_records: Vec<TxtRecord>,
     pub mx_records: Vec<MxRecord>,
 
-    /// Analytics IDs (as "`provider:tracking_id`" strings — legacy, use `analytics_ids` for structured)
+    /// Analytics IDs formatted as comma-separated `provider:tracking_id` values for CSV export.
+    /// JSONL uses [`Self::analytics_ids`] for structured output.
     pub analytics_ids_str: String,
     pub analytics_count: usize,
     /// Analytics IDs as structured data (safe from delimiter corruption)
@@ -329,10 +327,8 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         status_desc: row.get("http_status_text"),
         response_time: row.get("response_time_seconds"),
         title: row.get("title"),
-        keywords: row.get("keywords"),
         description: row.get("description"),
         meta_robots: row.get("meta_robots"),
-        is_mobile_friendly: row.get("is_mobile_friendly"),
         tls_version: row.get("tls_version"),
         ssl_cert_subject: row.get("ssl_cert_subject"),
         ssl_cert_issuer: row.get("ssl_cert_issuer"),
@@ -346,8 +342,6 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         body_sha256: row.get("body_sha256"),
         content_length: row.get("content_length"),
         http_version: row.get("http_version"),
-        body_word_count: row.get("body_word_count"),
-        body_line_count: row.get("body_line_count"),
         content_type: row.get("content_type"),
         canonical_url: row.get("canonical_url"),
         cert_fingerprint_sha256: row.get("cert_fingerprint_sha256"),

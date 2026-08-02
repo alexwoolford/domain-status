@@ -71,20 +71,12 @@ pub(crate) const CSV_COLUMN_DEFS: &[CsvColumn] = &[
         extract: |row| row.main.title.clone(),
     },
     CsvColumn {
-        name: "keywords",
-        extract: |row| row.main.keywords.clone().unwrap_or_default(),
-    },
-    CsvColumn {
         name: "description",
         extract: |row| row.main.description.clone().unwrap_or_default(),
     },
     CsvColumn {
         name: "meta_robots",
         extract: |row| row.main.meta_robots.clone().unwrap_or_default(),
-    },
-    CsvColumn {
-        name: "is_mobile_friendly",
-        extract: |row| row.main.is_mobile_friendly.to_string(),
     },
     CsvColumn {
         name: "body_sha256",
@@ -101,22 +93,6 @@ pub(crate) const CSV_COLUMN_DEFS: &[CsvColumn] = &[
     CsvColumn {
         name: "http_version",
         extract: |row| row.main.http_version.clone().unwrap_or_default(),
-    },
-    CsvColumn {
-        name: "body_word_count",
-        extract: |row| {
-            row.main
-                .body_word_count
-                .map_or(String::new(), |v| v.to_string())
-        },
-    },
-    CsvColumn {
-        name: "body_line_count",
-        extract: |row| {
-            row.main
-                .body_line_count
-                .map_or(String::new(), |v| v.to_string())
-        },
     },
     CsvColumn {
         name: "content_type",
@@ -609,8 +585,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO url_status (
                 initial_domain, final_domain, ip_address, http_status, http_status_text,
-                response_time_seconds, title, observed_at_ms, is_mobile_friendly
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_time_seconds, title, observed_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
         .bind("example.com")
@@ -621,7 +597,6 @@ mod tests {
         .bind(1.5f64)
         .bind("Test Page")
         .bind(1704067200000i64)
-        .bind(true)
         .fetch_one(pool)
         .await
         .expect("Failed to insert test URL status")

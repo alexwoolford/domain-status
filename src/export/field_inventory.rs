@@ -103,12 +103,12 @@ mod tests {
         }
         assert_eq!(
             CSV_COLUMN_DEFS.len(),
-            87,
+            83,
             "CSV column count drifted — add/remove via CSV_COLUMN_DEFS only"
         );
         assert_eq!(SATELLITE_DB_ONLY, &["url_script_hosts"]);
         let len = build_schema().fields().len();
-        assert!(len >= 70, "unexpectedly small parquet schema: {len}");
+        assert_eq!(len, 67, "parquet schema field count drifted: {len}");
     }
 
     #[test]
