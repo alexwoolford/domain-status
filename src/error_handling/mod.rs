@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn test_processing_stats_increment() {
         let stats = ProcessingStats::new();
-        stats.increment_error(ErrorType::TitleExtractError);
-        assert_eq!(stats.get_error_count(ErrorType::TitleExtractError), 1);
+        stats.increment_error(ErrorType::ProcessUrlTimeout);
+        assert_eq!(stats.get_error_count(ErrorType::ProcessUrlTimeout), 1);
 
         stats.increment_warning(WarningType::MissingMetaDescription);
         assert_eq!(
@@ -96,16 +96,16 @@ mod tests {
     #[test]
     fn test_processing_stats_multiple_increments() {
         let stats = ProcessingStats::new();
-        stats.increment_error(ErrorType::TitleExtractError);
-        stats.increment_error(ErrorType::TitleExtractError);
-        stats.increment_error(ErrorType::TitleExtractError);
-        assert_eq!(stats.get_error_count(ErrorType::TitleExtractError), 3);
+        stats.increment_error(ErrorType::ProcessUrlTimeout);
+        stats.increment_error(ErrorType::ProcessUrlTimeout);
+        stats.increment_error(ErrorType::ProcessUrlTimeout);
+        assert_eq!(stats.get_error_count(ErrorType::ProcessUrlTimeout), 3);
     }
 
     #[test]
     fn test_processing_stats_totals() {
         let stats = ProcessingStats::new();
-        stats.increment_error(ErrorType::TitleExtractError);
+        stats.increment_error(ErrorType::ProcessUrlTimeout);
         stats.increment_error(ErrorType::HttpRequestTimeoutError);
         stats.increment_warning(WarningType::MissingMetaDescription);
         stats.increment_info(InfoType::HttpRedirect);

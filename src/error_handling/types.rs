@@ -208,8 +208,6 @@ pub enum ErrorType {
     HttpRequestServiceUnavailable,  // 503 Service Unavailable
     HttpRequestGatewayTimeout,      // 504 Gateway Timeout
     // Note: Less common status codes (406, 521, etc.) are categorized as HttpRequestOtherError
-    // Data extraction errors (only for required data)
-    TitleExtractError, // Missing title - could be an error if we expect one
     ProcessUrlTimeout,
     // DNS errors
     DnsForwardLookupError,
@@ -285,7 +283,6 @@ impl ErrorType {
             ErrorType::HttpRequestBadGateway => "Bad Gateway (502)",
             ErrorType::HttpRequestServiceUnavailable => "Service Unavailable (503)",
             ErrorType::HttpRequestGatewayTimeout => "Gateway Timeout (504)",
-            ErrorType::TitleExtractError => "Title extract error",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
             ErrorType::DnsForwardLookupError => "DNS forward lookup error",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",

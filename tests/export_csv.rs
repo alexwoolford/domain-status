@@ -799,7 +799,7 @@ async fn test_export_csv_all_columns_present() {
     let lines: Vec<&str> = csv_content.lines().collect();
     assert!(lines.len() >= 2, "Should have header + at least 1 data row");
 
-    // Verify all 58 expected columns are present in header
+    // Verify expected columns are present in header
     let header = lines[0];
     let expected_columns = [
         "url",
@@ -811,9 +811,7 @@ async fn test_export_csv_all_columns_present() {
         "status_description",
         "response_time_ms",
         "title",
-        "keywords",
         "description",
-        "is_mobile_friendly",
         "body_truncated",
         "redirect_count",
         "final_redirect_url",
@@ -918,7 +916,7 @@ async fn test_export_csv_null_handling() {
     .await;
 
     // Explicitly set some fields to NULL
-    sqlx::query("UPDATE url_status SET reverse_dns_name = NULL, keywords = NULL, description = NULL, tls_version = NULL WHERE id = ?")
+    sqlx::query("UPDATE url_status SET reverse_dns_name = NULL, description = NULL, tls_version = NULL WHERE id = ?")
         .bind(url_id)
         .execute(&pool)
         .await

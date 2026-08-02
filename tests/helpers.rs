@@ -61,8 +61,8 @@ pub async fn create_test_url_status(
     sqlx::query(
         "INSERT INTO url_status (
             initial_domain, final_domain, ip_address, http_status, http_status_text,
-            response_time_seconds, title, observed_at_ms, run_id, is_mobile_friendly
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            response_time_seconds, title, observed_at_ms, run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id",
     )
     .bind(domain)
@@ -74,7 +74,6 @@ pub async fn create_test_url_status(
     .bind("Test Page")
     .bind(timestamp)
     .bind(run_id)
-    .bind(true)
     .fetch_one(pool)
     .await
     .expect("Failed to insert test URL status")

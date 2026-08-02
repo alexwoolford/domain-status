@@ -28,12 +28,6 @@ pub(crate) struct ResponseData {
     pub(crate) body_truncated: bool,
     pub(crate) content_length: Option<i64>,
     pub(crate) http_version: Option<String>,
-    /// Deprecated — no longer persisted on new scans.
-    #[allow(dead_code)]
-    pub(crate) body_word_count: Option<i64>,
-    /// Deprecated — no longer persisted on new scans.
-    #[allow(dead_code)]
-    pub(crate) body_line_count: Option<i64>,
     pub(crate) content_type: Option<String>,
 }
 

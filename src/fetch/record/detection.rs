@@ -109,8 +109,6 @@ mod tests {
             body_truncated: false,
             content_length: None,
             http_version: None,
-            body_word_count: None,
-            body_line_count: None,
             content_type: None,
         }
     }

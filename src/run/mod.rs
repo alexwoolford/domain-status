@@ -141,14 +141,14 @@ pub struct ScanReport {
 #[allow(clippy::type_complexity)] // Matches the progress_callback type from Config; alias would add indirection
 fn invoke_progress_callback(
     callback: Option<&Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
-    completed: &Arc<std::sync::atomic::AtomicUsize>,
+    successful: &Arc<std::sync::atomic::AtomicUsize>,
     failed: &Arc<std::sync::atomic::AtomicUsize>,
     skipped: &Arc<std::sync::atomic::AtomicUsize>,
     total: usize,
 ) {
     if let Some(cb) = callback {
         cb(
-            completed.load(Ordering::Relaxed),
+            successful.load(Ordering::Relaxed),
             failed.load(Ordering::Relaxed),
             skipped.load(Ordering::Relaxed),
             total,
@@ -208,7 +208,6 @@ pub async fn run_scan(
         let status_state = crate::status_server::StatusState {
             total_urls: Arc::clone(&resources.total_urls_in_file),
             total_urls_attempted: Arc::clone(&resources.total_urls_attempted),
-            completed_urls: Arc::clone(&resources.completed_urls),
             successful_urls: Arc::clone(&resources.successful_urls),
             failed_urls: Arc::clone(&resources.failed_urls),
             skipped_urls: Arc::clone(&resources.skipped_urls),
@@ -249,7 +248,7 @@ pub async fn run_scan(
     });
     let cancel_logging = cancel.child_token();
 
-    let completed_urls_for_logging = Arc::clone(&resources.completed_urls);
+    let successful_urls_for_logging = Arc::clone(&resources.successful_urls);
     let failed_urls_for_logging = Arc::clone(&resources.failed_urls);
     let skipped_urls_for_logging = Arc::clone(&resources.skipped_urls);
     let total_urls_for_logging = Arc::clone(&resources.total_urls_in_file);
@@ -269,7 +268,7 @@ pub async fn run_scan(
                 _ = interval.tick() => {
                     log_progress(
                         start_time,
-                        &completed_urls_for_logging,
+                        &successful_urls_for_logging,
                         &failed_urls_for_logging,
                         &skipped_urls_for_logging,
                         Some(&total_urls_for_logging),
@@ -345,7 +344,7 @@ pub async fn run_scan(
                     resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
                     invoke_progress_callback(
                         progress_callback.as_ref(),
-                        &resources.completed_urls,
+                        &resources.successful_urls,
                         &resources.failed_urls,
                         &resources.skipped_urls,
                         total_lines,
@@ -365,7 +364,7 @@ pub async fn run_scan(
                         resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
                         invoke_progress_callback(
                             progress_callback.as_ref(),
-                            &resources.completed_urls,
+                            &resources.successful_urls,
                             &resources.failed_urls,
                             &resources.skipped_urls,
                             total_lines,
@@ -406,7 +405,6 @@ pub async fn run_scan(
                     cancel: cancel.clone(),
                     permit,
                     request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
-                    completed_urls: Arc::clone(&resources.completed_urls),
                     successful_urls: Arc::clone(&resources.successful_urls),
                     skipped_urls: Arc::clone(&resources.skipped_urls),
                     failed_urls: Arc::clone(&resources.failed_urls),

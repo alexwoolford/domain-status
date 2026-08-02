@@ -25,6 +25,6 @@ pub use insert::{
 pub use migrations::run_migrations;
 pub use models::UrlRecord;
 pub use pool::{init_db_pool_with_path, DbPool};
-pub use record::{BatchRecord, CookieInfo, ScriptHostInfo};
+pub use record::{CookieInfo, PersistedUrlRecord, ScriptHostInfo};
 
 // Note: insert_geoip_data is used internally by fetch module, not exported here

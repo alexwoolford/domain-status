@@ -2,7 +2,7 @@
 //!
 //! This module defines the data structures used for database operations:
 //! - `UrlRecord` - Main URL status record
-//! - `BatchRecord` - Complete record with all satellite data (despite the name, records are NOT batched - they're written immediately)
+//! - `PersistedUrlRecord` - Complete record with all satellite data (despite the name, records are NOT batched - they're written immediately)
 //!
 //! All models use `Option<T>` for nullable fields to match `SQLite`'s type system.
 
@@ -42,8 +42,6 @@ pub struct UrlRecord {
     pub response_time: f64,
     /// HTML page title
     pub title: String,
-    /// HTML meta keywords
-    pub keywords: Option<String>,
     /// HTML meta description
     pub description: Option<String>,
     /// Content of `<meta name="robots">` when present
@@ -58,8 +56,6 @@ pub struct UrlRecord {
     pub ssl_cert_valid_from: Option<NaiveDateTime>,
     /// SSL certificate valid to date
     pub ssl_cert_valid_to: Option<NaiveDateTime>,
-    /// Whether the page is mobile-friendly
-    pub is_mobile_friendly: bool,
     /// Timestamp of the check (milliseconds since Unix epoch)
     pub timestamp: i64,
     /// JSON array of DNS nameservers
@@ -90,10 +86,6 @@ pub struct UrlRecord {
     pub content_length: Option<i64>,
     /// HTTP protocol version (e.g., "HTTP/1.1", "HTTP/2")
     pub http_version: Option<String>,
-    /// Number of words in the response body
-    pub body_word_count: Option<i64>,
-    /// Number of lines in the response body
-    pub body_line_count: Option<i64>,
     /// Content-Type header value
     pub content_type: Option<String>,
     /// Canonical URL from `<link rel="canonical">`
@@ -130,7 +122,6 @@ impl UrlRecord {
             status_desc: "OK".to_string(),
             response_time: 0.1,
             title: "Example".to_string(),
-            keywords: None,
             description: None,
             meta_robots: None,
             tls_version: None,
@@ -138,7 +129,6 @@ impl UrlRecord {
             ssl_cert_issuer: None,
             ssl_cert_valid_from: None,
             ssl_cert_valid_to: None,
-            is_mobile_friendly: false,
             timestamp: 1_700_000_000_000,
             nameservers: None,
             txt_records: None,
@@ -154,8 +144,6 @@ impl UrlRecord {
             external_scripts_scanned: 0,
             content_length: None,
             http_version: None,
-            body_word_count: None,
-            body_line_count: None,
             content_type: Some("text/html".to_string()),
             canonical_url: None,
             cert_fingerprint_sha256: None,

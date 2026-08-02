@@ -91,10 +91,6 @@ pub(crate) const URL_STATUS_COLUMN_DEFS: &[UrlStatusColumn] = &[
         extract: |r, _, _| UrlStatusBind::Text(r.title.as_str()),
     },
     UrlStatusColumn {
-        name: "keywords",
-        extract: |r, _, _| UrlStatusBind::OptText(r.keywords.as_deref()),
-    },
-    UrlStatusColumn {
         name: "description",
         extract: |r, _, _| UrlStatusBind::OptText(r.description.as_deref()),
     },
@@ -127,10 +123,6 @@ pub(crate) const URL_STATUS_COLUMN_DEFS: &[UrlStatusColumn] = &[
     UrlStatusColumn {
         name: "ssl_cert_valid_to_ms",
         extract: |_, _, valid_to_ms| UrlStatusBind::OptI64(valid_to_ms),
-    },
-    UrlStatusColumn {
-        name: "is_mobile_friendly",
-        extract: |r, _, _| UrlStatusBind::Bool(r.is_mobile_friendly),
     },
     UrlStatusColumn {
         name: "observed_at_ms",
@@ -185,14 +177,6 @@ pub(crate) const URL_STATUS_COLUMN_DEFS: &[UrlStatusColumn] = &[
     UrlStatusColumn {
         name: "http_version",
         extract: |r, _, _| UrlStatusBind::OptText(r.http_version.as_deref()),
-    },
-    UrlStatusColumn {
-        name: "body_word_count",
-        extract: |r, _, _| UrlStatusBind::OptI64(r.body_word_count),
-    },
-    UrlStatusColumn {
-        name: "body_line_count",
-        extract: |r, _, _| UrlStatusBind::OptI64(r.body_line_count),
     },
     UrlStatusColumn {
         name: "content_type",
@@ -353,41 +337,41 @@ pub struct UrlRecordInsertParams<'a> {
 }
 
 impl<'a> UrlRecordInsertParams<'a> {
-    /// Build params from a complete [`crate::storage::record::BatchRecord`].
+    /// Build params from a complete [`crate::storage::record::PersistedUrlRecord`].
     ///
     /// The production scan pipeline collects everything that goes into a
-    /// URL row into a `BatchRecord`, then calls `insert_url_record`. Mapping
+    /// URL row into a `PersistedUrlRecord`, then calls `insert_url_record`. Mapping
     /// the individual fields manually at the call site (the previous
     /// shape) made every new field a two-place edit — the struct definition
-    /// here, plus the manual field assignment in `insert_batch_record`. By
+    /// here, plus the manual field assignment in `insert_persisted_url_record`. By
     /// putting the mapping in one place, the call site stays a one-liner
     /// and the struct can grow without churning callers.
     ///
-    /// Crate-internal (`pub(crate)`) because `BatchRecord` is itself a
+    /// Crate-internal (`pub(crate)`) because `PersistedUrlRecord` is itself a
     /// crate-internal aggregate — exposing this constructor publicly would
-    /// pull `BatchRecord` (and through it, several other crate-private types
+    /// pull `PersistedUrlRecord` (and through it, several other crate-private types
     /// like `FaviconData`) into the public API surface.
     #[must_use]
-    pub(crate) fn from_batch(
+    pub(crate) fn from_persisted_record(
         pool: &'a sqlx::SqlitePool,
-        batch: &'a crate::storage::record::BatchRecord,
+        persisted: &'a crate::storage::record::PersistedUrlRecord,
     ) -> Self {
         Self {
             pool,
-            record: &batch.url_record,
-            security_headers: &batch.security_headers,
-            http_headers: &batch.http_headers,
-            oids: &batch.oids,
-            redirect_chain: &batch.redirect_chain,
-            technologies: &batch.technologies,
-            subject_alternative_names: &batch.subject_alternative_names,
-            cname_records: batch.cname_records.as_ref(),
-            aaaa_records: batch.aaaa_records.as_ref(),
-            caa_records: batch.caa_records.as_ref(),
-            csp_domains: &batch.csp_domains,
-            cookies: &batch.cookies,
-            resource_hints: &batch.resource_hints,
-            script_hosts: &batch.script_hosts,
+            record: &persisted.url_record,
+            security_headers: &persisted.security_headers,
+            http_headers: &persisted.http_headers,
+            oids: &persisted.oids,
+            redirect_chain: &persisted.redirect_chain,
+            technologies: &persisted.technologies,
+            subject_alternative_names: &persisted.subject_alternative_names,
+            cname_records: persisted.cname_records.as_ref(),
+            aaaa_records: persisted.aaaa_records.as_ref(),
+            caa_records: persisted.caa_records.as_ref(),
+            csp_domains: &persisted.csp_domains,
+            cookies: &persisted.cookies,
+            resource_hints: &persisted.resource_hints,
+            script_hosts: &persisted.script_hosts,
         }
     }
 
@@ -395,7 +379,7 @@ impl<'a> UrlRecordInsertParams<'a> {
     ///
     /// Prefer this in integration tests that only exercise the main row /
     /// pool / transaction behavior. New satellite fields then default here
-    /// (and in the crate-internal `from_batch` constructor) instead of
+    /// (and in the crate-internal `from_persisted_record` constructor) instead of
     /// breaking every `UrlRecordInsertParams { ... }` literal under `tests/`.
     ///
     /// Unit tests that need non-empty satellites should still construct the
@@ -726,7 +710,7 @@ mod tests {
             assert_eq!(*name, URL_STATUS_COLUMN_DEFS[i].name);
             assert!(seen.insert(*name), "duplicate url_status column: {name}");
         }
-        assert_eq!(names.len(), 41, "url_status column count drifted");
+        assert_eq!(names.len(), 37, "url_status column count drifted");
     }
 
     /// Creates an in-memory `SQLite` database pool for testing
@@ -759,7 +743,6 @@ mod tests {
         record.reverse_dns_name = Some("example.com".to_string());
         record.response_time = 0.123;
         record.title = "Example Domain".to_string();
-        record.keywords = Some("example, test".to_string());
         record.description = Some("Example description".to_string());
         record.tls_version = Some(crate::models::TlsVersion::Tls13);
         record.ssl_cert_subject = Some("CN=example.com".to_string());
@@ -770,7 +753,6 @@ mod tests {
         record.ssl_cert_valid_to = NaiveDate::from_ymd_opt(2025, 1, 1)
             .unwrap()
             .and_hms_opt(0, 0, 0);
-        record.is_mobile_friendly = true;
         record.timestamp = 1_704_067_200_000; // 2024-01-01 00:00:00 UTC in milliseconds
         record.nameservers = Some(r#"["ns1.example.com", "ns2.example.com"]"#.to_string());
         record.txt_records = Some(r#"["v=spf1 include:_spf.example.com ~all"]"#.to_string());
@@ -1645,16 +1627,13 @@ mod tests {
         .await
         .expect("seed url_partial_failures");
 
-        sqlx::query(
-            "INSERT INTO url_favicons (url_status_id, favicon_url, hash, base64_data) VALUES (?, ?, ?, ?)",
-        )
-        .bind(url_status_id)
-        .bind("https://seed.example/favicon.ico")
-        .bind(12345i64)
-        .bind("c2VlZA==")
-        .execute(pool)
-        .await
-        .expect("seed url_favicons");
+        sqlx::query("INSERT INTO url_favicons (url_status_id, favicon_url, hash) VALUES (?, ?, ?)")
+            .bind(url_status_id)
+            .bind("https://seed.example/favicon.ico")
+            .bind(12345i64)
+            .execute(pool)
+            .await
+            .expect("seed url_favicons");
 
         sqlx::query("INSERT INTO url_geoip (url_status_id, country_code) VALUES (?, ?)")
             .bind(url_status_id)
@@ -1774,7 +1753,6 @@ mod tests {
         create_test_run(&pool, "test-run-1").await;
         let mut record = create_test_url_record();
         // Set nullable fields to None
-        record.keywords = None;
         record.description = None;
         record.reverse_dns_name = None;
         record.tls_version = None;
@@ -1816,14 +1794,12 @@ mod tests {
 
         assert!(result.is_ok());
         // Verify NULL fields are handled correctly
-        let row =
-            sqlx::query("SELECT keywords, description, tls_version FROM url_status WHERE id = ?")
-                .bind(result.unwrap())
-                .fetch_one(&pool)
-                .await
-                .expect("Failed to fetch record");
+        let row = sqlx::query("SELECT description, tls_version FROM url_status WHERE id = ?")
+            .bind(result.unwrap())
+            .fetch_one(&pool)
+            .await
+            .expect("Failed to fetch record");
 
-        assert!(row.get::<Option<String>, _>("keywords").is_none());
         assert!(row.get::<Option<String>, _>("description").is_none());
         assert!(row.get::<Option<String>, _>("tls_version").is_none());
     }

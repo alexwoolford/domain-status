@@ -27,12 +27,10 @@ fn create_test_record(domain: &str) -> UrlRecord {
     record.reverse_dns_name = Some("example.com".to_string());
     record.response_time = 0.123;
     record.title = format!("Test {domain}");
-    record.keywords = Some("test".to_string());
     record.description = Some("Test record".to_string());
     record.tls_version = Some(domain_status::TlsVersion::Tls13);
     record.ssl_cert_subject = Some(format!("CN={domain}"));
     record.ssl_cert_issuer = Some("CN=Test CA".to_string());
-    record.is_mobile_friendly = true;
     record.timestamp = 1_704_067_200_000;
     record.run_id = Some("test-run-1".to_string());
     record

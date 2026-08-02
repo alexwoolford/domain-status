@@ -8,12 +8,10 @@ use crate::storage::insert::retry::with_sqlite_retry;
 /// Inserts `GeoIP` data for a URL status record.
 ///
 /// This should be called after `insert_url_record` to populate geographic
-/// and network information for the IP address.
-/// Note: `ip_address` is not stored here - it's in the `url_status` table.
+/// and network information. The IP address itself is stored in `url_status`.
 pub async fn insert_geoip_data(
     pool: &SqlitePool,
     url_status_id: i64,
-    _ip_address: &str, // Kept for API compatibility, but not stored (use url_status.ip_address)
     geoip: &crate::geoip::GeoIpResult,
 ) -> Result<(), DatabaseError> {
     with_sqlite_retry(|| async {
@@ -83,7 +81,7 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
         let geoip = create_test_geoip_result();
 
-        let result = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        let result = insert_geoip_data(&pool, url_status_id, &geoip).await;
         assert!(result.is_ok());
 
         // Verify insertion
@@ -128,13 +126,13 @@ mod tests {
         let mut geoip = create_test_geoip_result();
 
         // Insert first time
-        let result1 = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        let result1 = insert_geoip_data(&pool, url_status_id, &geoip).await;
         assert!(result1.is_ok());
 
         // Update and insert again (should upsert)
         geoip.city = Some("Los Angeles".to_string());
         geoip.region = Some("California".to_string());
-        let result2 = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        let result2 = insert_geoip_data(&pool, url_status_id, &geoip).await;
         assert!(result2.is_ok());
 
         // Verify only one row exists and it was updated
@@ -178,7 +176,7 @@ mod tests {
             asn_org: None,
         };
 
-        let result = insert_geoip_data(&pool, url_status_id, "93.184.216.34", &geoip).await;
+        let result = insert_geoip_data(&pool, url_status_id, &geoip).await;
         assert!(result.is_ok());
 
         // Verify partial data was inserted

@@ -73,7 +73,7 @@ mod tests {
         pool: &sqlx::SqlitePool,
         run_id: &str,
         total_urls_attempted: &Arc<AtomicUsize>,
-        completed_urls: &Arc<AtomicUsize>,
+        successful_urls: &Arc<AtomicUsize>,
         failed_urls: &Arc<AtomicUsize>,
         skipped_urls: &Arc<AtomicUsize>,
         error_stats: &Arc<ProcessingStats>,
@@ -81,10 +81,9 @@ mod tests {
     ) -> Result<()> {
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let total_urls = total_urls_attempted.load(Ordering::SeqCst) as i32;
-        let completed = completed_urls.load(Ordering::SeqCst);
         let skipped = skipped_urls.load(Ordering::SeqCst);
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let successful_urls = (completed.saturating_sub(skipped)) as i32;
+        let successful_urls = successful_urls.load(Ordering::SeqCst) as i32;
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let failed_urls_count = failed_urls.load(Ordering::SeqCst) as i32;
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
@@ -204,7 +203,7 @@ mod tests {
 
         let run_id = "test-run-123";
         let total_urls = Arc::new(AtomicUsize::new(100));
-        let completed_urls = Arc::new(AtomicUsize::new(85));
+        let successful_urls = Arc::new(AtomicUsize::new(85));
         let failed_urls = Arc::new(AtomicUsize::new(15));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let error_stats = Arc::new(ProcessingStats::new());
@@ -228,7 +227,7 @@ mod tests {
             &pool,
             run_id,
             &total_urls,
-            &completed_urls,
+            &successful_urls,
             &failed_urls,
             &skipped_urls,
             &error_stats,
@@ -281,7 +280,7 @@ mod tests {
 
         let run_id = "test-run-zero";
         let total_urls = Arc::new(AtomicUsize::new(0));
-        let completed_urls = Arc::new(AtomicUsize::new(0));
+        let successful_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let error_stats = Arc::new(ProcessingStats::new());
@@ -304,7 +303,7 @@ mod tests {
             &pool,
             run_id,
             &total_urls,
-            &completed_urls,
+            &successful_urls,
             &failed_urls,
             &skipped_urls,
             &error_stats,

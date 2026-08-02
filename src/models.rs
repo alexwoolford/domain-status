@@ -113,15 +113,6 @@ impl TlsVersion {
             TlsVersion::Unknown => "Unknown",
         }
     }
-
-    /// Returns `true` if this TLS version is considered weak/insecure.
-    ///
-    /// TLS 1.2 and TLS 1.3 are considered secure. Everything else
-    /// (TLS 1.1, TLS 1.0, `SSLv3`, Unknown) is considered weak.
-    #[must_use]
-    pub fn is_weak(&self) -> bool {
-        !matches!(self, TlsVersion::Tls12 | TlsVersion::Tls13)
-    }
 }
 
 impl fmt::Display for TlsVersion {
@@ -206,15 +197,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tls_version_display_and_strength_contract() {
+    fn test_tls_version_display_contract() {
         assert_eq!(TlsVersion::Tls10.as_str(), "TLSv1.0");
         assert_eq!(TlsVersion::Tls12.to_string(), "TLSv1.2");
         assert_eq!(TlsVersion::Tls13.to_string(), "TLSv1.3");
         assert_eq!(TlsVersion::Ssl30.to_string(), "SSLv3");
-        assert!(TlsVersion::Tls10.is_weak());
-        assert!(TlsVersion::Tls11.is_weak());
-        assert!(!TlsVersion::Tls12.is_weak());
-        assert!(!TlsVersion::Tls13.is_weak());
-        assert!(TlsVersion::Unknown.is_weak());
     }
 }

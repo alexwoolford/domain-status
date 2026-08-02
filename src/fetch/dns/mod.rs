@@ -23,7 +23,6 @@ pub(crate) async fn fetch_all_dns_data(
     resp_data: &crate::fetch::response::ResponseData,
     resolver: &hickory_resolver::TokioResolver,
     error_stats: &crate::error_handling::ProcessingStats,
-    run_id: Option<&str>,
 ) -> Result<
     (
         TlsDnsData,
@@ -40,7 +39,6 @@ pub(crate) async fn fetch_all_dns_data(
         resolver,
         &resp_data.final_domain,
         error_stats,
-        run_id,
     )
     .await?;
     let tls_dns_data = tls_dns_result.data;
@@ -105,8 +103,6 @@ mod tests {
             body_truncated: false,
             content_length: None,
             http_version: None,
-            body_word_count: None,
-            body_line_count: None,
             content_type: None,
         }
     }
@@ -119,13 +115,7 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
         let resp_data = create_test_response_data();
 
-        let result = fetch_all_dns_data(
-            &resp_data,
-            &resolver,
-            error_stats.as_ref(),
-            Some("test-run"),
-        )
-        .await;
+        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref()).await;
 
         // Should succeed (may have partial failures, but should return Ok)
         assert!(result.is_ok());
@@ -148,7 +138,7 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
         let resp_data = create_test_response_data();
 
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref(), None).await;
+        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref()).await;
 
         assert!(result.is_ok());
         let (_tls_dns_data, _additional_dns, partial_failures, _timings) = result.unwrap();
@@ -176,7 +166,7 @@ mod tests {
         let error_stats = Arc::new(ProcessingStats::new());
         let resp_data = create_test_response_data();
 
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref(), None).await;
+        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref()).await;
 
         assert!(result.is_ok());
         let (_tls_dns_data, _additional_dns, _partial_failures, timings) = result.unwrap();
@@ -195,7 +185,7 @@ mod tests {
         let mut resp_data = create_test_response_data();
         resp_data.final_url = "http://example.com".to_string();
 
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref(), None).await;
+        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref()).await;
 
         // Should succeed (HTTP URLs don't attempt TLS)
         assert!(result.is_ok());
@@ -203,31 +193,5 @@ mod tests {
 
         // TLS version should be None for HTTP
         assert!(tls_dns_data.tls_version.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_fetch_all_dns_data_run_id_passed_through() {
-        // Test that run_id is correctly passed to fetch_tls_and_dns
-        crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let resp_data = create_test_response_data();
-
-        // Test with run_id
-        let result_with_run_id = fetch_all_dns_data(
-            &resp_data,
-            &resolver,
-            error_stats.as_ref(),
-            Some("test-run-123"),
-        )
-        .await;
-
-        // Test without run_id
-        let result_without_run_id =
-            fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref(), None).await;
-
-        // Both should succeed (run_id is optional)
-        assert!(result_with_run_id.is_ok());
-        assert!(result_without_run_id.is_ok());
     }
 }

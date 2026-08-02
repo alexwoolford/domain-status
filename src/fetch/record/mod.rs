@@ -1,6 +1,6 @@
 //! Record building for database insertion.
 //!
-//! This module handles building URL records and batch records from extracted data.
+//! This module builds URL persistence records from extracted data.
 
 mod builder;
 mod detection;

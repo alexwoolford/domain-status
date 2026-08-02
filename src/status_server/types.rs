@@ -133,9 +133,6 @@ pub struct StatusState {
     pub total_urls: Arc<AtomicUsize>,
     /// Total URLs that have entered processing or early-skip paths
     pub total_urls_attempted: Arc<AtomicUsize>,
-    /// URLs that finished without failure via the success path (persisted inserts).
-    /// Mid-process skips are counted only in [`Self::skipped_urls`].
-    pub completed_urls: Arc<AtomicUsize>,
     /// URLs that produced a persisted `url_status` row (matches finalize / `runs`)
     pub successful_urls: Arc<AtomicUsize>,
     pub failed_urls: Arc<AtomicUsize>,
@@ -168,7 +165,6 @@ pub struct StatusState {
 pub struct StatusResponse {
     pub total_urls: usize,
     pub total_urls_attempted: usize,
-    pub completed_urls: usize,
     pub successful_urls: usize,
     pub failed_urls: usize,
     pub skipped_urls: usize,
@@ -258,7 +254,6 @@ pub struct InfoCounts {
 pub(crate) fn test_status_state(
     total: usize,
     attempted: usize,
-    completed: usize,
     successful: usize,
     failed: usize,
     skipped: usize,
@@ -266,7 +261,6 @@ pub(crate) fn test_status_state(
     StatusState {
         total_urls: Arc::new(AtomicUsize::new(total)),
         total_urls_attempted: Arc::new(AtomicUsize::new(attempted)),
-        completed_urls: Arc::new(AtomicUsize::new(completed)),
         successful_urls: Arc::new(AtomicUsize::new(successful)),
         failed_urls: Arc::new(AtomicUsize::new(failed)),
         skipped_urls: Arc::new(AtomicUsize::new(skipped)),
@@ -290,19 +284,19 @@ mod tests {
 
     #[test]
     fn test_status_state_atomic_operations() {
-        let state = test_status_state(100, 0, 0, 0, 0, 0);
-        state.completed_urls.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(state.completed_urls.load(Ordering::SeqCst), 1);
+        let state = test_status_state(100, 0, 0, 0, 0);
+        state.successful_urls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.successful_urls.load(Ordering::SeqCst), 1);
         state.failed_urls.fetch_add(5, Ordering::SeqCst);
         assert_eq!(state.failed_urls.load(Ordering::SeqCst), 5);
     }
 
     #[test]
     fn test_status_state_clone() {
-        let state = test_status_state(50, 0, 10, 10, 2, 0);
+        let state = test_status_state(50, 0, 10, 2, 0);
         let cloned = state.clone();
-        cloned.completed_urls.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(state.completed_urls.load(Ordering::SeqCst), 11);
+        cloned.successful_urls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(state.successful_urls.load(Ordering::SeqCst), 11);
     }
 
     #[test]
@@ -310,7 +304,6 @@ mod tests {
         let response = StatusResponse {
             total_urls: 100,
             total_urls_attempted: 55,
-            completed_urls: 50,
             successful_urls: 50,
             failed_urls: 5,
             skipped_urls: 0,
@@ -366,7 +359,6 @@ mod tests {
         let response = StatusResponse {
             total_urls: 100,
             total_urls_attempted: 100,
-            completed_urls: 100,
             successful_urls: 100,
             failed_urls: 0,
             skipped_urls: 0,

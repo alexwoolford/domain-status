@@ -2,7 +2,7 @@
 //!
 //! These functions are optimized to minimize clones in the hot path:
 //! - `build_url_record` clones ~15 small strings (unavoidable for `UrlRecord` fields)
-//! - `build_batch_record` takes ownership and **moves** large collections (`HashMaps`, Vecs)
+//! - `build_persisted_url_record` takes ownership and **moves** large collections (`HashMaps`, Vecs)
 //!   instead of cloning them, saving ~5-10KB of allocations per URL
 
 use regex::Regex;
@@ -37,7 +37,7 @@ fn root_domain(fqdn: &str) -> Option<String> {
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::external_scripts::collect_script_hosts;
 use crate::fetch::response::{HtmlData, ResponseData};
-use crate::storage::{BatchRecord, CookieInfo};
+use crate::storage::{CookieInfo, PersistedUrlRecord};
 
 /// Extracts FQDNs and registrable domains from a Content-Security-Policy header value.
 /// Parses directives like `default-src 'self' *.cdn.example.com; script-src https://analytics.com`
@@ -133,7 +133,7 @@ fn extract_cookies(headers: &reqwest::header::HeaderMap) -> Vec<CookieInfo> {
 ///
 /// This function clones string fields from the input data. While this involves
 /// ~15 small string allocations, these are necessary to create an independent
-/// `UrlRecord`. The expensive HashMap/Vec data is handled by `build_batch_record`
+/// `UrlRecord`. The expensive HashMap/Vec data is handled by `build_persisted_url_record`
 /// which takes ownership to avoid cloning.
 pub(crate) fn build_url_record(
     resp_data: &ResponseData,
@@ -155,8 +155,6 @@ pub(crate) fn build_url_record(
         status_desc: resp_data.status_desc.clone(),
         response_time: elapsed,
         title: html_data.title.clone(),
-        // Deprecated low-signal field: stop persisting meta keywords (column retained).
-        keywords: None,
         // Normalize empty strings to None for consistency with database queries
         description: html_data
             .description
@@ -169,8 +167,6 @@ pub(crate) fn build_url_record(
         ssl_cert_issuer: tls_dns_data.issuer.clone(),
         ssl_cert_valid_from: tls_dns_data.valid_from,
         ssl_cert_valid_to: tls_dns_data.valid_to,
-        // Deprecated: viewport-meta heuristic only — always store false.
-        is_mobile_friendly: false,
         timestamp,
         nameservers: additional_dns.nameservers.clone(),
         txt_records: additional_dns.txt_records.clone(),
@@ -186,9 +182,6 @@ pub(crate) fn build_url_record(
         external_scripts_scanned: html_data.external_scripts_scanned,
         content_length: resp_data.content_length,
         http_version: resp_data.http_version.clone(),
-        // Deprecated low-signal metrics: prefer content_length + body_sha256.
-        body_word_count: None,
-        body_line_count: None,
         content_type: resp_data.content_type.clone(),
         canonical_url: html_data.canonical_url.clone(),
         cert_fingerprint_sha256: tls_dns_data.cert_fingerprint_sha256.clone(),
@@ -200,13 +193,13 @@ pub(crate) fn build_url_record(
     }
 }
 
-/// Parameters for building a `BatchRecord`.
+/// Parameters for building a `PersistedUrlRecord`.
 ///
 /// This struct **owns** the response, HTML, and TLS/DNS data to enable moving
-/// large collections (`HashMaps`, Vecs) into the `BatchRecord` instead of cloning.
+/// large collections (`HashMaps`, Vecs) into the `PersistedUrlRecord` instead of cloning.
 /// This eliminates ~5-10KB of heap allocations per URL in the hot path.
-pub struct BatchRecordParams {
-    /// The URL record to include in the batch
+pub struct PersistedUrlRecordParams {
+    /// The main URL record to persist
     pub record: UrlRecord,
     /// Response data (headers, status, etc.) - owned to move `HashMaps`
     pub resp_data: ResponseData,
@@ -228,13 +221,13 @@ pub struct BatchRecordParams {
     pub timestamp: i64,
     /// Run identifier
     pub run_id: Option<String>,
-    /// Favicon data (hash + base64)
+    /// Favicon data (Shodan-compatible hash + resolved URL)
     pub favicon: Option<crate::fetch::favicon::FaviconData>,
     /// Additional DNS data (CNAME, AAAA, CAA) for satellite table insertion
     pub additional_dns: crate::fetch::dns::AdditionalDnsData,
 }
 
-/// Builds a `BatchRecord` from all extracted data.
+/// Builds a `PersistedUrlRecord` from all extracted data.
 ///
 /// Takes ownership of params to **move** large collections instead of cloning:
 /// - `security_headers` and `http_headers` `HashMaps` from `ResponseData`
@@ -245,8 +238,10 @@ pub struct BatchRecordParams {
 ///
 /// # Arguments
 ///
-/// * `params` - Parameters for building the batch record (ownership transferred)
-pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
+/// * `params` - Parameters for building the persisted record (ownership transferred)
+pub(crate) fn build_persisted_url_record(
+    mut params: PersistedUrlRecordParams,
+) -> PersistedUrlRecord {
     // Move OIDs HashSet instead of cloning (avoids HashSet allocation)
     let oids_set: std::collections::HashSet<String> =
         params.tls_dns_data.oids.take().unwrap_or_default();
@@ -323,7 +318,7 @@ pub(crate) fn build_batch_record(mut params: BatchRecordParams) -> BatchRecord {
         params.record.cert_is_mismatched = Some(!matches_san && !matches_cn);
     }
 
-    BatchRecord {
+    PersistedUrlRecord {
         url_record: params.record,
         security_headers,
         http_headers,
@@ -385,8 +380,6 @@ mod tests {
             body_truncated: false,
             content_length: None,
             http_version: Some("HTTP/2".to_string()),
-            body_word_count: None,
-            body_line_count: None,
             content_type: Some("text/html".to_string()),
         }
     }
@@ -474,8 +467,6 @@ mod tests {
         assert_eq!(record.ip_address, "192.0.2.1");
         assert_eq!(record.status, 200);
         assert_eq!(record.title, "Test Page");
-        assert_eq!(record.keywords, None, "keywords are no longer persisted");
-        assert!(!record.is_mobile_friendly);
         assert_eq!(record.description, Some("Test description".to_string()));
         assert_eq!(record.tls_version, Some(crate::models::TlsVersion::Tls13));
         assert_eq!(record.run_id, run_id);
@@ -500,7 +491,6 @@ mod tests {
         );
 
         // Empty strings should be normalized to None
-        assert_eq!(record.keywords, None);
         assert_eq!(record.description, None);
     }
 
@@ -522,12 +512,11 @@ mod tests {
             None,
         );
 
-        assert_eq!(record.keywords, None);
         assert_eq!(record.description, None);
     }
 
     #[test]
-    fn test_build_batch_record_basic() {
+    fn test_build_persisted_url_record_basic() {
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
         let tls_dns_data = create_test_tls_dns_data();
@@ -573,7 +562,7 @@ mod tests {
             ..Default::default()
         });
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -589,17 +578,20 @@ mod tests {
             additional_dns: create_test_additional_dns_data(),
         });
 
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
-        assert_eq!(batch_record.technologies.len(), 2);
-        assert!(batch_record.technologies.iter().any(|t| t.name == "PHP"));
-        assert_eq!(batch_record.redirect_chain.len(), 1);
-        assert_eq!(batch_record.partial_failures.len(), 1);
-        assert!(batch_record.geoip.is_some());
-        assert!(batch_record.whois.is_some());
+        assert_eq!(persisted_record.url_record.final_domain, "example.com");
+        assert_eq!(persisted_record.technologies.len(), 2);
+        assert!(persisted_record
+            .technologies
+            .iter()
+            .any(|t| t.name == "PHP"));
+        assert_eq!(persisted_record.redirect_chain.len(), 1);
+        assert_eq!(persisted_record.partial_failures.len(), 1);
+        assert!(persisted_record.geoip.is_some());
+        assert!(persisted_record.whois.is_some());
     }
 
     #[test]
-    fn test_build_batch_record_empty_oids() {
+    fn test_build_persisted_url_record_empty_oids() {
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
         let mut tls_dns_data = create_test_tls_dns_data();
@@ -616,7 +608,7 @@ mod tests {
             None,
         );
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -632,11 +624,11 @@ mod tests {
             additional_dns: create_test_additional_dns_data(),
         });
 
-        assert!(batch_record.oids.is_empty());
+        assert!(persisted_record.oids.is_empty());
     }
 
     #[test]
-    fn test_build_batch_record_empty_sans() {
+    fn test_build_persisted_url_record_empty_sans() {
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
         let mut tls_dns_data = create_test_tls_dns_data();
@@ -653,7 +645,7 @@ mod tests {
             None,
         );
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -669,11 +661,11 @@ mod tests {
             additional_dns: create_test_additional_dns_data(),
         });
 
-        assert!(batch_record.subject_alternative_names.is_empty());
+        assert!(persisted_record.subject_alternative_names.is_empty());
     }
 
     #[test]
-    fn test_build_batch_record_partial_failures() {
+    fn test_build_persisted_url_record_partial_failures() {
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
         let tls_dns_data = create_test_tls_dns_data();
@@ -697,7 +689,7 @@ mod tests {
             ),
         ];
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -713,13 +705,13 @@ mod tests {
             additional_dns: create_test_additional_dns_data(),
         });
 
-        assert_eq!(batch_record.partial_failures.len(), 2);
+        assert_eq!(persisted_record.partial_failures.len(), 2);
         assert_eq!(
-            batch_record.partial_failures[0].error_type,
+            persisted_record.partial_failures[0].error_type,
             ErrorType::DnsNsLookupError
         );
         assert_eq!(
-            batch_record.partial_failures[1].error_type,
+            persisted_record.partial_failures[1].error_type,
             ErrorType::DnsTxtLookupError
         );
     }
@@ -746,14 +738,12 @@ mod tests {
 
         // Whitespace-only strings should be preserved (not normalized to None)
         // This is intentional - only truly empty strings are normalized
-        // Keywords are no longer persisted regardless of HTML input.
-        assert_eq!(record.keywords, None);
         // Description still normalizes empty but preserves whitespace-only.
         assert_eq!(record.description, Some("\t\n".to_string()));
     }
 
     #[test]
-    fn test_build_batch_record_duplicate_oids() {
+    fn test_build_persisted_url_record_duplicate_oids() {
         // Test that duplicate OIDs are deduplicated (HashSet behavior)
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
@@ -775,7 +765,7 @@ mod tests {
             None,
         );
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -792,13 +782,13 @@ mod tests {
         });
 
         // Duplicate OIDs should be deduplicated by HashSet
-        assert_eq!(batch_record.oids.len(), 2); // Only 2 unique OIDs
-        assert!(batch_record.oids.contains("1.2.3.4"));
-        assert!(batch_record.oids.contains("5.6.7.8"));
+        assert_eq!(persisted_record.oids.len(), 2); // Only 2 unique OIDs
+        assert!(persisted_record.oids.contains("1.2.3.4"));
+        assert!(persisted_record.oids.contains("5.6.7.8"));
     }
 
     #[test]
-    fn test_build_batch_record_duplicate_sans() {
+    fn test_build_persisted_url_record_duplicate_sans() {
         // Test that duplicate SANs are preserved (Vec, not HashSet)
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
@@ -820,7 +810,7 @@ mod tests {
             None,
         );
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -837,13 +827,13 @@ mod tests {
         });
 
         // SANs are Vec, so duplicates are preserved (this is intentional - matches cert data)
-        assert_eq!(batch_record.subject_alternative_names.len(), 3);
-        assert_eq!(batch_record.subject_alternative_names[0], "example.com");
-        assert_eq!(batch_record.subject_alternative_names[2], "example.com");
+        assert_eq!(persisted_record.subject_alternative_names.len(), 3);
+        assert_eq!(persisted_record.subject_alternative_names[0], "example.com");
+        assert_eq!(persisted_record.subject_alternative_names[2], "example.com");
     }
 
     #[test]
-    fn test_build_batch_record_large_redirect_chain() {
+    fn test_build_persisted_url_record_large_redirect_chain() {
         // Test that large redirect chains are handled correctly
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
@@ -865,7 +855,7 @@ mod tests {
             .map(|i| (format!("https://example.com/redirect{}", i), 302))
             .collect();
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -882,19 +872,19 @@ mod tests {
         });
 
         // Large redirect chain should be preserved
-        assert_eq!(batch_record.redirect_chain.len(), 100);
+        assert_eq!(persisted_record.redirect_chain.len(), 100);
         assert_eq!(
-            batch_record.redirect_chain[0].0,
+            persisted_record.redirect_chain[0].0,
             "https://example.com/redirect0"
         );
         assert_eq!(
-            batch_record.redirect_chain[99].0,
+            persisted_record.redirect_chain[99].0,
             "https://example.com/redirect99"
         );
     }
 
     #[test]
-    fn test_build_batch_record_run_id_propagation() {
+    fn test_build_persisted_url_record_run_id_propagation() {
         // Test that run_id is correctly propagated to partial failure records
         let resp_data = create_test_response_data();
         let html_data = create_test_html_data();
@@ -914,7 +904,7 @@ mod tests {
         let run_id = Some("test-run-456".to_string());
         let partial_failures = vec![(ErrorType::DnsNsLookupError, "Test error".to_string())];
 
-        let batch_record = build_batch_record(BatchRecordParams {
+        let persisted_record = build_persisted_url_record(PersistedUrlRecordParams {
             record: url_record,
             resp_data,
             html_data,
@@ -931,7 +921,7 @@ mod tests {
         });
 
         // Run ID should be propagated to partial failure records
-        assert_eq!(batch_record.partial_failures.len(), 1);
-        assert_eq!(batch_record.partial_failures[0].run_id, run_id);
+        assert_eq!(persisted_record.partial_failures.len(), 1);
+        assert_eq!(persisted_record.partial_failures[0].run_id, run_id);
     }
 }

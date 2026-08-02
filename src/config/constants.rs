@@ -85,8 +85,6 @@ pub(crate) const MAX_HEADER_VALUE_LENGTH: usize = 1000;
 /// Most legitimate sites have <50 headers; 100 provides ample headroom
 /// Headers beyond this limit are ignored with a warning logged
 pub(crate) const MAX_HEADER_COUNT: usize = 100;
-// Note: JavaScript execution constants removed - we don't execute JavaScript
-// We match JS patterns as text (like WappalyzerGo) instead of executing JavaScript
 
 // Redirect handling
 /// Maximum number of redirect hops to follow

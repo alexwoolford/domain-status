@@ -34,7 +34,7 @@ Prioritized security findings and actions from the Security Posture Report imple
 
 ### P2 (optional enhancements)
 
-- **Explicit certificate trust outcomes:** Today `analyze_security()` folds expired, self-signed, and hostname mismatch into a single `InvalidCertificate` warning. Consider adding explicit fields (e.g. in the stored record or a small “certificate trust” struct) so “hostname mismatch”, “expired”, and “self-signed” are queryable/exportable.
+- **Certificate trust queries:** Prefer SQL / export on existing fact columns (`cert_is_self_signed`, `cert_is_wildcard`, `cert_is_mismatched`, `tls_version`, validity timestamps) rather than a precomputed warning table.
 - **GeoIP constant:** Document in code that `MAX_GEOIP_ARCHIVE_ENTRY_SIZE` must be chosen so that `+ 1` fits in u64 (for the single `.expect()` in [src/geoip/extract.rs](src/geoip/extract.rs)).
 
 ---

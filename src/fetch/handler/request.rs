@@ -255,7 +255,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = Arc::new(psl::List);
         let resolver = Arc::new(
             TokioResolver::builder_tokio()
                 .unwrap()
@@ -272,7 +271,7 @@ mod tests {
         );
 
         ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
+            NetworkContext::new(client, redirect_client, resolver),
             pool,
             RuntimeContext::new(
                 error_stats,
@@ -436,7 +435,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = Arc::new(psl::List);
         let resolver = Arc::new(
             TokioResolver::builder_tokio()
                 .unwrap()
@@ -453,7 +451,7 @@ mod tests {
         );
 
         let ctx = ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
+            NetworkContext::new(client, redirect_client, resolver),
             pool,
             RuntimeContext::new(
                 error_stats,

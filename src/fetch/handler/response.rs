@@ -9,7 +9,7 @@ use crate::fetch::response::{extract_response_data, parse_html_content, HtmlData
 use crate::fetch::ProcessingContext;
 use crate::fetch::UrlProcessOutcome;
 use crate::fingerprint::DetectedTechnology;
-use crate::storage::insert::insert_batch_record;
+use crate::storage::insert::insert_persisted_url_record;
 use crate::utils::{duration_to_us, UrlTimingMetrics};
 use std::sync::Arc;
 use std::time::Instant;
@@ -44,13 +44,7 @@ async fn extract_and_parse(
     ctx: &ProcessingContext,
 ) -> Result<Option<ExtractedResponse>, Error> {
     let html_parse_start = Instant::now();
-    let Some(resp_data) = extract_response_data(
-        response,
-        original_url,
-        final_url_str,
-        &ctx.network.extractor,
-    )
-    .await?
+    let Some(resp_data) = extract_response_data(response, original_url, final_url_str).await?
     else {
         return Ok(None);
     };
@@ -109,13 +103,7 @@ async fn parallel_enrich(
             (technologies, tech_detection_us)
         },
         async {
-            fetch_all_dns_data(
-                resp_data,
-                &ctx.network.resolver,
-                &ctx.runtime.error_stats,
-                ctx.runtime.run_id.as_deref(),
-            )
-            .await
+            fetch_all_dns_data(resp_data, &ctx.network.resolver, &ctx.runtime.error_stats).await
         },
         crate::fetch::favicon::fetch_and_hash_favicon(
             &ctx.network.client,
@@ -300,7 +288,7 @@ async fn persist(
         ..
     } = enrichment;
 
-    let (batch_record, (geoip_lookup_us, whois_lookup_us)) =
+    let (persisted_record, (geoip_lookup_us, whois_lookup_us)) =
         prepare_record_for_insertion(crate::fetch::record::RecordPreparationParams {
             resp_data,
             html_data,
@@ -316,7 +304,7 @@ async fn persist(
         })
         .await;
 
-    insert_batch_record(&ctx.pool, batch_record)
+    insert_persisted_url_record(&ctx.pool, persisted_record)
         .await
         .map_err(|e| {
             log::error!("Failed to insert record for URL {final_url_for_logging}: {e}");
@@ -430,7 +418,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = Arc::new(psl::List);
         let resolver = Arc::new(
             TokioResolver::builder_tokio()
                 .unwrap()
@@ -447,7 +434,7 @@ mod tests {
         );
 
         ProcessingContext::new(
-            NetworkContext::new(client, redirect_client, extractor, resolver),
+            NetworkContext::new(client, redirect_client, resolver),
             pool,
             RuntimeContext::new(
                 error_stats,
@@ -742,7 +729,6 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let extractor = Arc::new(psl::List);
         let resolver = Arc::new(
             TokioResolver::builder_tokio()
                 .unwrap()
@@ -754,7 +740,7 @@ mod tests {
         let timing_stats = Arc::new(TimingStats::new());
 
         let ctx = ProcessingContext::new(
-            NetworkContext::new(client_arc, redirect_client, extractor, resolver),
+            NetworkContext::new(client_arc, redirect_client, resolver),
             pool,
             RuntimeContext::new(
                 error_stats,

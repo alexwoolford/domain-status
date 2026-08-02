@@ -245,7 +245,6 @@ fn sniff_meta_charset(prefix: &[u8]) -> Option<String> {
 /// * `response` - The HTTP response
 /// * `original_url` - The original URL before redirects
 /// * `_final_url_str` - The final URL after redirects
-/// * `extractor` - Public Suffix List extractor
 ///
 /// # Errors
 ///
@@ -259,13 +258,12 @@ pub(crate) async fn extract_response_data(
     response: reqwest::Response,
     original_url: &str,
     _final_url_str: &str,
-    extractor: &psl::List,
 ) -> Result<Option<ResponseData>, Error> {
     let final_url = response.url().to_string();
     debug!("Final url after redirects: {final_url}");
 
-    let initial_domain = extract_domain(extractor, original_url)?;
-    let final_domain = extract_domain(extractor, &final_url)?;
+    let initial_domain = extract_domain(original_url)?;
+    let final_domain = extract_domain(&final_url)?;
     debug!("Initial domain: {initial_domain}, Final domain: {final_domain}");
 
     let parsed_url = reqwest::Url::parse(&final_url)?;
@@ -360,8 +358,6 @@ pub(crate) async fn extract_response_data(
             body_truncated,
             content_length: None,
             http_version: http_version.clone(),
-            body_word_count: None,
-            body_line_count: None,
             content_type: content_type.clone(),
         }));
     }
@@ -379,10 +375,6 @@ pub(crate) async fn extract_response_data(
     // Body is size-limited during streaming (typically < 10MB), length fits in i64
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let content_length = Some(body.len() as i64);
-    // body_word_count / body_line_count are deprecated low-signal metrics — leave NULL.
-    let body_word_count = None;
-    let body_line_count = None;
-
     Ok(Some(ResponseData {
         initial_url: original_url.to_string(),
         final_url,
@@ -399,8 +391,6 @@ pub(crate) async fn extract_response_data(
         body_truncated,
         content_length,
         http_version,
-        body_word_count,
-        body_line_count,
         content_type,
     }))
 }
@@ -409,10 +399,6 @@ pub(crate) async fn extract_response_data(
 mod tests {
     use super::*;
     use httptest::{matchers::*, responders::*, Expectation, Server};
-
-    fn create_test_extractor() -> psl::List {
-        psl::List
-    }
 
     // === charset decoding ===
 
@@ -623,11 +609,10 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // Domain extraction now accepts IP literals as domain keys (needed for
         // wiremock/httpmock). This test still exercises extract_response_data end-to-end.
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
 
         // original_url is example.com; final_url from httptest is an IP — both extract.
         assert!(
@@ -652,9 +637,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         let data = result
             .expect("application/json is scannable")
             .expect("should return Some ResponseData");
@@ -676,10 +660,9 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // Missing Content-Type: treated as HTML-ish / proceeds or errors on empty policy — not IP domain.
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         // Accept either success (body treated as HTML) or a content-type related error.
         if let Err(e) = &result {
             let msg = e.to_string();
@@ -706,9 +689,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "empty HTML body with IP final URL should extract, got: {result:?}"
@@ -719,20 +701,13 @@ mod tests {
     fn test_extract_response_data_domain_extraction_logic() {
         // Test domain extraction logic separately (domain extraction is tested in domain/tests.rs)
         // This test verifies that extract_domain works with proper URLs
-        let extractor = create_test_extractor();
 
         let original_url = "https://example.com/page";
         let final_url = "https://example.org/page";
 
         // Verify domain extraction works (tested more thoroughly in domain/tests.rs)
-        assert_eq!(
-            extract_domain(&extractor, original_url).unwrap(),
-            "example.com"
-        );
-        assert_eq!(
-            extract_domain(&extractor, final_url).unwrap(),
-            "example.org"
-        );
+        assert_eq!(extract_domain(original_url).unwrap(), "example.com");
+        assert_eq!(extract_domain(final_url).unwrap(), "example.org");
     }
 
     #[tokio::test]
@@ -755,9 +730,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -784,9 +758,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -811,9 +784,8 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -921,10 +893,9 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // IP literals are valid domain keys; assert extraction succeeds.
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -950,10 +921,9 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // IP literals are valid domain keys; assert extraction succeeds.
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -981,10 +951,9 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // IP literals are valid domain keys; assert extraction succeeds.
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -1023,7 +992,6 @@ mod tests {
     fn test_host_extraction_edge_cases() {
         // Test host extraction logic for various URL formats
         // This is critical - host extraction must work for all valid URLs
-        let _extractor = create_test_extractor();
 
         // Test cases for host extraction
         let test_cases = vec![
@@ -1087,11 +1055,10 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // The code at line 75-87 handles body read failures by catching errors
         // and using empty string, then checking if empty (line 89-92)
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -1118,11 +1085,10 @@ mod tests {
 
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
-        let extractor = create_test_extractor();
 
         // The code at line 70-72 logs Content-Encoding for debugging
         // reqwest automatically decompresses, so the body is already decompressed
-        let result = extract_response_data(response, test_url, &server_url, &extractor).await;
+        let result = extract_response_data(response, test_url, &server_url).await;
         assert!(
             result.is_ok(),
             "expected Ok after IP domain support, got: {result:?}"
@@ -1151,7 +1117,6 @@ mod tests {
 
         // Use httpbin.org which returns proper domain URLs
         let test_url = "https://httpbin.org/html";
-        let extractor = create_test_extractor();
 
         let response = match client.get(test_url).send().await {
             Ok(r) => r,
@@ -1162,7 +1127,7 @@ mod tests {
         };
 
         // This should succeed - httpbin.org returns HTML with proper domain
-        let result = extract_response_data(response, test_url, test_url, &extractor).await;
+        let result = extract_response_data(response, test_url, test_url).await;
 
         match result {
             Ok(Some(resp_data)) => {

@@ -17,7 +17,6 @@ use super::resources::{ProgressCallback, UrlTaskParams};
 
 /// Bundles progress counters and callback for task handlers (avoids `too_many_arguments`).
 struct TaskProgress<'a> {
-    completed_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
     successful_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
     skipped_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
     failed_urls: &'a Arc<std::sync::atomic::AtomicUsize>,
@@ -42,7 +41,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
         cancel,
         permit: _permit, // Hold permit until task completes
         request_limiter,
-        completed_urls,
         successful_urls,
         skipped_urls,
         failed_urls,
@@ -89,7 +87,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
     };
 
     let progress = TaskProgress {
-        completed_urls: &completed_urls,
         successful_urls: &successful_urls,
         skipped_urls: &skipped_urls,
         failed_urls: &failed_urls,
@@ -124,8 +121,6 @@ pub async fn process_url_task(params: UrlTaskParams) {
 fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskProgress<'_>) {
     match outcome {
         UrlProcessOutcome::Inserted => {
-            // Keep completed_urls in sync with successful_urls for progress bars / legacy fields.
-            progress.completed_urls.fetch_add(1, Ordering::Relaxed);
             progress.successful_urls.fetch_add(1, Ordering::Relaxed);
         }
         UrlProcessOutcome::Skipped => {
@@ -136,7 +131,7 @@ fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskPr
     }
     invoke_progress_callback(
         progress.progress_callback.as_ref(),
-        progress.completed_urls,
+        progress.successful_urls,
         progress.failed_urls,
         progress.skipped_urls,
         progress.total_urls_for_callback,
@@ -156,7 +151,7 @@ async fn handle_failure(
     let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
         progress.progress_callback.as_ref(),
-        progress.completed_urls,
+        progress.successful_urls,
         progress.failed_urls,
         progress.skipped_urls,
         progress.total_urls_for_callback,
@@ -167,7 +162,6 @@ async fn handle_failure(
 
     record_url_failure(crate::storage::failure::FailureRecordParams {
         pool: &ctx.pool,
-        extractor: &ctx.network.extractor,
         url: url.as_ref(),
         error: &error,
         context,
@@ -189,7 +183,7 @@ async fn handle_timeout(
     let elapsed = process_start.elapsed().as_secs_f64();
     invoke_progress_callback(
         progress.progress_callback.as_ref(),
-        progress.completed_urls,
+        progress.successful_urls,
         progress.failed_urls,
         progress.skipped_urls,
         progress.total_urls_for_callback,
@@ -217,7 +211,6 @@ async fn handle_timeout(
     #[allow(clippy::cast_possible_truncation)]
     record_url_failure(crate::storage::failure::FailureRecordParams {
         pool: &ctx.pool,
-        extractor: &ctx.network.extractor,
         url: url.as_ref(),
         error: &timeout_error,
         context,
@@ -270,7 +263,6 @@ mod tests {
             NetworkContext::new(
                 client,
                 redirect_client,
-                Arc::new(psl::List),
                 Arc::new(
                     TokioResolver::builder_tokio()
                         .unwrap()
@@ -298,12 +290,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_success_counts_inserted_url_as_successful() {
         let url: Arc<str> = Arc::from("https://example.com");
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let successful_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &successful_urls,
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,
@@ -313,7 +303,6 @@ mod tests {
 
         handle_success(&url, UrlProcessOutcome::Inserted, &progress);
 
-        assert_eq!(completed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 1);
         assert_eq!(skipped_urls.load(Ordering::SeqCst), 0);
     }
@@ -321,12 +310,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_success_counts_skipped_url_separately() {
         let url: Arc<str> = Arc::from("https://example.com");
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let successful_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &successful_urls,
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,
@@ -336,7 +323,6 @@ mod tests {
 
         handle_success(&url, UrlProcessOutcome::Skipped, &progress);
 
-        assert_eq!(completed_urls.load(Ordering::SeqCst), 0);
         assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
         assert_eq!(skipped_urls.load(Ordering::SeqCst), 1);
     }
@@ -344,7 +330,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_failure_increments_failed_urls_and_invokes_callback() {
         let url: Arc<str> = Arc::from("https://example.com/fail");
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
@@ -357,7 +342,6 @@ mod tests {
         }));
 
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &Arc::new(AtomicUsize::new(0)),
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,
@@ -384,12 +368,10 @@ mod tests {
         let anyhow_err = anyhow::anyhow!(err);
 
         let url: Arc<str> = Arc::from(server.uri().as_str());
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &Arc::new(AtomicUsize::new(0)),
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,
@@ -423,12 +405,10 @@ mod tests {
         let anyhow_err = anyhow::anyhow!(err);
 
         let url: Arc<str> = Arc::from(server.uri().as_str());
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &Arc::new(AtomicUsize::new(0)),
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,
@@ -452,7 +432,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_timeout_increments_failed_urls_and_error_stats() {
         let url: Arc<str> = Arc::from("https://example.com/timeout");
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
@@ -465,7 +444,6 @@ mod tests {
         }));
 
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &Arc::new(AtomicUsize::new(0)),
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,
@@ -487,7 +465,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_failure_records_failure_when_db_ok() {
         let url: Arc<str> = Arc::from("https://example.com/record-fail");
-        let completed_urls = Arc::new(AtomicUsize::new(0));
         let failed_urls = Arc::new(AtomicUsize::new(0));
         let skipped_urls = Arc::new(AtomicUsize::new(0));
         let ctx = minimal_ctx_with_migrations().await;
@@ -500,7 +477,6 @@ mod tests {
         }));
 
         let progress = TaskProgress {
-            completed_urls: &completed_urls,
             successful_urls: &Arc::new(AtomicUsize::new(0)),
             skipped_urls: &skipped_urls,
             failed_urls: &failed_urls,

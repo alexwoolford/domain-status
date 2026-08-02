@@ -202,15 +202,11 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             "status_description": export_row.main.status_desc,
             "response_time_ms": export_row.main.response_time,
             "title": export_row.main.title,
-            "keywords": export_row.main.keywords,
             "description": export_row.main.description,
             "meta_robots": export_row.main.meta_robots,
-            "is_mobile_friendly": export_row.main.is_mobile_friendly,
             "body_sha256": export_row.main.body_sha256,
             "content_length": export_row.main.content_length,
             "http_version": export_row.main.http_version,
-            "body_word_count": export_row.main.body_word_count,
-            "body_line_count": export_row.main.body_line_count,
             "content_type": export_row.main.content_type,
             "canonical_url": export_row.main.canonical_url,
             "body_truncated": export_row.main.body_truncated,
@@ -355,8 +351,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO url_status (
                 initial_domain, final_domain, ip_address, http_status, http_status_text,
-                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_time_seconds, title, observed_at_ms, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
         .bind(domain)
@@ -367,7 +363,6 @@ mod tests {
         .bind(1.5f64)
         .bind("Test Page")
         .bind(1704067200000i64)
-        .bind(true)
         .bind("test-run-1")
         .fetch_one(pool)
         .await
@@ -509,8 +504,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO url_status (
                 initial_domain, final_domain, ip_address, http_status, http_status_text,
-                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_time_seconds, title, observed_at_ms, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
         .bind("other.com")
@@ -521,7 +516,6 @@ mod tests {
         .bind(1.5f64)
         .bind("Other Page")
         .bind(1704067200000i64)
-        .bind(true)
         .bind("test-run-2")
         .fetch_one(&pool)
         .await
@@ -649,8 +643,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO url_status (
                 initial_domain, final_domain, ip_address, http_status, http_status_text,
-                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_time_seconds, title, observed_at_ms, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id",
         )
         .bind("newer.com")
@@ -661,7 +655,6 @@ mod tests {
         .bind(1.5f64)
         .bind("Newer Page")
         .bind(1704153600000i64) // Later timestamp
-        .bind(true)
         .bind("test-run-1")
         .fetch_one(&pool)
         .await
@@ -1133,11 +1126,11 @@ mod tests {
         sqlx::query(
             "INSERT INTO url_status (
                 initial_domain, final_domain, ip_address, http_status, http_status_text,
-                response_time_seconds, title, observed_at_ms, is_mobile_friendly, run_id,
-                reverse_dns_name, keywords, description, tls_version, ssl_cert_subject,
+                response_time_seconds, title, observed_at_ms, run_id,
+                reverse_dns_name, description, tls_version, ssl_cert_subject,
                 ssl_cert_issuer, ssl_cert_valid_to_ms, cipher_suite, key_algorithm,
                 spf_record, dmarc_record
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind("example.com")
         .bind("example.com")
@@ -1147,10 +1140,8 @@ mod tests {
         .bind(1.5f64)
         .bind("Test Page")
         .bind(1704067200000i64)
-        .bind(true)
         .bind("test-run-1")
         .bind::<Option<String>>(None) // NULL reverse_dns
-        .bind::<Option<String>>(None) // NULL keywords
         .bind::<Option<String>>(None) // NULL description
         .bind::<Option<String>>(None) // NULL tls_version
         .bind::<Option<String>>(None) // NULL ssl_cert_subject
@@ -1193,7 +1184,6 @@ mod tests {
             serde_json::from_str(contents.trim()).expect("Should be valid JSON");
         // NULL values should be serialized as null in JSON
         assert_eq!(json_obj["reverse_dns"], serde_json::Value::Null);
-        assert_eq!(json_obj["keywords"], serde_json::Value::Null);
         assert_eq!(json_obj["description"], serde_json::Value::Null);
     }
 
