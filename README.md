@@ -8,9 +8,9 @@
 [![CI](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
 
-**domain_status** is a concurrent URL/domain scanner. Give it a list of URLs; it captures HTTP status, TLS certificates, DNS, technology fingerprints, and related signals in one pass, and stores results in **SQLite** for relational analysis (1:many satellites for technologies, secrets, redirects, DNS rows, and more).
+**domain_status** is a concurrent URL/domain scanner. Give it a list of URLs; it captures HTTP status, TLS certificates, DNS, technology fingerprints, and related signals in one pass, and stores results in **SQLite** for relational analysis (1:many satellites for technologies, secrets, redirects, DNS rows, and more). Export the same run to Parquet or JSONL when you want DuckDB / data-lake workflows or shell pipelines—SQLite remains the source of truth.
 
-**Who it's for:** DevOps/SRE, security analysts, and anyone managing large URL/domain portfolios who wants one tool instead of stitching curl, whois, and Wappalyzer together.
+**Who it's for:** DevOps/SRE, security analysts, threat-intel / OSINT researchers, and anyone managing large URL/domain portfolios who wants one tool instead of stitching curl, whois, and Wappalyzer together.
 
 ## Quick Start
 
@@ -22,6 +22,8 @@ brew tap alexwoolford/domain-status && brew install domain_status
 
 echo -e "https://example.com\nhttps://example.org" > urls.txt
 domain_status scan urls.txt
+
+# Convenience digest (same DB)
 domain_status summary
 
 # SQLite is the primary result store (1:many joins are intentional)
@@ -30,7 +32,19 @@ sqlite3 domain_status.db "SELECT technology_name, COUNT(*) AS n FROM url_technol
 sqlite3 domain_status.db "SELECT secret_type, severity, COUNT(*) FROM url_exposed_secrets GROUP BY 1, 2 ORDER BY 3 DESC;"
 ```
 
-Optional: `domain_status export --format csv` flattens a view for spreadsheets (lossy vs the full schema). Pipe JSONL with `export --format jsonl --output -` (payload on stdout; logs/banners on stderr — see [docs/CLI.md](docs/CLI.md)). See [QUERIES.md](QUERIES.md) and [DATABASE.md](DATABASE.md) for more SQL.
+More SQL: [QUERIES.md](QUERIES.md) and [DATABASE.md](DATABASE.md).
+
+**Optional exports** (from the same SQLite DB—lossy flatten vs full schema for CSV/JSONL):
+
+```bash
+# Shell tooling (payload on stdout; logs/banners on stderr — see docs/CLI.md)
+domain_status export --format jsonl --output - | jq '.final_domain, .technologies'
+
+# Columnar analytics (e.g. DuckDB: SELECT * FROM 'recon.parquet')
+domain_status export --format parquet --output recon.parquet
+```
+
+CSV: `domain_status export --format csv`.
 
 ### Offline / air-gapped fingerprints
 

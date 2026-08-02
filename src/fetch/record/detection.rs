@@ -118,9 +118,7 @@ mod tests {
     fn create_test_html_data() -> HtmlData {
         HtmlData {
             title: "Test".to_string(),
-            keywords_str: None,
             description: None,
-            is_mobile_friendly: false,
             structured_data: crate::parse::StructuredData::default(),
             social_media_links: vec![],
             contact_links: vec![],

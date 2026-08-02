@@ -163,9 +163,6 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
         },
         warnings: WarningCounts {
             total: state.error_stats.total_warnings(),
-            missing_meta_keywords: state
-                .error_stats
-                .get_warning_count(WarningType::MissingMetaKeywords),
             missing_meta_description: state
                 .error_stats
                 .get_warning_count(WarningType::MissingMetaDescription),
@@ -198,7 +195,6 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
                         tech_detection_ms: micros_to_ms(avg.tech_detection_us),
                         geoip_lookup_ms: micros_to_ms(avg.geoip_lookup_us),
                         whois_lookup_ms: micros_to_ms(avg.whois_lookup_us),
-                        security_analysis_ms: micros_to_ms(avg.security_analysis_us),
                         total_ms: micros_to_ms(avg.total_us),
                     },
                 })

@@ -32,25 +32,6 @@ use std::collections::HashMap;
 pub(crate) struct RequestHeaders;
 
 impl RequestHeaders {
-    /// Returns headers as a vector of (name, value) tuples for failure tracking.
-    pub(crate) fn as_vec() -> Vec<(String, String)> {
-        vec![
-            (
-                "accept".to_string(),
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_string(),
-            ),
-            ("accept-language".to_string(), "en-US,en;q=0.9".to_string()),
-            ("accept-encoding".to_string(), "gzip, deflate, br".to_string()),
-            ("referer".to_string(), "https://www.google.com/".to_string()),
-            ("sec-fetch-dest".to_string(), "document".to_string()),
-            ("sec-fetch-mode".to_string(), "navigate".to_string()),
-            ("sec-fetch-site".to_string(), "none".to_string()),
-            ("sec-fetch-user".to_string(), "?1".to_string()),
-            ("upgrade-insecure-requests".to_string(), "1".to_string()),
-            ("cache-control".to_string(), "max-age=0".to_string()),
-        ]
-    }
-
     /// Applies the standard request headers to a `reqwest::RequestBuilder`.
     ///
     /// This is the preferred method for building requests as it uses reqwest's

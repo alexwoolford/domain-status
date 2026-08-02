@@ -41,13 +41,7 @@ pub(crate) struct ResponseData {
 #[derive(Debug)]
 pub(crate) struct HtmlData {
     pub(crate) title: String,
-    /// Deprecated — no longer extracted.
-    #[allow(dead_code)]
-    pub(crate) keywords_str: Option<String>,
     pub(crate) description: Option<String>,
-    /// Deprecated — always false on new scans.
-    #[allow(dead_code)]
-    pub(crate) is_mobile_friendly: bool,
     pub(crate) structured_data: crate::parse::StructuredData,
     pub(crate) social_media_links: Vec<crate::parse::SocialMediaLink>,
     pub(crate) contact_links: Vec<crate::parse::ContactLink>,

@@ -23,10 +23,6 @@ pub struct FailureContext {
     ///
     /// Stored as a vector of (name, value) tuples.
     pub response_headers: Vec<(String, String)>,
-    /// HTTP request headers sent to the server.
-    ///
-    /// Stored as a vector of (name, value) tuples.
-    pub request_headers: Vec<(String, String)>,
 }
 
 /// Custom error type that carries failure context.
@@ -104,7 +100,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec!["https://example.org".to_string()],
             response_headers: vec![("content-type".to_string(), "text/html".to_string())],
-            request_headers: vec![("user-agent".to_string(), "test".to_string())],
         };
 
         let original_error = anyhow::anyhow!("HTTP request failed");
@@ -115,7 +110,6 @@ mod tests {
         assert_eq!(extracted.final_url, context.final_url);
         assert_eq!(extracted.redirect_chain, context.redirect_chain);
         assert_eq!(extracted.response_headers, context.response_headers);
-        assert_eq!(extracted.request_headers, context.request_headers);
     }
 
     #[test]
@@ -126,7 +120,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let original_error = anyhow::anyhow!("Connection timeout");
@@ -159,7 +152,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec!["https://example.org".to_string()],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         // Use attach_failure_context to ensure context is extractable
@@ -185,7 +177,6 @@ mod tests {
         assert_eq!(extracted.final_url, None);
         assert_eq!(extracted.redirect_chain, Vec::<String>::new());
         assert_eq!(extracted.response_headers, Vec::<(String, String)>::new());
-        assert_eq!(extracted.request_headers, Vec::<(String, String)>::new());
     }
 
     #[test]
@@ -199,7 +190,6 @@ mod tests {
                 "https://www.example.com".to_string(),
             ],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let context_error = FailureContextError { context };
@@ -216,7 +206,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let context_error = FailureContextError { context };
@@ -234,7 +223,6 @@ mod tests {
             final_url: None,
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let context_error = FailureContextError { context };
@@ -251,7 +239,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         // attach_failure_context makes FailureContextError the root
@@ -273,7 +260,6 @@ mod tests {
             final_url: Some("https://example.com/final".to_string()),
             redirect_chain: redirect_chain.clone(),
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let error = attach_failure_context(anyhow::anyhow!("Test error"), context.clone());
@@ -294,7 +280,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec![],
             response_headers: response_headers.clone(),
-            request_headers: vec![],
         };
 
         let error = attach_failure_context(anyhow::anyhow!("Test error"), context.clone());
@@ -315,7 +300,6 @@ mod tests {
                 "https://www.example.com".to_string(),
             ],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let context_error = FailureContextError { context };
@@ -338,7 +322,6 @@ mod tests {
                 "https://www.example.com".to_string(),
             ],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let context_error = FailureContextError { context };
@@ -361,7 +344,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let error_with_context = attach_failure_context(original, context);

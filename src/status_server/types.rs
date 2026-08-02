@@ -222,7 +222,6 @@ pub struct TimingMetrics {
     pub tech_detection_ms: u64,
     pub geoip_lookup_ms: u64,
     pub whois_lookup_ms: u64,
-    pub security_analysis_ms: u64,
     pub total_ms: u64,
 }
 
@@ -241,7 +240,6 @@ pub struct ErrorCounts {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct WarningCounts {
     pub total: usize,
-    pub missing_meta_keywords: usize,
     pub missing_meta_description: usize,
     pub missing_title: usize,
 }
@@ -341,8 +339,7 @@ mod tests {
                 other_error: 0,
             },
             warnings: WarningCounts {
-                total: 3,
-                missing_meta_keywords: 1,
+                total: 2,
                 missing_meta_description: 1,
                 missing_title: 1,
             },
@@ -399,7 +396,6 @@ mod tests {
             },
             warnings: WarningCounts {
                 total: 0,
-                missing_meta_keywords: 0,
                 missing_meta_description: 0,
                 missing_title: 0,
             },
@@ -441,7 +437,6 @@ mod tests {
                 tech_detection_ms: 25,
                 geoip_lookup_ms: 5,
                 whois_lookup_ms: 100,
-                security_analysis_ms: 10,
                 total_ms: 415,
             },
         };

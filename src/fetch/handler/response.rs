@@ -280,7 +280,7 @@ async fn persist(
     elapsed: f64,
     timestamp: i64,
     ctx: &ProcessingContext,
-) -> Result<(u64, u64, u64), Error> {
+) -> Result<(u64, u64), Error> {
     debug!(
         "Preparing to insert record for URL: {}",
         resp_data.final_url
@@ -300,7 +300,7 @@ async fn persist(
         ..
     } = enrichment;
 
-    let (batch_record, (geoip_lookup_us, whois_lookup_us, security_analysis_us)) =
+    let (batch_record, (geoip_lookup_us, whois_lookup_us)) =
         prepare_record_for_insertion(crate::fetch::record::RecordPreparationParams {
             resp_data,
             html_data,
@@ -323,7 +323,7 @@ async fn persist(
             anyhow::anyhow!("Database write failed: {e}")
         })?;
 
-    Ok((geoip_lookup_us, whois_lookup_us, security_analysis_us))
+    Ok((geoip_lookup_us, whois_lookup_us))
 }
 
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
@@ -380,7 +380,7 @@ pub async fn handle_response(
     let external_script_scan = std::mem::take(&mut enrichment.external_script_scan);
     merge_secrets(&mut html_data, &resp_data, external_script_scan).await;
 
-    let (geoip_lookup_us, whois_lookup_us, security_analysis_us) = persist(
+    let (geoip_lookup_us, whois_lookup_us) = persist(
         resp_data,
         html_data,
         enrichment,
@@ -393,7 +393,6 @@ pub async fn handle_response(
 
     metrics.geoip_lookup_us = geoip_lookup_us;
     metrics.whois_lookup_us = whois_lookup_us;
-    metrics.security_analysis_us = security_analysis_us;
     metrics.total_us = duration_to_us(start_time.elapsed());
     ctx.runtime.timing_stats.record(&metrics);
 

@@ -29,8 +29,6 @@ pub struct UrlTimingMetrics {
     pub geoip_lookup_us: u64,
     /// WHOIS lookup time in microseconds
     pub whois_lookup_us: u64,
-    /// Security analysis time in microseconds
-    pub security_analysis_us: u64,
     /// Total processing time (from start to finish) in microseconds
     pub total_us: u64,
 }
@@ -63,8 +61,6 @@ pub struct TimingStats {
     pub geoip_lookup_sum_us: AtomicU64,
     /// Sum of WHOIS lookup times in microseconds
     pub whois_lookup_sum_us: AtomicU64,
-    /// Sum of security analysis times in microseconds
-    pub security_analysis_sum_us: AtomicU64,
     /// Sum of total processing times in microseconds
     pub total_sum_us: AtomicU64,
 }
@@ -95,8 +91,6 @@ impl TimingStats {
             .fetch_add(metrics.geoip_lookup_us, Ordering::Relaxed);
         self.whois_lookup_sum_us
             .fetch_add(metrics.whois_lookup_us, Ordering::Relaxed);
-        self.security_analysis_sum_us
-            .fetch_add(metrics.security_analysis_us, Ordering::Relaxed);
         self.total_sum_us
             .fetch_add(metrics.total_us, Ordering::Relaxed);
     }
@@ -123,7 +117,6 @@ impl TimingStats {
             tech_detection_us: self.tech_detection_sum_us.load(Ordering::Relaxed) / count,
             geoip_lookup_us: self.geoip_lookup_sum_us.load(Ordering::Relaxed) / count,
             whois_lookup_us: self.whois_lookup_sum_us.load(Ordering::Relaxed) / count,
-            security_analysis_us: self.security_analysis_sum_us.load(Ordering::Relaxed) / count,
             total_us: self.total_sum_us.load(Ordering::Relaxed) / count,
         }
     }
@@ -177,7 +170,6 @@ impl TimingStats {
             tech_detection_ms: Self::micros_to_ms(avg.tech_detection_us),
             geoip_lookup_ms: Self::micros_to_ms(avg.geoip_lookup_us),
             whois_lookup_ms: Self::micros_to_ms(avg.whois_lookup_us),
-            security_analysis_ms: Self::micros_to_ms(avg.security_analysis_us),
             total_ms: Self::micros_to_ms(avg.total_us),
         };
         let total_sum_ms = Self::micros_to_ms(total_sum_micros);
@@ -321,17 +313,6 @@ impl TimingStats {
             );
         }
 
-        // Security Analysis - always enabled, but very fast (just checking conditions)
-        let security_sum_micros = self.security_analysis_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                security_sum_micros,
-                avg_ms.security_analysis_ms,
-                "Security Analysis:",
-                percentage(avg_ms.security_analysis_ms, avg_ms.total_ms),
-            )
-        );
         let other_ms = avg_ms.total_ms.saturating_sub(
             avg_ms.http_request_ms
                 + avg_ms.dns_forward_ms
@@ -341,8 +322,7 @@ impl TimingStats {
                 + avg_ms.html_parsing_ms
                 + avg_ms.tech_detection_ms
                 + avg_ms.geoip_lookup_ms
-                + avg_ms.whois_lookup_ms
-                + avg_ms.security_analysis_ms,
+                + avg_ms.whois_lookup_ms,
         );
         log::info!(
             "  Other/Overhead:      {:>6} ms ({:.1}%)",
@@ -376,7 +356,6 @@ struct DisplayMs {
     tech_detection_ms: u64,
     geoip_lookup_ms: u64,
     whois_lookup_ms: u64,
-    security_analysis_ms: u64,
     total_ms: u64,
 }
 
@@ -608,7 +587,6 @@ mod tests {
             tech_detection_us: 50,
             geoip_lookup_us: 10,
             whois_lookup_us: 0,
-            security_analysis_us: 5,
             total_us: 3000, // Total includes overhead
         };
 
@@ -622,8 +600,7 @@ mod tests {
             + avg.html_parsing_us
             + avg.tech_detection_us
             + avg.geoip_lookup_us
-            + avg.whois_lookup_us
-            + avg.security_analysis_us;
+            + avg.whois_lookup_us;
 
         // Sum of components should be <= total (total includes overhead)
         assert!(sum_components <= avg.total_us);
@@ -682,7 +659,6 @@ mod tests {
             tech_detection_us: 50,
             geoip_lookup_us: 10,
             whois_lookup_us: 5,
-            security_analysis_us: 2,
             total_us: 3000, // Total includes overhead, so sum of components < total
         };
 
@@ -698,8 +674,7 @@ mod tests {
             + avg.html_parsing_us
             + avg.tech_detection_us
             + avg.geoip_lookup_us
-            + avg.whois_lookup_us
-            + avg.security_analysis_us;
+            + avg.whois_lookup_us;
 
         assert!(
             sum < avg.total_us,

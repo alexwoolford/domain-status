@@ -40,9 +40,7 @@ pub struct RecordPreparationParams<'a> {
 ///
 /// Orchestrates enrichment lookups and batch record building.
 /// Technology detection is now done in parallel with DNS/TLS fetching.
-/// Returns the batch record and timing metrics in microseconds: (`geoip_lookup_us`, `whois_lookup_us`, `security_analysis_us`).
-/// `security_analysis_us` is always `0` now that `analyze_security`/`url_security_warnings`
-/// have been removed; the timing bucket is retained for metrics/status-server compatibility.
+/// Returns the batch record and timing metrics in microseconds: (`geoip_lookup_us`, `whois_lookup_us`).
 ///
 /// This function takes **ownership** of the response, HTML, and TLS/DNS data
 /// to enable moving large collections (`HashMaps`, Vecs) into the final `BatchRecord`
@@ -54,7 +52,7 @@ pub struct RecordPreparationParams<'a> {
 #[allow(clippy::too_many_lines)] // Assembles BatchRecord from response data, DNS, TLS, fingerprints, and enrichment data
 pub async fn prepare_record_for_insertion(
     params: RecordPreparationParams<'_>,
-) -> (BatchRecord, (u64, u64, u64)) {
+) -> (BatchRecord, (u64, u64)) {
     use crate::utils::duration_to_us;
     use std::time::Instant;
 
@@ -149,9 +147,6 @@ pub async fn prepare_record_for_insertion(
 
     let (geoip_data, geoip_lookup_us) = geoip_data;
     let (whois_data, whois_lookup_us) = whois_data;
-    // `analyze_security`/`url_security_warnings` were removed; the timing bucket is
-    // retained for metrics/status-server compatibility but is always zero now.
-    let security_analysis_us = 0;
 
     // Build batch record - takes ownership and MOVES large collections instead of cloning
     // This eliminates ~5-10KB of heap allocations per URL (HashMaps, Vecs)
@@ -171,10 +166,7 @@ pub async fn prepare_record_for_insertion(
         additional_dns: params.additional_dns,
     });
 
-    (
-        batch_record,
-        (geoip_lookup_us, whois_lookup_us, security_analysis_us),
-    )
+    (batch_record, (geoip_lookup_us, whois_lookup_us))
 }
 
 #[cfg(test)]
@@ -265,9 +257,7 @@ mod tests {
     fn create_minimal_html_data() -> HtmlData {
         HtmlData {
             title: "Test".to_string(),
-            keywords_str: None,
             description: None,
-            is_mobile_friendly: false,
             structured_data: crate::parse::StructuredData::default(),
             social_media_links: Vec::new(),
             contact_links: Vec::new(),
@@ -330,7 +320,7 @@ mod tests {
         let tls_dns_data = create_minimal_tls_dns_data();
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (batch_record, (geoip_ms, whois_ms, security_ms)) =
+        let (batch_record, (geoip_ms, whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -358,14 +348,6 @@ mod tests {
             GEOIP_TEST_TIMEOUT_MS
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled in test context
-                                 // Security analysis should be fast (synchronous operation)
-                                 // Note: Using very lenient threshold for CI environments where system load can cause delays
-                                 // Increased to 20 seconds to account for CI variability while still catching regressions
-        assert!(
-            security_ms < 20000,
-            "Security analysis took {}ms, expected < 20000ms",
-            security_ms
-        );
     }
 
     #[tokio::test]
@@ -380,7 +362,7 @@ mod tests {
         tls_dns_data.ip_address = Some("invalid.ip.address".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (batch_record, (geoip_ms, _whois_ms, _security_ms)) =
+        let (batch_record, (geoip_ms, _whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -410,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_record_for_insertion_parallel_tasks_complete() {
-        // Test that parallel tasks (GeoIP, security, WHOIS) complete correctly
+        // Test that parallel tasks (GeoIP, WHOIS) complete correctly
         // This is critical - tokio::join! should handle all tasks even if some fail
         let ctx = create_test_context().await;
         let resp_data = create_minimal_resp_data();
@@ -419,7 +401,7 @@ mod tests {
         let additional_dns = create_minimal_additional_dns_data();
 
         let start = std::time::Instant::now();
-        let (batch_record, (geoip_ms, whois_ms, security_ms)) =
+        let (batch_record, (geoip_ms, whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -452,13 +434,6 @@ mod tests {
             GEOIP_TEST_TIMEOUT_MS
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
-                                 // Note: Using very lenient threshold for CI environments where system load can cause delays
-                                 // Increased to 20 seconds to account for CI variability while still catching regressions
-        assert!(
-            security_ms < 20000,
-            "Security analysis took {}ms, expected < 20000ms",
-            security_ms
-        );
     }
 
     #[tokio::test]
@@ -552,7 +527,7 @@ mod tests {
         let additional_dns = create_minimal_additional_dns_data();
 
         let start = std::time::Instant::now();
-        let (batch_record, (geoip_ms, _whois_ms, security_ms)) =
+        let (batch_record, (geoip_ms, _whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -584,49 +559,7 @@ mod tests {
             geoip_ms,
             GEOIP_TEST_TIMEOUT_MS
         );
-        // Note: Using very lenient threshold for CI environments where system load can cause delays
-        assert!(
-            security_ms < 10000,
-            "Security analysis took {}ms, expected < 10000ms",
-            security_ms
-        );
         // _whois_ms may be 0 if lookup fails immediately, but the code path was executed
-    }
-
-    #[tokio::test]
-    async fn test_prepare_record_for_insertion_security_analysis_edge_cases() {
-        // Test security analysis with various edge cases
-        // This is critical - security warnings must be correctly identified
-        let ctx = create_test_context().await;
-        let mut resp_data = create_minimal_resp_data();
-
-        // Test with HTTP URL (should trigger NoHttps warning)
-        resp_data.final_url = "http://example.com".to_string();
-        let html_data = create_minimal_html_data();
-        let mut tls_dns_data = create_minimal_tls_dns_data();
-        tls_dns_data.tls_version = None; // No TLS for HTTP
-        let additional_dns = create_minimal_additional_dns_data();
-
-        let (batch_record, _) = prepare_record_for_insertion(RecordPreparationParams {
-            resp_data,
-            html_data,
-            tls_dns_data,
-            additional_dns,
-            technologies_vec: Vec::new(),
-            partial_failures: Vec::new(),
-            redirect_chain: Vec::new(),
-            elapsed: 1.0,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            ctx: &ctx,
-            favicon: None,
-        })
-        .await;
-
-        // Security analysis should run and may produce warnings
-        // The key is that the function doesn't panic and security analysis completes
-        assert_eq!(batch_record.url_record.final_domain, "example.com");
-        // Security warnings may or may not be present depending on analysis
-        // The important thing is the analysis runs without panicking
     }
 
     #[tokio::test]
@@ -641,7 +574,7 @@ mod tests {
         tls_dns_data.ip_address = Some("999.999.999.999".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (batch_record, (geoip_ms, whois_ms, security_ms)) =
+        let (batch_record, (geoip_ms, whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -668,14 +601,7 @@ mod tests {
             GEOIP_TEST_TIMEOUT_MS
         );
         assert_eq!(whois_ms, 0); // WHOIS disabled
-                                 // Note: Using very lenient threshold for CI environments where system load can cause delays
-                                 // Increased to 20 seconds to account for CI variability while still catching regressions
-        assert!(
-            security_ms < 20000,
-            "Security analysis took {}ms, expected < 20000ms",
-            security_ms
-        );
-        // GeoIP data should be None (invalid IP)
+                                 // GeoIP data should be None (invalid IP)
         assert!(batch_record.geoip.is_none());
     }
 }

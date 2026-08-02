@@ -58,7 +58,6 @@ mod tests {
             final_url: Some("https://example.com".to_string()),
             redirect_chain: vec!["https://example.org".to_string()],
             response_headers: vec![("content-type".to_string(), "text/html".to_string())],
-            request_headers: vec![("user-agent".to_string(), "test".to_string())],
         };
         let error = anyhow::Error::from(FailureContextError {
             context: context.clone(),
@@ -68,7 +67,6 @@ mod tests {
         assert_eq!(extracted.final_url, context.final_url);
         assert_eq!(extracted.redirect_chain, context.redirect_chain);
         assert_eq!(extracted.response_headers, context.response_headers);
-        assert_eq!(extracted.request_headers, context.request_headers);
     }
 
     #[test]
@@ -84,7 +82,6 @@ mod tests {
         assert_eq!(extracted.final_url, None);
         assert_eq!(extracted.redirect_chain, Vec::<String>::new());
         assert_eq!(extracted.response_headers, Vec::<(String, String)>::new());
-        assert_eq!(extracted.request_headers, Vec::<(String, String)>::new());
     }
 
     #[test]

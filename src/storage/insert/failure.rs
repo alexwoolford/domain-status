@@ -140,9 +140,6 @@ async fn insert_failure_satellite_data(
     // Insert response headers
     insert_failure_response_headers(tx, failure_id, &failure.response_headers).await?;
 
-    // Request headers (echo of our outbound UA/headers) are no longer persisted;
-    // `url_failure_request_headers` was dropped (migration 0012).
-
     Ok(())
 }
 
@@ -315,7 +312,6 @@ mod tests {
             run_id: Some("test-run-123".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -368,7 +364,6 @@ mod tests {
                 "https://www.example.com".to_string(),
             ],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -425,10 +420,6 @@ mod tests {
                 ("Server".to_string(), "nginx/1.18.0".to_string()),
                 ("Content-Type".to_string(), "text/html".to_string()),
             ],
-            request_headers: vec![
-                ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
-                ("Accept".to_string(), "text/html".to_string()),
-            ],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -471,7 +462,6 @@ mod tests {
             run_id: None,
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -630,7 +620,6 @@ mod tests {
             run_id: Some("test-run-rollback".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         // This should succeed - we're testing that the rollback path exists in code
@@ -665,7 +654,6 @@ mod tests {
                 "https://www.example.com".to_string(),
             ],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -709,7 +697,6 @@ mod tests {
             run_id: None,
             redirect_chain: vec![], // Empty redirect chain
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -781,7 +768,6 @@ mod tests {
                 ("Server".to_string(), "nginx/1.18.0".to_string()),
                 ("Server".to_string(), "nginx/1.20.0".to_string()), // Duplicate name
             ],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
@@ -836,7 +822,6 @@ mod tests {
             run_id: Some("test-run-empty".to_string()),
             redirect_chain: vec![],
             response_headers: vec![],
-            request_headers: vec![],
         };
 
         let result = insert_url_failure(&pool, &failure).await;
