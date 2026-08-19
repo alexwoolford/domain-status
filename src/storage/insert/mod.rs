@@ -35,4 +35,4 @@ pub use run::{
 // `UrlRecordInsertParams` lives in `src/lib.rs` behind the `test-utils`
 // feature; that path goes directly to `storage::insert::url::*` so this
 // module doesn't need its own gated `pub use`.
-pub(crate) use url::insert_url_record;
+pub(crate) use url::{insert_url_record_with_outcome, UrlUpsertOutcome};

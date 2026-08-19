@@ -15,6 +15,14 @@ use super::super::models::UrlRecord;
 use super::retry::with_sqlite_retry;
 use super::utils::naive_datetime_to_millis;
 
+/// Result of upserting into `url_status` (unique on `(run_id, initial_domain)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UrlUpsertOutcome {
+    pub id: i64,
+    /// `true` when this call created a new row; `false` when an existing row was updated.
+    pub inserted: bool,
+}
+
 use satellite::{
     insert_caa_records, insert_certificate_sans, insert_cname_records, insert_http_headers,
     insert_ipv6_addresses, insert_mx_records, insert_nameservers, insert_oids,
@@ -437,15 +445,25 @@ impl<'a> UrlRecordInsertParams<'a> {
 ///
 /// # Errors
 /// Returns `Err` when the transaction or any insert fails.
-#[allow(clippy::too_many_lines)] // Thin wrapper; length comes from insert_url_record_impl
 pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
+    insert_url_record_with_outcome(params)
+        .await
+        .map(|outcome| outcome.id)
+}
+
+/// Like [`insert_url_record`] but reports whether the row was newly inserted or updated.
+pub async fn insert_url_record_with_outcome(
+    params: UrlRecordInsertParams<'_>,
+) -> Result<UrlUpsertOutcome, DatabaseError> {
     with_sqlite_retry(|| insert_url_record_impl(&params)).await
 }
 
 /// Internal implementation of `insert_url_record` (without retry logic).
 #[allow(clippy::too_many_lines)] // Main record + ~17 in-txn satellite inserts
 #[allow(clippy::cognitive_complexity)] // Each satellite table has distinct insert logic
-async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
+async fn insert_url_record_impl(
+    params: &UrlRecordInsertParams<'_>,
+) -> Result<UrlUpsertOutcome, DatabaseError> {
     let valid_from_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_from.as_ref());
     let valid_to_millis = naive_datetime_to_millis(params.record.ssl_cert_valid_to.as_ref());
 
@@ -456,6 +474,16 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
 
     // Start transaction for atomic dual-write
     let mut tx = params.pool.begin().await.map_err(DatabaseError::SqlError)?;
+
+    let inserted = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM url_status WHERE run_id = ? AND initial_domain = ?",
+    )
+    .bind(params.record.run_id.as_deref())
+    .bind(&params.record.initial_domain)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DatabaseError::SqlError)?
+    .is_none();
 
     // 1. Insert into main url_status table
     // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
@@ -557,7 +585,10 @@ async fn insert_url_record_impl(params: &UrlRecordInsertParams<'_>) -> Result<i6
         DatabaseError::SqlError(e)
     })?;
 
-    Ok(url_status_id)
+    Ok(UrlUpsertOutcome {
+        id: url_status_id,
+        inserted,
+    })
 }
 
 /// Inserts CSP domains into `url_csp_domains` table.
@@ -1155,7 +1186,7 @@ mod tests {
         let sans = Vec::new();
 
         // Insert first time
-        let id1 = insert_url_record(UrlRecordInsertParams {
+        let first = insert_url_record_with_outcome(UrlRecordInsertParams {
             pool: &pool,
             record: &record,
             security_headers: &security_headers,
@@ -1174,11 +1205,13 @@ mod tests {
         })
         .await
         .expect("Failed to insert record");
+        assert!(first.inserted);
+        let id1 = first.id;
 
         // Update record and insert again (same final_domain and timestamp)
         record.title = "Updated Title".to_string();
         record.status = 301;
-        let id2 = insert_url_record(UrlRecordInsertParams {
+        let second = insert_url_record_with_outcome(UrlRecordInsertParams {
             pool: &pool,
             record: &record,
             security_headers: &security_headers,
@@ -1197,6 +1230,8 @@ mod tests {
         })
         .await
         .expect("Failed to upsert record");
+        assert!(!second.inserted);
+        let id2 = second.id;
 
         // Should return same ID (UPSERT)
         assert_eq!(id1, id2);
