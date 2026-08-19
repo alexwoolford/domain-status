@@ -36,6 +36,30 @@ fn has_rule(body: &str, rule_id: &str) -> bool {
         .any(|s| s.secret_type == rule_id)
 }
 
+/// Asserts `rule_id` fires on `body`.
+fn assert_rule(body: &str, rule_id: &str) {
+    let secrets = detect_exposed_secrets(body);
+    assert!(
+        secrets.iter().any(|s| s.secret_type == rule_id),
+        "expected {rule_id}; body={body:?} got={secrets:?}"
+    );
+}
+
+/// Asserts `rule_id` does **not** fire. Other rules on the same body are allowed.
+fn assert_no_rule(body: &str, rule_id: &str) {
+    let secrets = detect_exposed_secrets(body);
+    assert!(
+        secrets.iter().all(|s| s.secret_type != rule_id),
+        "expected no {rule_id}; body={body:?} got={secrets:?}"
+    );
+}
+
+/// High-entropy GitHub-PAT-shaped password used in KEEP credential-URL fixtures.
+/// Assembled at runtime so pre-commit gitleaks does not flag this file.
+fn keep_credential_password() -> String {
+    format!("ghp_{}", "x7K9mQ2vL8nR3pW1234567890ab")
+}
+
 // ---------------------------------------------------------------------------
 // FN corpus: every fixture MUST produce the expected detection.
 // ---------------------------------------------------------------------------
@@ -315,4 +339,173 @@ fn tp_corpus_opaque_generic_api_key_still_detects() {
         has_rule(&body, "generic-api-key"),
         "plausible opaque generic-api-key must still detect; body={body}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Precision KEEP/DROP matrix (scan-2026-08-18 Type I patterns).
+// DROP asserts no `credential-bearing-url` / `database-connection-uri`.
+// KEEP asserts the dedicated rule still fires (severity must stay Critical).
+// ---------------------------------------------------------------------------
+
+fn credential_url_finding(secrets: &[crate::parse::ExposedSecret]) -> &crate::parse::ExposedSecret {
+    secrets
+        .iter()
+        .find(|s| s.secret_type == "credential-bearing-url")
+        .expect("expected credential-bearing-url")
+}
+
+#[test]
+fn fp_corpus_wordpress_explicit_port_path_not_credential_url() {
+    // `/` in the password class lets `:443/wp-content/…@…` parse as userinfo.
+    assert_no_rule(
+        r#"<img src="https://example.com:443/wp-content/uploads/x.jpg@2x">"#,
+        "credential-bearing-url",
+    );
+    assert_no_rule(
+        r#"<img src="https://mooremedical.com:443/wp-content/foo@cdn.example">"#,
+        "credential-bearing-url",
+    );
+    assert_no_rule(
+        r#"<!-- https://davis.local:8890/wp-content/theme@internal -->"#,
+        "credential-bearing-url",
+    );
+}
+
+#[test]
+fn tp_corpus_credential_url_userinfo_without_slash_still_detects() {
+    let password = keep_credential_password();
+    let body = format!(r#"fetch("https://deploy:{password}@api.internal.com/v1/data")"#);
+    let secrets = detect_exposed_secrets(&body);
+    let found = credential_url_finding(&secrets);
+    assert_eq!(found.matched_value, password);
+    assert_eq!(found.severity.as_str(), "critical");
+}
+
+#[test]
+fn tp_corpus_credential_url_mixed_password_and_pct_encoded_at() {
+    let password = keep_credential_password();
+    assert_rule(
+        &format!(r#"fetch("https://user:{password}@db.internal.example/v1")"#),
+        "credential-bearing-url",
+    );
+    // Password starts with a port-like prefix but is not `port/path`.
+    assert_rule(
+        &format!(r#"fetch("https://user:443{password}@host.example/api")"#),
+        "credential-bearing-url",
+    );
+    // RFC 3986: `@` in userinfo must be percent-encoded.
+    assert_rule(
+        &format!(r#"fetch("https://user:p%40{password}@host.example/api")"#),
+        "credential-bearing-url",
+    );
+}
+
+#[test]
+fn fp_corpus_placeholder_passwords_in_credential_url() {
+    for password in [
+        "mypassword",
+        "secretpassword",
+        "dummy",
+        "warehouse",
+        "gooduser",
+        "YOURAPIKEY",
+        "changeme",
+    ] {
+        let body = format!(r#"fetch("https://docs:{password}@api.example.com/v1")"#);
+        assert_no_rule(&body, "credential-bearing-url");
+    }
+}
+
+#[test]
+fn fp_corpus_placeholder_passwords_in_database_uri() {
+    assert_no_rule(
+        r#"mongodb://root:mypassword@zadig-mongodb:27017/app"#,
+        "database-connection-uri",
+    );
+    assert_no_rule(
+        r#"postgres://app:dummy@localhost:5432/app"#,
+        "database-connection-uri",
+    );
+    assert_no_rule(
+        r#"postgresql://warehouse:warehouse@localhost:5432/warehouse"#,
+        "database-connection-uri",
+    );
+    assert_no_rule(
+        r#"postgres://appuser:secretpassword@db.example.com:5432/app"#,
+        "database-connection-uri",
+    );
+    assert_no_rule(
+        r#"postgresql://$DB_USERNAME:$DB_PASSWORD@db.example/app"#,
+        "database-connection-uri",
+    );
+}
+
+#[test]
+fn tp_corpus_placeholder_as_substring_still_detects() {
+    assert_rule(
+        r#"mongodb://admin:warehouse123@cluster.example.net/db"#,
+        "database-connection-uri",
+    );
+    // High-entropy password that merely contains a placeholder token.
+    assert_rule(
+        r#"fetch("https://deploy:a9F3dummyK2mP@api.example.com/v1")"#,
+        "credential-bearing-url",
+    );
+}
+
+#[test]
+fn fp_corpus_template_variable_password_in_credential_url() {
+    assert_no_rule(
+        r#"fetch("https://user:$DB_PASSWORD@api.example.com/v1")"#,
+        "credential-bearing-url",
+    );
+    assert_no_rule(
+        r#"fetch("https://user:${API_TOKEN}@api.example.com/v1")"#,
+        "credential-bearing-url",
+    );
+    assert_no_rule(
+        r#"fetch("https://user:%API_TOKEN%@api.example.com/v1")"#,
+        "credential-bearing-url",
+    );
+}
+
+#[test]
+fn tp_corpus_nearby_template_token_does_not_suppress_real_credential_url() {
+    let password = keep_credential_password();
+    let body = format!(
+        r#"const unused = "$DB_PASSWORD"; fetch("https://deploy:{password}@api.internal.com/v1/data");"#
+    );
+    assert_rule(&body, "credential-bearing-url");
+}
+
+#[test]
+fn fp_corpus_known_safe_cdn_hosts_not_credential_url() {
+    let password = keep_credential_password();
+    for host in [
+        "maps.googleapis.com",
+        "cdn.jsdelivr.net",
+        "cdn.onetrust.com",
+        "cdn.cookielaw.org",
+        "www.gstatic.com",
+        "www.youtube.com",
+    ] {
+        let body = format!(r#"<script src="https://embed:{password}@{host}/pkg.js"></script>"#);
+        assert_no_rule(&body, "credential-bearing-url");
+    }
+}
+
+#[test]
+fn tp_corpus_jsdelivr_nearby_does_not_suppress_real_credential_url() {
+    // Match-target (host of the finding) must not behave like line-target.
+    // A real credential URL within 512 bytes of a jsDelivr script tag must
+    // still be reported.
+    let password = keep_credential_password();
+    let body = format!(
+        r#"<script src="https://cdn.jsdelivr.net/npm/foo"></script>fetch("https://deploy:{password}@api.internal.com/v1/data")"#
+    );
+    assert!(
+        !body.contains('\n'),
+        "fixture must be one line so a line-target allowlist would incorrectly skip"
+    );
+    assert_rule(&body, "credential-bearing-url");
 }

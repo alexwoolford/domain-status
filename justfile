@@ -55,7 +55,7 @@ audit:
 
 # Run cargo-deny policy checks
 deny:
-    cargo deny check advisories bans sources
+    cargo deny check
 
 # Run secret scanner
 secrets:

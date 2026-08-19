@@ -48,6 +48,7 @@ Trade-offs:
 - upstream changes can alter detection behavior without local code changes
 - partial-source success improves resilience but can reduce consistency if one source is temporarily unavailable
 - the vendored fallback is intentionally small (common techs only), not Wappalyzer-complete
+- default upstream sources (`enthec/webappanalyzer`, `HTTPArchive/wappalyzer`) are GPL-3.0; see [docs/LICENSES.md](../LICENSES.md)
 
 ## Operational Notes
 

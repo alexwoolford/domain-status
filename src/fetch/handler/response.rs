@@ -268,7 +268,7 @@ async fn persist(
     elapsed: f64,
     timestamp: i64,
     ctx: &ProcessingContext,
-) -> Result<(u64, u64), Error> {
+) -> Result<(u64, u64, bool), Error> {
     debug!(
         "Preparing to insert record for URL: {}",
         resp_data.final_url
@@ -304,14 +304,14 @@ async fn persist(
         })
         .await;
 
-    insert_persisted_url_record(&ctx.pool, persisted_record)
+    let upsert = insert_persisted_url_record(&ctx.pool, persisted_record)
         .await
         .map_err(|e| {
             log::error!("Failed to insert record for URL {final_url_for_logging}: {e}");
             anyhow::anyhow!("Database write failed: {e}")
         })?;
 
-    Ok((geoip_lookup_us, whois_lookup_us))
+    Ok((geoip_lookup_us, whois_lookup_us, upsert.inserted))
 }
 
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
@@ -368,7 +368,7 @@ pub async fn handle_response(
     let external_script_scan = std::mem::take(&mut enrichment.external_script_scan);
     merge_secrets(&mut html_data, &resp_data, external_script_scan).await;
 
-    let (geoip_lookup_us, whois_lookup_us) = persist(
+    let (geoip_lookup_us, whois_lookup_us, inserted) = persist(
         resp_data,
         html_data,
         enrichment,
@@ -384,7 +384,11 @@ pub async fn handle_response(
     metrics.total_us = duration_to_us(start_time.elapsed());
     ctx.runtime.timing_stats.record(&metrics);
 
-    Ok(UrlProcessOutcome::Inserted)
+    Ok(if inserted {
+        UrlProcessOutcome::Inserted
+    } else {
+        UrlProcessOutcome::Updated
+    })
 }
 
 #[cfg(test)]

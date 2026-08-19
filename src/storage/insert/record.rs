@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use crate::error_handling::DatabaseError;
 use crate::storage::PersistedUrlRecord;
 
-use crate::storage::insert;
+use crate::storage::insert::{self, UrlUpsertOutcome};
 
 /// Summary of enrichment data insertion results.
 ///
@@ -85,7 +85,7 @@ impl EnrichmentInsertSummary {
 pub async fn insert_persisted_url_record(
     pool: &SqlitePool,
     record: PersistedUrlRecord,
-) -> Result<(), DatabaseError> {
+) -> Result<UrlUpsertOutcome, DatabaseError> {
     // Clone domain for error message (record will be moved to insert_enrichment_data)
     let domain = record.url_record.initial_domain.clone();
 
@@ -93,7 +93,7 @@ pub async fn insert_persisted_url_record(
     // params lives in `UrlRecordInsertParams::from_persisted_record` so adding a new
     // satellite/field doesn't require a parallel edit at every production
     // call site.
-    let url_status_id = insert::insert_url_record(
+    let upsert = insert::insert_url_record_with_outcome(
         insert::url::UrlRecordInsertParams::from_persisted_record(pool, &record),
     )
     .await
@@ -103,6 +103,7 @@ pub async fn insert_persisted_url_record(
         );
         e
     })?;
+    let url_status_id = upsert.id;
 
     // Insert enrichment data
     // Note: Enrichment data is inserted AFTER the main transaction commits.
@@ -136,10 +137,8 @@ pub async fn insert_persisted_url_record(
         );
     }
 
-    Ok(())
+    Ok(upsert)
 }
-
-/// Inserts partial failures for a record.
 ///
 /// # Arguments
 ///

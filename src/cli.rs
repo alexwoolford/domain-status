@@ -211,13 +211,58 @@ fn init_scan_logging(
     Ok(())
 }
 
+const PROGRESS_BAR_TEMPLATE: &str =
+    "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos}/{len} ({percent}%) {msg}";
+
+fn progress_status_message(completed: usize, failed: usize, skipped: usize) -> String {
+    format!("✓{completed} ✗{failed} ⊘{skipped}")
+}
+
+/// Columns used by everything except `{wide_bar}` (ANSI ignored; spinner = 1 cell).
+#[cfg(test)]
+fn estimate_progress_fixed_cols(elapsed_precise: &str, pos: u64, len: u64, msg: &str) -> usize {
+    let percent = if len == 0 {
+        0
+    } else {
+        pos.saturating_mul(100) / len
+    };
+    let percent_s = format!("({percent}%)");
+    1 + 1
+        + 1
+        + elapsed_precise.len()
+        + 1
+        + 1
+        + 1
+        + pos.to_string().len()
+        + 1
+        + len.to_string().len()
+        + 1
+        + percent_s.len()
+        + 1
+        + msg.chars().count()
+}
+
+/// Visible columns after `{wide_bar}` fills leftover terminal width (or 0 if chrome is wider).
+#[cfg(test)]
+fn estimate_progress_line_cols(
+    elapsed_precise: &str,
+    pos: u64,
+    len: u64,
+    msg: &str,
+    term_cols: Option<usize>,
+) -> usize {
+    let fixed = estimate_progress_fixed_cols(elapsed_precise, pos, len, msg);
+    match term_cols {
+        Some(width) if width > fixed => width,
+        _ => fixed,
+    }
+}
+
 fn create_progress_bar() -> Result<Arc<ProgressBar>> {
     let pb = Arc::new(ProgressBar::new(0));
     pb.set_style(
         ProgressStyle::default_bar()
-            .template(
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}",
-            )
+            .template(PROGRESS_BAR_TEMPLATE)
             .context("Failed to create progress bar template")?
             .progress_chars("█▓░"),
     );
@@ -232,7 +277,7 @@ fn create_progress_callback(
         // completed == successful persisted inserts; skips are counted only in skipped.
         pb.set_length(total as u64);
         pb.set_position((completed + failed + skipped) as u64);
-        pb.set_message(format!("✓{completed} ✗{failed} ⊘{skipped}"));
+        pb.set_message(progress_status_message(completed, failed, skipped));
     })
 }
 
@@ -524,6 +569,28 @@ mod tests {
             db_path: PathBuf::from("test.db"),
             run_id: "test-run-1".to_string(),
         }
+    }
+
+    #[test]
+    fn progress_line_fits_80_cols_after_multi_day_scan() {
+        let early_elapsed = "00:00:01";
+        let late_elapsed = "7d 21:27:56";
+        let early_msg = progress_status_message(0, 0, 0);
+        let late_msg = progress_status_message(263_688, 139_233, 49);
+        let early = estimate_progress_line_cols(early_elapsed, 1, 752_906, &early_msg, Some(80));
+        let late_80 =
+            estimate_progress_line_cols(late_elapsed, 402_970, 752_906, &late_msg, Some(80));
+        let late_40 =
+            estimate_progress_line_cols(late_elapsed, 402_970, 752_906, &late_msg, Some(40));
+        assert!(
+            late_80 <= 80,
+            "wide_bar should keep the 7-day line within 80 cols (got {late_80})"
+        );
+        assert_eq!(early, 80, "wide_bar should fill leftover columns");
+        assert!(
+            late_40 > 40,
+            "chrome alone can still exceed a 40-col window (got {late_40})"
+        );
     }
 
     #[test]

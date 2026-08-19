@@ -94,6 +94,9 @@ Tips:
 - first run may hit GitHub-hosted content
 - `GITHUB_TOKEN` is optional but helps avoid GitHub API rate limits for metadata lookups
 
+**Licensing:** upstream fingerprint JSON is GPL-3.0; the bundled minimal fallback
+in `assets/fingerprints/` is project-maintained. See [LICENSES.md](LICENSES.md).
+
 ### User-Agent refresh
 
 If you keep the built-in default User-Agent, the scanner may fetch the latest Chrome version and cache it under:
