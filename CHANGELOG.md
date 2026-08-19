@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- [`docs/LICENSES.md`](docs/LICENSES.md) and cross-links (project MIT vs dependency policy vs GPL fingerprint data).
+
+### Fixed
+- `successful_urls` no longer exceeds `url_status` row count when duplicate input lines share the same registrable domain (UPSERT `Updated` → `skipped_urls` accounting).
+- Secret-detection false positives: credential-bearing URL password charset, CDN host allowlist, and placeholder/template passwords; corpus regression tests added.
+
 ### Removed
 - Duplicate `completed_urls` progress/status counter and Prometheus gauge; `successful_urls` is now the sole persisted-success counter.
 - Always-zero `security_analysis_us` / `security_analysis_ms` timing channel (status JSON + Prometheus).
@@ -36,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Route scan completion banners to stderr (same as export banners).
 - UPSERT `url_status` on `(run_id, initial_domain)` instead of `(run_id, final_domain)` so distinct inputs that share a parked/final host are not collapsed (migration `0013_url_status_unique_initial_domain.sql`).
 - Clarify README Quick Start: SQLite stays primary; `summary` / JSONL / Parquet called out as complementary paths (including DuckDB-friendly Parquet export).
+- Progress bar status line shows skipped count (`✓N ✗N ⊘N`).
 
 ### Deferred (separate PRs)
 - Simplify config merge (single env authority; fail-fast TOML).
