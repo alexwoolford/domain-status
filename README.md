@@ -106,4 +106,6 @@ Example TOML: [`config_examples/domain_status.example.toml`](config_examples/dom
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT for this codebase — see [LICENSE](LICENSE). For Rust dependencies and
+optional runtime data (fingerprints, gitleaks rules, MaxMind), see
+[docs/LICENSES.md](docs/LICENSES.md).

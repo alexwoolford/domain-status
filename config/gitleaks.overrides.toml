@@ -178,8 +178,8 @@ regexes = [
     '''://[^:@/]+:%[A-Za-z_][A-Za-z0-9_]*%@''',
     # Template-token wraps: <password>, {password}, [REDACTED]
     '''://[^:@/]+:[<\[\{][^>\]\}@]+[>\]\}]@''',
-    # Literal common placeholder names
-    '''(?i)://[^:@/]+:(?:password|passwd|pass|secret|placeholder|redacted|your[_-]?password|todo|changeme)@''',
+    # Literal common placeholder names (exact password segment, not substring)
+    '''(?i)://[^:@/]+:(?:password|passwd|pass|secret|placeholder|redacted|your[_-]?password|todo|changeme|dummy|warehouse|gooduser|mypassword|secretpassword|yourapikey|yourkey)@''',
 ]
 
 # Same placeholder filtering for JDBC connection strings.
@@ -240,10 +240,14 @@ keywords = ["basic"]
 # ── Credential-bearing URLs (from Titus kingfisher.uri.1) ──
 # Detects https:// or http:// URLs with embedded user:password before @.
 # Broader than the database-connection-uri rule (catches any protocol).
+#
+# Password class omits `/` (RFC 3986 userinfo cannot contain it). Including
+# `/` made `https://host:443/path@later` parse as user=`host`,
+# password=`443/path`, host=`later` (WordPress explicit-port media URLs).
 [[rules]]
 id = "credential-bearing-url"
 description = "URL with embedded credentials (user:password@host)"
-regex = '''https?://[A-Za-z0-9._~%!$&'()*+,;=-]+:([A-Za-z0-9._~%!$&'()*+,;=/-]{3,})@(?:[A-Za-z0-9._-]+|\[[A-Fa-f0-9:.]+\])'''
+regex = '''https?://[A-Za-z0-9._~%!$&'()*+,;=-]+:([A-Za-z0-9._~%!$&'()*+,;=-]{3,})@(?:[A-Za-z0-9._-]+|\[[A-Fa-f0-9:.]+\])'''
 secretGroup = 1
 entropy = 3.0
 keywords = ["http://", "https://"]
@@ -465,6 +469,27 @@ regexes = [
     '''sentry\.io/''',
     '''sentryDsn''',
     '''youtube\.com/''',
+]
+
+# Exact placeholder / template passwords. `regexTarget` defaults to the
+# captured secret (the password). Do not use stopwords: those are substring
+# `contains` checks and would skip `a9F3dummyK2mP`.
+[[append]]
+rule_id = "credential-bearing-url"
+regexes = [
+    '''(?i)^(password|passwd|pass|secret|placeholder|redacted|changeme|todo|dummy|warehouse|gooduser|mypassword|secretpassword|yourpassword|yourapikey|yourkey)$''',
+    '''^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$''',
+    '''^%[A-Za-z_][A-Za-z0-9_]*%$''',
+]
+
+# Known-safe hosts that do not accept userinfo authentication. Match-target
+# (full regex match = `https://user:pass@host`) so a nearby CDN URL cannot
+# suppress a real credential URL on the same minified line.
+[[append]]
+rule_id = "credential-bearing-url"
+regexTarget = "match"
+regexes = [
+    '''(?i)https?://[^@\s]+@([^/]*\.)?(googleapis\.com|gstatic\.com|jsdelivr\.net|onetrust\.com|cookielaw\.org|youtube\.com)(?:[/:]|$)''',
 ]
 
 # Legacy vault `s.` tokens that are camelCase CSS/design-token identifiers.

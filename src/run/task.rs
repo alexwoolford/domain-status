@@ -123,6 +123,10 @@ fn handle_success(_url: &Arc<str>, outcome: UrlProcessOutcome, progress: &TaskPr
         UrlProcessOutcome::Inserted => {
             progress.successful_urls.fetch_add(1, Ordering::Relaxed);
         }
+        UrlProcessOutcome::Updated => {
+            // Same `(run_id, initial_domain)` as an earlier line: row refreshed, not a new success.
+            progress.skipped_urls.fetch_add(1, Ordering::Relaxed);
+        }
         UrlProcessOutcome::Skipped => {
             // Skips are finished work but not successes; counting them only in skipped_urls
             // keeps successful + failed + skipped ≈ attempted and avoids progress double-count.
@@ -322,6 +326,26 @@ mod tests {
         };
 
         handle_success(&url, UrlProcessOutcome::Skipped, &progress);
+
+        assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
+        assert_eq!(skipped_urls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_success_counts_updated_as_skipped_for_accounting() {
+        let url: Arc<str> = Arc::from("https://example.com");
+        let successful_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+        let progress = TaskProgress {
+            successful_urls: &successful_urls,
+            skipped_urls: &skipped_urls,
+            failed_urls: &failed_urls,
+            total_urls_for_callback: 2,
+            progress_callback: &None,
+        };
+
+        handle_success(&url, UrlProcessOutcome::Updated, &progress);
 
         assert_eq!(successful_urls.load(Ordering::SeqCst), 0);
         assert_eq!(skipped_urls.load(Ordering::SeqCst), 1);

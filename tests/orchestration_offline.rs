@@ -347,7 +347,28 @@ async fn test_fast_concurrency_smoke_max_inflight() {
 
     let report = run_scan(config).await.expect("concurrency smoke scan");
     assert_eq!(report.total_urls, total_urls);
-    assert_eq!(report.successful, total_urls);
+    assert_eq!(
+        report.successful, 1,
+        "same IP literal shares one url_status row per run"
+    );
+    assert_eq!(report.skipped, total_urls - 1);
+    assert_eq!(
+        report.successful + report.failed + report.skipped,
+        report.total_urls
+    );
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+    let status_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status WHERE run_id = ?")
+        .bind(&report.run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("status count");
+    assert_eq!(
+        usize::try_from(status_count).expect("non-neg"),
+        report.successful
+    );
 
     let observed = max_observed.load(Ordering::SeqCst);
     assert!(
@@ -512,5 +533,57 @@ async fn test_bogus_geoip_path_soft_fails_scan_still_succeeds() {
     assert_eq!(
         geoip_count, 0,
         "GeoIP init failure must disable lookups, not error out or fabricate data"
+    );
+}
+
+/// Duplicate `(run_id, initial_domain)` within one run must not inflate `successful_urls`
+/// above `url_status` row count — accounting follows the UPSERT, not dispatch heuristics.
+#[tokio::test]
+async fn test_duplicate_registrable_domain_accounting() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Server", "nginx/1.24.0")
+                .set_body_string("<html><title>Dup</title></html>"),
+        )
+        .mount(&mock)
+        .await;
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let url = format!("{}/", mock.uri());
+    let urls = write_urls(&[&url, &url]);
+    let db = NamedTempFile::new().expect("db");
+
+    let report = run_scan(base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    ))
+    .await
+    .expect("scan should complete");
+
+    assert_eq!(report.total_urls, 2);
+    assert_eq!(report.successful, 1);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.failed, 0);
+    assert_eq!(
+        report.successful + report.failed + report.skipped,
+        report.total_urls
+    );
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect");
+    let status_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status WHERE run_id = ?")
+        .bind(&report.run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("status count");
+    assert_eq!(
+        usize::try_from(status_count).expect("non-neg"),
+        report.successful,
+        "url_status rows must match successful counter"
     );
 }
