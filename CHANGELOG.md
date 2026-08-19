@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-08-19
+
 ### Added
 - [`docs/LICENSES.md`](docs/LICENSES.md) and cross-links (project MIT vs dependency policy vs GPL fingerprint data).
 
@@ -25,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused dev-dependencies `assert_fs` and `insta` `yaml` feature.
 
 ### Changed
+- Upgrade `h2` to 0.4.17 (GHSA-q83h-524g-xf6h).
 - Rename the immediate-persistence `BatchRecord` API to `PersistedUrlRecord` (including its builder and parameter type).
 - Narrow `.gitignore` `test_*` patterns to root scratch only (`/test_*`) so new files under `tests/` are not silently ignored.
 - Unify testing docs into [`docs/TESTING.md`](docs/TESTING.md); root `TESTING.md` is a stub.
