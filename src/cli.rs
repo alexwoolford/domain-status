@@ -221,11 +221,7 @@ fn progress_status_message(completed: usize, failed: usize, skipped: usize) -> S
 /// Columns used by everything except `{wide_bar}` (ANSI ignored; spinner = 1 cell).
 #[cfg(test)]
 fn estimate_progress_fixed_cols(elapsed_precise: &str, pos: u64, len: u64, msg: &str) -> usize {
-    let percent = if len == 0 {
-        0
-    } else {
-        pos.saturating_mul(100) / len
-    };
+    let percent = pos.saturating_mul(100).checked_div(len).unwrap_or(0);
     let percent_s = format!("({percent}%)");
     1 + 1
         + 1
