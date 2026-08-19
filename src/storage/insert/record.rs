@@ -852,7 +852,7 @@ mod tests {
 
         // Create a URL status record first
         let url_record = create_test_url_record();
-        let _url_status_id = insert::insert_url_record(insert::url::UrlRecordInsertParams {
+        let _url_status_id = insert::url::insert_url_record(insert::url::UrlRecordInsertParams {
             pool: &pool,
             record: &url_record,
             security_headers: &HashMap::new(),
