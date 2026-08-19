@@ -3,7 +3,7 @@ members = ["cli"]
 
 [package]
 name = "domain_status"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Alex Woolford <alex@woolford.io>"]
@@ -123,7 +123,7 @@ url = "^2.5"
 serde_json = "^1.0"
 
 # CLI and error handling (CLI definition lives in domain_status_cli for single source of truth)
-domain_status_cli = { path = "cli", version = "0.1.27" }
+domain_status_cli = { path = "cli", version = "0.1.28" }
 clap = { version = "^4.6", features = ["derive", "env"] }
 clap_complete = "^4.6"
 clap_mangen = "^0.2"
@@ -183,7 +183,7 @@ dirs = "^6"
 
 [build-dependencies]
 clap = { version = "^4.6", features = ["derive"] }
-domain_status_cli = { path = "cli", version = "0.1.27" }
+domain_status_cli = { path = "cli", version = "0.1.28" }
 clap_complete = "^4.6"
 clap_mangen = "^0.2"
 
