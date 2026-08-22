@@ -17,7 +17,6 @@
 #[cfg(test)]
 mod tests {
     use httptest::{matchers::*, responders::*, Expectation, Server};
-    use tempfile::TempDir;
 
     /// Basic test to verify httptest setup works
     #[tokio::test]
@@ -91,28 +90,11 @@ mod tests {
         assert_eq!(response.status(), 404);
     }
 
-    /// Test that tempfile works for test database setup
-    #[test]
-    fn test_tempfile_setup() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let db_path = temp_dir.path().join("test.db");
-        assert!(!db_path.exists());
-        // File would be created when database is initialized
-        // This test just verifies tempfile works
-    }
-
-    /// Test full pipeline using library API with mock server
+    /// Full pipeline via library API with mock HTTP + offline fingerprint fixture.
     ///
-    /// This test verifies that the library API works end-to-end by:
-    /// 1. Creating a mock HTTP server
-    /// 2. Running a scan via the library API
-    /// 3. Verifying the results are saved to the database
-    ///
-    /// Note: This test may make DNS lookups and fetch fingerprint rulesets,
-    /// so it's more of an integration test than a unit test.
+    /// Must not soft-skip on ruleset fetch: fingerprints are loaded from a local JSON file
+    /// (same contract style as `tests/orchestration_offline.rs`).
     #[tokio::test]
-    #[ignore] // Ignore by default - requires network access for DNS/fingerprints
-              // Run with `cargo test -- --ignored` or in CI e2e job
     async fn test_full_scan_with_mock_server() {
         use domain_status::{run_scan, Config};
         use tempfile::TempDir;
@@ -120,10 +102,9 @@ mod tests {
         let server = Server::run();
         let server_url = format!("http://{}/", server.addr());
 
-        // Set up mock responses (allow multiple requests for DNS, fingerprints, etc.)
         server.expect(
             Expectation::matching(request::method_path("GET", "/"))
-                .times(..) // Allow multiple requests
+                .times(..)
                 .respond_with(
                     status_code(200)
                         .body(
@@ -132,74 +113,67 @@ mod tests {
                         .append_header("Server", "nginx/1.18.0"),
                 ),
         );
-        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
         server.expect(
             Expectation::matching(request::method_path("GET", "/favicon.ico"))
                 .times(0..)
                 .respond_with(status_code(404)),
         );
 
-        // Create temporary input file
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let input_file = temp_dir.path().join("urls.txt");
         std::fs::write(&input_file, format!("{}\n", server_url))
             .expect("Failed to write test file");
 
-        // Create config for library usage
-        // Note: Uses default fingerprint fetching from GitHub (GITHUB_TOKEN env var increases rate limit)
+        let fingerprints = temp_dir.path().join("technologies.json");
+        std::fs::write(
+            &fingerprints,
+            r#"{
+  "Nginx": {
+    "cats": [6],
+    "website": "https://nginx.org",
+    "headers": { "Server": "nginx(?:/([\\d.]+))?\\;version:\\1" }
+  }
+}"#,
+        )
+        .expect("write offline fingerprints");
+
         let config = Config {
             file: input_file,
             db_path: temp_dir.path().join("test.db"),
             max_concurrency: 1,
-            rate_limit_rps: 0, // Disable rate limiting for test
+            rate_limit_rps: 0,
             enable_whois: false,
             cache_dir: None,
-            scan_external_scripts: false, // Disable WHOIS for faster tests
-            log_level: domain_status::LogLevel::Error, // Reduce log noise in tests
+            scan_external_scripts: false,
+            log_level: domain_status::LogLevel::Error,
             log_level_filter_override: None,
             log_format: domain_status::LogFormat::Plain,
             timeout_seconds: 5,
             user_agent: "domain_status-test/1.0".to_string(),
-            fingerprints: None, // Use default (fetches from GitHub - GITHUB_TOKEN increases rate limit)
-            geoip: None,        // Disable GeoIP for test
+            fingerprints: Some(fingerprints.to_string_lossy().into_owned()),
+            geoip: None,
             status_port: None,
             fail_on: domain_status::FailOn::Never,
             fail_on_pct_threshold: 10,
             log_file: None,
             progress_callback: None,
             dependency_overrides: None,
-            allow_localhost_for_tests: true, // Mock server is bound to 127.0.0.1/::1
+            allow_localhost_for_tests: true,
             drain_timeout_secs: 10,
         };
 
-        // Run the scan using the library
-        // Skip test if ruleset initialization fails (e.g., network issues, rate limits)
-        let report = match run_scan(config).await {
-            Ok(report) => report,
-            Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("Failed to initialize fingerprint ruleset")
-                    || error_msg.contains("Failed to fetch ruleset")
-                {
-                    eprintln!(
-                        "Skipping test: ruleset initialization failed (likely network issues or rate limits): {}",
-                        error_msg
-                    );
-                    return;
-                }
-                // Re-raise other errors
-                panic!("Scan should complete: {}", e);
-            }
-        };
+        let report = run_scan(config)
+            .await
+            .expect("offline fingerprints + mock HTTP must succeed without soft-skip");
 
-        // Verify results
         assert_eq!(report.total_urls, 1);
-        // Note: URL might fail due to DNS resolution issues with mock server
-        // So we just verify the scan completed and database exists
         assert!(report.db_path.exists());
-        assert!(report.successful + report.failed == 1);
+        assert_eq!(
+            report.successful + report.failed + report.skipped,
+            report.total_urls
+        );
+        assert_eq!(report.successful, 1, "mock URL should be counted successful");
 
-        // Verify database was created and has the runs table
         let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
             .await
             .expect("Failed to connect to test database");

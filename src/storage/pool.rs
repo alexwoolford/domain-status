@@ -174,19 +174,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_db_pool_with_path_invalid_path() {
-        // Test error handling with invalid path (directory instead of file)
-        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-        let invalid_path = temp_dir.path(); // This is a directory, not a file
-
-        // This should fail when trying to connect (SQLite expects a file path)
-        let result = init_db_pool_with_path(invalid_path, 5).await;
-        // May succeed (SQLite creates a file in the directory) or fail depending on path format
-        // The key is that it doesn't panic
-        let _ = result;
-    }
-
-    #[tokio::test]
     async fn test_init_db_pool_with_path_wal_mode_enabled() {
         // Test that WAL mode is actually enabled
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");

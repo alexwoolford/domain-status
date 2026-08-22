@@ -120,9 +120,10 @@ mod tests {
             .expect("Failed to write invalid JSON");
 
         let result = load_metadata(&metadata_file).await;
-        // serde_json might parse this differently, so we just verify it fails or succeeds
-        // The important thing is it doesn't panic
-        let _ = result;
+        assert!(
+            result.is_err(),
+            "invalid JSON must fail to deserialize, got: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -376,19 +377,6 @@ mod tests {
         let result = load_metadata(&metadata_file).await;
         // Should fail gracefully (file not found in this case)
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_extract_metadata_very_long_source_path() {
-        // Test that very long source paths don't cause issues
-        // This is critical - very long paths could cause memory issues or truncation
-        // The code at line 22 stores source as String, which should handle any length
-        // But we verify it doesn't panic or cause issues
-        let long_source = "https://example.com/".to_string() + &"a".repeat(10000) + "/db.mmdb";
-        // The format! macro should handle long strings
-        let _ = format!("build_{}", 12345u64);
-        // If this compiles and runs, long source paths are handled
-        assert!(long_source.len() > 1000);
     }
 
     #[tokio::test]

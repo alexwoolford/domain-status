@@ -219,10 +219,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_default_wrapper_delegates_without_panicking() {
-        let _ = lookup_ip("8.8.8.8");
-        let _ = is_enabled();
-        let _ = GeoIpService::default().get_metadata();
-    }
 }
