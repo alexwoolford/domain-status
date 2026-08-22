@@ -88,9 +88,11 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::response::{HtmlData, ResponseData};
-    use reqwest::header::HeaderMap;
+    use crate::fingerprint::{FingerprintMetadata, FingerprintRuleset, Technology};
+    use reqwest::header::{HeaderMap, HeaderValue};
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
+    use std::time::SystemTime;
 
     fn create_test_response_data() -> ResponseData {
         ResponseData {
@@ -137,7 +139,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detect_technologies_safely_success() {
+    async fn test_detect_technologies_safely_empty_ruleset() {
         let html_data = create_test_html_data();
         let resp_data = create_test_response_data();
         let error_stats = Arc::new(ProcessingStats::new());
@@ -147,59 +149,47 @@ mod tests {
             detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
                 .await;
         assert!(result.is_empty());
+        assert_eq!(
+            error_stats.get_error_count(crate::error_handling::ErrorType::TechnologyDetectionError),
+            0,
+            "empty ruleset is success with no detections, not an error"
+        );
     }
 
     #[tokio::test]
-    async fn test_detect_technologies_safely_error_handling() {
+    async fn test_detect_technologies_safely_fixture_ruleset_detects_header() {
         let html_data = create_test_html_data();
-        let resp_data = create_test_response_data();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
+        let mut resp_data = create_test_response_data();
+        resp_data
+            .headers
+            .insert("Server", HeaderValue::from_static("nginx/1.24.0"));
 
+        let mut tech = Technology::default();
+        // Ruleset header keys are lowercase (normalized on load).
+        tech.headers.insert(
+            "server".to_string(),
+            "nginx(?:/([\\d.]+))?\\;version:\\1".to_string(),
+        );
+        let mut technologies = HashMap::new();
+        technologies.insert("Nginx".to_string(), tech);
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: SystemTime::now(),
+            },
+        });
+
+        let error_stats = Arc::new(ProcessingStats::new());
         let result =
             detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
                 .await;
-        let _ = result;
-    }
 
-    #[tokio::test]
-    async fn test_detect_technologies_safely_empty_result() {
-        let html_data = create_test_html_data();
-        let resp_data = create_test_response_data();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
-
-        let result =
-            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
-                .await;
-        assert!(result.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_detect_technologies_safely_error_stats_incremented() {
-        let html_data = create_test_html_data();
-        let resp_data = create_test_response_data();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
-
-        let result =
-            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
-                .await;
-        let _ = result;
-    }
-
-    #[tokio::test]
-    async fn test_detect_technologies_safely_result_sorted() {
-        let html_data = create_test_html_data();
-        let resp_data = create_test_response_data();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let ruleset = Arc::new(FingerprintRuleset::empty_for_tests());
-
-        let result =
-            detect_technologies_safely(&html_data, &resp_data, error_stats.as_ref(), &ruleset)
-                .await;
-        let mut sorted = result.clone();
-        sorted.sort();
-        assert_eq!(result, sorted);
+        assert_eq!(result.len(), 1, "expected Nginx, got {result:?}");
+        assert_eq!(result[0].name, "Nginx");
+        assert_eq!(result[0].version.as_deref(), Some("1.24.0"));
+        assert!(!result[0].is_implied);
     }
 }

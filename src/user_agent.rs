@@ -658,35 +658,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_fetch_chrome_version_empty_response() {
-        // Test that empty response is handled correctly
+        // Empty LATEST_RELEASE body yields major "" -> ".0.0.0"
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
+        let url_path = "/LATEST_RELEASE/empty";
         server.expect(
-            Expectation::matching(request::method_path("GET", "/empty"))
+            Expectation::matching(request::method_path("GET", url_path))
                 .respond_with(status_code(200).body("")),
         );
 
-        let url = server.url("/empty").to_string();
+        let url = server.url(url_path).to_string();
         let result = try_fetch_chrome_version(&url).await;
-
-        // Empty response for LATEST_RELEASE format should result in ".0.0.0"
-        // Empty response for chrome-for-testing should error
-        // Either is acceptable - the function should handle gracefully
-        let _ = result;
-    }
-
-    #[test]
-    fn test_try_fetch_chrome_version_version_parsing_edge_cases() {
-        // Test edge cases in version parsing
-        // Many dots
-        let many = "131.0.6778.85.123.456";
-        let major = many.split('.').next().unwrap_or(many);
-        assert_eq!(format!("{}.0.0.0", major), "131.0.0.0");
-
-        // Non-numeric
-        let non_numeric = "abc.def.ghi";
-        let major = non_numeric.split('.').next().unwrap_or(non_numeric);
-        assert_eq!(format!("{}.0.0.0", major), "abc.0.0.0");
+        assert_eq!(
+            result.expect("empty LATEST_RELEASE body should parse"),
+            ".0.0.0"
+        );
     }
 }

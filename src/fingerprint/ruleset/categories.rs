@@ -392,14 +392,4 @@ mod tests {
         assert_eq!(categories.get(&1), Some(&"CMS".to_string()));
     }
 
-    #[tokio::test]
-    async fn test_load_categories_from_path_no_parent() {
-        // Test with root path (no parent)
-        let root_path = std::path::Path::new("/");
-        let result = load_categories_from_path(root_path).await;
-        // Should either find categories.json or fail gracefully
-        // The exact behavior depends on whether /categories.json exists
-        // We just verify it doesn't panic
-        let _ = result;
-    }
 }

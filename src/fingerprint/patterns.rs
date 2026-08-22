@@ -975,21 +975,6 @@ mod tests {
     }
 
     #[test]
-    fn test_check_meta_patterns_empty_key() {
-        // Test with empty key (edge case)
-        // Empty key will try to match "name:", "property:", "http-equiv:" prefixes
-        let mut meta_tags = HashMap::new();
-        meta_tags.insert("name:".to_string(), vec!["value".to_string()]);
-
-        // Empty key will try "name:" which exists, so it will check patterns
-        // This is actually valid behavior - empty key matches "name:" meta tag
-        let result = check_meta_patterns("", &["value".to_string()], &meta_tags);
-        // Result depends on whether "name:" exists and matches pattern
-        // The key behavior is that it doesn't panic
-        let _ = result;
-    }
-
-    #[test]
     fn test_matches_pattern_very_long_string() {
         // Test pattern matching with very long strings (performance/overflow edge case)
         let very_long_text = "A".repeat(1_000_000);

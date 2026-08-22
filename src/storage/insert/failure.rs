@@ -717,34 +717,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_url_failure_exponential_backoff_calculation() {
-        // Test that exponential backoff delay is calculated correctly
-        // This is critical - incorrect backoff could cause excessive retries or delays
-        // Formula: INITIAL_DELAY_MS * (1 << attempt)
-        // attempt 0: 50ms (INITIAL_DELAY_MS)
-        // attempt 1: 50 * 2 = 100ms
-        // attempt 2: 50 * 4 = 200ms
-        const INITIAL_DELAY_MS: u64 = 50;
-        assert_eq!(INITIAL_DELAY_MS, 50);
-        assert_eq!(INITIAL_DELAY_MS * (1 << 1), 100);
-        assert_eq!(INITIAL_DELAY_MS * (1 << 2), 200);
-    }
-
-    #[tokio::test]
-    async fn test_insert_url_failure_max_retries() {
-        // Test that MAX_RETRIES is 3 (0, 1, 2, 3 = 4 attempts total)
-        // This is critical - ensures retry logic has correct bounds
-        const MAX_RETRIES: usize = 3;
-        // Loop runs from 0 to MAX_RETRIES (inclusive), so 4 attempts total
-        let mut attempt_count = 0;
-        for attempt in 0..=MAX_RETRIES {
-            attempt_count += 1;
-            let _ = attempt; // Suppress unused warning
-        }
-        assert_eq!(attempt_count, 4, "Should have 4 attempts (0, 1, 2, 3)");
-    }
-
-    #[tokio::test]
     async fn test_insert_url_failure_response_headers_conflict_handling() {
         // Test that response headers with duplicate names are handled correctly
         // This is critical - ON CONFLICT DO UPDATE ensures latest value is used

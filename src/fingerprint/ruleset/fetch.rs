@@ -210,17 +210,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_single_file_with_size_limit_allows_valid_size() {
-        // Note: This test would require a real public URL since httptest uses localhost
-        // which is blocked by SSRF protection. The size limit logic is tested above,
-        // and the full flow is tested via integration tests with real URLs.
-        // This test verifies the size limit constant is reasonable.
-        // Using const assertions would be optimized away, so we just document the limits:
-        // MAX_RULESET_DOWNLOAD_SIZE should be > 1KB and < 100MB (currently 10MB)
-        let _ = MAX_RULESET_DOWNLOAD_SIZE; // Ensure constant is accessible
-    }
-
-    #[tokio::test]
     async fn test_fetch_single_file_content_length_mismatch() {
         // Test that actual body size is checked even if content-length header is valid
         // This is critical - servers might send incorrect content-length headers

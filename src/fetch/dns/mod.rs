@@ -108,29 +108,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_all_dns_data_success() {
-        // Test that fetch_all_dns_data successfully combines TLS/DNS and additional DNS data
-        crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let resp_data = create_test_response_data();
-
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref()).await;
-
-        // Should succeed (may have partial failures, but should return Ok)
-        assert!(result.is_ok());
-        let (tls_dns_data, additional_dns, partial_failures, timings) = result.unwrap();
-
-        // Verify structure is correct
-        let _ = tls_dns_data.ip_address; // Should be Some when DNS resolution succeeds
-        let _ = additional_dns.nameservers; // May be None or Some
-        let _ = partial_failures; // Partial failures may be empty or contain errors
-
-        // Verify timing metrics are returned (u64 values are always >= 0)
-        let (_dns_forward_ms, _dns_reverse_ms, _dns_additional_ms, _tls_handshake_ms) = timings;
-    }
-
-    #[tokio::test]
     async fn test_fetch_all_dns_data_partial_failures_merged() {
         // Test that partial failures from both TLS/DNS and additional DNS are merged correctly
         crate::initialization::init_crypto_provider();
@@ -156,24 +133,6 @@ mod tests {
                 "Error message should be sanitized/truncated"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn test_fetch_all_dns_data_timing_metrics_calculated() {
-        // Test that timing metrics are correctly calculated for all operations
-        crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
-        let error_stats = Arc::new(ProcessingStats::new());
-        let resp_data = create_test_response_data();
-
-        let result = fetch_all_dns_data(&resp_data, &resolver, error_stats.as_ref()).await;
-
-        assert!(result.is_ok());
-        let (_tls_dns_data, _additional_dns, _partial_failures, timings) = result.unwrap();
-
-        // Verify timing metrics are returned (u64 values are always >= 0)
-        // All timings should be calculated - they may be 0 if operations are very fast
-        let (_dns_forward_ms, _dns_reverse_ms, _dns_additional_ms, _tls_handshake_ms) = timings;
     }
 
     #[tokio::test]
