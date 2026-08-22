@@ -18,17 +18,30 @@ fn dns_error_type_from_message(msg: &str) -> ErrorType {
         ErrorType::DnsTxtLookupError
     } else if msg.contains("mx") || msg.contains("mail") {
         ErrorType::DnsMxLookupError
+    } else if mentions_nameserver_record(msg) {
+        ErrorType::DnsNsLookupError
     } else {
+        // Record-type unknown: NS is the historical default for enrichment NetErrors.
         ErrorType::DnsNsLookupError
     }
+}
+
+/// True when `msg` refers to NS / nameserver records — not the substring `ns` inside `dns`.
+fn mentions_nameserver_record(msg: &str) -> bool {
+    msg.contains("nameserver")
+        || msg.contains(" ns ")
+        || msg.contains(" ns:")
+        || msg.contains(":ns ")
+        || msg.starts_with("ns ")
+        || msg.ends_with(" ns")
 }
 
 /// Extracts error type from an error chain.
 ///
 /// Uses the shared `categorize_reqwest_error` function for consistency,
-/// but also enhances categorization by checking error messages for DNS/TLS patterns.
-/// When a `NetError` is found in the chain, uses predicate-based categorization
-/// instead of string matching.
+/// with light message enhancements for TLS and timeouts. DNS record-type labels
+/// (NS/TXT/MX) come from the `NetError` enrichment path — not from reclassifying
+/// HTTP connect failures whose chain happens to mention `dns error`.
 pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
     // Check error chain for DNS resolver errors (predicate-based, no string matching)
     for cause in error.chain() {
@@ -48,26 +61,11 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
     // Check error chain for reqwest errors
     for cause in error.chain() {
         if let Some(reqwest_err) = cause.downcast_ref::<ReqwestError>() {
-            // Use shared categorization function for consistency
+            // Trust reqwest's Connect/Timeout/Request classification. A connect
+            // failure often embeds "dns error" in the chain; that is still a
+            // connect failure, not an NS/TXT/MX enrichment lookup.
             let base_type = categorize_reqwest_error(reqwest_err);
-
-            // Enhance categorization by checking error messages for DNS/TLS patterns
-            // This provides more specific error types when the underlying cause is DNS/TLS
             let error_msg = reqwest_err.to_string().to_lowercase();
-
-            // Check for DNS errors in message (more specific than generic connect/request errors)
-            if error_msg.contains("dns")
-                || error_msg.contains("name resolution")
-                || error_msg.contains("failed to resolve")
-            {
-                // Try to determine which DNS lookup failed
-                if error_msg.contains("txt") {
-                    return ErrorType::DnsTxtLookupError;
-                } else if error_msg.contains("mx") || error_msg.contains("mail") {
-                    return ErrorType::DnsMxLookupError;
-                }
-                return ErrorType::DnsNsLookupError;
-            }
 
             // Check for TLS errors in message
             if error_msg.contains("tls")
@@ -100,6 +98,16 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
         return ErrorType::ProcessUrlTimeout;
     }
 
+    // HTTP client connect failures that mention "dns error" in the chain are still
+    // connect errors (A/AAAA during dial), not NS-record enrichment failures.
+    if msg.contains("connect")
+        && (msg.contains("dns")
+            || msg.contains("name resolution")
+            || msg.contains("failed to resolve"))
+    {
+        return ErrorType::HttpRequestConnectError;
+    }
+
     // Check for DNS errors in error message
     if msg.contains("dns") || msg.contains("resolve") || msg.contains("lookup failed") {
         // Try to determine which DNS lookup failed
@@ -108,7 +116,7 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
             return ErrorType::DnsTxtLookupError;
         } else if msg.contains("mx") || msg.contains("mail") {
             return ErrorType::DnsMxLookupError;
-        } else if msg.contains("ns") || msg.contains("nameserver") {
+        } else if mentions_nameserver_record(&msg) {
             return ErrorType::DnsNsLookupError;
         }
         // Generic DNS error - default to NS lookup error
@@ -186,23 +194,43 @@ mod tests {
         let error = anyhow::Error::from(reqwest_err);
 
         let error_type = extract_error_type(&error);
-        // Should detect DNS error from message (or timeout/connect error)
-        // Accept multiple error types as DNS resolution can fail in different ways
-        // Also accept HttpRequestRequestError as it can occur for various network issues
+        // NXDOMAIN / resolve failure during dial is a connect/request/timeout — not
+        // an NS enrichment lookup. Accept network classes only.
         assert!(
             matches!(
                 error_type,
-                ErrorType::DnsNsLookupError
-                    | ErrorType::DnsTxtLookupError
-                    | ErrorType::DnsMxLookupError
-                    | ErrorType::HttpRequestConnectError
+                ErrorType::HttpRequestConnectError
                     | ErrorType::HttpRequestTimeoutError
                     | ErrorType::HttpRequestRequestError
                     | ErrorType::HttpRequestOtherError
             ),
-            "Expected DNS-related or network error type, got: {:?}",
+            "Expected connect/request/timeout for dial-time DNS failure, got: {:?}",
             error_type
         );
+    }
+
+    #[test]
+    fn test_connect_with_dns_error_in_chain_is_connect_not_ns() {
+        // Live scan shape: reqwest Connect failures embed "dns error" in the chain.
+        // That must not become DnsNsLookupError (`contains("ns")` matching inside "dns").
+        let error = anyhow::anyhow!(
+            "error sending request for url (https://0-in.com/): client error (Connect) \
+             (error chain: error sending request for url (https://0-in.com/) \
+             -> client error (Connect) -> dns error -> ...)"
+        );
+        assert_eq!(
+            extract_error_type(&error),
+            ErrorType::HttpRequestConnectError,
+            "Connect+dns-error chain must stay a connect failure"
+        );
+    }
+
+    #[test]
+    fn test_mentions_nameserver_record_does_not_match_inside_dns() {
+        assert!(!mentions_nameserver_record("dns error"));
+        assert!(!mentions_nameserver_record("failed dns lookup"));
+        assert!(mentions_nameserver_record("nameserver lookup failed"));
+        assert!(mentions_nameserver_record("ns lookup failed"));
     }
 
     #[test]

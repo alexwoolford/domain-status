@@ -8,7 +8,7 @@ Prefer maintainable fixes over growing per-site exception lists:
 
 1. **Upstream distinctive shapes** — keep well-scoped Gitleaks rules (e.g. Dropbox `sl.…` / long-lived); disable catch-alls that only match “provider name + short alnum”.
 2. **Same-id rule replace** in `config/gitleaks.overrides.toml` when the upstream regex is the bug (see `sourcegraph-access-token`, `square-access-token`, `datadog-access-token`).
-3. **Structural plausibility** in `web_rule_match_is_plausible` (entropy/length for `generic-api-key`, camelCase reject for LinkedIn ids, etc.), or `web_rule_match_is_plausible_in_context` when the disambiguating signal (e.g. a provider name like "algolia") sits outside the capture group and needs the surrounding text window.
+3. **Structural plausibility** in `web_rule_match_is_plausible` (entropy/length for `generic-api-key`, camelCase reject for LinkedIn ids, etc.), or `web_rule_match_is_plausible_in_context` when the disambiguating signal sits outside the capture group (e.g. Datadog identity markers required near bare `apiKey` hex).
 4. **Severity demotion** when the match is real but public/temporary (e.g. `X-Amz-Credential=` → Low), still stored for inventory.
 5. **Allowlists** only for product-format public-by-design IDs (Weglot `wg_…`, App Insights `instrumentationKey`, HubSpot form UUIDs) — not site names or one-off URL trivia.
 
@@ -25,16 +25,19 @@ Prefer maintainable fixes over growing per-site exception lists:
 |--------|---------|---------------------------|------------|
 | `data-hubspot-form="uuid"` | hubspot-api-key | Form/embed ID, not API key | Allowlisted (`data-hubspot-form=`, `data-hubspot-form-id=`) |
 | `x-hubspot-correlation-id: uuid` | hubspot-api-key | Request correlation header, not API key | Allowlisted (`x-hubspot-correlation-id`) |
-| `hubspotFormId*` / `*_HUBSPOT_*FORM_ID*` | hubspot-api-key | Public form/widget UUID | Allowlisted (`hubspotFormId`, `HUBSPOT_*FORM_ID`) |
+| `hubspotFormId*` / `hubspot_button_id` / `hubspotSignupguid` / `hubspotID` | hubspot-api-key | Public form/widget UUID | Allowlisted (form/button/guid/signup name shapes) |
 | `app.powerbi.com/view?r=eyJrIjoi…` | grafana-api-key | Power BI embed token shares Grafana's `eyJrIjoi` prefix | Allowlisted (`powerbi.com`) |
 | `wg_<32 hex>` | generic-api-key | Weglot public widget key | Allowlisted (`^wg_[0-9a-f]{32}$`) |
 | `instrumentationKey:` / `InstrumentationKey=` | generic-api-key | Azure App Insights browser SDK public key | Allowlisted |
-| `"link_type":"…"` + `"key":"<uuid>"` | generic-api-key | Prismic/CMS document UUID | Allowlisted (`"link_type"`) |
+| `link_type` / `linkType` + `"key":"<hex\|uuid>"` | generic-api-key | Prismic/CMS document UUID | Allowlisted (`link[_]?type\s*:`) |
+| React/SVG `key:"<32–40 hex>"` | generic-api-key | Framework reconciliation / CMS bare `key` | Allowlisted (bare `key` property only; not `apiKey`) |
+| `botSignalToken:` | generic-api-key | Public anti-bot challenge token | Allowlisted |
 | `X-Amz-Credential=AKIA\|ASIA…` | aws-access-token | Pre-signed URL temporary credential ID | Severity demoted to **Low** (still stored) |
 | `"datadogVersion":"<40 hex>"` | datadog-access-token | Build hash, not API key | Rule replaced: credential assignment only |
-| `algoliaApiKey:`/`al_apiKey:` assignment of a 32-40 char hex value | datadog-access-token | Algolia search credential — regex only requires `apiKey`/`appKey`, which is a substring of `algoliaApiKey` | Allowlisted (same-line `algolia`/`al_apiKey` in overrides) **and** context-aware reject in `web_rule_match_is_plausible_in_context` (catches assignments split across lines) |
+| Bare `apiKey:"<hex>"` (Bugsnag, Amplitude, Algolia, …) | datadog-access-token | Regex still matches generic `apiKey`/`appKey`; many SDKs use that shape | Keep only when nearby text identifies Datadog (`datadog`, `dd_api`, `dd_rum`, …) |
 | `EAAA…` in binary | square-access-token | WebP/binary collision | Rule replaced: `sq0atp-` only |
 | Bare `EAA[MC]…` in binary | facebook-page-access-token | Binary collision | Rule replaced: `access_token=` context |
+| `…discord…` near 32-char CSS/URL token | discord-client-secret | Upstream allows `,` as operator | Rule replaced: `discord*client*secret=` assignment only |
 | 15-char near “dropbox” | dropbox-api-token | JS identifier (e.g. `theChampSiteUrl`) | Rule disabled; use long/short-lived Dropbox rules |
 | camelCase near “linkedin” (e.g. `thumbnailWidth`) | linkedin-client-id/secret | JS property name | Plausibility: reject lowercase-starting camelCase |
 | Cloudflare email obfuscation (40-char hex) | sourcegraph-access-token | `email-protection#`, `data-cfemail=`, `__cf_email__` | Allowlisted in overrides |
@@ -83,3 +86,7 @@ LIMIT 50;
 ## Overrides
 
 Web-specific rule replaces and allowlists live in `config/gitleaks.overrides.toml` and are merged at load time so they are not overwritten when refreshing upstream `config/gitleaks.toml`. Prefer same-id `[[rules]]` replaces and structural filters for broad FPs; add `[[append]]` allowlists only for clear product-format public IDs. Add unit tests in `src/parse/secrets.rs` for each new mitigation.
+
+## Related: HTTP failure labeling
+
+Reqwest **Connect** failures often embed `dns error` in the error chain (A/AAAA during dial). Those are labeled `HTTP request connect error`, not `DNS NS lookup error`. NS/TXT/MX labels are reserved for enrichment DNS lookups (`NetError`), not for reclassifying HTTP connect failures whose message happens to contain the substring `dns`.
