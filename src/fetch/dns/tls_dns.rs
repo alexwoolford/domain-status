@@ -233,5 +233,4 @@ mod tests {
         // TLS should be None for HTTP
         assert!(tls_dns_result.data.tls_version.is_none());
     }
-
 }

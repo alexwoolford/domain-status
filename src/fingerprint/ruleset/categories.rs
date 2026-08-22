@@ -391,5 +391,4 @@ mod tests {
         let categories = result.unwrap();
         assert_eq!(categories.get(&1), Some(&"CMS".to_string()));
     }
-
 }

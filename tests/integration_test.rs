@@ -172,7 +172,10 @@ mod tests {
             report.successful + report.failed + report.skipped,
             report.total_urls
         );
-        assert_eq!(report.successful, 1, "mock URL should be counted successful");
+        assert_eq!(
+            report.successful, 1,
+            "mock URL should be counted successful"
+        );
 
         let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
             .await
