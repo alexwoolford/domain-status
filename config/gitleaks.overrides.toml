@@ -36,6 +36,8 @@ keywords = ["sq0atp-"]
 
 # Upstream datadog-access-token matches any 40-hex after "datadog", so
 # "datadogVersion":"<build hash>" fires. Require credential-shaped assignment.
+# Bare apiKey/appKey still match many SaaS SDKs; Rust context filter keeps only
+# findings whose nearby text identifies Datadog (see web_rule_match_is_plausible_in_context).
 [[rules]]
 id = "datadog-access-token"
 description = "Datadog API/app key in credential assignment (not datadogVersion hashes)"
@@ -51,16 +53,20 @@ keywords = [
     "ddapikey",
     "ddappkey",
 ]
-# Algolia search credentials are also 32-char hex-ish values assigned to an
-# `apiKey`/`algoliaApiKey`/`al_apiKey`-style property, colliding with this
-# rule's shape. Same-line "algolia"/"al_apiKey" context means it's Algolia,
-# not Datadog. (A wider, cross-line context check also runs in Rust for
-# assignments split across lines; see web_rule_match_is_plausible_in_context.)
-[[rules.allowlists]]
-regexTarget = "line"
-regexes = [
-    '''(?i)algolia''',
-    '''(?i)al_apikey''',
+
+# Upstream discord-client-secret matches any 32-char [a-z0-9=_-] near "discord",
+# including CSS/URL path noise when "," is treated as an assignment operator.
+# Require a discord*client*secret LHS (same approach as facebook-page-access-token).
+[[rules]]
+id = "discord-client-secret"
+description = "Discord client secret in discord client_secret assignment context"
+regex = '''(?i)(?:discord[_-]?client[_-]?secret|discordClientSecret)\s*[=:]\s*[\x60'"\s]{0,5}([a-z0-9=_-]{32})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 2
+keywords = [
+    "discord",
+    "client_secret",
+    "clientsecret",
 ]
 
 # Upstream facebook-page-access-token matches bare EAA[MC]… anywhere, including
@@ -109,6 +115,9 @@ regexes = [
     '''(?i)x-hubspot-correlation-id''',
     '''(?i)hubspotFormId''',
     '''(?i)HUBSPOT_[A-Z0-9_]*FORM_ID''',
+    # Public form/button/signup GUIDs (hubspot_button_id, hubspotSignupguid, hubspotID, …)
+    '''(?i)hubspot[_-]?[a-z0-9_]*(?:form|button|guid|signup)[a-z0-9_]*''',
+    '''(?i)\bhubspotId["']?\s*[:=]''',
 ]
 
 # Grafana API keys are base64 of {"k":…} and start with eyJrIjoi. Power BI
@@ -351,8 +360,13 @@ regexes = [
     '''(?i)algoliaApiKey.*algoliaAppId|algoliaAppId.*algoliaApiKey''',
     # Azure App Insights browser SDK — instrumentationKey is public-by-design
     '''(?i)instrumentationKey\s*[:=]''',
-    # Prismic / CMS link objects — document UUID next to link_type, not a secret
-    '''"link_type"\s*:\s*"''',
+    # Prismic / CMS link objects — document UUID next to link_type / linkType
+    '''(?i)link[_]?type\s*:''',
+    # React/Preact/Stencil reconciliation keys and bare JSON `"key":"<hex>"` CMS ids
+    # (does not match apiKey / api_key / clientKey)
+    '''(?i)(?:\bkey|"key")\s*:\s*['"`][0-9a-f]{32,40}''',
+    # Anti-bot public challenge tokens (JSON often has "botSignalToken":"…")
+    '''(?i)["']?botSignalToken["']?\s*[:=]''',
 ]
 
 # Product-format public client IDs that correctly match generic-api-key but are

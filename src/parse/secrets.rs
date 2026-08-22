@@ -211,19 +211,32 @@ fn web_rule_match_is_plausible(rule_id: &str, matched_value: &str) -> bool {
 ///
 /// Some rules can't be disambiguated from `matched_value` alone because the tell is
 /// in a variable/property name that sits *before* the captured value, outside the
-/// rule's capture group. `datadog-access-token`'s regex matches any
-/// `apiKey`/`appKey`-style assignment of a 32-40 char hex value, but Algolia search
-/// credentials are also typically assigned to `apiKey`/`algoliaApiKey`/`al_apiKey`
-/// and are also 32-char hex strings — so a plain "APIKEY: <hex>" match can't tell
-/// Datadog and Algolia apart, but the nearby "algolia" text can.
+/// rule's capture group. `datadog-access-token`'s regex still matches bare
+/// `apiKey`/`appKey` assignments of 32-40 hex (many third-party SDKs use that shape). Keep
+/// the finding only when nearby text identifies Datadog — not by denylisting every
+/// other product (Bugsnag, Amplitude, Cookie Control, Algolia, …).
 fn web_rule_match_is_plausible_in_context(rule_id: &str, nearby_text: &str) -> bool {
     match rule_id {
-        "datadog-access-token" => {
-            let lower = nearby_text.to_ascii_lowercase();
-            !(lower.contains("algolia") || lower.contains("al_apikey"))
-        }
+        "datadog-access-token" => nearby_text_looks_like_datadog(nearby_text),
         _ => true,
     }
+}
+
+/// Datadog identity markers that must appear near a candidate `apiKey`/`appKey` hex.
+fn nearby_text_looks_like_datadog(nearby_text: &str) -> bool {
+    let lower = nearby_text.to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "datadog",
+        "dd_api",
+        "dd_app",
+        "ddapikey",
+        "ddappkey",
+        "dd_rum",
+        "dd_logs",
+        "dd_client",
+        "dd_site",
+    ];
+    MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// Severity for a gitleaks rule id.
@@ -1574,6 +1587,9 @@ mod tests {
             format!(r#"PUBLIC_HUBSPOT_CONTACT_FORM_ID:"{form_id}""#),
             format!(r#""hubspotFormIdProd":"{form_id}""#),
             format!(r#"REACT_APP_HUBSPOT_FORM_ID_EN:"{form_id}""#),
+            format!(r#""hubspot_button_id":"{form_id}""#),
+            format!(r#"hubspotSignupguid:"{form_id}""#),
+            format!(r#"hubspotID:"{form_id}""#),
         ];
         for body in cases {
             let secrets = detect_exposed_secrets(&body);
@@ -1717,13 +1733,11 @@ mod tests {
         assert_eq!(dd.unwrap().matched_value, hash);
     }
 
-    /// Algolia search credentials assigned to an `apiKey`-style property collide with
-    /// the `datadog-access-token` regex shape (both are 32-40 char hex-ish values
-    /// assigned to a key/name containing "apiKey"). Nearby "algolia" context must
-    /// suppress the datadog false positive; a real `DD_API_KEY` assignment (no
-    /// Algolia context nearby) must still match.
+    /// Bare `apiKey`/`appKey` hex assignments collide with many third-party SDKs. Keep
+    /// `datadog-access-token` only when nearby text identifies Datadog; Algolia /
+    /// Bugsnag / etc. must not match. `DD_API_KEY` (contains `dd_api`) still matches.
     #[test]
-    fn test_datadog_algolia_false_positive_suppressed() {
+    fn test_datadog_requires_datadog_context() {
         let hash = "e561f43f1a2b3c4d5e6f708192a3b4c5d6e7f809";
 
         let body_algolia_camel = format!(r#"var algoliaApiKey = "{hash}";"#);
@@ -1756,7 +1770,27 @@ mod tests {
             secrets_nearby
         );
 
-        // Real Datadog assignment (no Algolia context nearby) must still match.
+        let body_bugsnag = format!(r#"Bugsnag.start({{ apiKey: "{hash}" }});"#);
+        let secrets_bugsnag = detect_exposed_secrets(&body_bugsnag);
+        assert!(
+            secrets_bugsnag
+                .iter()
+                .all(|s| s.secret_type != "datadog-access-token"),
+            "Bugsnag apiKey must not match datadog-access-token; got {:?}",
+            secrets_bugsnag
+        );
+
+        let body_bare = format!(r#"const apiKey = "{hash}";"#);
+        let secrets_bare = detect_exposed_secrets(&body_bare);
+        assert!(
+            secrets_bare
+                .iter()
+                .all(|s| s.secret_type != "datadog-access-token"),
+            "bare apiKey without Datadog context must not match; got {:?}",
+            secrets_bare
+        );
+
+        // Real Datadog assignment (DD_API_KEY embeds dd_api identity).
         let body_key = format!(r#"DD_API_KEY={hash}"#);
         let secrets_key = detect_exposed_secrets(&body_key);
         let dd = secrets_key
@@ -1764,10 +1798,22 @@ mod tests {
             .find(|s| s.secret_type == "datadog-access-token");
         assert!(
             dd.is_some(),
-            "DD_API_KEY assignment with no Algolia context should still be reported; got {:?}",
+            "DD_API_KEY assignment should still be reported; got {:?}",
             secrets_key
         );
         assert_eq!(dd.unwrap().matched_value, hash);
+
+        let body_rum = format!(
+            r#"window.DD_RUM.init({{ clientToken: "pubxxx", site: "datadoghq.com", apiKey: "{hash}" }});"#
+        );
+        let secrets_rum = detect_exposed_secrets(&body_rum);
+        assert!(
+            secrets_rum
+                .iter()
+                .any(|s| s.secret_type == "datadog-access-token" && s.matched_value == hash),
+            "apiKey near datadog RUM context should be reported; got {:?}",
+            secrets_rum
+        );
     }
 
     /// Bare EAAC… without `access_token` assignment must not match; assignment must.
@@ -1944,6 +1990,77 @@ mod tests {
             "Prismic link_type+key should be allowlisted; got {:?}",
             secrets_prismic
         );
+
+        let hex40 = "000f0192a841c56389c0ea2bff307ee1f771334f";
+        let body_minified_prismic =
+            format!(r#"last_publication_date:"2026-07-10",uid:aM,link_type:c,key:"{hex40}""#);
+        let secrets_minified = detect_exposed_secrets(&body_minified_prismic);
+        assert!(
+            secrets_minified
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == hex40)),
+            "minified link_type:c,key should be allowlisted; got {:?}",
+            secrets_minified
+        );
+
+        let body_react_key = format!(r#"return eb(ev,{{key:"{hex40}",role:this.getRole()}})"#);
+        let secrets_react = detect_exposed_secrets(&body_react_key);
+        assert!(
+            secrets_react
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == hex40)),
+            "React key:\"<40hex>\" should be allowlisted; got {:?}",
+            secrets_react
+        );
+
+        let body_bot = format!(r#""botSignalToken":"{hex40}","botSignalTimestamp":"6a89f8b7""#);
+        let secrets_bot = detect_exposed_secrets(&body_bot);
+        assert!(
+            secrets_bot
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == hex40)),
+            "botSignalToken should be allowlisted; got {:?}",
+            secrets_bot
+        );
+
+        // Bare apiKey assignment of hex must still be eligible for generic-api-key
+        // (not caught by the key: allowlist).
+        let body_api = format!(r#"const apiKey = "{hex40}";"#);
+        let secrets_api = detect_exposed_secrets(&body_api);
+        assert!(
+            secrets_api
+                .iter()
+                .any(|s| s.secret_type == "generic-api-key" && s.matched_value == hex40),
+            "apiKey assignment should still match generic-api-key; got {:?}",
+            secrets_api
+        );
+    }
+
+    /// Discord client secret requires discord*client*secret assignment, not URL/CSS noise.
+    #[test]
+    fn test_discord_client_secret_requires_assignment() {
+        let body_fp = r#"{"platforms-subtitle1-image2":"https://assets.example.com/ai-live-captions-google-meet-discord-voov.webp","platforms-subtitle1-image2-title":"Online meeting"}"#;
+        let secrets_fp = detect_exposed_secrets(body_fp);
+        assert!(
+            secrets_fp
+                .iter()
+                .all(|s| s.secret_type != "discord-client-secret"),
+            "discord in URL/CSS must not fire discord-client-secret; got {:?}",
+            secrets_fp
+        );
+
+        let secret = "a1b2c3d4e5f6789012345678abcdef01";
+        let body_ok = format!(r#"discord_client_secret = "{secret}""#);
+        let secrets_ok = detect_exposed_secrets(&body_ok);
+        let hit = secrets_ok
+            .iter()
+            .find(|s| s.secret_type == "discord-client-secret");
+        assert!(
+            hit.is_some(),
+            "discord_client_secret assignment should be reported; got {:?}",
+            secrets_ok
+        );
+        assert_eq!(hit.unwrap().matched_value, secret);
     }
 
     /// JWT rule severity is explicitly Low (inventory, not triage-urgent).
