@@ -1,19 +1,17 @@
 //! `GeoIP` database loading from files and URLs.
 
 use anyhow::{Context, Result};
-use futures::StreamExt;
 use maxminddb::Reader;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::{MAX_GEOIP_DOWNLOAD_SIZE, MAX_NETWORK_DOWNLOAD_RETRIES};
+use crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
 use crate::geoip::extract::extract_mmdb_from_tar_gz;
 use crate::geoip::metadata::{extract_metadata, load_metadata, save_metadata, write_atomic};
 use crate::geoip::types::GeoIpMetadata;
 use crate::geoip::{self};
-use crate::security::{ssrf_safe_redirect_policy, validate_url_safe};
+use crate::security::validate_url_safe;
 
 /// Loads `GeoIP` database from a local file path
 pub(crate) async fn load_from_file(path: &str) -> Result<(Reader<Vec<u8>>, GeoIpMetadata)> {
@@ -66,12 +64,8 @@ async fn try_load_from_cache(
         return Ok(None); // No metadata, cache doesn't exist
     };
 
-    // Check if cache is fresh
-    let Ok(age) = metadata.last_updated.elapsed() else {
-        return Ok(None); // Can't determine age, treat as expired
-    };
-
-    if age.as_secs() >= geoip::CACHE_TTL_SECS {
+    // Check if cache is fresh (fail closed on clock skew)
+    if crate::utils::cache::cache_ttl_exceeded(metadata.last_updated, geoip::CACHE_TTL_SECS, true) {
         return Ok(None); // Cache expired
     }
 
@@ -133,54 +127,24 @@ pub(crate) async fn load_from_url(
     // Download database with retries and size limits
     log::info!("Downloading GeoIP database from: {url}");
 
-    let mut last_error = None;
-    for attempt in 1..=MAX_NETWORK_DOWNLOAD_RETRIES {
-        match download_geoip_with_size_limit(url).await {
-            Ok(bytes) => {
-                return process_downloaded_geoip(
-                    bytes,
-                    url,
-                    cache_dir,
-                    db_name,
-                    &cache_file,
-                    &metadata_file,
-                )
-                .await;
-            }
-            Err(e) => {
-                last_error = Some(e);
-                if attempt < MAX_NETWORK_DOWNLOAD_RETRIES {
-                    log::warn!(
-                        "Failed to download GeoIP database from {url} (attempt {attempt}/{MAX_NETWORK_DOWNLOAD_RETRIES}), retrying..."
-                    );
-                    // Exponential backoff: 2s, 4s, 8s (longer for large files)
-                    tokio::time::sleep(Duration::from_secs(2 << (attempt - 1))).await;
-                }
-            }
-        }
-    }
+    let bytes = crate::utils::retry::with_network_download_retry(
+        &format!("download GeoIP database from {url}"),
+        2, // Exponential backoff: 2s, 4s, 8s (longer for large files)
+        || download_geoip_with_size_limit(url),
+    )
+    .await?;
 
-    Err(last_error.unwrap_or_else(|| {
-        anyhow::anyhow!(
-            "Failed to download GeoIP database from {url} after {MAX_NETWORK_DOWNLOAD_RETRIES} attempts"
-        )
-    }))
+    process_downloaded_geoip(bytes, url, cache_dir, db_name, &cache_file, &metadata_file).await
 }
 
 /// Downloads `GeoIP` database with size limit enforcement
 async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-    use crate::initialization::init_resolver;
-    use crate::security::safe_resolver::SafeResolver;
+    use crate::fetch::stream::{
+        reject_if_content_length_exceeds, stream_bytes_with_limit, OnLimit,
+    };
+    use crate::initialization::build_download_client;
 
-    let resolver =
-        init_resolver().context("Failed to initialize DNS resolver for GeoIP download")?;
-    let client = reqwest::Client::builder()
-        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
-        .redirect(ssrf_safe_redirect_policy())
-        .timeout(Duration::from_secs(300)) // 5 minutes for large file
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
-        .build()?;
+    let client = build_download_client(Duration::from_secs(300))?; // 5 minutes for large file
 
     let response = client.get(url).send().await?;
 
@@ -205,29 +169,17 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
         ));
     }
 
-    // Check content-length header if available
-    if let Some(content_length) = response.content_length() {
-        if content_length > MAX_GEOIP_DOWNLOAD_SIZE as u64 {
-            return Err(anyhow::anyhow!(
-                "GeoIP database too large: {content_length} bytes (max: {MAX_GEOIP_DOWNLOAD_SIZE} bytes)"
-            ));
-        }
-    }
+    reject_if_content_length_exceeds(&response, MAX_GEOIP_DOWNLOAD_SIZE, "GeoIP database")?;
 
-    let mut downloaded_bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        let new_len = downloaded_bytes.len().saturating_add(chunk.len());
-        if new_len > MAX_GEOIP_DOWNLOAD_SIZE {
-            return Err(anyhow::anyhow!(
-                "GeoIP database too large: {new_len} bytes (max: {MAX_GEOIP_DOWNLOAD_SIZE} bytes)"
-            ));
-        }
-        downloaded_bytes.extend_from_slice(&chunk);
-    }
+    let streamed = stream_bytes_with_limit(
+        response,
+        MAX_GEOIP_DOWNLOAD_SIZE,
+        OnLimit::Error,
+        "GeoIP download",
+    )
+    .await?;
 
-    Ok(downloaded_bytes)
+    Ok(streamed.into_bytes())
 }
 
 /// Processes downloaded `GeoIP` bytes (extraction, caching, metadata)

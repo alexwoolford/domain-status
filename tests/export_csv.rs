@@ -2,12 +2,11 @@
 
 use domain_status::export::{export_csv, ExportFormat, ExportOptions};
 use sqlx::SqlitePool;
-use tempfile::TempDir;
 
 #[path = "helpers.rs"]
 mod helpers;
 
-use helpers::{create_test_pool_with_path, create_test_run, create_test_url_status};
+use helpers::{create_test_run, create_test_url_status, setup_export_fixture};
 
 /// Creates test data: URL with technologies, `GeoIP`, WHOIS, etc.
 async fn create_test_url_with_enrichment(
@@ -118,17 +117,8 @@ async fn create_test_url_with_enrichment(
 
 #[tokio::test]
 async fn test_export_csv_basic() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    // Ensure parent directory exists
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).expect("Failed to create parent directory");
-    }
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create test run first (required for foreign key)
     create_test_run(&pool, "test_run_1", 1704067200000).await;
@@ -187,12 +177,8 @@ async fn test_export_csv_basic() {
 
 #[tokio::test]
 async fn test_export_csv_filter_by_run_id() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create runs first (required for foreign key)
     create_test_run(&pool, "run_1", 1704067200000).await;
@@ -249,12 +235,8 @@ async fn test_export_csv_filter_by_run_id() {
 
 #[tokio::test]
 async fn test_export_csv_filter_by_domain() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     create_test_url_status(
         &pool,
@@ -298,12 +280,8 @@ async fn test_export_csv_filter_by_domain() {
 
 #[tokio::test]
 async fn test_export_csv_filter_by_status() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     create_test_url_status(&pool, "ok.com", "ok.com", 200, None, 1704067200000).await;
     create_test_url_status(&pool, "error.com", "error.com", 404, None, 1704067200000).await;
@@ -336,13 +314,8 @@ async fn test_export_csv_filter_by_status() {
 
 #[tokio::test]
 async fn test_export_csv_empty_database() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create empty database
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
     drop(pool);
 
     // Export from empty database
@@ -370,12 +343,8 @@ async fn test_export_csv_empty_database() {
 
 #[tokio::test]
 async fn test_export_csv_missing_relationships() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create URL with NO enrichment data (no GeoIP, no WHOIS, no technologies)
     create_test_url_status(&pool, "bare.com", "bare.com", 200, None, 1704067200000).await;
@@ -408,12 +377,8 @@ async fn test_export_csv_missing_relationships() {
 
 #[tokio::test]
 async fn test_export_csv_all_enrichment_data() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create URL with all enrichment data
     create_test_url_with_enrichment(&pool, "full.com", None).await;
@@ -462,12 +427,8 @@ async fn test_export_csv_all_enrichment_data() {
 
 #[tokio::test]
 async fn test_export_csv_filter_combinations() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create run first (required for foreign key)
     create_test_run(&pool, "run_1", 1704067200000).await;
@@ -540,12 +501,8 @@ async fn test_export_csv_filter_combinations() {
 
 #[tokio::test]
 async fn test_export_csv_filter_by_since() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create data with different timestamps
     create_test_url_status(&pool, "old.com", "old.com", 200, None, 1609459200000).await; // 2021-01-01
@@ -583,11 +540,7 @@ async fn test_export_csv_filter_by_since() {
 
 #[tokio::test]
 async fn test_export_csv_stdout() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
 
     create_test_url_status(&pool, "stdout.com", "stdout.com", 200, None, 1704067200000).await;
 
@@ -625,12 +578,8 @@ async fn test_export_csv_stdout() {
 
 #[tokio::test]
 async fn test_export_csv_date_formatting() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     let url_id =
         create_test_url_status(&pool, "date.com", "date.com", 200, None, 1704067200000).await;
@@ -688,12 +637,8 @@ async fn test_export_csv_date_formatting() {
 
 #[tokio::test]
 async fn test_export_csv_comma_separated_lists() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    // Create test database with migrations
-    let pool = create_test_pool_with_path(&db_path).await;
 
     let url_id =
         create_test_url_status(&pool, "list.com", "list.com", 200, None, 1704067200000).await;
@@ -772,11 +717,8 @@ async fn test_export_csv_comma_separated_lists() {
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_export_csv_all_columns_present() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     create_test_url_with_enrichment(&pool, "full.com", None).await;
     drop(pool);
 
@@ -898,11 +840,8 @@ async fn test_export_csv_all_columns_present() {
 
 #[tokio::test]
 async fn test_export_csv_null_handling() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
 
     // Create URL with many NULL/empty fields
     let url_id = create_test_url_status(
@@ -968,11 +907,8 @@ async fn test_export_csv_null_handling() {
 
 #[tokio::test]
 async fn test_export_csv_no_redirects_still_exports_final_domain() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     let _url_id = create_test_url_status(
         &pool,
         "redirect.com",
@@ -1008,10 +944,7 @@ async fn test_export_csv_no_redirects_still_exports_final_domain() {
 
 #[tokio::test]
 async fn test_export_csv_redirect_chain_edge_cases() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
-
-    let pool2 = create_test_pool_with_path(&db_path).await;
+    let (temp_dir, db_path, pool2) = setup_export_fixture().await;
     let url_id2 =
         create_test_url_status(&pool2, "start.com", "end.com", 200, None, 1704067300000i64).await;
 
@@ -1108,11 +1041,8 @@ async fn test_export_csv_redirect_chain_edge_cases() {
 /// happened". This matches JSONL's existing behavior (see `export_row.final_redirect_url`).
 #[tokio::test]
 async fn test_export_csv_final_redirect_url_empty_when_no_redirects() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     create_test_url_status(
         &pool,
         "noredirect.com",
@@ -1171,11 +1101,8 @@ async fn test_export_csv_final_redirect_url_empty_when_no_redirects() {
 /// `0009_secrets_scan_completeness.sql`) must be surfaced as a named CSV column.
 #[tokio::test]
 async fn test_export_csv_body_truncated_column_present() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     let url_id = create_test_url_status(
         &pool,
         "truncated.com",
@@ -1227,11 +1154,8 @@ async fn test_export_csv_body_truncated_column_present() {
 
 #[tokio::test]
 async fn test_export_csv_header_filtering() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     let url_id = create_test_url_status(
         &pool,
         "headers.com",
@@ -1342,11 +1266,8 @@ async fn test_export_csv_header_filtering() {
 
 #[tokio::test]
 async fn test_export_csv_unicode_and_special_chars() {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.csv");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     let url_id = create_test_url_status(
         &pool,
         "unicode.com",

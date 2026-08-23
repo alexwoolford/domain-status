@@ -3,8 +3,10 @@
 //! This module provides functions to export data from the `SQLite` database
 //! into various formats (CSV, JSONL, Parquet) for different use cases.
 
+mod bootstrap;
 mod csv;
 mod field_inventory;
+mod fields;
 mod jsonl;
 mod parquet;
 mod queries;

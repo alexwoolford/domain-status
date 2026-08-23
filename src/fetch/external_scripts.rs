@@ -191,10 +191,10 @@ fn is_first_party_script(page_url: &str, script_url: &str) -> bool {
         return true;
     }
 
-    let Some(page_root) = registrable_domain(&page_host) else {
+    let Some(page_root) = crate::domain::root_domain(&page_host) else {
         return false;
     };
-    let Some(script_root) = registrable_domain(&script_host) else {
+    let Some(script_root) = crate::domain::root_domain(&script_host) else {
         return false;
     };
     page_root.eq_ignore_ascii_case(&script_root)
@@ -204,18 +204,6 @@ fn url_host(url: &str) -> Option<String> {
     url::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_lowercase))
-}
-
-fn registrable_domain(host: &str) -> Option<String> {
-    psl::domain_str(host)
-        .map(std::string::ToString::to_string)
-        .or_else(|| {
-            if psl::suffix_str(host).is_some() {
-                Some(host.to_string())
-            } else {
-                None
-            }
-        })
 }
 
 fn is_known_third_party_script_host(host: &str) -> bool {
@@ -264,7 +252,7 @@ pub(crate) fn collect_script_hosts(
         if !seen.insert(host.clone()) {
             continue;
         }
-        let registrable = registrable_domain(&host);
+        let registrable = crate::domain::root_domain(&host);
         let is_first_party = is_first_party_script(page_url, &abs);
         out.push(crate::storage::ScriptHostInfo {
             host,
@@ -312,69 +300,26 @@ async fn fetch_script_body(client: &reqwest::Client, url: &str) -> Option<String
     // truncated to the cap and the prefix is still scanned — production JS
     // bundles routinely exceed 1MB, and a secret in the first megabyte would
     // otherwise never be seen.
-    let mut accumulated: Vec<u8> = Vec::new();
-    use futures::StreamExt;
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = match chunk_result {
-            Ok(c) => c,
+    use crate::fetch::stream::{stream_bytes_with_limit, OnLimit};
+    let streamed =
+        match stream_bytes_with_limit(resp, MAX_SCRIPT_BODY_BYTES, OnLimit::Truncate, url).await {
+            Ok(s) => s,
             Err(e) => {
                 log::debug!("external_script: chunk error for {url}: {e}");
                 return None;
             }
         };
-        if accumulated.len() + chunk.len() > MAX_SCRIPT_BODY_BYTES {
-            log::debug!("external_script: truncating {url} at size cap");
-            let room = MAX_SCRIPT_BODY_BYTES - accumulated.len();
-            accumulated.extend_from_slice(&chunk[..room]);
-            break;
-        }
-        accumulated.extend_from_slice(&chunk);
+    if streamed.is_truncated() {
+        log::debug!("external_script: truncating {url} at size cap");
     }
+    let accumulated = streamed.into_bytes();
 
     Some(decode_script_body(&accumulated, content_type.as_deref()))
 }
 
-/// Charset-aware decode for script bodies. Mirrors the page-body decoder so
-/// non-UTF-8 scripts (`Shift_JIS`, Windows-1252, etc.) don't get corrupted
-/// before regex sees them.
+/// Charset-aware decode for script bodies (no HTML meta sniffing).
 fn decode_script_body(bytes: &[u8], content_type: Option<&str>) -> String {
-    use encoding_rs::{Encoding, UTF_8};
-    if let Some(ct) = content_type {
-        if let Some(label) = charset_from_content_type(ct) {
-            if let Some(enc) = Encoding::for_label(label.as_bytes()) {
-                let (cow, _, _) = enc.decode(bytes);
-                return cow.into_owned();
-            }
-        }
-    }
-    if let Some(enc) = Encoding::for_bom(bytes).map(|(e, _bom_len)| e) {
-        let (cow, _, _) = enc.decode(bytes);
-        return cow.into_owned();
-    }
-    let (cow, _, _) = UTF_8.decode(bytes);
-    cow.into_owned()
-}
-
-/// Local copy of the Content-Type charset parser. Kept private so the public
-/// API surface doesn't grow; we only need it here and inside
-/// `fetch::response::extract`.
-fn charset_from_content_type(ct: &str) -> Option<String> {
-    for part in ct.split(';').map(str::trim) {
-        if let Some(rest) = part.strip_prefix("charset=").or_else(|| {
-            if part.len() >= 8 && part[..8].eq_ignore_ascii_case("charset=") {
-                Some(&part[8..])
-            } else {
-                None
-            }
-        }) {
-            let trimmed = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
+    crate::fetch::charset::decode_body(bytes, content_type, false)
 }
 
 #[cfg(test)]

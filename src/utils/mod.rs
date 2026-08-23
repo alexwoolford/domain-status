@@ -8,9 +8,10 @@
 //! - CSS selector parsing utilities
 //! - Timing metrics for performance analysis
 
+pub(crate) mod cache;
 mod io_context;
 mod process;
-mod retry;
+pub(crate) mod retry;
 pub mod sanitize;
 mod selector;
 mod timing;

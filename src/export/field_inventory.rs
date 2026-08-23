@@ -25,7 +25,9 @@ pub(crate) const URL_STATUS_REQUIRED_IN_FLAT_EXPORT: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::URL_STATUS_REQUIRED_IN_FLAT_EXPORT;
-    use crate::export::csv::CSV_COLUMN_DEFS;
+    use crate::export::fields::{
+        self, flat_shared_fields, CSV_FIELD_ORDER, EXPORT_FIELDS, PARQUET_FIELD_ORDER,
+    };
     use crate::export::parquet::build_schema;
     use crate::storage::insert::url::URL_STATUS_COLUMN_DEFS;
 
@@ -48,7 +50,7 @@ mod tests {
     const SATELLITE_DB_ONLY: &[&str] = &["url_script_hosts"];
 
     fn csv_has_column(name: &str) -> bool {
-        CSV_COLUMN_DEFS.iter().any(|c| c.name == name)
+        fields::csv_column_names().any(|n| n == name)
     }
 
     fn parquet_has(name: &str) -> bool {
@@ -77,7 +79,11 @@ mod tests {
             if !csv_has_column(name) {
                 missing_csv.push(*name);
             }
-            if !parquet_has(name) {
+            let parquet_name = flat_shared_fields()
+                .find(|f| f.csv.as_ref().is_some_and(|c| c.name == *name))
+                .and_then(|f| f.parquet.as_ref().map(|p| p.name))
+                .unwrap_or(name);
+            if !parquet_has(parquet_name) {
                 missing_parquet.push(*name);
             }
         }
@@ -92,23 +98,63 @@ mod tests {
     }
 
     #[test]
-    fn csv_column_defs_have_unique_names() {
+    fn flat_shared_fields_appear_in_csv_and_parquet() {
+        let mut missing = Vec::new();
+        for field in flat_shared_fields() {
+            let csv_name = field.csv.as_ref().expect("flat_shared needs csv").name;
+            let pq_name = field
+                .parquet
+                .as_ref()
+                .expect("flat_shared needs parquet")
+                .name;
+            if !csv_has_column(csv_name) {
+                missing.push(format!("csv:{csv_name}"));
+            }
+            if !parquet_has(pq_name) {
+                missing.push(format!("parquet:{pq_name}"));
+            }
+        }
+        assert!(missing.is_empty(), "flat shared field drift: {missing:?}");
+    }
+
+    #[test]
+    fn csv_and_parquet_orders_match_registry() {
         let mut seen = std::collections::HashSet::new();
-        for col in CSV_COLUMN_DEFS {
+        for id in CSV_FIELD_ORDER {
+            assert!(seen.insert(*id), "duplicate CSV field id: {id}");
             assert!(
-                seen.insert(col.name),
-                "duplicate CSV column name: {}",
-                col.name
+                fields::field_by_id(id).csv.is_some(),
+                "{id} in CSV_FIELD_ORDER but missing csv spec"
             );
         }
         assert_eq!(
-            CSV_COLUMN_DEFS.len(),
+            CSV_FIELD_ORDER.len(),
             83,
-            "CSV column count drifted — add/remove via CSV_COLUMN_DEFS only"
+            "CSV column count drifted — edit EXPORT_FIELDS / CSV_FIELD_ORDER"
         );
         assert_eq!(SATELLITE_DB_ONLY, &["url_script_hosts"]);
+
+        let mut seen_pq = std::collections::HashSet::new();
+        for id in PARQUET_FIELD_ORDER {
+            assert!(seen_pq.insert(*id), "duplicate Parquet field id: {id}");
+            assert!(
+                fields::field_by_id(id).parquet.is_some(),
+                "{id} in PARQUET_FIELD_ORDER but missing parquet spec"
+            );
+        }
         let len = build_schema().fields().len();
         assert_eq!(len, 67, "parquet schema field count drifted: {len}");
+        assert_eq!(PARQUET_FIELD_ORDER.len(), len);
+
+        let parquet_only = PARQUET_FIELD_ORDER
+            .iter()
+            .filter(|id| fields::field_by_id(id).csv.is_none())
+            .count();
+        assert_eq!(
+            EXPORT_FIELDS.len(),
+            seen.len() + parquet_only,
+            "EXPORT_FIELDS len should equal unique CSV ids + parquet-only ids"
+        );
     }
 
     #[test]

@@ -92,20 +92,21 @@ name = "db_pool_timeout_bug"
 path = "tests/db_pool_timeout_bug.rs"
 required-features = ["test-utils"]
 
-[[test]]
-name = "stress_concurrency_mismatch"
-path = "tests/stress_concurrency_mismatch.rs"
-required-features = ["test-utils"]
-
-[[test]]
-name = "stress_database_scale"
-path = "tests/stress_database_scale.rs"
-required-features = ["test-utils"]
-
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate", "stream"] }
-tokio = { version = "^1", features = ["full"] }
+tokio = { version = "^1", features = [
+    "fs",
+    "io-std",
+    "io-util",
+    "macros",
+    "net",
+    "rt",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+] }
 tokio-util = "^0.7"
 tokio-retry = "^0.3"
 futures = "^0.3"

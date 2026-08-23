@@ -1,12 +1,14 @@
 //! HTTP response extraction utilities.
 
 use anyhow::{Error, Result};
-use futures::StreamExt;
 use log::debug;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use super::types::ResponseData;
+use crate::domain::extract_domain;
+use crate::fetch::request::{extract_http_headers, extract_security_headers};
+use crate::fetch::stream::{stream_bytes_with_limit, OnLimit, StreamedBytes};
 
 /// Computes SHA-256 hash of the body, returning hex-encoded string.
 fn compute_body_sha256(body: &str) -> Option<String> {
@@ -28,121 +30,10 @@ fn format_http_version(version: reqwest::Version) -> String {
         other => format!("{other:?}"),
     }
 }
-use crate::domain::extract_domain;
-use crate::fetch::request::{extract_http_headers, extract_security_headers};
 
-/// Outcome of streaming a response body under a size cap.
-#[derive(Debug)]
-enum StreamedBody {
-    /// Whole body received within the cap.
-    Complete(Vec<u8>),
-    /// Body exceeded the cap; carries exactly `max_size` bytes of prefix.
-    /// The prefix is still parsed and scanned for secrets — discarding it
-    /// would leave anything on a large page (SPA bundles, inlined app
-    /// shells) entirely unexamined.
-    Truncated(Vec<u8>),
-}
-
-/// Streams response body bytes with a size limit to prevent OOM attacks.
-///
-/// Unlike `response.bytes().await` which downloads the entire body into memory first,
-/// this function streams bytes incrementally and stops reading once the limit is
-/// reached. This prevents malicious servers from causing OOM by streaming infinite
-/// content, while retaining the buffered prefix for parsing and secret scanning.
-///
-/// Returns raw bytes; charset decoding is the caller's responsibility (see
-/// [`decode_body_with_charset`]).
-///
-/// # Arguments
-///
-/// * `response` - The HTTP response to stream
-/// * `max_size` - Maximum allowed body size in bytes
-/// * `domain` - Domain name for logging
-///
-/// # Returns
-///
-/// * `Ok(StreamedBody::Complete(_))` - Full body within size limit
-/// * `Ok(StreamedBody::Truncated(_))` - First `max_size` bytes; rest discarded
-/// * `Err(_)` - Stream read error
-async fn stream_body_with_limit(
-    response: reqwest::Response,
-    max_size: usize,
-    domain: &str,
-) -> Result<StreamedBody, Error> {
-    let mut stream = response.bytes_stream();
-    let mut accumulated = Vec::with_capacity(max_size.min(64 * 1024)); // Pre-allocate up to 64KB
-
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result?;
-
-        // Check if adding this chunk would exceed the limit
-        if accumulated.len() + chunk.len() > max_size {
-            log::debug!(
-                "Truncating body stream for {} at {} bytes (limit: {} bytes)",
-                domain,
-                accumulated.len() + chunk.len(),
-                max_size
-            );
-            let room = max_size - accumulated.len();
-            accumulated.extend_from_slice(&chunk[..room]);
-            return Ok(StreamedBody::Truncated(accumulated));
-        }
-
-        accumulated.extend_from_slice(&chunk);
-    }
-
-    Ok(StreamedBody::Complete(accumulated))
-}
-
-/// Decodes raw body bytes into a `String` using charset detection.
-///
-/// Picks the encoding by trying, in order:
-/// 1. `charset=` parameter from the Content-Type header (RFC 7231 §3.1.1).
-/// 2. Byte-Order-Mark sniffing (UTF-8 BOM `EF BB BF`, UTF-16 BE/LE).
-/// 3. `<meta charset="…">` or `<meta http-equiv="Content-Type" content="…">`
-///    inside the first 1024 bytes (HTML-spec sniffing window).
-/// 4. UTF-8 default.
-///
-/// Why this matters for secret detection: pages routinely declare or default
-/// to UTF-8 while serving Windows-1252, ISO-8859-1, GBK, `Shift_JIS`, etc.
-/// `String::from_utf8_lossy` replaces every non-UTF-8 byte with `U+FFFD`
-/// (3 bytes), which can corrupt long base64/hex secrets that span those
-/// bytes. Charset-aware decoding via `encoding_rs` produces faithful
-/// round-tripped UTF-8 the regex engine can reason about.
-///
-/// `encoding_rs::Encoding::for_label` recognises every label in the WHATWG
-/// Encoding Standard, including all the legacy Windows / ISO-8859-* / Asian
-/// encodings real production sites still serve.
+/// Page-body decode with HTML `<meta charset>` sniffing enabled.
 fn decode_body_with_charset(bytes: &[u8], content_type: Option<&str>) -> String {
-    use encoding_rs::{Encoding, UTF_8};
-
-    // 1. Content-Type charset
-    let ct_charset = content_type.and_then(charset_from_content_type);
-    if let Some(label) = ct_charset.as_deref() {
-        if let Some(enc) = Encoding::for_label(label.as_bytes()) {
-            let (cow, _, _) = enc.decode(bytes);
-            return cow.into_owned();
-        }
-    }
-
-    // 2. BOM
-    if let Some(enc) = Encoding::for_bom(bytes).map(|(e, _bom_len)| e) {
-        let (cow, _, _) = enc.decode(bytes);
-        return cow.into_owned();
-    }
-
-    // 3. <meta charset> sniffing in first 1024 bytes (HTML living standard).
-    let prefix = &bytes[..bytes.len().min(1024)];
-    if let Some(label) = sniff_meta_charset(prefix) {
-        if let Some(enc) = Encoding::for_label(label.as_bytes()) {
-            let (cow, _, _) = enc.decode(bytes);
-            return cow.into_owned();
-        }
-    }
-
-    // 4. UTF-8 default.
-    let (cow, _, _) = UTF_8.decode(bytes);
-    cow.into_owned()
+    crate::fetch::charset::decode_body(bytes, content_type, true)
 }
 
 /// Decode a streamed body and set the scan-completeness truncation flag.
@@ -150,13 +41,13 @@ fn decode_body_with_charset(bytes: &[u8], content_type: Option<&str>) -> String 
 /// Truncated prefixes are still secret-scanned; `body_truncated` tells analysts
 /// that content past the cap was never seen.
 fn decode_streamed_body(
-    streamed: StreamedBody,
+    streamed: StreamedBytes,
     content_type: Option<&str>,
     final_domain: &str,
 ) -> (String, bool) {
     match streamed {
-        StreamedBody::Complete(bytes) => (decode_body_with_charset(&bytes, content_type), false),
-        StreamedBody::Truncated(bytes) => {
+        StreamedBytes::Complete(bytes) => (decode_body_with_charset(&bytes, content_type), false),
+        StreamedBytes::Truncated(bytes) => {
             debug!("Body exceeded limit for {final_domain}, parsing truncated prefix");
             (decode_body_with_charset(&bytes, content_type), true)
         }
@@ -192,50 +83,6 @@ fn is_scannable_content_type(ct_lower: &str) -> bool {
             | "application/soap+xml"
     ) || mime.ends_with("+json")
         || mime.ends_with("+xml")
-}
-
-/// Parses the `charset` parameter out of a Content-Type header, if present.
-fn charset_from_content_type(ct: &str) -> Option<String> {
-    for part in ct.split(';').map(str::trim) {
-        if let Some(rest) = part.strip_prefix("charset=").or_else(|| {
-            // Case-insensitive match
-            if part.len() >= 8 && part[..8].eq_ignore_ascii_case("charset=") {
-                Some(&part[8..])
-            } else {
-                None
-            }
-        }) {
-            // Strip surrounding quotes and any trailing `;` debris
-            let trimmed = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Sniffs the charset declared via `<meta charset="…">` or
-/// `<meta http-equiv="content-type" content="…; charset=…">` in the supplied
-/// byte prefix. Treats the input as ASCII for matching purposes; non-ASCII
-/// bytes can't form a valid meta-tag declaration.
-fn sniff_meta_charset(prefix: &[u8]) -> Option<String> {
-    use std::sync::LazyLock;
-    static META_CHARSET_RE: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
-        // Match either `<meta charset="…">` or `<meta http-equiv=… content="…charset=…">`.
-        regex::bytes::RegexBuilder::new(
-            r#"(?i)<meta[^>]+(?:charset\s*=\s*["']?([a-z0-9._:+-]+)|content\s*=\s*["'][^"'>]*?charset\s*=\s*([a-z0-9._:+-]+))"#,
-        )
-        .build()
-        .expect("hardcoded meta charset regex")
-    });
-
-    META_CHARSET_RE.captures(prefix).and_then(|caps| {
-        caps.get(1)
-            .or_else(|| caps.get(2))
-            .and_then(|m| std::str::from_utf8(m.as_bytes()).ok())
-            .map(str::to_string)
-    })
 }
 
 /// Extracts and validates response data from an HTTP response.
@@ -325,9 +172,10 @@ pub(crate) async fn extract_response_data(
     // SECURITY: Stream body with running size check to prevent OOM attacks.
     // Unlike response.text().await which downloads the entire body into memory first,
     // this approach stops reading at MAX_RESPONSE_BODY_SIZE and keeps the prefix.
-    let streamed = stream_body_with_limit(
+    let streamed = stream_bytes_with_limit(
         response,
         crate::config::MAX_RESPONSE_BODY_SIZE,
+        OnLimit::Truncate,
         &final_domain,
     )
     .await;
@@ -400,41 +248,7 @@ mod tests {
     use super::*;
     use httptest::{matchers::*, responders::*, Expectation, Server};
 
-    // === charset decoding ===
-
-    #[test]
-    fn test_charset_from_content_type_utf8() {
-        assert_eq!(
-            charset_from_content_type("text/html; charset=utf-8"),
-            Some("utf-8".to_string())
-        );
-        assert_eq!(
-            charset_from_content_type("text/html;charset=Windows-1252"),
-            Some("Windows-1252".to_string())
-        );
-    }
-
-    #[test]
-    fn test_charset_from_content_type_quoted() {
-        assert_eq!(
-            charset_from_content_type(r#"text/html; charset="iso-8859-1""#),
-            Some("iso-8859-1".to_string())
-        );
-    }
-
-    #[test]
-    fn test_charset_from_content_type_case_insensitive() {
-        assert_eq!(
-            charset_from_content_type("text/html; CHARSET=UTF-8"),
-            Some("UTF-8".to_string())
-        );
-    }
-
-    #[test]
-    fn test_charset_from_content_type_missing() {
-        assert_eq!(charset_from_content_type("text/html"), None);
-        assert_eq!(charset_from_content_type(""), None);
-    }
+    // === charset decoding (page wrapper over fetch::charset) ===
 
     #[test]
     fn test_decode_body_with_charset_uses_content_type_label() {
@@ -512,24 +326,6 @@ mod tests {
         bytes.extend_from_slice(b";");
         let decoded = decode_body_with_charset(&bytes, Some("text/html; charset=windows-1252"));
         assert!(decoded.contains("abcdef0123456789abcdef0123456789"));
-    }
-
-    #[test]
-    fn test_sniff_meta_charset_finds_meta_charset_attr() {
-        let body = b"<html><head><meta charset=\"shift_jis\"></head>";
-        assert_eq!(sniff_meta_charset(body), Some("shift_jis".to_string()));
-    }
-
-    #[test]
-    fn test_sniff_meta_charset_finds_http_equiv() {
-        let body = b"<meta http-equiv=Content-Type content='text/html; charset=gb2312'>";
-        assert_eq!(sniff_meta_charset(body), Some("gb2312".to_string()));
-    }
-
-    #[test]
-    fn test_sniff_meta_charset_returns_none_when_absent() {
-        let body = b"<html><head><title>x</title></head>";
-        assert_eq!(sniff_meta_charset(body), None);
     }
 
     // === content-type allowlist ===
@@ -611,7 +407,7 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
 
         // Domain extraction now accepts IP literals as domain keys (needed for
-        // wiremock/httpmock). This test still exercises extract_response_data end-to-end.
+        // wiremock). This test still exercises extract_response_data end-to-end.
         let result = extract_response_data(response, test_url, &server_url).await;
 
         // original_url is example.com; final_url from httptest is an IP — both extract.
@@ -712,7 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_response_data_security_headers_extraction() {
-        // httpmock serves from an IP literal (valid domain key).
+        // wiremock serves from an IP literal (valid domain key).
         // Header extraction is tested in fetch/request/tests.rs and through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
@@ -740,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_response_data_http_headers_extraction() {
-        // httpmock serves from an IP literal (valid domain key).
+        // wiremock serves from an IP literal (valid domain key).
         // Header extraction is tested in fetch/request/tests.rs and through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
@@ -768,7 +564,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_response_data_status_code_extraction() {
-        // httpmock serves from an IP literal (valid domain key).
+        // wiremock serves from an IP literal (valid domain key).
         // Status code extraction is straightforward and tested through integration tests
         let server = Server::run();
         let server_url = server.url("/test").to_string();
@@ -860,12 +656,12 @@ mod tests {
 
     #[test]
     fn test_decode_streamed_body_sets_truncated_flag() {
-        let complete = StreamedBody::Complete(b"<html>ok</html>".to_vec());
+        let complete = StreamedBytes::Complete(b"<html>ok</html>".to_vec());
         let (body, truncated) = decode_streamed_body(complete, Some("text/html"), "example.com");
         assert!(!truncated);
         assert!(body.contains("ok"));
 
-        let over = StreamedBody::Truncated(b"x".repeat(100));
+        let over = StreamedBytes::Truncated(b"x".repeat(100));
         let (body2, truncated2) = decode_streamed_body(over, Some("text/html"), "example.com");
         assert!(
             truncated2,
@@ -1176,7 +972,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_body_with_limit_within_limit() {
-        // Test that bodies within the limit are successfully streamed
+        // Covered by fetch::stream unit tests; keep one integration check here.
         let server = Server::run();
         let server_url = server.url("/stream-small").to_string();
 
@@ -1189,13 +985,13 @@ mod tests {
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
 
-        let result = super::stream_body_with_limit(response, 1024, "test.com").await;
+        let result = stream_bytes_with_limit(response, 1024, OnLimit::Truncate, "test.com").await;
 
         match result.unwrap() {
-            super::StreamedBody::Complete(bytes) => {
+            StreamedBytes::Complete(bytes) => {
                 assert_eq!(String::from_utf8(bytes).unwrap(), body_content);
             }
-            super::StreamedBody::Truncated(_) => panic!("small body must not be truncated"),
+            StreamedBytes::Truncated(_) => panic!("small body must not be truncated"),
         }
     }
 
@@ -1216,14 +1012,14 @@ mod tests {
         let response = client.get(&server_url).send().await.unwrap();
 
         // Use a limit smaller than the body
-        let result = super::stream_body_with_limit(response, 1000, "test.com").await;
+        let result = stream_bytes_with_limit(response, 1000, OnLimit::Truncate, "test.com").await;
 
         match result.unwrap() {
-            super::StreamedBody::Truncated(bytes) => {
+            StreamedBytes::Truncated(bytes) => {
                 assert_eq!(bytes.len(), 1000, "prefix must be exactly the cap");
                 assert!(bytes.iter().all(|&b| b == b'x'));
             }
-            super::StreamedBody::Complete(_) => {
+            StreamedBytes::Complete(_) => {
                 panic!("oversized body must be reported as truncated")
             }
         }
@@ -1244,11 +1040,11 @@ mod tests {
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
 
-        let result = super::stream_body_with_limit(response, 1000, "test.com").await;
+        let result = stream_bytes_with_limit(response, 1000, OnLimit::Truncate, "test.com").await;
 
         match result.unwrap() {
-            super::StreamedBody::Complete(bytes) => assert_eq!(bytes.len(), 1000),
-            super::StreamedBody::Truncated(_) => {
+            StreamedBytes::Complete(bytes) => assert_eq!(bytes.len(), 1000),
+            StreamedBytes::Truncated(_) => {
                 panic!("body exactly at limit should be complete")
             }
         }
@@ -1268,11 +1064,11 @@ mod tests {
         let client = reqwest::Client::new();
         let response = client.get(&server_url).send().await.unwrap();
 
-        let result = super::stream_body_with_limit(response, 1000, "test.com").await;
+        let result = stream_bytes_with_limit(response, 1000, OnLimit::Truncate, "test.com").await;
 
         match result.unwrap() {
-            super::StreamedBody::Complete(bytes) => assert!(bytes.is_empty()),
-            super::StreamedBody::Truncated(_) => panic!("empty body must not be truncated"),
+            StreamedBytes::Complete(bytes) => assert!(bytes.is_empty()),
+            StreamedBytes::Truncated(_) => panic!("empty body must not be truncated"),
         }
     }
 
@@ -1280,7 +1076,7 @@ mod tests {
     fn test_stream_body_prevents_oom_attack() {
         // Verify the streaming approach prevents OOM attacks by documenting the behavior:
         // - Old approach (response.text().await): Downloads entire body into memory BEFORE checking size
-        // - New approach (stream_body_with_limit): Stops reading at the limit, keeps the prefix
+        // - New approach (stream_bytes_with_limit): Stops reading at the limit, keeps the prefix
         //
         // This test verifies the constants and logic are correctly set up for OOM protection
         use crate::config::MAX_RESPONSE_BODY_SIZE;

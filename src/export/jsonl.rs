@@ -4,16 +4,16 @@
 //! Each line is a complete JSON object representing one URL scan result.
 //! This format is ideal for programmatic processing, piping to jq, or loading into databases.
 
-use anyhow::{Context, Result};
-use futures::TryStreamExt;
+use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, Write};
 
-use crate::storage::init_db_pool_with_path;
 use crate::utils::IoErrorContext;
 
-use super::queries::{build_export_query, IgnoreBrokenPipe};
-use super::row::{build_export_row, build_url, extract_main_row_data, parse_string_list};
+use super::bootstrap::for_each_export_row;
+use super::fields;
+use super::queries::IgnoreBrokenPipe;
+use super::row::{build_url, parse_string_list};
 
 /// Exports data to JSONL format (JSON Lines).
 ///
@@ -60,17 +60,6 @@ use super::row::{build_export_row, build_url, extract_main_row_data, parse_strin
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
 #[allow(clippy::too_many_lines)] // Sequential export pipeline: DB setup, query, row serialization, output
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
-    let pool = init_db_pool_with_path(&opts.db_path, 5)
-        .await
-        .context("Failed to initialize database pool")?;
-
-    let mut query_builder = build_export_query(
-        opts.run_id.as_deref(),
-        opts.domain.as_deref(),
-        opts.status,
-        opts.since,
-    );
-
     let mut writer: Box<dyn Write> = if let Some(output_path) = opts.output.as_ref() {
         let file = tokio::fs::File::create(output_path)
             .await
@@ -82,15 +71,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
         Box::new(IgnoreBrokenPipe::new(io::stdout()))
     };
 
-    let query = query_builder.build();
-    let mut rows = query.fetch(pool.as_ref());
-
-    let mut record_count = 0;
-
-    while let Some(row) = rows.try_next().await? {
-        // Extract main row data and build the complete export row
-        let main = extract_main_row_data(&row);
-        let export_row = build_export_row(&pool, main, opts.include_implied_tech).await?;
+    let record_count = for_each_export_row(opts, |export_row| {
 
         // Build URL
         let url = build_url(&export_row.main.final_domain);
@@ -314,11 +295,15 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             );
         }
 
+        if let Value::Object(ref mut map) = json_obj {
+            fields::insert_jsonl_flat_fields(map, &export_row);
+        }
         serde_json::to_writer(&mut writer, &json_obj)?;
         writeln!(writer)?;
 
-        record_count += 1;
-    }
+        Ok(())
+    })
+    .await?;
 
     Ok(record_count)
 }

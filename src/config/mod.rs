@@ -15,7 +15,7 @@ pub(crate) use headers::*;
 // Small set kept public for tests/docs and Config defaults.
 pub use constants::{DB_PATH, DEFAULT_USER_AGENT, WHOIS_TIMEOUT_SECS};
 
-pub use merge::{apply_file_env_map_to_config, merge_file_env_and_cli};
+pub use merge::{apply_file_config, merge_file_env_and_cli, FileConfig};
 pub use types::{
     log_level_filter, Config, ConfigValidationError, FailOn, LogFormat, LogLevel,
     ScanDependencyOverrides,

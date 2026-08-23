@@ -229,24 +229,12 @@ pub(crate) async fn fetch_additional_dns_records(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use hickory_resolver::config::ResolverOpts;
-    use hickory_resolver::TokioResolver;
+    use crate::initialization::test_resolver;
     use std::sync::Arc;
-
-    fn create_test_resolver() -> TokioResolver {
-        let mut opts = ResolverOpts::default();
-        opts.timeout = std::time::Duration::from_secs(5);
-        opts.attempts = 1;
-        TokioResolver::builder_tokio()
-            .unwrap()
-            .with_options(opts)
-            .build()
-            .expect("resolver builds with default config")
-    }
 
     #[tokio::test]
     async fn test_fetch_additional_dns_records_invalid_domain() {
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let result = fetch_additional_dns_records(
             "this-domain-definitely-does-not-exist-12345.invalid",
@@ -354,7 +342,7 @@ mod tests {
     async fn test_fetch_additional_dns_records_spf_dmarc_extraction() {
         // Test that SPF and DMARC are correctly extracted from TXT records
         // This is critical - SPF/DMARC extraction must work correctly for security analysis
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
 
         // Use a domain that might have SPF/DMARC records
@@ -382,7 +370,7 @@ mod tests {
     async fn test_fetch_additional_dns_records_mx_json_format() {
         // Test that MX records are correctly formatted as JSON
         // This is critical - MX records must be in correct format for database storage
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
 
         let result =
@@ -403,7 +391,7 @@ mod tests {
     async fn test_fetch_additional_dns_records_error_message_sanitization() {
         // Test that error messages are correctly sanitized and truncated
         // This is critical - error messages must not cause database bloat
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
 
         let result = fetch_additional_dns_records(

@@ -10,18 +10,15 @@ use arrow::array::{
     StringBuilder, StructBuilder,
 };
 use arrow::datatypes::{DataType, Field, Schema};
-use futures::TryStreamExt;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::sync::Arc;
 
-use crate::storage::init_db_pool_with_path;
 use crate::utils::IoErrorContext;
 
-use super::queries::build_export_query;
-use super::row::{build_export_row, extract_main_row_data};
+use super::bootstrap::for_each_export_row;
 
 /// Batch size for collecting rows before writing a Parquet row group.
 const BATCH_SIZE: usize = 10_000;
@@ -29,314 +26,10 @@ const BATCH_SIZE: usize = 10_000;
 /// Build the Arrow schema for the Parquet file.
 ///
 /// `pub(crate)` so field-inventory tests can assert schema contents without
-/// duplicating the Field list.
-#[allow(clippy::too_many_lines)] // Schema definition: one Field per export column (~80 columns)
+/// duplicating the Field list. Columns come from [`super::fields`].
 pub(crate) fn build_schema() -> Schema {
-    Schema::new(vec![
-        // Core identity
-        Field::new("url", DataType::Utf8, false),
-        Field::new("initial_domain", DataType::Utf8, false),
-        Field::new("final_domain", DataType::Utf8, false),
-        Field::new("initial_url", DataType::Utf8, true),
-        Field::new("final_url", DataType::Utf8, true),
-        Field::new("ip_address", DataType::Utf8, false),
-        Field::new("reverse_dns", DataType::Utf8, true),
-        // HTTP response
-        Field::new("http_status", DataType::Int32, false),
-        Field::new("http_status_text", DataType::Utf8, false),
-        Field::new("response_time_seconds", DataType::Float64, false),
-        Field::new("title", DataType::Utf8, false),
-        Field::new("description", DataType::Utf8, true),
-        Field::new("meta_robots", DataType::Utf8, true),
-        // Content metrics
-        Field::new("body_sha256", DataType::Utf8, true),
-        Field::new("content_length", DataType::Int64, true),
-        Field::new("http_version", DataType::Utf8, true),
-        Field::new("content_type", DataType::Utf8, true),
-        Field::new("canonical_url", DataType::Utf8, true),
-        Field::new("body_truncated", DataType::Boolean, false),
-        // Redirects
-        Field::new("redirect_count", DataType::Int32, false),
-        Field::new("final_redirect_url", DataType::Utf8, false),
-        Field::new(
-            "redirect_chain",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("redirect_url", DataType::Utf8, false),
-                        Field::new("sequence_order", DataType::Int64, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Technologies
-        Field::new("technology_count", DataType::Int32, false),
-        Field::new(
-            "technologies",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("name", DataType::Utf8, false),
-                        Field::new("version", DataType::Utf8, true),
-                        Field::new("category", DataType::Utf8, true),
-                        Field::new("is_implied", DataType::Boolean, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // TLS
-        Field::new("tls_version", DataType::Utf8, true),
-        Field::new("ssl_cert_subject", DataType::Utf8, true),
-        Field::new("ssl_cert_issuer", DataType::Utf8, true),
-        Field::new("ssl_cert_valid_to_ms", DataType::Int64, true),
-        Field::new("cipher_suite", DataType::Utf8, true),
-        Field::new("key_algorithm", DataType::Utf8, true),
-        Field::new("cert_fingerprint_sha256", DataType::Utf8, true),
-        Field::new(
-            "certificate_sans",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            false,
-        ),
-        Field::new(
-            "certificate_oids",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            false,
-        ),
-        // DNS
-        Field::new(
-            "cname_records",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            false,
-        ),
-        Field::new(
-            "ipv6_addresses",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            false,
-        ),
-        Field::new(
-            "caa_records",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("flag", DataType::Int64, false),
-                        Field::new("tag", DataType::Utf8, false),
-                        Field::new("value", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        Field::new("spf_record", DataType::Utf8, true),
-        Field::new("dmarc_record", DataType::Utf8, true),
-        Field::new(
-            "nameservers",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            false,
-        ),
-        Field::new(
-            "txt_records",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("record_type", DataType::Utf8, false),
-                        Field::new("content", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        Field::new(
-            "mx_records",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("priority", DataType::Int64, false),
-                        Field::new("mail_exchange", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Analytics
-        Field::new(
-            "analytics_ids",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("provider", DataType::Utf8, false),
-                        Field::new("tracking_id", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Social media
-        Field::new(
-            "social_media_links",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("platform", DataType::Utf8, false),
-                        Field::new("url", DataType::Utf8, false),
-                        Field::new("identifier", DataType::Utf8, true),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Structured data
-        Field::new(
-            "structured_data",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("data_type", DataType::Utf8, false),
-                        Field::new("property_name", DataType::Utf8, false),
-                        Field::new("property_value", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Headers
-        Field::new(
-            "http_headers",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("name", DataType::Utf8, false),
-                        Field::new("value", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        Field::new(
-            "security_headers",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("name", DataType::Utf8, false),
-                        Field::new("value", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Partial failures
-        Field::new(
-            "partial_failures",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("error_type", DataType::Utf8, false),
-                        Field::new("error_message", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // GeoIP
-        Field::new("geoip_country_code", DataType::Utf8, true),
-        Field::new("geoip_country_name", DataType::Utf8, true),
-        Field::new("geoip_region", DataType::Utf8, true),
-        Field::new("geoip_city", DataType::Utf8, true),
-        Field::new("geoip_latitude", DataType::Float64, true),
-        Field::new("geoip_longitude", DataType::Float64, true),
-        Field::new("geoip_asn", DataType::Int64, true),
-        Field::new("geoip_asn_org", DataType::Utf8, true),
-        // WHOIS
-        Field::new("whois_registrar", DataType::Utf8, true),
-        Field::new("whois_creation_date_ms", DataType::Int64, true),
-        Field::new("whois_expiration_date_ms", DataType::Int64, true),
-        Field::new("whois_registrant_country", DataType::Utf8, true),
-        // Favicon
-        Field::new("favicon_hash", DataType::Int32, true),
-        Field::new("favicon_url", DataType::Utf8, true),
-        // Contact links
-        Field::new("contact_link_count", DataType::Int32, false),
-        Field::new(
-            "contact_links",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("contact_type", DataType::Utf8, false),
-                        Field::new("contact_value", DataType::Utf8, false),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Exposed secrets
-        Field::new("exposed_secret_count", DataType::Int32, false),
-        Field::new(
-            "exposed_secrets",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::Struct(
-                    vec![
-                        Field::new("secret_type", DataType::Utf8, false),
-                        Field::new("matched_value", DataType::Utf8, false),
-                        Field::new("severity", DataType::Utf8, false),
-                        Field::new("location", DataType::Utf8, false),
-                        Field::new("context", DataType::Utf8, true),
-                        Field::new("jwt_algorithm", DataType::Utf8, true),
-                        Field::new("jwt_issuer", DataType::Utf8, true),
-                        Field::new("jwt_subject", DataType::Utf8, true),
-                        Field::new("jwt_audience", DataType::Utf8, true),
-                        Field::new("jwt_expiration_ms", DataType::Int64, true),
-                        Field::new("jwt_issued_at_ms", DataType::Int64, true),
-                        Field::new("jwt_header_json", DataType::Utf8, true),
-                        Field::new("jwt_payload_json", DataType::Utf8, true),
-                    ]
-                    .into(),
-                ),
-                true,
-            ))),
-            false,
-        ),
-        // Metadata
-        Field::new("observed_at_ms", DataType::Int64, false),
-        Field::new("run_id", DataType::Utf8, true),
-    ])
+    // Schema columns are owned by the shared export field registry.
+    super::fields::build_parquet_schema()
 }
 
 /// Helper to create a `ListBuilder` for List<Struct{Utf8, Utf8}> (two string fields).
@@ -1011,76 +704,89 @@ fn write_batch(
         append_opt_str(&mut run_id_b, row.main.run_id.as_ref());
     }
 
-    // Build arrays in schema order
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(url_b.finish()),
-        Arc::new(initial_domain_b.finish()),
-        Arc::new(final_domain_b.finish()),
-        Arc::new(initial_url_b.finish()),
-        Arc::new(final_url_b.finish()),
-        Arc::new(ip_address_b.finish()),
-        Arc::new(reverse_dns_b.finish()),
-        Arc::new(http_status_b.finish()),
-        Arc::new(http_status_text_b.finish()),
-        Arc::new(response_time_b.finish()),
-        Arc::new(title_b.finish()),
-        Arc::new(description_b.finish()),
-        Arc::new(meta_robots_b.finish()),
-        Arc::new(body_sha256_b.finish()),
-        Arc::new(content_length_b.finish()),
-        Arc::new(http_version_b.finish()),
-        Arc::new(content_type_b.finish()),
-        Arc::new(canonical_url_b.finish()),
-        Arc::new(body_truncated_b.finish()),
-        Arc::new(redirect_count_b.finish()),
-        Arc::new(final_redirect_url_b.finish()),
-        Arc::new(redirect_chain_b.finish()),
-        Arc::new(technology_count_b.finish()),
-        Arc::new(technologies_b.finish()),
-        Arc::new(tls_version_b.finish()),
-        Arc::new(ssl_cert_subject_b.finish()),
-        Arc::new(ssl_cert_issuer_b.finish()),
-        Arc::new(ssl_cert_valid_to_b.finish()),
-        Arc::new(cipher_suite_b.finish()),
-        Arc::new(key_algorithm_b.finish()),
-        Arc::new(cert_fingerprint_sha256_b.finish()),
-        Arc::new(cert_sans_b.finish()),
-        Arc::new(cert_oids_b.finish()),
-        Arc::new(cname_records_b.finish()),
-        Arc::new(ipv6_addresses_b.finish()),
-        Arc::new(caa_records_b.finish()),
-        Arc::new(spf_record_b.finish()),
-        Arc::new(dmarc_record_b.finish()),
-        Arc::new(nameservers_b.finish()),
-        Arc::new(txt_records_b.finish()),
-        Arc::new(mx_records_b.finish()),
-        Arc::new(analytics_ids_b.finish()),
-        Arc::new(social_media_b.finish()),
-        Arc::new(structured_data_b.finish()),
-        Arc::new(http_headers_b.finish()),
-        Arc::new(security_headers_b.finish()),
-        Arc::new(partial_failures_b.finish()),
-        Arc::new(geoip_cc_b.finish()),
-        Arc::new(geoip_cn_b.finish()),
-        Arc::new(geoip_region_b.finish()),
-        Arc::new(geoip_city_b.finish()),
-        Arc::new(geoip_lat_b.finish()),
-        Arc::new(geoip_lon_b.finish()),
-        Arc::new(geoip_asn_b.finish()),
-        Arc::new(geoip_asn_org_b.finish()),
-        Arc::new(whois_registrar_b.finish()),
-        Arc::new(whois_creation_b.finish()),
-        Arc::new(whois_expiration_b.finish()),
-        Arc::new(whois_country_b.finish()),
-        Arc::new(favicon_hash_b.finish()),
-        Arc::new(favicon_url_b.finish()),
-        Arc::new(contact_link_count_b.finish()),
-        Arc::new(contact_links_b.finish()),
-        Arc::new(exposed_secret_count_b.finish()),
-        Arc::new(exposed_secrets_b.finish()),
-        Arc::new(observed_at_b.finish()),
-        Arc::new(run_id_b.finish()),
-    ];
+    // Finish builders then assemble columns in registry/schema order so the
+    // RecordBatch cannot drift from [`build_schema`].
+    let mut finished: Vec<ArrayRef> = Vec::with_capacity(67);
+    finished.push(Arc::new(url_b.finish()));
+    finished.push(Arc::new(initial_domain_b.finish()));
+    finished.push(Arc::new(final_domain_b.finish()));
+    finished.push(Arc::new(initial_url_b.finish()));
+    finished.push(Arc::new(final_url_b.finish()));
+    finished.push(Arc::new(ip_address_b.finish()));
+    finished.push(Arc::new(reverse_dns_b.finish()));
+    finished.push(Arc::new(http_status_b.finish()));
+    finished.push(Arc::new(http_status_text_b.finish()));
+    finished.push(Arc::new(response_time_b.finish()));
+    finished.push(Arc::new(title_b.finish()));
+    finished.push(Arc::new(description_b.finish()));
+    finished.push(Arc::new(meta_robots_b.finish()));
+    finished.push(Arc::new(body_sha256_b.finish()));
+    finished.push(Arc::new(content_length_b.finish()));
+    finished.push(Arc::new(http_version_b.finish()));
+    finished.push(Arc::new(content_type_b.finish()));
+    finished.push(Arc::new(canonical_url_b.finish()));
+    finished.push(Arc::new(body_truncated_b.finish()));
+    finished.push(Arc::new(redirect_count_b.finish()));
+    finished.push(Arc::new(final_redirect_url_b.finish()));
+    finished.push(Arc::new(redirect_chain_b.finish()));
+    finished.push(Arc::new(technology_count_b.finish()));
+    finished.push(Arc::new(technologies_b.finish()));
+    finished.push(Arc::new(tls_version_b.finish()));
+    finished.push(Arc::new(ssl_cert_subject_b.finish()));
+    finished.push(Arc::new(ssl_cert_issuer_b.finish()));
+    finished.push(Arc::new(ssl_cert_valid_to_b.finish()));
+    finished.push(Arc::new(cipher_suite_b.finish()));
+    finished.push(Arc::new(key_algorithm_b.finish()));
+    finished.push(Arc::new(cert_fingerprint_sha256_b.finish()));
+    finished.push(Arc::new(cert_sans_b.finish()));
+    finished.push(Arc::new(cert_oids_b.finish()));
+    finished.push(Arc::new(cname_records_b.finish()));
+    finished.push(Arc::new(ipv6_addresses_b.finish()));
+    finished.push(Arc::new(caa_records_b.finish()));
+    finished.push(Arc::new(spf_record_b.finish()));
+    finished.push(Arc::new(dmarc_record_b.finish()));
+    finished.push(Arc::new(nameservers_b.finish()));
+    finished.push(Arc::new(txt_records_b.finish()));
+    finished.push(Arc::new(mx_records_b.finish()));
+    finished.push(Arc::new(analytics_ids_b.finish()));
+    finished.push(Arc::new(social_media_b.finish()));
+    finished.push(Arc::new(structured_data_b.finish()));
+    finished.push(Arc::new(http_headers_b.finish()));
+    finished.push(Arc::new(security_headers_b.finish()));
+    finished.push(Arc::new(partial_failures_b.finish()));
+    finished.push(Arc::new(geoip_cc_b.finish()));
+    finished.push(Arc::new(geoip_cn_b.finish()));
+    finished.push(Arc::new(geoip_region_b.finish()));
+    finished.push(Arc::new(geoip_city_b.finish()));
+    finished.push(Arc::new(geoip_lat_b.finish()));
+    finished.push(Arc::new(geoip_lon_b.finish()));
+    finished.push(Arc::new(geoip_asn_b.finish()));
+    finished.push(Arc::new(geoip_asn_org_b.finish()));
+    finished.push(Arc::new(whois_registrar_b.finish()));
+    finished.push(Arc::new(whois_creation_b.finish()));
+    finished.push(Arc::new(whois_expiration_b.finish()));
+    finished.push(Arc::new(whois_country_b.finish()));
+    finished.push(Arc::new(favicon_hash_b.finish()));
+    finished.push(Arc::new(favicon_url_b.finish()));
+    finished.push(Arc::new(contact_link_count_b.finish()));
+    finished.push(Arc::new(contact_links_b.finish()));
+    finished.push(Arc::new(exposed_secret_count_b.finish()));
+    finished.push(Arc::new(exposed_secrets_b.finish()));
+    finished.push(Arc::new(observed_at_b.finish()));
+    finished.push(Arc::new(run_id_b.finish()));
+
+    let mut by_name: std::collections::HashMap<&'static str, ArrayRef> =
+        std::collections::HashMap::with_capacity(67);
+    for (name, array) in super::fields::parquet_column_names().zip(finished.drain(..)) {
+        by_name.insert(name, array);
+    }
+    let columns: Vec<ArrayRef> = super::fields::parquet_column_names()
+        .map(|name| {
+            by_name
+                .remove(name)
+                .unwrap_or_else(|| panic!("missing Parquet column builder for {name}"))
+        })
+        .collect();
 
     anyhow::ensure!(
         columns.len() == schema.fields().len(),
@@ -1151,17 +857,6 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
         bail!("Parquet is a binary format and cannot be written to stdout. Use --output <path> to specify a file.");
     }
 
-    let pool = init_db_pool_with_path(&opts.db_path, 5)
-        .await
-        .context("Failed to initialize database pool")?;
-
-    let mut query_builder = build_export_query(
-        opts.run_id.as_deref(),
-        opts.domain.as_deref(),
-        opts.status,
-        opts.since,
-    );
-
     let schema = Arc::new(build_schema());
 
     let props = WriterProperties::builder()
@@ -1173,27 +868,18 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
     let mut writer = ArrowWriter::try_new(file, Arc::clone(&schema), Some(props))
         .context("Failed to create Parquet writer")?;
 
-    let query = query_builder.build();
-    let mut rows_stream = query.fetch(pool.as_ref());
-
-    let mut batch_rows: Vec<ExportRow> = Vec::with_capacity(BATCH_SIZE);
-    let mut record_count: usize = 0;
-
-    while let Some(row) = rows_stream.try_next().await? {
-        let main = extract_main_row_data(&row);
-        let export_row = build_export_row(&pool, main, opts.include_implied_tech).await?;
+    let mut batch_rows: Vec<super::row::ExportRow> = Vec::with_capacity(BATCH_SIZE);
+    let record_count = for_each_export_row(opts, |export_row| {
         batch_rows.push(export_row);
-
         if batch_rows.len() >= BATCH_SIZE {
-            record_count += batch_rows.len();
             write_batch(&mut writer, &schema, &batch_rows)?;
             batch_rows.clear();
         }
-    }
+        Ok(())
+    })
+    .await?;
 
-    // Flush remaining rows
     if !batch_rows.is_empty() {
-        record_count += batch_rows.len();
         write_batch(&mut writer, &schema, &batch_rows)?;
     }
 

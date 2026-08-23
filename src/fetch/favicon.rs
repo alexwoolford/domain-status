@@ -7,10 +7,10 @@
 
 use anyhow::{Error, Result};
 use base64::Engine;
-use futures::StreamExt;
 use std::sync::Arc;
 
 use crate::config::{FAVICON_FETCH_TIMEOUT_SECS, MAX_FAVICON_SIZE};
+use crate::fetch::stream::{stream_bytes_with_limit, OnLimit, StreamBytesError};
 use crate::security::validate_url_safe;
 
 /// Favicon data ready for database insertion.
@@ -116,32 +116,25 @@ async fn fetch_favicon_bytes(
             return Ok(None);
         }
 
-        // Stream with size cap (same pattern as stream_body_with_limit)
-        let mut stream = response.bytes_stream();
-        let mut buf = Vec::with_capacity(max_size.min(16 * 1024));
-
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = match chunk_result {
-                Ok(c) => c,
+        // Stream with size cap; abort (drop favicon) if oversize.
+        let streamed =
+            match stream_bytes_with_limit(response, max_size, OnLimit::Abort, &current_url).await {
+                Ok(s) => s,
+                Err(StreamBytesError::LimitExceeded) => {
+                    log::debug!(
+                        "Favicon exceeds {}KB limit for {} (aborting)",
+                        max_size / 1024,
+                        current_url,
+                    );
+                    return Ok(None);
+                }
                 Err(e) => {
                     log::debug!("Favicon stream error for {current_url}: {e}");
                     return Ok(None);
                 }
             };
 
-            if buf.len() + chunk.len() > max_size {
-                log::debug!(
-                    "Favicon exceeds {}KB limit for {} (aborting at {} bytes)",
-                    max_size / 1024,
-                    current_url,
-                    buf.len() + chunk.len()
-                );
-                return Ok(None);
-            }
-
-            buf.extend_from_slice(&chunk);
-        }
-
+        let buf = streamed.into_bytes();
         if buf.is_empty() {
             return Ok(None);
         }

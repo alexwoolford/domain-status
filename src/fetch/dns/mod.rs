@@ -70,21 +70,9 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::response::ResponseData;
-    use hickory_resolver::config::ResolverOpts;
-    use hickory_resolver::TokioResolver;
+    use crate::initialization::test_resolver;
     use std::collections::HashMap;
     use std::sync::Arc;
-
-    fn create_test_resolver() -> TokioResolver {
-        let mut opts = ResolverOpts::default();
-        opts.timeout = std::time::Duration::from_secs(5);
-        opts.attempts = 1;
-        TokioResolver::builder_tokio()
-            .unwrap()
-            .with_options(opts)
-            .build()
-            .expect("resolver builds with default config")
-    }
 
     fn create_test_response_data() -> ResponseData {
         ResponseData {
@@ -111,7 +99,7 @@ mod tests {
     async fn test_fetch_all_dns_data_partial_failures_merged() {
         // Test that partial failures from both TLS/DNS and additional DNS are merged correctly
         crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let resp_data = create_test_response_data();
 
@@ -139,7 +127,7 @@ mod tests {
     async fn test_fetch_all_dns_data_http_url_handled() {
         // Test that HTTP URLs are handled correctly (no TLS handshake)
         crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let mut resp_data = create_test_response_data();
         resp_data.final_url = "http://example.com".to_string();

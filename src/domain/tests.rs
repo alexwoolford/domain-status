@@ -3,6 +3,26 @@
 use super::*;
 
 #[test]
+fn test_normalize_domain_lowercases_and_strips_www() {
+    assert_eq!(normalize_domain("WWW.Example.COM"), "example.com");
+    assert_eq!(normalize_domain("  example.com  "), "example.com");
+    assert_eq!(normalize_domain("www.example.co.uk"), "example.co.uk");
+    assert_eq!(normalize_domain("example.com"), "example.com");
+}
+
+#[test]
+fn test_root_domain_basic() {
+    assert_eq!(
+        root_domain("www.example.com"),
+        Some("example.com".to_string())
+    );
+    assert_eq!(
+        root_domain("a.b.example.co.uk"),
+        Some("example.co.uk".to_string())
+    );
+}
+
+#[test]
 fn test_extract_domain_basic() {
     assert_eq!(
         extract_domain("https://www.example.com/path").unwrap(),

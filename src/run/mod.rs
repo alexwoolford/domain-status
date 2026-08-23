@@ -156,6 +156,119 @@ fn invoke_progress_callback(
     }
 }
 
+/// Records an early skip (invalid URL / SSRF-unsafe) and notifies progress.
+fn skip_url(
+    resources: &ScanResources,
+    progress_callback: &resources::ProgressCallback,
+    total_lines: usize,
+) {
+    resources
+        .total_urls_attempted
+        .fetch_add(1, Ordering::Relaxed);
+    resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
+    invoke_progress_callback(
+        progress_callback.as_ref(),
+        &resources.successful_urls,
+        &resources.failed_urls,
+        &resources.skipped_urls,
+        total_lines,
+    );
+}
+
+/// Builds [`crate::status_server::StatusState`] from scan resources (Arc field wiring only).
+fn build_status_state(resources: &ScanResources) -> crate::status_server::StatusState {
+    crate::status_server::StatusState {
+        total_urls: Arc::clone(&resources.total_urls_in_file),
+        total_urls_attempted: Arc::clone(&resources.total_urls_attempted),
+        successful_urls: Arc::clone(&resources.successful_urls),
+        failed_urls: Arc::clone(&resources.failed_urls),
+        skipped_urls: Arc::clone(&resources.skipped_urls),
+        start_time: Arc::new(resources.start_time),
+        error_stats: Arc::clone(&resources.shared_ctx.runtime.error_stats),
+        timing_stats: Some(Arc::clone(&resources.shared_ctx.runtime.timing_stats)),
+        request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
+        runtime_metrics: Arc::clone(&resources.shared_ctx.runtime.runtime_metrics),
+        run_id: Some(resources.run_id.clone()),
+        run_start_time_unix_secs: Some({
+            #[allow(clippy::cast_precision_loss)]
+            // Epoch millis fits in f64 mantissa until year 2255
+            {
+                (resources.start_time_epoch as f64) / 1000.0
+            }
+        }),
+        phase: Arc::clone(&resources.phase),
+        throughput_window: Arc::clone(&resources.throughput_window),
+        max_concurrency: Some(resources.config.max_concurrency),
+        semaphore: Some(Arc::clone(&resources.semaphore)),
+    }
+}
+
+/// Drains remaining `JoinSet` tasks until empty or the wall-clock drain deadline.
+///
+/// On timeout: snapshots in-flight URLs, records drain-timeout failures, increments
+/// `failed_urls`, aborts remaining tasks, and cancels the token. Does not change
+/// [`InFlightGuard`] registration/drop semantics.
+async fn drain_join_set(
+    resources: &ScanResources,
+    tasks: &mut JoinSet<()>,
+    cancel: &CancellationToken,
+) {
+    let drain_timeout_secs = resources.config.drain_timeout_secs;
+    let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs);
+    let drain_deadline = tokio::time::Instant::now() + drain_timeout;
+    loop {
+        let remaining = drain_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            // Snapshot the URLs whose tasks are still in flight BEFORE aborting them.
+            // The InFlightGuard::Drop removes URLs on natural completion, so the set
+            // we read here is exactly the set that did NOT finish in time.
+            let abandoned: Vec<String> = resources
+                .in_flight_urls
+                .lock()
+                .map(|set| set.iter().cloned().collect())
+                .unwrap_or_default();
+            let abandoned_count = abandoned.len();
+            if abandoned_count > 0 {
+                log::warn!(
+                    "Drain timeout ({drain_timeout_secs}s) reached, recording {abandoned_count} in-flight task(s) as failures and aborting"
+                );
+                let inserted = record_drain_timeout_failures(
+                    &resources.shared_ctx.pool,
+                    &resources.run_id,
+                    drain_timeout_secs,
+                    &abandoned,
+                )
+                .await;
+                if inserted < abandoned_count {
+                    log::warn!(
+                        "Recorded {inserted}/{abandoned_count} drain-timeout failures (the rest hit DB errors; see preceding log lines)"
+                    );
+                }
+                resources
+                    .failed_urls
+                    .fetch_add(abandoned_count, Ordering::Relaxed);
+            } else {
+                log::info!("Drain timeout ({drain_timeout_secs}s) reached, no remaining tasks");
+            }
+            tasks.abort_all();
+            cancel.cancel();
+            break;
+        }
+        match tokio::time::timeout(remaining, tasks.join_next()).await {
+            Ok(Some(task_result)) => {
+                if let Err(join_error) = task_result {
+                    resources.failed_urls.fetch_add(1, Ordering::Relaxed);
+                    log::warn!("Failed to join task (panicked): {join_error:?}");
+                }
+            }
+            Ok(None) => break,
+            #[allow(clippy::needless_continue)]
+            // Explicit continue clarifies intent: retry after timeout
+            Err(_) => continue, // Deadline check at top of loop handles the abort
+        }
+    }
+}
+
 /// Runs a URL scan with the provided configuration.
 ///
 /// This is the main entry point for the library. It reads URLs from the input file,
@@ -194,7 +307,7 @@ fn invoke_progress_callback(
 /// # }
 /// ```
 #[allow(clippy::cognitive_complexity)] // Multi-phase scan: init, status server, logging, URL loop, drain, finalize
-#[allow(clippy::too_many_lines)] // 6 sequential phases that share state; already factored into init/finalize modules
+#[allow(clippy::too_many_lines)] // Still >100 after helper extraction; loop + select dominate
 pub async fn run_scan(
     config: crate::config::Config,
 ) -> Result<ScanReport, crate::error_handling::RunScanError> {
@@ -205,32 +318,8 @@ pub async fn run_scan(
 
     // Phase 2: Start status server if configured
     let mut status_server = if let Some(port) = resources.config.status_port {
-        let status_state = crate::status_server::StatusState {
-            total_urls: Arc::clone(&resources.total_urls_in_file),
-            total_urls_attempted: Arc::clone(&resources.total_urls_attempted),
-            successful_urls: Arc::clone(&resources.successful_urls),
-            failed_urls: Arc::clone(&resources.failed_urls),
-            skipped_urls: Arc::clone(&resources.skipped_urls),
-            start_time: Arc::new(resources.start_time),
-            error_stats: Arc::clone(&resources.shared_ctx.runtime.error_stats),
-            timing_stats: Some(Arc::clone(&resources.shared_ctx.runtime.timing_stats)),
-            request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
-            runtime_metrics: Arc::clone(&resources.shared_ctx.runtime.runtime_metrics),
-            run_id: Some(resources.run_id.clone()),
-            run_start_time_unix_secs: Some({
-                #[allow(clippy::cast_precision_loss)]
-                // Epoch millis fits in f64 mantissa until year 2255
-                {
-                    (resources.start_time_epoch as f64) / 1000.0
-                }
-            }),
-            phase: Arc::clone(&resources.phase),
-            throughput_window: Arc::clone(&resources.throughput_window),
-            max_concurrency: Some(resources.config.max_concurrency),
-            semaphore: Some(Arc::clone(&resources.semaphore)),
-        };
         Some(
-            crate::status_server::spawn_status_server(port, status_state)
+            crate::status_server::spawn_status_server(port, build_status_state(&resources))
                 .await
                 .map_err(|e| crate::error_handling::RunScanError::Startup(e.into()))?,
         )
@@ -338,17 +427,7 @@ pub async fn run_scan(
                 }
 
                 let Some(url) = validate_and_normalize_url(trimmed) else {
-                    resources
-                        .total_urls_attempted
-                        .fetch_add(1, Ordering::Relaxed);
-                    resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
-                    invoke_progress_callback(
-                        progress_callback.as_ref(),
-                        &resources.successful_urls,
-                        &resources.failed_urls,
-                        &resources.skipped_urls,
-                        total_lines,
-                    );
+                    skip_url(&resources, &progress_callback, total_lines);
                     continue;
                 };
 
@@ -358,17 +437,7 @@ pub async fn run_scan(
                 if !resources.config.allow_localhost_for_tests {
                     if let Err(e) = validate_url_safe(&url) {
                         warn!("Skipping SSRF-unsafe URL: {e}");
-                        resources
-                            .total_urls_attempted
-                            .fetch_add(1, Ordering::Relaxed);
-                        resources.skipped_urls.fetch_add(1, Ordering::Relaxed);
-                        invoke_progress_callback(
-                            progress_callback.as_ref(),
-                            &resources.successful_urls,
-                            &resources.failed_urls,
-                            &resources.skipped_urls,
-                            total_lines,
-                        );
+                        skip_url(&resources, &progress_callback, total_lines);
                         continue;
                     }
                 }
@@ -438,60 +507,7 @@ pub async fn run_scan(
     resources
         .phase
         .set(crate::status_server::ScanPhase::Draining);
-    let drain_timeout_secs = resources.config.drain_timeout_secs;
-    let drain_timeout = std::time::Duration::from_secs(drain_timeout_secs);
-    let drain_deadline = tokio::time::Instant::now() + drain_timeout;
-    loop {
-        let remaining = drain_deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            // Snapshot the URLs whose tasks are still in flight BEFORE aborting them.
-            // The InFlightGuard::Drop removes URLs on natural completion, so the set
-            // we read here is exactly the set that did NOT finish in time.
-            let abandoned: Vec<String> = resources
-                .in_flight_urls
-                .lock()
-                .map(|set| set.iter().cloned().collect())
-                .unwrap_or_default();
-            let abandoned_count = abandoned.len();
-            if abandoned_count > 0 {
-                log::warn!(
-                    "Drain timeout ({drain_timeout_secs}s) reached, recording {abandoned_count} in-flight task(s) as failures and aborting"
-                );
-                let inserted = record_drain_timeout_failures(
-                    &resources.shared_ctx.pool,
-                    &resources.run_id,
-                    drain_timeout_secs,
-                    &abandoned,
-                )
-                .await;
-                if inserted < abandoned_count {
-                    log::warn!(
-                        "Recorded {inserted}/{abandoned_count} drain-timeout failures (the rest hit DB errors; see preceding log lines)"
-                    );
-                }
-                resources
-                    .failed_urls
-                    .fetch_add(abandoned_count, Ordering::Relaxed);
-            } else {
-                log::info!("Drain timeout ({drain_timeout_secs}s) reached, no remaining tasks");
-            }
-            tasks.abort_all();
-            cancel.cancel();
-            break;
-        }
-        match tokio::time::timeout(remaining, tasks.join_next()).await {
-            Ok(Some(task_result)) => {
-                if let Err(join_error) = task_result {
-                    resources.failed_urls.fetch_add(1, Ordering::Relaxed);
-                    log::warn!("Failed to join task (panicked): {join_error:?}");
-                }
-            }
-            Ok(None) => break,
-            #[allow(clippy::needless_continue)]
-            // Explicit continue clarifies intent: retry after timeout
-            Err(_) => continue, // Deadline check at top of loop handles the abort
-        }
-    }
+    drain_join_set(&resources, &mut tasks, &cancel).await;
 
     // Phase 6: Finalize
     let loop_result = ScanLoopResult {

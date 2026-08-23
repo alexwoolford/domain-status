@@ -10,7 +10,6 @@ use anyhow::{Context, Result};
 use clap_complete::Shell;
 use clap_mangen::Man;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,7 +19,7 @@ use clap::parser::ValueSource;
 use clap::{FromArgMatches, Parser};
 use domain_status_cli::ExportFormat as CliExportFormat;
 
-use crate::config::{log_level_filter, FailOn, LogFormat, LogLevel};
+use crate::config::{log_level_filter, FailOn, FileConfig, LogFormat, LogLevel};
 use crate::export::{export_csv, ExportOptions};
 use crate::initialization::{init_crypto_provider, init_logger_to_file, init_logger_with};
 use crate::summary::{format_scan_summary, query_scan_summary, SummaryOptions};
@@ -80,13 +79,14 @@ where
 /// Loads config from optional file and env vars with prefix `DOMAIN_STATUS_`.
 ///
 /// Precedence when merging later: CLI > env > file > defaults.
-/// Returns `Ok(None)` when no config file is requested and no default file exists.
+/// Returns `Ok(None)` when no config file is requested and no default file exists
+/// and env contributes nothing useful — still returns `Some` with an empty
+/// [`FileConfig`] when the builder succeeds (env-only overlays).
 ///
 /// # Errors
-/// Fails when a requested config file is missing or invalid.
-fn load_file_env_config(
-    explicit_config_path: Option<&Path>,
-) -> Result<Option<HashMap<String, String>>> {
+/// Fails when a requested config file is missing or invalid, or when file/env
+/// values cannot be deserialized into [`FileConfig`] (invalid enums/bools).
+fn load_file_env_config(explicit_config_path: Option<&Path>) -> Result<Option<FileConfig>> {
     // CLI `--config` wins over DOMAIN_STATUS_CONFIG_FILE (documented precedence).
     let config_name = explicit_config_path.map(Path::to_path_buf).or_else(|| {
         std::env::var("DOMAIN_STATUS_CONFIG_FILE")
@@ -109,8 +109,8 @@ fn load_file_env_config(
     builder = builder.add_source(config::Environment::with_prefix("DOMAIN_STATUS"));
 
     match builder.build() {
-        Ok(settings) => match settings.try_deserialize::<HashMap<String, String>>() {
-            Ok(map) => Ok(Some(map)),
+        Ok(settings) => match settings.try_deserialize::<FileConfig>() {
+            Ok(file_config) => Ok(Some(file_config)),
             Err(e) => Err(anyhow::anyhow!("Invalid configuration: {e}")),
         },
         Err(e) => Err(anyhow::anyhow!("Failed to load configuration: {e}")),
@@ -171,12 +171,12 @@ fn build_config_from_scan_command(
     scan_cmd: ScanCommand,
     scan_arg_matches: Option<&clap::ArgMatches>,
 ) -> Result<Config> {
-    let file_env_map = load_file_env_config(scan_cmd.config.as_deref())?;
+    let file_env = load_file_env_config(scan_cmd.config.as_deref())?;
     let cli_config = config_from_scan_command(scan_cmd);
     let cli_explicit = scan_arg_matches.map(get_explicit_config_keys);
     let explicit_slice = cli_explicit.as_deref();
     Ok(crate::config::merge_file_env_and_cli(
-        file_env_map.as_ref(),
+        file_env.as_ref(),
         cli_config,
         explicit_slice,
     ))

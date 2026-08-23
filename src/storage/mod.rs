@@ -16,7 +16,7 @@ pub mod pool;
 pub mod record;
 
 #[cfg(test)]
-mod test_helpers;
+pub(crate) mod test_helpers;
 
 // Re-export commonly used items
 pub use insert::{

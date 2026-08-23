@@ -6,6 +6,7 @@
 //! Key functions:
 //! - `extract_domain()` - Extracts the registrable domain from a URL
 //! - `normalize_domain()` - Normalizes domain names (lowercase, removes www)
+//! - `root_domain()` - Registrable domain (eTLD+1) from a bare hostname/FQDN
 //!
 //! ## Strict hostname validation
 //!
@@ -60,6 +61,47 @@ pub fn extract_domain(url: &str) -> Result<String> {
     psl::domain_str(host)
         .ok_or_else(|| anyhow::anyhow!("Failed to extract domain from URL: {url}"))
         .map(std::string::ToString::to_string)
+}
+
+/// Normalizes a domain name: ASCII-lowercase and strip a leading `www.`.
+///
+/// Does not apply PSL rules — use [`extract_domain`] or [`root_domain`] for
+/// registrable-domain extraction.
+///
+/// Kept as a shared helper even when no production call site needs it yet;
+/// unit tests cover the documented contract.
+#[allow(dead_code)]
+pub fn normalize_domain(domain: &str) -> String {
+    let lower = domain.trim().to_ascii_lowercase();
+    lower
+        .strip_prefix("www.")
+        .unwrap_or(lower.as_str())
+        .to_string()
+}
+
+/// Returns the PSL registrable domain (eTLD+1) for a given FQDN/hostname.
+///
+/// Uses `psl::domain_str()` which correctly implements the Public Suffix List
+/// algorithm. For most domains this gives the expected organizational domain
+/// (e.g., `www.facebook.com` -> `facebook.com`).
+///
+/// For wildcard PSL entries like `*.cloudfront.net`, the registrable domain
+/// equals the full FQDN (e.g., `d123.cloudfront.net`) because each subdomain
+/// under a wildcard suffix is independently registered.
+///
+/// Bare public suffixes (e.g. `googleapis.com`) have no registrable domain in
+/// PSL terms; we fall back to the FQDN itself when `psl::suffix_str` recognizes
+/// it, so callers still get a stable organizational key.
+pub fn root_domain(fqdn: &str) -> Option<String> {
+    psl::domain_str(fqdn)
+        .map(std::string::ToString::to_string)
+        .or_else(|| {
+            if psl::suffix_str(fqdn).is_some() {
+                Some(fqdn.to_string())
+            } else {
+                None
+            }
+        })
 }
 
 #[cfg(test)]

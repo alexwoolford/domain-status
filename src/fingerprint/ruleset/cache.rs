@@ -8,11 +8,6 @@ use tokio::fs;
 
 use crate::fingerprint::models::{FingerprintMetadata, FingerprintRuleset};
 
-/// Cache duration: 7 days
-/// Based on commit history, HTTP Archive updates technologies roughly weekly
-const CACHE_DURATION: std::time::Duration =
-    std::time::Duration::from_secs(crate::config::FINGERPRINT_CACHE_TTL_SECS);
-
 /// Loads ruleset from cache if it exists and is fresh
 ///
 /// `cache_key` is a hash used for the cache directory name
@@ -51,13 +46,15 @@ pub(crate) async fn load_from_cache(
         ));
     }
 
-    // Check if cache is fresh
-    if let Ok(age) = metadata.last_updated.elapsed() {
-        if age > CACHE_DURATION {
-            return Err(anyhow::anyhow!(
-                "Cache expired (age: {age:?}, max: {CACHE_DURATION:?}) for sources: {expected_sources}"
-            ));
-        }
+    // Check if cache is fresh (future timestamps stay fresh)
+    if crate::utils::cache::cache_ttl_exceeded(
+        metadata.last_updated,
+        crate::config::FINGERPRINT_CACHE_TTL_SECS,
+        false,
+    ) {
+        return Err(anyhow::anyhow!(
+            "Cache expired for sources: {expected_sources}"
+        ));
     }
 
     // Load technologies
@@ -117,15 +114,15 @@ pub(crate) async fn save_to_cache(
 
     // Save metadata
     let metadata_json = serde_json::to_string_pretty(&ruleset.metadata)?;
-    fs::write(&metadata_path, metadata_json).await?;
+    crate::utils::cache::write_atomic(&metadata_path, metadata_json.as_bytes()).await?;
 
     // Save technologies
     let technologies_json = serde_json::to_string_pretty(&ruleset.technologies)?;
-    fs::write(&technologies_path, technologies_json).await?;
+    crate::utils::cache::write_atomic(&technologies_path, technologies_json.as_bytes()).await?;
 
     // Save categories
     let categories_json = serde_json::to_string_pretty(&ruleset.categories)?;
-    fs::write(&categories_path, categories_json).await?;
+    crate::utils::cache::write_atomic(&categories_path, categories_json.as_bytes()).await?;
 
     // Drop superseded hash directories so the fingerprints cache does not grow forever
     // when sources / schema keys change. The just-written `cache_key` is retained.

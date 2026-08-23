@@ -6,10 +6,103 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::Config;
+use crate::config::{Config, TCP_CONNECT_TIMEOUT_SECS};
 use crate::security::safe_resolver::SafeResolver;
+use crate::security::ssrf_safe_redirect_policy;
+use anyhow::Context;
 use hickory_resolver::TokioResolver;
 use reqwest::ClientBuilder;
+
+/// Redirect policy for SSRF-safe clients.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RedirectMode {
+    /// Do not follow redirects (manual hop validation).
+    None,
+    /// Follow redirects with per-hop SSRF checks.
+    SsrfSafe,
+}
+
+/// Options for building an SSRF-safe `reqwest` client.
+#[derive(Debug, Clone)]
+pub(crate) struct SsrfClientOptions {
+    pub timeout: Duration,
+    pub connect_timeout: Duration,
+    pub user_agent: Option<String>,
+    pub redirect: RedirectMode,
+    pub pool_idle_timeout: Option<Duration>,
+    pub pool_max_idle_per_host: Option<usize>,
+    pub tcp_nodelay: bool,
+}
+
+impl SsrfClientOptions {
+    /// Defaults suited to one-off asset downloads (`GeoIP`, ruleset, UA).
+    #[must_use]
+    pub(crate) fn download(timeout: Duration) -> Self {
+        Self {
+            timeout,
+            connect_timeout: Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS),
+            user_agent: None,
+            redirect: RedirectMode::SsrfSafe,
+            pool_idle_timeout: None,
+            pool_max_idle_per_host: None,
+            tcp_nodelay: false,
+        }
+    }
+
+    /// Defaults for the shared scan clients (page fetch / redirect resolution).
+    #[must_use]
+    pub(crate) fn scan(config: &Config) -> Self {
+        Self {
+            timeout: Duration::from_secs(config.timeout_seconds),
+            connect_timeout: Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS),
+            user_agent: Some(config.user_agent.clone()),
+            redirect: RedirectMode::None,
+            pool_idle_timeout: Some(Duration::from_secs(30)),
+            pool_max_idle_per_host: Some(10),
+            tcp_nodelay: true,
+        }
+    }
+}
+
+/// Builds an SSRF-safe HTTP client using the given resolver and options.
+pub(crate) fn build_ssrf_client(
+    resolver: Arc<TokioResolver>,
+    opts: SsrfClientOptions,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let redirect = match opts.redirect {
+        RedirectMode::None => reqwest::redirect::Policy::none(),
+        RedirectMode::SsrfSafe => ssrf_safe_redirect_policy(),
+    };
+
+    let mut builder = ClientBuilder::new()
+        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
+        .redirect(redirect)
+        .timeout(opts.timeout)
+        .connect_timeout(opts.connect_timeout);
+
+    if let Some(ua) = opts.user_agent {
+        builder = builder.user_agent(ua);
+    }
+    if let Some(idle) = opts.pool_idle_timeout {
+        builder = builder.pool_idle_timeout(idle);
+    }
+    if let Some(max_idle) = opts.pool_max_idle_per_host {
+        builder = builder.pool_max_idle_per_host(max_idle);
+    }
+    if opts.tcp_nodelay {
+        builder = builder.tcp_nodelay(true);
+    }
+
+    builder.build()
+}
+
+/// Builds a download client with a fresh resolver (`GeoIP` / ruleset / UA fetches).
+pub(crate) fn build_download_client(timeout: Duration) -> Result<reqwest::Client, anyhow::Error> {
+    let resolver = crate::initialization::init_resolver()
+        .context("Failed to initialize DNS resolver for download")?;
+    build_ssrf_client(resolver, SsrfClientOptions::download(timeout))
+        .context("Failed to build SSRF-safe download client")
+}
 
 /// Initializes the HTTP client with default settings.
 ///
@@ -30,111 +123,34 @@ use reqwest::ClientBuilder;
 /// validation at each hop. If this client followed redirects automatically,
 /// a malicious server could redirect to internal IPs after validation.
 ///
-/// # Arguments
-///
-/// * `config` - Configuration containing user-agent and timeout settings
-///
-/// # Returns
-///
-/// A configured HTTP client ready for making requests.
-///
 /// # Errors
 ///
 /// Returns a `reqwest::Error` if client creation fails.
-///
-/// # Examples
-///
-/// ```ignore
-/// // `initialization` is crate-private; this example is illustrative only.
-/// use domain_status::{initialization::{init_client, init_resolver}, Config};
-///
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let resolver = init_resolver()?;
-/// let client = init_client(&Config::default(), resolver).await?;
-/// let response = client.get("https://example.com").send().await?;
-/// println!("{}", response.status());
-/// # Ok(())
-/// # }
-/// ```
 pub async fn init_client(
     config: &Config,
     resolver: Arc<TokioResolver>,
 ) -> Result<Arc<reqwest::Client>, reqwest::Error> {
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-
     // SECURITY: SafeResolver validates that all DNS-resolved IPs are public before
-    // reqwest opens a TCP socket, closing the DNS-rebinding TOCTOU gap. It uses the
-    // same hickory resolver (and its timeouts) as the rest of the scan.
-    let client = ClientBuilder::new()
-        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(config.timeout_seconds))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-        .user_agent(config.user_agent.clone())
-        .pool_idle_timeout(Duration::from_secs(30)) // Faster cleanup for scanning workload (default 90s)
-        .pool_max_idle_per_host(10) // Prevent FD exhaustion when scanning many URLs on the same host
-        .tcp_nodelay(true) // Reduce latency for small request/response pairs
-        .build()?;
+    // reqwest opens a TCP socket, closing the DNS-rebinding TOCTOU gap.
+    let client = build_ssrf_client(resolver, SsrfClientOptions::scan(config))?;
     Ok(Arc::new(client))
 }
 
 /// Initializes a shared HTTP client for redirect resolution.
 ///
-/// Creates a `reqwest::Client` for the redirect-resolution stage.
-///
-/// The primary fetch client and redirect client currently share the same low-level
-/// configuration (including strict TLS verification; see `init_client`), but they are
-/// exposed as separate constructors so call sites can express intent clearly.
-///
-/// Redirects remain disabled here as well; redirect traversal is performed manually
+/// The primary fetch client and redirect client share the same low-level
+/// configuration; separate constructors keep call-site intent clear.
+/// Redirects remain disabled; redirect traversal is performed manually
 /// so the scanner can inspect and validate each hop.
-///
-/// # Arguments
-///
-/// * `config` - Configuration containing user-agent and timeout settings
-///
-/// # Returns
-///
-/// A configured HTTP client with redirects disabled.
 ///
 /// # Errors
 ///
 /// Returns a `reqwest::Error` if client creation fails.
-///
-/// # Examples
-///
-/// ```ignore
-/// // `initialization` is crate-private; this example is illustrative only.
-/// use domain_status::{initialization::{init_redirect_client, init_resolver}, Config};
-///
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let resolver = init_resolver()?;
-/// let client = init_redirect_client(&Config::default(), resolver).await?;
-/// let response = client.get("https://example.com").send().await?;
-/// println!("{}", response.status());
-/// # Ok(())
-/// # }
-/// ```
 pub async fn init_redirect_client(
     config: &Config,
     resolver: Arc<TokioResolver>,
 ) -> Result<Arc<reqwest::Client>, reqwest::Error> {
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-
-    // SECURITY: SafeResolver validates resolved IPs are public, preventing
-    // DNS-rebinding attacks during redirect resolution. Uses same resolver (and timeouts).
-    let client = ClientBuilder::new()
-        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(config.timeout_seconds))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-        .user_agent(config.user_agent.clone())
-        .pool_idle_timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(10)
-        .tcp_nodelay(true)
-        .build()?;
+    let client = build_ssrf_client(resolver, SsrfClientOptions::scan(config))?;
     Ok(Arc::new(client))
 }
 
@@ -142,14 +158,9 @@ pub async fn init_redirect_client(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::initialization::init_resolver;
-    use std::path::PathBuf;
-
     use crate::config::FailOn;
-
-    fn test_resolver() -> Arc<TokioResolver> {
-        init_resolver().expect("test resolver")
-    }
+    use crate::initialization::test_resolver;
+    use std::path::PathBuf;
 
     fn create_test_config() -> Config {
         // Create Config manually with required fields

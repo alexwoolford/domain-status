@@ -5,8 +5,20 @@
 
 use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 use domain_status::run_migrations;
+
+/// Temp directory + migrated on-disk `SQLite` pool for export integration tests.
+///
+/// Returns `(temp_dir, db_path, pool)`. Build output paths under `temp_dir.path()`.
+#[allow(dead_code)] // used via `mod helpers` in export_* tests; unused in the auto-discovered helpers binary
+pub async fn setup_export_fixture() -> (TempDir, PathBuf, SqlitePool) {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let db_path = temp_dir.path().join("test_export.db");
+    let pool = create_test_pool_with_path(&db_path).await;
+    (temp_dir, db_path, pool)
+}
 
 /// Creates a test database pool from a file path.
 /// Useful for tests that need persistence or specific database files.

@@ -1,26 +1,11 @@
 /// DNS module tests.
 use super::*;
-use hickory_resolver::config::ResolverOpts;
-use std::time::Duration;
-
-/// Creates a test DNS resolver with short timeouts for faster test execution.
-fn create_test_resolver() -> hickory_resolver::TokioResolver {
-    let mut opts = ResolverOpts::default();
-    opts.timeout = Duration::from_secs(5);
-    opts.attempts = 1; // Single attempt for faster failures in tests
-    opts.ndots = 0;
-
-    hickory_resolver::TokioResolver::builder_tokio()
-        .unwrap()
-        .with_options(opts)
-        .build()
-        .expect("resolver builds with default config")
-}
+use crate::initialization::test_resolver;
 
 #[tokio::test]
 #[ignore = "requires network DNS"]
 async fn test_lookup_ns_records_success() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let nameservers = lookup_ns_records("example.com", &resolver)
         .await
         .expect("example.com NS lookup should succeed with network");
@@ -36,7 +21,7 @@ async fn test_lookup_ns_records_success() {
 
 #[tokio::test]
 async fn test_lookup_ns_records_no_records_found() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let result = lookup_ns_records("definitely-does-not-exist-12345.invalid", &resolver).await;
     match result {
         Ok(nameservers) => {
@@ -59,7 +44,7 @@ async fn test_lookup_ns_records_no_records_found() {
 #[tokio::test]
 #[ignore = "requires network DNS"]
 async fn test_lookup_txt_records_success() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     // Ok is the contract; record presence varies by zone.
     lookup_txt_records("example.com", &resolver)
         .await
@@ -68,7 +53,7 @@ async fn test_lookup_txt_records_success() {
 
 #[tokio::test]
 async fn test_lookup_txt_records_no_records_found() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let result = lookup_txt_records("definitely-does-not-exist-12345.invalid", &resolver).await;
     match result {
         Ok(txt_records) => {
@@ -91,7 +76,7 @@ async fn test_lookup_txt_records_no_records_found() {
 #[tokio::test]
 #[ignore = "requires network DNS"]
 async fn test_lookup_mx_records_success() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let mx_records = lookup_mx_records("example.com", &resolver)
         .await
         .expect("example.com MX lookup should succeed with network");
@@ -109,7 +94,7 @@ async fn test_lookup_mx_records_success() {
 
 #[tokio::test]
 async fn test_lookup_mx_records_no_records_found() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let result = lookup_mx_records("definitely-does-not-exist-12345.invalid", &resolver).await;
     match result {
         Ok(mx_records) => {
@@ -131,7 +116,7 @@ async fn test_lookup_mx_records_no_records_found() {
 
 #[tokio::test]
 async fn test_error_message_parsing_no_records_found() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let result = lookup_ns_records("test.invalid-tld-xyz", &resolver).await;
     match result {
         Ok(nameservers) => {
@@ -150,7 +135,7 @@ async fn test_error_message_parsing_no_records_found() {
 
 #[tokio::test]
 async fn test_all_dns_functions_handle_nonexistent_domains() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let test_domain = "definitely-does-not-exist-12345.invalid";
 
     let ns_result = lookup_ns_records(test_domain, &resolver).await;
@@ -194,7 +179,7 @@ async fn test_all_dns_functions_handle_nonexistent_domains() {
 #[tokio::test]
 #[ignore = "requires network DNS"]
 async fn test_dns_functions_with_valid_well_known_domains() {
-    let resolver = create_test_resolver();
+    let resolver = test_resolver();
     let test_domains = ["example.com", "iana.org"];
 
     for domain in test_domains {
@@ -268,6 +253,5 @@ fn test_extract_dmarc_record_empty() {
 fn test_extract_dmarc_record_case_insensitive() {
     let txt_records = vec!["v=dmarc1; p=none".to_string()];
     let dmarc = extract_dmarc_record(&txt_records);
-    // Implementation is case-sensitive for "v=DMARC1"
-    assert_eq!(dmarc, None);
+    assert_eq!(dmarc, Some("v=dmarc1; p=none".to_string()));
 }

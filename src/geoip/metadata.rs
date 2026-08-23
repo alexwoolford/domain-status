@@ -9,6 +9,9 @@ use std::time::SystemTime;
 
 use super::types::GeoIpMetadata;
 
+/// Re-export shared atomic writer used by `GeoIP` cache + metadata saves.
+pub(crate) use crate::utils::cache::write_atomic;
+
 /// Extracts metadata from a `GeoIP` database
 pub(crate) fn extract_metadata<T: AsRef<[u8]>>(reader: &Reader<T>, source: &str) -> GeoIpMetadata {
     // Try to get build epoch from database metadata
@@ -27,28 +30,6 @@ pub(crate) async fn load_metadata(metadata_file: &Path) -> Result<GeoIpMetadata>
     let content = tokio::fs::read_to_string(metadata_file).await?;
     let metadata: GeoIpMetadata = serde_json::from_str(&content)?;
     Ok(metadata)
-}
-
-pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    tokio::fs::create_dir_all(parent).await?;
-
-    let file_name = path.file_name().map_or_else(
-        || "geoip.tmp".to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let temp_path = parent.join(format!(".{file_name}.tmp"));
-
-    tokio::fs::write(&temp_path, bytes).await?;
-    if let Err(error) = tokio::fs::rename(&temp_path, path).await {
-        if path.exists() {
-            tokio::fs::remove_file(path).await?;
-            tokio::fs::rename(&temp_path, path).await?;
-        } else {
-            return Err(error.into());
-        }
-    }
-    Ok(())
 }
 
 /// Best-effort removal of orphaned atomic-write staging files (`.{name}.tmp`).

@@ -65,6 +65,15 @@ pub fn init_resolver() -> Result<Arc<TokioResolver>, InitializationError> {
     Ok(Arc::new(resolver))
 }
 
+/// Shared DNS resolver for unit tests (same options as [`init_resolver`]).
+///
+/// Prefer this over locally constructed `TokioResolver` builders so timeout /
+/// attempts / `ndots` stay consistent with production init.
+#[cfg(test)]
+pub(crate) fn test_resolver() -> Arc<TokioResolver> {
+    init_resolver().expect("test resolver")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +100,11 @@ mod tests {
         let resolver2 = init_resolver().unwrap();
         // Different instances should be created
         assert!(!Arc::ptr_eq(&resolver1, &resolver2));
+    }
+
+    #[test]
+    fn test_resolver_helper_matches_init() {
+        let resolver = test_resolver();
+        assert_eq!(Arc::strong_count(&resolver), 1);
     }
 }

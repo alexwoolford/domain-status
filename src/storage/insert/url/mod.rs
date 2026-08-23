@@ -512,14 +512,7 @@ async fn insert_url_record_impl(
     let url_status_id = match url_status_id_result {
         Ok(id) => id,
         Err(e) => {
-            // Main insert failed - explicitly rollback transaction
-            // Note: We ignore rollback errors since the transaction will be rolled back
-            // by Drop anyway, but being explicit makes the intent clear
-            if let Err(rollback_err) = tx.rollback().await {
-                log::warn!(
-                    "Failed to rollback transaction after main insert error (this is non-fatal): {rollback_err}"
-                );
-            }
+            // Transaction rolls back on Drop when not committed.
             return Err(e);
         }
     };

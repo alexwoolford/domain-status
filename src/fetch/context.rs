@@ -130,17 +130,7 @@ impl ProcessingContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_resolver::config::ResolverOpts;
-
-    fn create_test_resolver() -> Arc<TokioResolver> {
-        Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build()
-                .expect("resolver builds with default config"),
-        )
-    }
+    use crate::initialization::test_resolver;
 
     fn empty_ruleset() -> Arc<FingerprintRuleset> {
         Arc::new(FingerprintRuleset::empty_for_tests())
@@ -159,7 +149,7 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let run_id = Some("test-run-123".to_string());
         let enable_whois = true;
@@ -223,7 +213,7 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let run_id = None;
         let enable_whois = false;

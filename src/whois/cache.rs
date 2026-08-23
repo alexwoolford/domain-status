@@ -97,7 +97,7 @@ impl<C: Clock> WhoisCacheStore<C> {
             .now()
             .duration_since(entry.cached_at)
             .unwrap_or_default();
-        if age.as_secs() > CACHE_TTL_SECS {
+        if crate::utils::cache::duration_exceeds_ttl(age, CACHE_TTL_SECS) {
             if let Err(e) = tokio::fs::remove_file(&cache_file).await {
                 log::debug!(
                     "Failed to remove expired WHOIS cache file {}: {}",
@@ -130,7 +130,7 @@ impl<C: Clock> WhoisCacheStore<C> {
 
         let content =
             serde_json::to_string_pretty(&entry).context("Failed to serialize cache entry")?;
-        tokio::fs::write(&cache_file, content)
+        crate::utils::cache::write_atomic(&cache_file, content.as_bytes())
             .await
             .context("Failed to write cache file")?;
 

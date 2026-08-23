@@ -8,18 +8,15 @@ use domain_status::export::{export_jsonl, ExportFormat, ExportOptions};
 #[allow(dead_code)]
 mod helpers;
 
-use helpers::{create_test_pool_with_path, create_test_url_status};
+use helpers::{create_test_url_status, setup_export_fixture};
 
 /// Contract: `body_truncated` is on `url_status` (see migration
 /// `0009_secrets_scan_completeness.sql`) and must be surfaced as a top-level boolean
 /// field in every exported JSONL object, not silently dropped.
 #[tokio::test]
 async fn test_export_jsonl_body_truncated_field_present() {
-    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.jsonl");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     let url_id = create_test_url_status(
         &pool,
         "truncated.com",
@@ -67,11 +64,8 @@ async fn test_export_jsonl_body_truncated_field_present() {
 /// was never truncated, mirroring the CSV export's `body_truncated` behavior.
 #[tokio::test]
 async fn test_export_jsonl_body_truncated_false_by_default() {
-    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
-    let db_path = temp_dir.path().join("test_export.db");
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
     let output_path = temp_dir.path().join("output.jsonl");
-
-    let pool = create_test_pool_with_path(&db_path).await;
     create_test_url_status(
         &pool,
         "nottruncated.com",

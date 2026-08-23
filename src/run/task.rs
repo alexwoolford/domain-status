@@ -234,9 +234,8 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
+    use crate::initialization::test_resolver;
     use crate::utils::TimingStats;
-    use hickory_resolver::config::ResolverOpts;
-    use hickory_resolver::TokioResolver;
     use std::sync::atomic::AtomicUsize;
 
     /// Builds a minimal `ProcessingContext` with migrations so `record_url_failure` can succeed.
@@ -264,17 +263,7 @@ mod tests {
                 .expect("test redirect client"),
         );
         let ctx = ProcessingContext::new(
-            NetworkContext::new(
-                client,
-                redirect_client,
-                Arc::new(
-                    TokioResolver::builder_tokio()
-                        .unwrap()
-                        .with_options(ResolverOpts::default())
-                        .build()
-                        .expect("resolver builds with default config"),
-                ),
-            ),
+            NetworkContext::new(client, redirect_client, test_resolver()),
             pool,
             RuntimeContext::new(
                 Arc::new(ProcessingStats::new()),
