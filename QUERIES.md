@@ -37,8 +37,7 @@ SELECT
     us.http_status,
     COUNT(urc.id) as redirect_count
 FROM url_status us
-LEFT JOIN url_redirect_chain urc ON us.id = urc.url_status_id
-WHERE urc.id IS NOT NULL
+JOIN url_redirect_chain urc ON us.id = urc.url_status_id
 GROUP BY us.id
 ORDER BY redirect_count DESC;
 ```
@@ -69,6 +68,7 @@ SELECT
     ut.technology_category
 FROM url_status us
 JOIN url_technologies ut ON us.id = ut.url_status_id
+WHERE ut.is_implied = 0
 ORDER BY us.final_domain, ut.technology_category, ut.technology_name;
 ```
 
@@ -81,6 +81,7 @@ SELECT
     COUNT(DISTINCT us.final_domain) as domain_count
 FROM url_technologies ut
 JOIN url_status us ON ut.url_status_id = us.id
+WHERE ut.is_implied = 0
 GROUP BY ut.technology_category
 ORDER BY technology_count DESC;
 ```
@@ -95,6 +96,7 @@ SELECT DISTINCT
 FROM url_status us
 JOIN url_technologies ut ON us.id = ut.url_status_id
 WHERE ut.technology_name = 'WordPress'  -- Replace with your technology
+  AND ut.is_implied = 0
 ORDER BY us.final_domain;
 ```
 
@@ -334,6 +336,7 @@ SELECT DISTINCT
 FROM url_technologies ut2
 JOIN url_status us2 ON ut2.url_status_id = us2.id
 WHERE us2.run_id = (SELECT run_id FROM runs ORDER BY start_time_ms DESC LIMIT 1)
+  AND ut2.is_implied = 0
   AND NOT EXISTS (
     SELECT 1
     FROM url_technologies ut1
@@ -341,6 +344,7 @@ WHERE us2.run_id = (SELECT run_id FROM runs ORDER BY start_time_ms DESC LIMIT 1)
     WHERE us1.run_id = (SELECT run_id FROM runs ORDER BY start_time_ms DESC LIMIT 1 OFFSET 1)
       AND ut1.technology_name = ut2.technology_name
       AND us1.final_domain = us2.final_domain
+      AND ut1.is_implied = 0
   )
 ORDER BY us2.final_domain, ut2.technology_category;
 ```
@@ -517,10 +521,10 @@ ORDER BY us.initial_domain;
 SELECT
     us.final_domain,
     COUNT(DISTINCT us.id) as url_count,
-    us.http_status,
-    ROUND(us.response_time_seconds, 3) as response_time,
-    COUNT(DISTINCT ut.technology_name) as technology_count,
-    GROUP_CONCAT(DISTINCT ut.technology_name) as technologies
+    MIN(us.http_status) as min_http_status,
+    ROUND(AVG(us.response_time_seconds), 3) as avg_response_time,
+    COUNT(DISTINCT CASE WHEN ut.is_implied = 0 THEN ut.technology_name END) as technology_count,
+    GROUP_CONCAT(DISTINCT CASE WHEN ut.is_implied = 0 THEN ut.technology_name END) as technologies
 FROM url_status us
 LEFT JOIN url_technologies ut ON us.id = ut.url_status_id
 GROUP BY us.final_domain
@@ -587,28 +591,94 @@ GROUP BY jc.algorithm, jc.issuer
 ORDER BY token_count DESC;
 ```
 
-## Query validation (MCP-tested)
 
-Queries were run against a SQLite DB via the SQLite MCP. Failures are due to **schema evolution**: the test DB was on an older schema; every missing table/column **does exist** in the migrations (see below).
+## Observation enrichments (migration 0015)
 
-| #   | Status  | Notes |
-|-----|--------|--------|
-| 1–3 | OK     | Return rows. |
-| 4   | **FAIL** | `no such column: urc.http_status` — column added in **0006_osint_signals.sql** (`ALTER TABLE url_redirect_chain ADD COLUMN http_status INTEGER`). |
-| 5–13 | OK    | Return rows (or empty). Query 11 uses placeholder `example.com`; replace with a domain you have. |
-| 14  | **FAIL** | `no such table: url_cname_records` — table created in **0006_osint_signals.sql**. |
-| 15  | **FAIL** | `no such table: url_ipv6_addresses` — table created in **0006_osint_signals.sql**. |
-| 16  | **FAIL** | `no such table: url_caa_records` — table created in **0006_osint_signals.sql**. |
-| 17  | **FAIL** | `no such column: body_sha256` — added in **0006_osint_signals.sql** on `url_status`. |
-| 18  | **FAIL** | `no such column: cert_fingerprint_sha256` — added in **0006_osint_signals.sql** on `url_status`. |
-| 19  | **FAIL** | `no such column: http_version` — added in **0006_osint_signals.sql** on `url_status`. |
-| 20–21 | OK   | Return rows or empty. |
-| 22  | **FAIL** | `no such column: skipped_urls` — added in **0004_add_skipped_urls_to_runs.sql** on `runs`. |
-| 23–37 | OK   | Return rows or empty. |
-| 38  | **FAIL** | `no such table: url_jwt_claims` — table created in **0008_jwt_claims.sql**. |
-| 39  | **FAIL** | `no such table: url_jwt_claims` — same as 38. |
+### 40. Domains by CDN provider
 
-**Summary:** All failures are from running against a DB that has not had the full migration set applied. The queries are correct for the current schema. Apply migrations through `0014_drop_unpopulated_columns.sql` (full set `0001`–`0014`) and all 39 queries should run.
+```sql
+SELECT
+    cdn_provider,
+    COUNT(*) as domain_count
+FROM url_status
+WHERE cdn_provider IS NOT NULL
+GROUP BY cdn_provider
+ORDER BY domain_count DESC;
+```
+
+### 41. Missing HSTS (no Strict-Transport-Security header)
+
+```sql
+SELECT s.final_domain, s.final_url
+FROM url_status s
+WHERE NOT EXISTS (
+    SELECT 1 FROM url_security_headers h
+    WHERE h.url_status_id = s.id
+      AND h.header_name = 'Strict-Transport-Security'
+)
+ORDER BY s.final_domain;
+```
+
+### 42. Parsed HSTS policy columns
+
+```sql
+SELECT
+    final_domain,
+    hsts_max_age,
+    hsts_include_subdomains,
+    hsts_preload
+FROM url_status
+WHERE hsts_max_age IS NOT NULL
+ORDER BY hsts_max_age DESC;
+```
+
+### 43. Email auth TXT convenience columns (MTA-STS / TLS-RPT / BIMI)
+
+```sql
+SELECT
+    final_domain,
+    mta_sts_record,
+    tls_rpt_record,
+    bimi_record
+FROM url_status
+WHERE mta_sts_record IS NOT NULL
+   OR tls_rpt_record IS NOT NULL
+   OR bimi_record IS NOT NULL
+ORDER BY final_domain;
+```
+
+### 44. security.txt contacts and policy
+
+```sql
+SELECT
+    s.final_domain,
+    t.source_url,
+    t.http_status,
+    t.contacts,
+    t.expires,
+    t.policy,
+    t.hiring
+FROM url_status s
+JOIN url_security_txt t ON t.url_status_id = s.id
+ORDER BY s.final_domain;
+```
+
+### 45. robots.txt Disallow directives
+
+```sql
+SELECT
+    s.final_domain,
+    d.directive,
+    d.value
+FROM url_status s
+JOIN url_robots_directives d ON d.url_status_id = s.id
+WHERE d.directive = 'disallow'
+ORDER BY s.final_domain, d.value;
+```
+
+## Query validation
+
+SQL cookbook fences in this file, `DATABASE.md`, and `README.md` are executed against a freshly migrated empty SQLite database in CI (`tests/docs_sql_smoke.rs`). That checks **syntax and schema alignment** (empty result sets are fine). Apply the full migration set (`0001`–`0015`) before running these queries on a real scan DB.
 
 ## Tips
 

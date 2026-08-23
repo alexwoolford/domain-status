@@ -101,4 +101,6 @@ sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status;"
 ./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
 ```
 
-Schema reference: [DATABASE.md](../DATABASE.md) and `migrations/` (`0001`–`0013`).
+Schema reference: [DATABASE.md](../DATABASE.md) and `migrations/` (`0001`–`0015`).
+
+Cookbook SQL in `QUERIES.md` / `DATABASE.md` / `README.md` is regression-checked by `tests/docs_sql_smoke.rs` (syntax + schema against an empty migrated DB).

@@ -73,7 +73,9 @@ overrides live in
 
 ### MaxMind GeoLite2
 
-GeoIP enrichment is optional. When enabled via `MAXMIND_LICENSE_KEY` or
-`--geoip`, the scanner may download MaxMind GeoLite2 data subject to the
+GeoIP enrichment is optional. GeoLite2 is MaxMind’s free tier; a free account
+and license key are still required to download it (there is no unlicensed
+fallback). When enabled via `MAXMIND_LICENSE_KEY` or `--geoip`, the scanner may
+download MaxMind GeoLite2 data subject to the
 [MaxMind GeoLite2 EULA](https://www.maxmind.com/en/geolite2/eula). See
 [ADVANCED.md](ADVANCED.md).

@@ -46,13 +46,15 @@ domain_status export --format parquet --output recon.parquet
 
 CSV: `domain_status export --format csv`.
 
-### Offline / air-gapped fingerprints
+### Fingerprint rules without GitHub
 
-Default scans try to refresh Wappalyzer-compatible rules from GitHub (set `GITHUB_TOKEN` to raise rate limits). When remotes fail, a **bundled minimal** ruleset is used. For fully offline runs, pass a local rules path:
+Default scans try to refresh Wappalyzer-compatible rules from GitHub (set `GITHUB_TOKEN` to raise rate limits). When remotes fail, a **bundled minimal** ruleset is used. To skip GitHub entirely (CI, restricted egress, deterministic runs), pass a local rules path:
 
 ```bash
 domain_status scan urls.txt --fingerprints /path/to/technologies
 ```
+
+That only affects how fingerprint *rules* are loaded — scanning the URLs in your list still needs network access to those hosts.
 
 Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cache-dir`, or `DOMAIN_STATUS_CACHE_DIR`, or the platform cache directory + `domain_status/` (Linux `~/.cache/…`, macOS `~/Library/Caches/…`). The SQLite DB and log file stay under `--db-path` / `--log-file` (cwd by default).
 
@@ -60,7 +62,7 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 
 | Feature | How to enable / disable |
 |---------|-------------------------|
-| GeoIP | Set `MAXMIND_LICENSE_KEY` in `.env`, or pass `--geoip` |
+| GeoIP | Set `MAXMIND_LICENSE_KEY` for GeoLite2 auto-download (free MaxMind account + key; GeoLite2 *is* the free tier — there is no unlicensed download), **or** pass `--geoip /path/or/url` to an MMDB you already have |
 | WHOIS | **On by default**; disable with `--no-whois` (or `enable_whois = false` in TOML) |
 | External script scan | `--scan-external-scripts` (off by default; secrets + static tech on first-party bodies) |
 
@@ -69,13 +71,12 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 WHOIS is on by default. For a fuller observational pass, add GeoIP and first-party script bodies:
 
 ```bash
-# Requires MAXMIND_LICENSE_KEY in the environment for GeoIP auto-download
+# GeoIP: MAXMIND_LICENSE_KEY (free GeoLite2 download), or --geoip /path/to/GeoLite2-City.mmdb
 domain_status scan urls.txt \
-  --geoip \
   --scan-external-scripts
 ```
 
-This keeps WHOIS/RDAP, and adds GeoIP/ASN plus first-party external script bodies (secrets + static tech). Core HTTP/TLS/DNS/headers/`security.txt`/`robots.txt` capture runs regardless. Use `--no-whois` for cheap bulk crawls.
+This keeps WHOIS/RDAP, and adds GeoIP/ASN (when licensed or `--geoip <path|url>` is set) plus first-party external script bodies (secrets + static tech). Core HTTP/TLS/DNS/headers/`security.txt`/`robots.txt` capture runs regardless. Use `--no-whois` for cheap bulk crawls. Details: [docs/ADVANCED.md](docs/ADVANCED.md).
 
 
 ## Features (core)
@@ -84,7 +85,7 @@ This keeps WHOIS/RDAP, and adds GeoIP/ASN plus first-party external script bodie
 - TLS certificate fields (resolves all public IPs, IPv4-first, so dual-stack hosts with broken IPv6 egress still get a certificate)
 - DNS (NS/TXT/MX + SPF/DMARC/MTA-STS/TLS-RPT/BIMI), parsed HSTS, CDN taxonomy, `security.txt` / `robots.txt`
 - Technology fingerprints + exposed secrets (static analysis; no JS execution). Fingerprints use headers/cookies/meta/HTML/`scriptSrc` URLs/inline script text/DNS/cert issuer from the initial response. With `--scan-external-scripts`, first-party fetched script bodies also feed secret detection and Wappalyzer `scripts` tech patterns.
-- Security findings (`no_https`, `weak_tls`, `invalid_certificate`) — real observed issues only; header *presence* (HSTS/CSP/etc.) is captured separately and "missing header" is a query, not a precomputed warning (see [DATABASE.md](DATABASE.md))
+- Security signals are **query-derived** (no `url_security_warnings` table): e.g. non-HTTPS finals, weak TLS versions, self-signed/mismatched/expired certs. Header *presence* (HSTS/CSP/etc.) is stored; "missing header" is a query, not a precomputed warning — see [DATABASE.md](DATABASE.md) and [QUERIES.md](QUERIES.md) §30
 - SQLite fact table + satellite tables; `summary` command
 - Concurrency / rate limiting; `--fail-on` for CI exit policy
 
@@ -93,7 +94,7 @@ This keeps WHOIS/RDAP, and adds GeoIP/ASN plus first-party external script bodie
 ## Limitations
 
 - Static analysis only — no JavaScript rendering; JS-runtime-only fingerprint rules will not match
-- Fingerprint rules depend on network refresh or a local `--fingerprints` path
+- Fingerprint *rules* depend on GitHub refresh, cache, or a local `--fingerprints` path (target scans still need network)
 - Private/link-local targets are blocked (SSRF protection)
 
 ## Configuration (keep it simple)

@@ -42,12 +42,14 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 
 - Default: merge Enthec + HTTPArchive technology directories from GitHub.
 - `GITHUB_TOKEN` raises API rate limits for commit metadata.
-- Offline: `--fingerprints /path/to/rules` (file or directory).
+- Without GitHub: `--fingerprints /path/to/rules` (file or directory) for CI, restricted egress, or deterministic runs. This only skips ruleset download — scanning target URLs still needs network access to those hosts.
 - If all remotes fail: bundled minimal ruleset (`vendored:assets/fingerprints`).
 
 ## GeoIP
 
-- Disabled unless `MAXMIND_LICENSE_KEY` is set or `--geoip` points at an MMDB/URL.
+- Disabled unless `MAXMIND_LICENSE_KEY` is set (auto-download) **or** `--geoip <path|url>` points at an MMDB.
+- GeoLite2 (City + ASN) *is* MaxMind’s free tier; a free MaxMind account and license key are still required to download it. There is no unlicensed “lite” fallback. Without a key or `--geoip`, GeoIP stays off and the scan continues.
+- Bare `--geoip` without a value is invalid; the flag always requires a path or URL.
 - Auto-download uses the shared `geoip/` cache subdirectory.
 
 ## WHOIS / RDAP
@@ -95,7 +97,7 @@ See [docs.rs/domain_status](https://docs.rs/domain_status). Prefer `Config` + `r
 For portfolio infosec or light tech diligence, prefer one thorough observational run over re-scanning with extra flags later:
 
 - WHOIS/RDAP is **on by default** (use `--no-whois` only for cheap bulk crawls)
-- `--geoip` (or `MAXMIND_LICENSE_KEY`) — ASN / geo
+- GeoIP: `MAXMIND_LICENSE_KEY` for auto-download, **or** `--geoip <path|url>` to an MMDB — ASN / geo
 - `--scan-external-scripts` — first-party script bodies for secrets + static `scripts` tech patterns
 
 Same-pass captures that always run (no flags): security headers (including CORS/COOP/COEP/CORP and CSP-Report-Only), parsed HSTS columns, CDN provider taxonomy, MTA-STS / TLS-RPT / BIMI TXT, `/.well-known/security.txt`, and `/robots.txt` (directives only; sitemaps are listed, not crawled).
