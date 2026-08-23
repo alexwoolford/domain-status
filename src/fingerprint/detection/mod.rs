@@ -12,6 +12,7 @@ mod cookies;
 mod dns_cert;
 mod headers;
 mod matching;
+mod signal_match;
 mod utils;
 
 use reqwest::header::HeaderMap;
@@ -108,12 +109,8 @@ fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &Fingerprin
     for _ in 0..MAX_IMPLIES_DEPTH {
         let mut implied_to_add: Vec<(String, Option<String>)> = Vec::new();
         for tech_name in detected.keys() {
-            let base_tech_name = if let Some(colon_pos) = tech_name.find(':') {
-                &tech_name[..colon_pos]
-            } else {
-                tech_name
-            };
-            if let Some(tech) = ruleset.technologies.get(base_tech_name) {
+            // Keys are bare technology names (may contain ':'); never split on colon.
+            if let Some(tech) = ruleset.technologies.get(tech_name) {
                 for implied in &tech.implies {
                     let (name, version) = parse_technology_reference(implied);
                     implied_to_add.push((name, version));
@@ -150,43 +147,26 @@ fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &Fingerprin
     }
 }
 
+/// Protocol / transport flags that belong in headers/TLS columns, not the stack inventory.
+fn is_denylisted_technology(name: &str) -> bool {
+    name.eq_ignore_ascii_case("HTTP/3") || name.eq_ignore_ascii_case("HSTS")
+}
+
 fn finalize_detections(
     detected: HashMap<String, TechInfo>,
     ruleset: &FingerprintRuleset,
 ) -> Vec<DetectedTechnology> {
-    let detected_vec: Vec<(String, Option<String>, bool)> = detected
-        .into_iter()
-        .map(|(name, info)| (name, info.version, info.is_implied))
-        .collect();
+    let detected_names: HashSet<String> = detected.keys().cloned().collect();
+    let kept_names = apply_technology_exclusions(&detected_names, ruleset);
 
-    let detected_formatted_for_exclusions: HashSet<String> = detected_vec
-        .iter()
-        .map(|(name, version, _)| {
-            if let Some(ref ver) = version {
-                format!("{name}:{ver}")
-            } else {
-                name.clone()
-            }
-        })
-        .collect();
-    let final_detected_formatted =
-        apply_technology_exclusions(&detected_formatted_for_exclusions, ruleset);
-
-    detected_vec
+    detected
         .into_iter()
-        .filter(|(name, version, _)| {
-            let formatted = if let Some(ref ver) = version {
-                format!("{name}:{ver}")
-            } else {
-                name.clone()
-            };
-            final_detected_formatted.contains(&formatted)
-        })
-        .map(|(name, version, is_implied)| DetectedTechnology {
+        .filter(|(name, _)| kept_names.contains(name) && !is_denylisted_technology(name))
+        .map(|(name, info)| DetectedTechnology {
             category: get_technology_category(ruleset, &name),
             name,
-            version,
-            is_implied,
+            version: info.version,
+            is_implied: info.is_implied,
         })
         .collect()
 }
@@ -399,6 +379,56 @@ mod tests {
     use super::*;
     use reqwest::header::HeaderMap;
     use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn test_finalize_detections_drops_http3_and_hsts() {
+        let mut detected = HashMap::new();
+        detected.insert(
+            "HTTP/3".to_string(),
+            TechInfo {
+                version: None,
+                is_implied: false,
+            },
+        );
+        detected.insert(
+            "HSTS".to_string(),
+            TechInfo {
+                version: None,
+                is_implied: false,
+            },
+        );
+        detected.insert(
+            "nginx".to_string(),
+            TechInfo {
+                version: Some("1.18".to_string()),
+                is_implied: false,
+            },
+        );
+        detected.insert(
+            "Re:amaze".to_string(),
+            TechInfo {
+                version: Some("2".to_string()),
+                is_implied: false,
+            },
+        );
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+        let out = finalize_detections(detected, &ruleset);
+        let names: Vec<_> = out.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"nginx"));
+        assert!(names.contains(&"Re:amaze"));
+        assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("HTTP/3")));
+        assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("HSTS")));
+        let re = out.iter().find(|t| t.name == "Re:amaze").unwrap();
+        assert_eq!(re.version.as_deref(), Some("2"));
+    }
 
     #[test]
     fn test_sanitize_technology_version_keeps_semver() {

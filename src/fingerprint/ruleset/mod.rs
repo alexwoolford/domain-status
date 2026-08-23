@@ -32,7 +32,7 @@ use vendored::load_vendored_ruleset;
 
 /// Cache schema version. Bump when `Technology` retained fields change so old
 /// narrowed caches (missing dns/certIssuer/scripts) are not reused.
-const CACHE_SCHEMA_VERSION: &str = "2";
+const CACHE_SCHEMA_VERSION: &str = "3";
 
 /// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then `HTTPArchive`).
 /// wappalyzergo uses the same two sources; we merge with later overwriting earlier for the same technology.
@@ -47,6 +47,50 @@ static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
 
 /// Serializes first-load so concurrent callers cannot race vendored vs remote writes.
 static RULESET_INIT: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Keep only `js` keys that look like HTML script `id`s (static detection under ADR 0005).
+/// Typical globals (`jQuery`, `$`) are dropped; `__NEXT_DATA__`-style IDs are retained.
+fn is_script_id_js_key(key: &str) -> bool {
+    let k = key.trim();
+    if k.is_empty() {
+        return false;
+    }
+    k.starts_with("__") || k.to_ascii_uppercase().contains("DATA")
+}
+
+/// True if the technology has at least one static signal we can match without JS execution.
+fn technology_has_static_signals(tech: &crate::fingerprint::models::Technology) -> bool {
+    !tech.headers.is_empty()
+        || !tech.cookies.is_empty()
+        || !tech.meta.is_empty()
+        || !tech.script.is_empty()
+        || !tech.scripts.is_empty()
+        || !tech.html.is_empty()
+        || !tech.url.is_empty()
+        || !tech.dns.is_empty()
+        || !tech.cert_issuer.is_empty()
+        || !tech.js.is_empty()
+}
+
+/// Strip unsupported / unused payload and drop techs that become unmatchable.
+fn prune_technology_for_static_detection(
+    mut tech: crate::fingerprint::models::Technology,
+) -> Option<crate::fingerprint::models::Technology> {
+    // website is never consulted during matching — drop to shrink cache/RSS.
+    tech.website.clear();
+    // Retain only script-id-like js keys; clear pattern values (ID presence is enough).
+    tech.js = tech
+        .js
+        .into_iter()
+        .filter(|(k, _)| is_script_id_js_key(k))
+        .map(|(k, _)| (k, String::new()))
+        .collect();
+    if technology_has_static_signals(&tech) {
+        Some(tech)
+    } else {
+        None
+    }
+}
 
 /// Initializes the fingerprint ruleset from URL or local path.
 ///
@@ -223,7 +267,9 @@ async fn fetch_ruleset_from_multiple_sources(
             // Note: URL patterns are not normalized to preserve case-sensitive matching
             // URL patterns are matched against the actual URL which may have case-sensitive paths
 
-            all_technologies.insert(tech_name, tech);
+            if let Some(tech) = prune_technology_for_static_detection(tech) {
+                all_technologies.insert(tech_name, tech);
+            }
         }
 
         // Fetch categories from this source
@@ -268,7 +314,14 @@ async fn fetch_ruleset_from_multiple_sources(
              Prefer setting GITHUB_TOKEN, using a local --fingerprints path, or retrying when network is available.",
             sources.len()
         );
-        let vendored = load_vendored_ruleset()?;
+        let mut vendored = load_vendored_ruleset()?;
+        vendored.technologies = vendored
+            .technologies
+            .into_iter()
+            .filter_map(|(name, tech)| {
+                prune_technology_for_static_detection(tech).map(|tech| (name, tech))
+            })
+            .collect();
         // Do NOT write vendored under the remote `cache_key`. That would poison
         // subsequent cold starts into believing the full GitHub merge is cached.
         return Ok(vendored);
@@ -398,6 +451,33 @@ mod tests {
         // Test that empty versions list uses "unknown" fallback
         // The code at line 254-258 handles empty versions
         // This is tested implicitly - if versions is empty, version becomes "unknown"
+    }
+
+    use super::{is_script_id_js_key, prune_technology_for_static_detection};
+    use crate::fingerprint::models::Technology;
+
+    #[test]
+    fn prune_drops_js_only_technology() {
+        let mut tech = Technology::default();
+        tech.js.insert("jQuery".to_string(), String::new());
+        assert!(prune_technology_for_static_detection(tech).is_none());
+    }
+
+    #[test]
+    fn prune_keeps_script_id_js_key() {
+        let mut tech = Technology::default();
+        tech.js
+            .insert("__NEXT_DATA__".to_string(), "unused".to_string());
+        let pruned = prune_technology_for_static_detection(tech).expect("kept");
+        assert!(pruned.js.contains_key("__NEXT_DATA__"));
+        assert_eq!(pruned.js.get("__NEXT_DATA__").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn script_id_key_heuristic() {
+        assert!(is_script_id_js_key("__NEXT_DATA__"));
+        assert!(is_script_id_js_key("dataLayer"));
+        assert!(!is_script_id_js_key("jQuery"));
     }
 
     #[test]

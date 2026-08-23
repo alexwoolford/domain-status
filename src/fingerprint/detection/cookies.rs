@@ -8,12 +8,10 @@ use std::collections::HashMap;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
 
-/// Result of cookie matching for a single technology
-#[derive(Debug, Clone)]
-pub struct CookieMatchResult {
-    pub tech_name: String,
-    pub version: Option<String>,
-}
+use super::signal_match::SignalMatch;
+
+/// Result of cookie matching for a single technology.
+pub type CookieMatchResult = SignalMatch;
 
 /// Compile a wildcard cookie name (e.g. `_ga_*`) into an anchored regex.
 ///

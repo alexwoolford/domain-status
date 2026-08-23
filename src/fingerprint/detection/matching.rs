@@ -8,43 +8,30 @@ use std::collections::HashSet;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::parse_technology_reference;
 
-/// Extracts base technology name from formatted name (strips version if present).
-/// `"jQuery:3.6.0"` -> `"jQuery"`, `"WordPress"` -> `"WordPress"`
-fn extract_base_tech_name(formatted_name: &str) -> &str {
-    if let Some(colon_pos) = formatted_name.find(':') {
-        &formatted_name[..colon_pos]
-    } else {
-        formatted_name
-    }
-}
-
 /// Applies technology exclusions, removing technologies that are excluded by others.
 ///
+/// `detected` must be a set of bare technology names (not `name:version` strings).
+/// Version is stored separately on [`crate::fingerprint::detection::TechInfo`] and must
+/// never be encoded into the name — tech names may themselves contain `:`.
+///
 /// A technology is excluded if any other detected technology lists it in its `excludes` field.
-/// For example, if `TechA` excludes `TechB`, and both are detected, `TechB` will be removed.
 pub(crate) fn apply_technology_exclusions(
     detected: &HashSet<String>,
     ruleset: &FingerprintRuleset,
 ) -> HashSet<String> {
     let mut final_detected = HashSet::new();
     for tech_name in detected {
-        let base_tech_name = extract_base_tech_name(tech_name);
-
-        // Check if this technology is excluded by any other detected technology
         let is_excluded = detected.iter().any(|other_tech_name| {
             if other_tech_name == tech_name {
-                return false; // A technology doesn't exclude itself
+                return false;
             }
-            let other_base_name = extract_base_tech_name(other_tech_name);
-
-            // Check if the other technology excludes this one
             ruleset
                 .technologies
-                .get(other_base_name)
+                .get(other_tech_name.as_str())
                 .is_some_and(|other_tech| {
                     other_tech.excludes.iter().any(|excluded| {
                         let (excluded_name, _) = parse_technology_reference(excluded);
-                        excluded_name == base_tech_name
+                        excluded_name == *tech_name
                     })
                 })
         });
@@ -199,8 +186,29 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_base_tech_name_with_version() {
-        assert_eq!(extract_base_tech_name("jQuery:3.6.0"), "jQuery");
-        assert_eq!(extract_base_tech_name("WordPress"), "WordPress");
+    fn test_colon_in_tech_name_is_not_treated_as_version_separator() {
+        // Names like Re:amaze must stay intact; exclusions key on bare names only.
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+        let mut tech_a = create_empty_technology();
+        tech_a.excludes.push("Re:amaze".to_string());
+        ruleset.technologies.insert("TechA".to_string(), tech_a);
+        ruleset
+            .technologies
+            .insert("Re:amaze".to_string(), create_empty_technology());
+
+        let mut detected = HashSet::new();
+        detected.insert("TechA".to_string());
+        detected.insert("Re:amaze".to_string());
+
+        let result = apply_technology_exclusions(&detected, &ruleset);
+        assert!(result.contains("TechA"));
+        assert!(
+            !result.contains("Re:amaze"),
+            "exclusion must match full name including colon"
+        );
     }
 }
