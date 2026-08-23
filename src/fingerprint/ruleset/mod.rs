@@ -58,24 +58,28 @@ fn is_script_id_js_key(key: &str) -> bool {
     k.starts_with("__") || k.to_ascii_uppercase().contains("DATA")
 }
 
-/// True if the technology has at least one static signal we can match without JS execution.
-fn technology_has_static_signals(tech: &crate::fingerprint::models::Technology) -> bool {
-    !tech.headers.is_empty()
-        || !tech.cookies.is_empty()
-        || !tech.meta.is_empty()
-        || !tech.script.is_empty()
-        || !tech.scripts.is_empty()
-        || !tech.html.is_empty()
-        || !tech.url.is_empty()
-        || !tech.dns.is_empty()
-        || !tech.cert_issuer.is_empty()
-        || !tech.js.is_empty()
+/// True when the only matchable signal is runtime `js` (ADR 0005 cannot honor those alone).
+fn is_js_only_technology(tech: &crate::fingerprint::models::Technology) -> bool {
+    !tech.js.is_empty()
+        && tech.headers.is_empty()
+        && tech.cookies.is_empty()
+        && tech.meta.is_empty()
+        && tech.script.is_empty()
+        && tech.scripts.is_empty()
+        && tech.html.is_empty()
+        && tech.url.is_empty()
+        && tech.dns.is_empty()
+        && tech.cert_issuer.is_empty()
 }
 
-/// Strip unsupported / unused payload and drop techs that become unmatchable.
+/// Strip unused payload; drop only dead js-only rules after script-id filtering.
+///
+/// Category / implies stubs (no headers/html/js/…) are kept so `implies` targets remain
+/// resolvable (e.g. Nginx → `TestOS` in offline fixtures).
 fn prune_technology_for_static_detection(
     mut tech: crate::fingerprint::models::Technology,
 ) -> Option<crate::fingerprint::models::Technology> {
+    let was_js_only = is_js_only_technology(&tech);
     // website is never consulted during matching — drop to shrink cache/RSS.
     tech.website.clear();
     // Retain only script-id-like js keys; clear pattern values (ID presence is enough).
@@ -85,10 +89,10 @@ fn prune_technology_for_static_detection(
         .filter(|(k, _)| is_script_id_js_key(k))
         .map(|(k, _)| (k, String::new()))
         .collect();
-    if technology_has_static_signals(&tech) {
-        Some(tech)
-    } else {
+    if was_js_only && tech.js.is_empty() {
         None
+    } else {
+        Some(tech)
     }
 }
 
@@ -461,6 +465,19 @@ mod tests {
         let mut tech = Technology::default();
         tech.js.insert("jQuery".to_string(), String::new());
         assert!(prune_technology_for_static_detection(tech).is_none());
+    }
+
+    #[test]
+    fn prune_keeps_implies_stub_without_signals() {
+        // Cats/website-only techs exist as implies targets and must remain loadable.
+        let tech = Technology {
+            website: "https://example.com/testos".to_string(),
+            ..Default::default()
+        };
+        let kept = prune_technology_for_static_detection(tech).expect("stub kept");
+        assert!(kept.website.is_empty());
+        assert!(kept.headers.is_empty());
+        assert!(kept.js.is_empty());
     }
 
     #[test]
