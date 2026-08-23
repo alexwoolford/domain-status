@@ -149,6 +149,21 @@ fn write_batch(
     ));
     let mut spf_record_b = StringBuilder::new();
     let mut dmarc_record_b = StringBuilder::new();
+    let mut mta_sts_record_b = StringBuilder::new();
+    let mut tls_rpt_record_b = StringBuilder::new();
+    let mut bimi_record_b = StringBuilder::new();
+    let mut hsts_max_age_b = Int64Builder::new();
+    let mut hsts_include_subdomains_b = arrow::array::BooleanBuilder::new();
+    let mut hsts_preload_b = arrow::array::BooleanBuilder::new();
+    let mut cdn_provider_b = StringBuilder::new();
+    let mut script_hosts_b = ListBuilder::new(StructBuilder::from_fields(
+        vec![
+            Field::new("host", DataType::Utf8, false),
+            Field::new("registrable_domain", DataType::Utf8, true),
+            Field::new("is_first_party", DataType::Boolean, false),
+        ],
+        0,
+    ));
     let mut geoip_cc_b = StringBuilder::new();
     let mut geoip_cn_b = StringBuilder::new();
     let mut geoip_region_b = StringBuilder::new();
@@ -422,6 +437,48 @@ fn write_batch(
         // DNS
         append_opt_str(&mut spf_record_b, row.main.spf_record.as_ref());
         append_opt_str(&mut dmarc_record_b, row.main.dmarc_record.as_ref());
+        append_opt_str(&mut mta_sts_record_b, row.main.mta_sts_record.as_ref());
+        append_opt_str(&mut tls_rpt_record_b, row.main.tls_rpt_record.as_ref());
+        append_opt_str(&mut bimi_record_b, row.main.bimi_record.as_ref());
+        match row.main.hsts_max_age {
+            Some(v) => hsts_max_age_b.append_value(v),
+            None => hsts_max_age_b.append_null(),
+        }
+        match row.main.hsts_include_subdomains {
+            Some(v) => hsts_include_subdomains_b.append_value(v),
+            None => hsts_include_subdomains_b.append_null(),
+        }
+        match row.main.hsts_preload {
+            Some(v) => hsts_preload_b.append_value(v),
+            None => hsts_preload_b.append_null(),
+        }
+        append_opt_str(&mut cdn_provider_b, row.main.cdn_provider.as_ref());
+        for host in &row.script_hosts {
+            script_hosts_b
+                .values()
+                .field_builder::<StringBuilder>(0)
+                .unwrap()
+                .append_value(&host.host);
+            match &host.registrable_domain {
+                Some(d) => script_hosts_b
+                    .values()
+                    .field_builder::<StringBuilder>(1)
+                    .unwrap()
+                    .append_value(d),
+                None => script_hosts_b
+                    .values()
+                    .field_builder::<StringBuilder>(1)
+                    .unwrap()
+                    .append_null(),
+            }
+            script_hosts_b
+                .values()
+                .field_builder::<arrow::array::BooleanBuilder>(2)
+                .unwrap()
+                .append_value(host.is_first_party);
+            script_hosts_b.values().append(true);
+        }
+        script_hosts_b.append(true);
 
         // Nameservers
         for ns in &row.nameservers {
@@ -706,7 +763,7 @@ fn write_batch(
 
     // Finish builders then assemble columns in registry/schema order so the
     // RecordBatch cannot drift from [`build_schema`].
-    let mut finished: Vec<ArrayRef> = Vec::with_capacity(67);
+    let mut finished: Vec<ArrayRef> = Vec::with_capacity(75);
     finished.push(Arc::new(url_b.finish()));
     finished.push(Arc::new(initial_domain_b.finish()));
     finished.push(Arc::new(final_domain_b.finish()));
@@ -745,6 +802,14 @@ fn write_batch(
     finished.push(Arc::new(caa_records_b.finish()));
     finished.push(Arc::new(spf_record_b.finish()));
     finished.push(Arc::new(dmarc_record_b.finish()));
+    finished.push(Arc::new(mta_sts_record_b.finish()));
+    finished.push(Arc::new(tls_rpt_record_b.finish()));
+    finished.push(Arc::new(bimi_record_b.finish()));
+    finished.push(Arc::new(hsts_max_age_b.finish()));
+    finished.push(Arc::new(hsts_include_subdomains_b.finish()));
+    finished.push(Arc::new(hsts_preload_b.finish()));
+    finished.push(Arc::new(cdn_provider_b.finish()));
+    finished.push(Arc::new(script_hosts_b.finish()));
     finished.push(Arc::new(nameservers_b.finish()));
     finished.push(Arc::new(txt_records_b.finish()));
     finished.push(Arc::new(mx_records_b.finish()));
@@ -776,7 +841,7 @@ fn write_batch(
     finished.push(Arc::new(run_id_b.finish()));
 
     let mut by_name: std::collections::HashMap<&'static str, ArrayRef> =
-        std::collections::HashMap::with_capacity(67);
+        std::collections::HashMap::with_capacity(75);
     for (name, array) in super::fields::parquet_column_names().zip(finished.drain(..)) {
         by_name.insert(name, array);
     }

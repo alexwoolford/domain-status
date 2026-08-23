@@ -218,6 +218,34 @@ pub(crate) const URL_STATUS_COLUMN_DEFS: &[UrlStatusColumn] = &[
         name: "meta_refresh_url",
         extract: |r, _, _| UrlStatusBind::OptText(r.meta_refresh_url.as_deref()),
     },
+    UrlStatusColumn {
+        name: "hsts_max_age",
+        extract: |r, _, _| UrlStatusBind::OptI64(r.hsts_max_age),
+    },
+    UrlStatusColumn {
+        name: "hsts_include_subdomains",
+        extract: |r, _, _| UrlStatusBind::OptBool(r.hsts_include_subdomains),
+    },
+    UrlStatusColumn {
+        name: "hsts_preload",
+        extract: |r, _, _| UrlStatusBind::OptBool(r.hsts_preload),
+    },
+    UrlStatusColumn {
+        name: "mta_sts_record",
+        extract: |r, _, _| UrlStatusBind::OptText(r.mta_sts_record.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "tls_rpt_record",
+        extract: |r, _, _| UrlStatusBind::OptText(r.tls_rpt_record.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "bimi_record",
+        extract: |r, _, _| UrlStatusBind::OptText(r.bimi_record.as_deref()),
+    },
+    UrlStatusColumn {
+        name: "cdn_provider",
+        extract: |r, _, _| UrlStatusBind::OptText(r.cdn_provider.as_deref()),
+    },
 ];
 
 /// Column names derived from [`URL_STATUS_COLUMN_DEFS`] (same order as binds).
@@ -293,6 +321,9 @@ pub(crate) const URL_STATUS_SATELLITE_TABLES: &[&str] = &[
     "url_cookies",
     "url_resource_hints",
     "url_script_hosts",
+    "url_security_txt",
+    "url_robots_txt",
+    "url_robots_directives",
     // Enrichment tables (inserted after that transaction, but cleaned here)
     "url_analytics_ids",
     "url_structured_data",
@@ -342,7 +373,12 @@ pub struct UrlRecordInsertParams<'a> {
     pub resource_hints: &'a [(String, String)],
     /// Script `src` host inventory
     pub script_hosts: &'a [crate::storage::ScriptHostInfo],
+    /// Parsed security.txt (if fetched)
+    pub security_txt: Option<&'a crate::fetch::well_known::SecurityTxtData>,
+    /// Parsed robots.txt (if fetched)
+    pub robots_txt: Option<&'a crate::fetch::well_known::RobotsTxtData>,
 }
+
 
 impl<'a> UrlRecordInsertParams<'a> {
     /// Build params from a complete [`crate::storage::record::PersistedUrlRecord`].
@@ -380,6 +416,8 @@ impl<'a> UrlRecordInsertParams<'a> {
             cookies: &persisted.cookies,
             resource_hints: &persisted.resource_hints,
             script_hosts: &persisted.script_hosts,
+            security_txt: persisted.security_txt.as_ref(),
+            robots_txt: persisted.robots_txt.as_ref(),
         }
     }
 
@@ -416,6 +454,8 @@ impl<'a> UrlRecordInsertParams<'a> {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         }
     }
 }
@@ -564,6 +604,8 @@ async fn insert_url_record_impl(
     insert_cookies(&mut tx, url_status_id, params.cookies).await;
     insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await;
     insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await;
+    insert_security_txt(&mut tx, url_status_id, params.security_txt).await;
+    insert_robots_txt(&mut tx, url_status_id, params.robots_txt).await;
 
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.
@@ -651,6 +693,96 @@ async fn insert_cookies(
     }
 }
 
+
+/// Inserts parsed `security.txt` into `url_security_txt`.
+async fn insert_security_txt(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    data: Option<&crate::fetch::well_known::SecurityTxtData>,
+) {
+    let Some(data) = data else {
+        return;
+    };
+    let result = sqlx::query(
+        "INSERT INTO url_security_txt (
+            url_status_id, source_url, http_status, contacts, expires, encryption,
+            acknowledgments, preferred_languages, canonical, policy, hiring, raw_body
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url_status_id) DO UPDATE SET
+            source_url=excluded.source_url,
+            http_status=excluded.http_status,
+            contacts=excluded.contacts,
+            expires=excluded.expires,
+            encryption=excluded.encryption,
+            acknowledgments=excluded.acknowledgments,
+            preferred_languages=excluded.preferred_languages,
+            canonical=excluded.canonical,
+            policy=excluded.policy,
+            hiring=excluded.hiring,
+            raw_body=excluded.raw_body",
+    )
+    .bind(url_status_id)
+    .bind(&data.source_url)
+    .bind(i64::from(data.http_status))
+    .bind(data.contacts.join("\n"))
+    .bind(&data.expires)
+    .bind(data.encryption.join("\n"))
+    .bind(data.acknowledgments.join("\n"))
+    .bind(&data.preferred_languages)
+    .bind(data.canonical.join("\n"))
+    .bind(data.policy.join("\n"))
+    .bind(data.hiring.join("\n"))
+    .bind(&data.raw_body)
+    .execute(&mut **tx)
+    .await;
+    if let Err(e) = result {
+        log::warn!("Failed to insert security.txt for {url_status_id}: {e}");
+    }
+}
+
+/// Inserts parsed `robots.txt` parent row and directives.
+async fn insert_robots_txt(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    data: Option<&crate::fetch::well_known::RobotsTxtData>,
+) {
+    let Some(data) = data else {
+        return;
+    };
+    if let Err(e) = sqlx::query(
+        "INSERT INTO url_robots_txt (url_status_id, http_status, raw_body)
+         VALUES (?, ?, ?)
+         ON CONFLICT(url_status_id) DO UPDATE SET
+            http_status=excluded.http_status,
+            raw_body=excluded.raw_body",
+    )
+    .bind(url_status_id)
+    .bind(i64::from(data.http_status))
+    .bind(&data.raw_body)
+    .execute(&mut **tx)
+    .await
+    {
+        log::warn!("Failed to insert robots.txt for {url_status_id}: {e}");
+        return;
+    }
+    if data.directives.is_empty() {
+        return;
+    }
+    let query = super::utils::build_batch_insert_query(
+        "url_robots_directives",
+        &["url_status_id", "directive", "value"],
+        data.directives.len(),
+        Some("ON CONFLICT(url_status_id, directive, value) DO NOTHING"),
+    );
+    let mut qb = sqlx::query(&query);
+    for (directive, value) in &data.directives {
+        qb = qb.bind(url_status_id).bind(directive).bind(value);
+    }
+    if let Err(e) = qb.execute(&mut **tx).await {
+        log::warn!("Failed to insert robots directives for {url_status_id}: {e}");
+    }
+}
+
 /// Inserts script `src` host inventory into `url_script_hosts`.
 async fn insert_script_hosts(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -734,7 +866,7 @@ mod tests {
             assert_eq!(*name, URL_STATUS_COLUMN_DEFS[i].name);
             assert!(seen.insert(*name), "duplicate url_status column: {name}");
         }
-        assert_eq!(names.len(), 37, "url_status column count drifted");
+        assert_eq!(names.len(), 44, "url_status column count drifted");
     }
 
     /// Creates an in-memory `SQLite` database pool for testing
@@ -818,6 +950,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await;
 
@@ -871,6 +1005,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &script_hosts,
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("insert");
@@ -928,6 +1064,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("insert");
@@ -966,6 +1104,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("upsert");
@@ -1027,6 +1167,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("Failed to insert record");
@@ -1079,6 +1221,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("Failed to insert record");
@@ -1136,6 +1280,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("Failed to insert record");
@@ -1195,6 +1341,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("Failed to insert record");
@@ -1220,6 +1368,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("Failed to upsert record");
@@ -1279,6 +1429,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("insert a");
@@ -1299,6 +1451,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("insert b");
@@ -1349,6 +1503,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("first insert");
@@ -1392,6 +1548,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("upsert");
@@ -1585,6 +1743,48 @@ mod tests {
         .expect("seed url_script_hosts");
 
         sqlx::query(
+            "INSERT INTO url_security_txt (
+                url_status_id, source_url, http_status, contacts, expires, encryption,
+                acknowledgments, preferred_languages, canonical, policy, hiring, raw_body
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("https://seed.example/.well-known/security.txt")
+        .bind(200i64)
+        .bind("mailto:security@seed.example")
+        .bind(Option::<String>::None)
+        .bind("")
+        .bind("")
+        .bind(Option::<String>::None)
+        .bind("")
+        .bind("")
+        .bind("")
+        .bind("Contact: mailto:security@seed.example\n")
+        .execute(pool)
+        .await
+        .expect("seed url_security_txt");
+
+        sqlx::query(
+            "INSERT INTO url_robots_txt (url_status_id, http_status, raw_body) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind(200i64)
+        .bind("User-agent: *\nDisallow: /admin\n")
+        .execute(pool)
+        .await
+        .expect("seed url_robots_txt");
+
+        sqlx::query(
+            "INSERT INTO url_robots_directives (url_status_id, directive, value) VALUES (?, ?, ?)",
+        )
+        .bind(url_status_id)
+        .bind("disallow")
+        .bind("/admin")
+        .execute(pool)
+        .await
+        .expect("seed url_robots_directives");
+
+        sqlx::query(
             "INSERT INTO url_analytics_ids (url_status_id, provider, tracking_id) VALUES (?, ?, ?)",
         )
         .bind(url_status_id)
@@ -1718,6 +1918,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("first insert");
@@ -1755,6 +1957,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await
         .expect("upsert");
@@ -1817,6 +2021,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
         })
         .await;
 

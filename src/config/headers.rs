@@ -19,18 +19,50 @@ pub(crate) const HEADER_X_XSS_PROTECTION: &str = "X-XSS-Protection";
 pub(crate) const HEADER_REFERRER_POLICY: &str = "Referrer-Policy";
 /// Permissions-Policy header
 pub(crate) const HEADER_PERMISSIONS_POLICY: &str = "Permissions-Policy";
+/// Content-Security-Policy-Report-Only header
+pub(crate) const HEADER_CONTENT_SECURITY_POLICY_REPORT_ONLY: &str =
+    "Content-Security-Policy-Report-Only";
+/// Cross-Origin-Opener-Policy header
+pub(crate) const HEADER_CROSS_ORIGIN_OPENER_POLICY: &str = "Cross-Origin-Opener-Policy";
+/// Cross-Origin-Embedder-Policy header
+pub(crate) const HEADER_CROSS_ORIGIN_EMBEDDER_POLICY: &str = "Cross-Origin-Embedder-Policy";
+/// Cross-Origin-Resource-Policy header
+pub(crate) const HEADER_CROSS_ORIGIN_RESOURCE_POLICY: &str = "Cross-Origin-Resource-Policy";
+/// Access-Control-Allow-Origin header
+pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_ORIGIN: &str = "Access-Control-Allow-Origin";
+/// Access-Control-Allow-Methods header
+pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_METHODS: &str = "Access-Control-Allow-Methods";
+/// Access-Control-Allow-Headers header
+pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_HEADERS: &str = "Access-Control-Allow-Headers";
+/// Access-Control-Allow-Credentials header
+pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS: &str =
+    "Access-Control-Allow-Credentials";
+/// Access-Control-Expose-Headers header
+pub(crate) const HEADER_ACCESS_CONTROL_EXPOSE_HEADERS: &str = "Access-Control-Expose-Headers";
+/// Access-Control-Max-Age header
+pub(crate) const HEADER_ACCESS_CONTROL_MAX_AGE: &str = "Access-Control-Max-Age";
 
 /// List of security headers to capture.
 /// These are stored in the `url_security_headers` table.
 /// To add/remove headers, modify this array.
 pub(crate) const SECURITY_HEADERS: &[&str] = &[
     HEADER_CONTENT_SECURITY_POLICY,
+    HEADER_CONTENT_SECURITY_POLICY_REPORT_ONLY,
     HEADER_STRICT_TRANSPORT_SECURITY,
     HEADER_X_CONTENT_TYPE_OPTIONS,
     HEADER_X_FRAME_OPTIONS,
     HEADER_X_XSS_PROTECTION,
     HEADER_REFERRER_POLICY,
     HEADER_PERMISSIONS_POLICY,
+    HEADER_CROSS_ORIGIN_OPENER_POLICY,
+    HEADER_CROSS_ORIGIN_EMBEDDER_POLICY,
+    HEADER_CROSS_ORIGIN_RESOURCE_POLICY,
+    HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+    HEADER_ACCESS_CONTROL_ALLOW_METHODS,
+    HEADER_ACCESS_CONTROL_ALLOW_HEADERS,
+    HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
+    HEADER_ACCESS_CONTROL_EXPOSE_HEADERS,
+    HEADER_ACCESS_CONTROL_MAX_AGE,
 ];
 
 // Other HTTP header names
@@ -46,10 +78,30 @@ pub(crate) const HEADER_X_GENERATOR: &str = "X-Generator";
 // CDN/Proxy identification
 /// CF-Ray header (Cloudflare request ID)
 pub(crate) const HEADER_CF_RAY: &str = "CF-Ray";
+/// CF-Cache-Status header (Cloudflare cache status)
+pub(crate) const HEADER_CF_CACHE_STATUS: &str = "CF-Cache-Status";
 /// X-Served-By header (Fastly server identification)
 pub(crate) const HEADER_X_SERVED_BY: &str = "X-Served-By";
 /// Via header (proxy chain information)
 pub(crate) const HEADER_VIA: &str = "Via";
+/// CloudFront request ID
+pub(crate) const HEADER_X_AMZ_CF_ID: &str = "X-Amz-Cf-Id";
+/// CloudFront PoP
+pub(crate) const HEADER_X_AMZ_CF_POP: &str = "X-Amz-Cf-Pop";
+/// Azure Front Door / CDN ref
+pub(crate) const HEADER_X_AZURE_REF: &str = "X-Azure-Ref";
+/// Azure / MS Edge ref
+pub(crate) const HEADER_X_MSEDGE_REF: &str = "X-MSEdge-Ref";
+/// Akamai request ID
+pub(crate) const HEADER_X_AKAMAI_REQUEST_ID: &str = "X-Akamai-Request-ID";
+/// Vercel request ID
+pub(crate) const HEADER_X_VERCEL_ID: &str = "X-Vercel-Id";
+/// Vercel cache status
+pub(crate) const HEADER_X_VERCEL_CACHE: &str = "X-Vercel-Cache";
+/// Netlify request ID
+pub(crate) const HEADER_X_NF_REQUEST_ID: &str = "X-Nf-Request-Id";
+/// Fastly IO info
+pub(crate) const HEADER_FASTLY_IO_INFO: &str = "Fastly-IO-Info";
 
 // Performance/Monitoring
 /// Server-Timing header (performance metrics)
@@ -103,8 +155,18 @@ pub(crate) const HTTP_HEADERS: &[&str] = &[
     HEADER_X_GENERATOR,
     // CDN/Proxy identification
     HEADER_CF_RAY,
+    HEADER_CF_CACHE_STATUS,
     HEADER_X_SERVED_BY,
     HEADER_VIA,
+    HEADER_X_AMZ_CF_ID,
+    HEADER_X_AMZ_CF_POP,
+    HEADER_X_AZURE_REF,
+    HEADER_X_MSEDGE_REF,
+    HEADER_X_AKAMAI_REQUEST_ID,
+    HEADER_X_VERCEL_ID,
+    HEADER_X_VERCEL_CACHE,
+    HEADER_X_NF_REQUEST_ID,
+    HEADER_FASTLY_IO_INFO,
     // Performance/Monitoring
     HEADER_SERVER_TIMING,
     HEADER_X_CACHE,

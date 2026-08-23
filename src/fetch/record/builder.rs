@@ -112,6 +112,13 @@ pub(crate) fn build_url_record(
         cert_is_wildcard: tls_dns_data.cert_is_wildcard,
         cert_is_mismatched: None, // Computed later when host is available
         meta_refresh_url: html_data.meta_refresh_url.clone(),
+        hsts_max_age: None,
+        hsts_include_subdomains: None,
+        hsts_preload: None,
+        mta_sts_record: additional_dns.mta_sts_record.clone(),
+        tls_rpt_record: additional_dns.tls_rpt_record.clone(),
+        bimi_record: additional_dns.bimi_record.clone(),
+        cdn_provider: None,
     }
 }
 
@@ -147,6 +154,8 @@ pub struct PersistedUrlRecordParams {
     pub favicon: Option<crate::fetch::favicon::FaviconData>,
     /// Additional DNS data (CNAME, AAAA, CAA) for satellite table insertion
     pub additional_dns: crate::fetch::dns::AdditionalDnsData,
+    /// security.txt / robots.txt captured during enrichment
+    pub well_known: crate::fetch::well_known::WellKnownData,
 }
 
 /// Builds a `PersistedUrlRecord` from all extracted data.
@@ -215,6 +224,26 @@ pub(crate) fn build_persisted_url_record(
         &params.html_data.script_sources,
     );
 
+    // Persist parsed HSTS directives onto the fact row (raw header stays in satellite).
+    if let Some(hsts_value) = security_headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
+        .map(|(_, v)| v.as_str())
+    {
+        let d = crate::security::parse_hsts_directive(hsts_value);
+        params.record.hsts_max_age = d.max_age.map(|v| i64::try_from(v).unwrap_or(i64::MAX));
+        params.record.hsts_include_subdomains = Some(d.include_subdomains);
+        params.record.hsts_preload = Some(d.preload);
+    }
+
+    params.record.cdn_provider = crate::fetch::cdn::detect_cdn_provider(
+        &http_headers,
+        &security_headers,
+        params.additional_dns.cname_chain.as_deref(),
+        params.additional_dns.nameservers.as_deref(),
+    );
+
+
     // Compute cert_is_mismatched: check if host matches any SAN or CN.
     // Uses sans_vec (not tls_dns_data.subject_alternative_names which was already .take()'d).
     let domain = &params.resp_data.host;
@@ -264,6 +293,8 @@ pub(crate) fn build_persisted_url_record(
         cookies,
         resource_hints: std::mem::take(&mut params.html_data.resource_hints),
         script_hosts,
+        security_txt: params.well_known.security_txt,
+        robots_txt: params.well_known.robots_txt,
     }
 }
 
@@ -360,6 +391,9 @@ mod tests {
             mx_records: Some("10 mail.example.com".to_string()),
             spf_record: Some("v=spf1 include:_spf.google.com ~all".to_string()),
             dmarc_record: Some("v=DMARC1; p=none".to_string()),
+            mta_sts_record: None,
+            tls_rpt_record: None,
+            bimi_record: None,
             cname_chain: None,
             aaaa_records: None,
             caa_records: None,
@@ -497,6 +531,7 @@ mod tests {
             timestamp: 1234567890,
             run_id,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -543,6 +578,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -580,6 +616,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -624,6 +661,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -700,6 +738,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -745,6 +784,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -790,6 +830,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: None,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 
@@ -839,6 +880,7 @@ mod tests {
             timestamp: 1234567890,
             run_id: run_id.clone(),
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             additional_dns: create_test_additional_dns_data(),
         });
 

@@ -6,8 +6,9 @@
 use log::debug;
 
 use crate::dns::{
-    extract_dmarc_record, extract_spf_record, lookup_aaaa_records, lookup_caa_records,
-    lookup_cname_records, lookup_mx_records, lookup_ns_records, lookup_txt_records,
+    extract_bimi_record, extract_dmarc_record, extract_mta_sts_record, extract_spf_record,
+    extract_tls_rpt_record, lookup_aaaa_records, lookup_caa_records, lookup_cname_records,
+    lookup_mx_records, lookup_ns_records, lookup_txt_records,
 };
 use crate::fetch::utils::serialize_json_with_default;
 
@@ -105,6 +106,22 @@ pub(crate) async fn fetch_additional_dns_records(
             dmarc_record = extract_dmarc_record(&dmarc_txt);
         }
     }
+
+    let mta_sts_record =
+        match lookup_txt_records(&format!("_mta-sts.{final_domain}"), resolver).await {
+            Ok(txts) => extract_mta_sts_record(&txts),
+            Err(_) => None,
+        };
+    let tls_rpt_record =
+        match lookup_txt_records(&format!("_smtp._tls.{final_domain}"), resolver).await {
+            Ok(txts) => extract_tls_rpt_record(&txts),
+            Err(_) => None,
+        };
+    let bimi_record =
+        match lookup_txt_records(&format!("default._bimi.{final_domain}"), resolver).await {
+            Ok(txts) => extract_bimi_record(&txts),
+            Err(_) => None,
+        };
 
     let mx_records = match mx_result {
         Ok(mx) if !mx.is_empty() => {
@@ -217,6 +234,9 @@ pub(crate) async fn fetch_additional_dns_records(
             mx_records,
             spf_record,
             dmarc_record,
+            mta_sts_record,
+            tls_rpt_record,
+            bimi_record,
             cname_chain,
             aaaa_records,
             caa_records,

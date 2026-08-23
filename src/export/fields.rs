@@ -145,6 +145,21 @@ fn arrow_type_mx_records() -> DataType {
     )))
 }
 
+fn arrow_type_script_hosts() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "item",
+        DataType::Struct(
+            vec![
+                Field::new("host", DataType::Utf8, false),
+                Field::new("registrable_domain", DataType::Utf8, true),
+                Field::new("is_first_party", DataType::Boolean, false),
+            ]
+            .into(),
+        ),
+        true,
+    )))
+}
+
 fn arrow_type_analytics_ids() -> DataType {
     DataType::List(Arc::new(Field::new(
         "item",
@@ -981,6 +996,128 @@ pub(crate) const EXPORT_FIELDS: &[ExportField] = &[
         flat_shared: true,
     },
     ExportField {
+        id: "mta_sts_record",
+        csv: Some(CsvSpec {
+            name: "mta_sts_record",
+            extract: |row| row.main.mta_sts_record.clone().unwrap_or_default(),
+        }),
+        parquet: Some(ParquetSpec {
+            name: "mta_sts_record",
+            data_type: utf8,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.mta_sts_record)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "tls_rpt_record",
+        csv: Some(CsvSpec {
+            name: "tls_rpt_record",
+            extract: |row| row.main.tls_rpt_record.clone().unwrap_or_default(),
+        }),
+        parquet: Some(ParquetSpec {
+            name: "tls_rpt_record",
+            data_type: utf8,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.tls_rpt_record)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "bimi_record",
+        csv: Some(CsvSpec {
+            name: "bimi_record",
+            extract: |row| row.main.bimi_record.clone().unwrap_or_default(),
+        }),
+        parquet: Some(ParquetSpec {
+            name: "bimi_record",
+            data_type: utf8,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.bimi_record)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "hsts_max_age",
+        csv: Some(CsvSpec {
+            name: "hsts_max_age",
+            extract: |row| row.main.hsts_max_age.map(|v| v.to_string()).unwrap_or_default(),
+        }),
+        parquet: Some(ParquetSpec {
+            name: "hsts_max_age",
+            data_type: int64,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.hsts_max_age)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "hsts_include_subdomains",
+        csv: Some(CsvSpec {
+            name: "hsts_include_subdomains",
+            extract: |row| {
+                row.main
+                    .hsts_include_subdomains
+                    .map(|v| i32::from(v).to_string())
+                    .unwrap_or_default()
+            },
+        }),
+        parquet: Some(ParquetSpec {
+            name: "hsts_include_subdomains",
+            data_type: boolean,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.hsts_include_subdomains)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "hsts_preload",
+        csv: Some(CsvSpec {
+            name: "hsts_preload",
+            extract: |row| {
+                row.main
+                    .hsts_preload
+                    .map(|v| i32::from(v).to_string())
+                    .unwrap_or_default()
+            },
+        }),
+        parquet: Some(ParquetSpec {
+            name: "hsts_preload",
+            data_type: boolean,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.hsts_preload)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "cdn_provider",
+        csv: Some(CsvSpec {
+            name: "cdn_provider",
+            extract: |row| row.main.cdn_provider.clone().unwrap_or_default(),
+        }),
+        parquet: Some(ParquetSpec {
+            name: "cdn_provider",
+            data_type: utf8,
+            nullable: true,
+        }),
+        jsonl_flat: Some(|row| json!(row.main.cdn_provider)),
+        flat_shared: true,
+    },
+    ExportField {
+        id: "script_hosts",
+        csv: Some(CsvSpec {
+            name: "script_hosts",
+            extract: |row| row.script_hosts_str.clone(),
+        }),
+        parquet: Some(ParquetSpec {
+            name: "script_hosts",
+            data_type: arrow_type_script_hosts,
+            nullable: false,
+        }),
+        jsonl_flat: None,
+        flat_shared: false,
+    },
+    ExportField {
         id: "analytics_ids",
         csv: Some(CsvSpec {
             name: "analytics_ids",
@@ -1537,6 +1674,14 @@ pub(crate) const CSV_FIELD_ORDER: &[&str] = &[
     "caa_count",
     "spf_record",
     "dmarc_record",
+    "mta_sts_record",
+    "tls_rpt_record",
+    "bimi_record",
+    "hsts_max_age",
+    "hsts_include_subdomains",
+    "hsts_preload",
+    "cdn_provider",
+    "script_hosts",
     "analytics_ids",
     "analytics_count",
     "social_media_links",
@@ -1616,6 +1761,14 @@ pub(crate) const PARQUET_FIELD_ORDER: &[&str] = &[
     "caa_records",
     "spf_record",
     "dmarc_record",
+    "mta_sts_record",
+    "tls_rpt_record",
+    "bimi_record",
+    "hsts_max_age",
+    "hsts_include_subdomains",
+    "hsts_preload",
+    "cdn_provider",
+    "script_hosts",
     "nameservers",
     "txt_records",
     "mx_records",

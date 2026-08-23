@@ -30,6 +30,12 @@ pub(crate) fn detect_txt_type(txt: &str) -> &'static str {
         "SPF"
     } else if crate::dns::is_dmarc_txt(txt) {
         "DMARC"
+    } else if crate::dns::is_mta_sts_txt(txt) {
+        "MTA-STS"
+    } else if crate::dns::is_tls_rpt_txt(txt) {
+        "TLS-RPT"
+    } else if crate::dns::is_bimi_txt(txt) {
+        "BIMI"
     } else {
         let txt_lower = txt.to_lowercase();
         if txt_lower.contains("google-site-verification")

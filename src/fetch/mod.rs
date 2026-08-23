@@ -15,6 +15,7 @@ mod context;
 pub(crate) mod cookies;
 mod dns;
 pub(crate) mod external_scripts;
+pub(crate) mod cdn;
 pub(crate) mod favicon;
 mod handler;
 mod record;
@@ -22,6 +23,7 @@ mod redirects;
 mod request;
 mod response;
 pub(crate) mod stream;
+pub(crate) mod well_known;
 mod utils;
 
 pub use context::{NetworkContext, ProcessingContext, RuntimeContext};
