@@ -193,7 +193,7 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
 | `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload (`hint_type` stored lowercase) | `hint_type`, `href` |
 | `url_script_hosts` | Unique hosts from `<script src>` (resolved against final URL) | `host`, `registrable_domain`, `is_first_party` |
-| `url_security_txt` | Parsed RFC 9116 `security.txt` (one row per URL) | `source_url`, `http_status`, `contacts`, `expires`, `policy`, `hiring`, `raw_body` |
+| `url_security_txt` | Parsed RFC 9116 `security.txt` (one row per URL) | `source_url`, `http_status`, `contacts`, `expires`, `encryption`, `acknowledgments`, `preferred_languages`, `canonical`, `policy`, `hiring`, `raw_body` |
 | `url_robots_txt` | Fetched `/robots.txt` parent row | `http_status`, `raw_body` |
 | `url_robots_directives` | Parsed robots directives (no sitemap crawl) | `directive`, `value` |
 

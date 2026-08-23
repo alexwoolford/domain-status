@@ -63,11 +63,15 @@ TOML/`DOMAIN_STATUS_FAIL_ON` also accept `any_failure` / `anyfailure` as aliases
 Mostly CLI-only (plus shared `--db-path` / `DOMAIN_STATUS_DB_PATH`):
 
 ```bash
-domain_status summary --top 20
+domain_status summary                  # digest for latest run; --top N (default 15)
+domain_status summary --top 20         # list more top technologies
 domain_status export --format csv --output results.csv
 domain_status export --format jsonl --run-id run_…
+domain_status export --domain example.com --status 200 --since 1700000000000
 domain_status export --include-implied-tech   # include is_implied=1 fingerprint rows (off by default)
 ```
+
+Export filters (optional): `--domain` (substring match on final domain), `--status` (HTTP status code), `--since` (epoch ms lower bound on `observed_at_ms`), `--run-id`.
 
 ### Stdout / stderr
 
