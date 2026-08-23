@@ -5,12 +5,10 @@ use std::collections::HashMap;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
 
+use super::signal_match::SignalMatch;
+
 /// Result of a DNS or cert-issuer match for a single technology.
-#[derive(Debug, Clone)]
-pub struct DnsCertMatchResult {
-    pub tech_name: String,
-    pub version: Option<String>,
-}
+pub type DnsCertMatchResult = SignalMatch;
 
 /// Matches technologies against DNS record haystacks and optional cert issuer.
 ///

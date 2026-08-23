@@ -23,19 +23,12 @@ pub(crate) async fn insert_technologies(
         url_status_id
     );
 
-    // Deduplicate technologies and drop header-derived protocol flags (HTTP/3, HSTS)
-    // that belong in headers/TLS columns, not the stack inventory.
+    // Deduplicate by (name, version). Detection already filters protocol flags
+    // (HTTP/3, HSTS); do not re-encode version into the name (names may contain ':').
     let mut seen = std::collections::HashSet::new();
     let mut deduped: Vec<&DetectedTechnology> = Vec::new();
     for tech in technologies {
-        if tech.name.eq_ignore_ascii_case("HTTP/3") || tech.name.eq_ignore_ascii_case("HSTS") {
-            continue;
-        }
-        let key = if let Some(ref version) = tech.version {
-            format!("{}:{}", tech.name, version)
-        } else {
-            tech.name.clone()
-        };
+        let key = (tech.name.as_str(), tech.version.as_deref());
         if seen.insert(key) {
             deduped.push(tech);
         }
@@ -287,28 +280,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_technologies_skips_http3_and_hsts() {
+    async fn test_insert_technologies_preserves_colon_in_name() {
         let pool = create_test_pool().await;
         let url_status_id = create_test_url_status_default(&pool).await;
 
         let mut tx = pool.begin().await.expect("Failed to start transaction");
         let technologies = vec![
             crate::fingerprint::DetectedTechnology {
-                name: "HTTP/3".to_string(),
-                version: None,
+                name: "Re:amaze".to_string(),
+                version: Some("1.0".to_string()),
                 category: None,
                 is_implied: false,
             },
             crate::fingerprint::DetectedTechnology {
-                name: "HSTS".to_string(),
-                version: None,
+                name: "Re:amaze".to_string(),
+                version: Some("1.0".to_string()),
                 category: None,
-                is_implied: false,
-            },
-            crate::fingerprint::DetectedTechnology {
-                name: "nginx".to_string(),
-                version: None,
-                category: Some("Web servers".to_string()),
                 is_implied: false,
             },
         ];
@@ -316,14 +303,16 @@ mod tests {
         insert_technologies(&mut tx, url_status_id, &technologies).await;
         tx.commit().await.expect("Failed to commit transaction");
 
-        let names: Vec<String> = sqlx::query_scalar(
-            "SELECT technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+        let rows = sqlx::query(
+            "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ?",
         )
         .bind(url_status_id)
         .fetch_all(&pool)
         .await
         .expect("fetch");
 
-        assert_eq!(names, vec!["nginx".to_string()]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get::<String, _>("technology_name"), "Re:amaze");
+        assert_eq!(rows[0].get::<String, _>("technology_version"), "1.0");
     }
 }

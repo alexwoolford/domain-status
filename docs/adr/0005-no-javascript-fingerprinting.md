@@ -32,6 +32,12 @@ Technology detection is based on static evidence such as:
 
 This keeps the scanner aligned with a lightweight, batch-oriented architecture rather than turning it into a browser automation system.
 
+
+At ruleset load time, technologies that only define runtime `js` object patterns (and no
+static headers/cookies/html/script/dns/cert signals) are dropped. Remaining `js` keys are
+kept only when they look like HTML script `id`s (e.g. `__NEXT_DATA__`); values are cleared.
+Low-confidence patterns (`\;confidence` below 50) are ignored during matching.
+
 ## Consequences
 
 Positive:

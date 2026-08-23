@@ -1,60 +1,22 @@
 //! Header-based technology detection.
 //!
-//! This module matches technologies based on HTTP response headers,
-//! following wappalyzergo's `checkHeaders()` and `matchMapString(headers, headersPart)` logic.
+//! Matches technologies against HTTP response headers (Wappalyzer `headers` map).
 
 use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
-use crate::fingerprint::patterns::matches_pattern;
 
-/// Result of header matching for a single technology
-#[derive(Debug, Clone)]
-pub struct HeaderMatchResult {
-    pub tech_name: String,
-    pub version: Option<String>,
-}
+use super::signal_match::{match_string_map_signal, SignalMatch};
+
+/// Result of header matching for a single technology.
+pub type HeaderMatchResult = SignalMatch;
 
 /// Checks all technologies against headers and returns matches.
-///
-/// Synchronous header check using a pre-fetched ruleset (for use on blocking threads).
 pub(crate) fn check_headers_with_ruleset(
     ruleset: &FingerprintRuleset,
     headers: &HashMap<String, String>,
 ) -> Vec<HeaderMatchResult> {
-    let mut results = Vec::new();
-    for (tech_name, tech) in &ruleset.technologies {
-        if tech.headers.is_empty() {
-            continue;
-        }
-        let mut matched = false;
-        let mut version: Option<String> = None;
-        for (header_name, pattern) in &tech.headers {
-            if let Some(header_value) = headers.get(header_name) {
-                if pattern.is_empty() {
-                    matched = true;
-                    break;
-                }
-                let result = matches_pattern(pattern, header_value);
-                if result.matched {
-                    matched = true;
-                    if version.is_none() && result.version.is_some() {
-                        version.clone_from(&result.version);
-                    }
-                    if version.is_some() {
-                        break;
-                    }
-                }
-            }
-        }
-        if matched {
-            results.push(HeaderMatchResult {
-                tech_name: tech_name.clone(),
-                version,
-            });
-        }
-    }
-    results
+    match_string_map_signal(ruleset, headers, |tech| &tech.headers)
 }
 
 #[cfg(test)]
