@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-08-23
+
+### Added
+- Observation enrichments (migration `0015_observation_enrichments.sql`): parsed HSTS columns, `cdn_provider`, MTA-STS / TLS-RPT / BIMI TXT convenience fields, and `url_security_txt` / `url_robots_txt` / `url_robots_directives` satellites.
+- Cookbook SQL smoke test (`tests/docs_sql_smoke.rs`) that executes `QUERIES.md` / `DATABASE.md` / `README.md` SELECT fences against a freshly migrated empty DB.
+- Diligence-oriented docs coverage for 0015 signals (CDN, HSTS, email-auth TXT, security.txt, robots).
+
+### Changed
+- WHOIS/RDAP is **on by default**; use `--no-whois` to disable (`--enable-whois` remains accepted and redundant).
+- Simplify config loading to a single env-authority path.
+- Harden static technology detection; keep imply-only fingerprint stubs when pruning JS-only rules; drop unused Wappalyzer weight path.
+- Progress bar redraw fix for long-running scans.
+- Docs accuracy pass: GeoIP requires `MAXMIND_LICENSE_KEY` or `--geoip <path|url>` (bare `--geoip` invalid); security signals are query-derived (no `url_security_warnings` table); migration range `0001`–`0015`; export filters and `summary --top` defaults documented.
+
+### Fixed
+- CI/test flakes from observation enrichments, well-known fetches, and export snapshots.
+- High-confidence secret false positives and DNS Connect mislabeling.
+- Drop network-flaky tests in favor of stronger offline fingerprint contracts.
+- Dependabot minor/patch dependency bumps.
+
 ## [0.1.28] - 2026-08-19
 
 ### Added
@@ -350,7 +370,9 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.27...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.29...HEAD
+[0.1.29]: https://github.com/alexwoolford/domain_status/compare/v0.1.28...v0.1.29
+[0.1.28]: https://github.com/alexwoolford/domain_status/compare/v0.1.27...v0.1.28
 [0.1.27]: https://github.com/alexwoolford/domain_status/compare/v0.1.26...v0.1.27
 [0.1.26]: https://github.com/alexwoolford/domain_status/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/alexwoolford/domain_status/compare/v0.1.24...v0.1.25
