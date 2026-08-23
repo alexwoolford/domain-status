@@ -119,7 +119,7 @@ GeoIP is optional and best-effort.
 
 ### WHOIS
 
-WHOIS/RDAP is disabled unless `--enable-whois` is set.
+WHOIS/RDAP is **on by default**. Disable with `--no-whois` (or `enable_whois = false` in TOML).
 
 - Results are cached in `…/domain_status/whois/` for 7 days.
 - Lookup timeout is `5s`.

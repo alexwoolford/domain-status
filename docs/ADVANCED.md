@@ -52,8 +52,8 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 
 ## WHOIS / RDAP
 
-- Off by default: `--enable-whois`.
-- If TOML sets `enable_whois = true`, CLI can force off with `--no-whois`.
+- **On by default.** Disable with `--no-whois` or `enable_whois = false` in TOML.
+- `--enable-whois` remains accepted for older scripts (redundant when using defaults).
 - Results cached under `whois/`.
 
 ## Status server
@@ -94,7 +94,7 @@ See [docs.rs/domain_status](https://docs.rs/domain_status). Prefer `Config` + `r
 
 For portfolio infosec or light tech diligence, prefer one thorough observational run over re-scanning with extra flags later:
 
-- `--enable-whois` — registrar / creation / expiration facts
+- WHOIS/RDAP is **on by default** (use `--no-whois` only for cheap bulk crawls)
 - `--geoip` (or `MAXMIND_LICENSE_KEY`) — ASN / geo
 - `--scan-external-scripts` — first-party script bodies for secrets + static `scripts` tech patterns
 

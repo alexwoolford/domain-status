@@ -86,12 +86,18 @@ pub struct ScanCommand {
     #[arg(long, env = "DOMAIN_STATUS_STATUS_PORT")]
     pub status_port: Option<u16>,
 
-    #[arg(long, env = "DOMAIN_STATUS_ENABLE_WHOIS")]
+    /// Enable WHOIS/RDAP (on by default). Prefer `--no-whois` to disable.
+    /// Kept for backward compatibility with scripts that pass `--enable-whois`.
+    #[arg(long, env = "DOMAIN_STATUS_ENABLE_WHOIS", default_value_t = true)]
     pub enable_whois: bool,
 
-    /// Disable WHOIS even if enabled in TOML / env (`enable_whois = true`).
+    /// Disable WHOIS/RDAP (overrides default-on and TOML/env `enable_whois = true`).
     #[arg(long, conflicts_with = "enable_whois")]
     pub no_whois: bool,
+
+    /// Hide the terminal progress bar (still logs progress to `--log-file`).
+    #[arg(long, env = "DOMAIN_STATUS_NO_PROGRESS")]
+    pub no_progress: bool,
 
     /// Shared cache root for fingerprints, GeoIP, WHOIS, and User-Agent data.
     /// Defaults to `$DOMAIN_STATUS_CACHE_DIR` or the platform cache dir +
