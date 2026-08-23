@@ -77,6 +77,26 @@ impl EnrichmentInsertSummary {
     }
 }
 
+/// Runs an enrichment insert and records success/failure on the summary flags.
+async fn try_enrich<F, Fut>(
+    label: &str,
+    url_status_id: i64,
+    inserted: &mut bool,
+    failed: &mut bool,
+    insert: F,
+) where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(), DatabaseError>>,
+{
+    match insert().await {
+        Ok(()) => *inserted = true,
+        Err(e) => {
+            *failed = true;
+            log::warn!("Failed to insert {label} for url_status_id {url_status_id}: {e}");
+        }
+    }
+}
+
 /// Inserts a complete URL persistence record directly into the database.
 ///
 /// Inserts the main URL record and enrichment data immediately, without buffering
@@ -166,180 +186,6 @@ async fn insert_partial_failures(
     }
 }
 
-/// Inserts `GeoIP` data for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `geoip` - Optional tuple of (IP address, `GeoIP` result)
-/// * `summary` - Summary to update with insertion results
-async fn insert_geoip_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    geoip: Option<&(String, crate::geoip::GeoIpResult)>,
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if let Some((ip_address, geoip_result)) = geoip {
-        match insert::insert_geoip_data(pool, url_status_id, geoip_result).await {
-            Ok(()) => summary.geoip_inserted = true,
-            Err(e) => {
-                summary.geoip_failed = true;
-                log::warn!(
-                    "Failed to insert GeoIP data for IP '{ip_address}' (url_status_id {url_status_id}): {e}"
-                );
-            }
-        }
-    }
-}
-
-/// Inserts structured data for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `structured_data` - Optional structured data
-/// * `summary` - Summary to update with insertion results
-async fn insert_structured_data_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    structured_data: Option<&crate::parse::StructuredData>,
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if let Some(structured_data) = structured_data {
-        match insert::insert_structured_data(pool, url_status_id, structured_data).await {
-            Ok(()) => summary.structured_data_inserted = true,
-            Err(e) => {
-                summary.structured_data_failed = true;
-                log::warn!(
-                    "Failed to insert structured data for url_status_id {url_status_id}: {e}"
-                );
-            }
-        }
-    }
-}
-
-/// Inserts social media links for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `social_media_links` - Vector of social media links
-/// * `summary` - Summary to update with insertion results
-async fn insert_social_media_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    social_media_links: &[crate::parse::SocialMediaLink],
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if !social_media_links.is_empty() {
-        match insert::insert_social_media_links(pool, url_status_id, social_media_links).await {
-            Ok(()) => summary.social_media_inserted = true,
-            Err(e) => {
-                summary.social_media_failed = true;
-                log::warn!(
-                    "Failed to insert social media links for url_status_id {url_status_id}: {e}"
-                );
-            }
-        }
-    }
-}
-
-/// Inserts WHOIS data for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `whois` - Optional WHOIS result
-/// * `summary` - Summary to update with insertion results
-async fn insert_whois_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    whois: Option<&crate::whois::WhoisResult>,
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if let Some(whois_result) = whois {
-        match insert::insert_whois_data(pool, url_status_id, whois_result).await {
-            Ok(()) => summary.whois_inserted = true,
-            Err(e) => {
-                summary.whois_failed = true;
-                log::warn!("Failed to insert WHOIS data for url_status_id {url_status_id}: {e}");
-            }
-        }
-    }
-}
-
-/// Inserts analytics IDs for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `analytics_ids` - Vector of analytics IDs
-/// * `summary` - Summary to update with insertion results
-async fn insert_analytics_ids_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    analytics_ids: &[crate::parse::AnalyticsId],
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if !analytics_ids.is_empty() {
-        match insert::insert_analytics_ids(pool, url_status_id, analytics_ids).await {
-            Ok(()) => summary.analytics_ids_inserted = true,
-            Err(e) => {
-                summary.analytics_ids_failed = true;
-                log::warn!("Failed to insert analytics IDs for url_status_id {url_status_id}: {e}");
-            }
-        }
-    }
-}
-
-/// Inserts favicon data for a record.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `favicon` - Optional favicon data
-/// * `summary` - Summary to update with insertion results
-async fn insert_favicon_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    favicon: Option<&crate::fetch::favicon::FaviconData>,
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if let Some(favicon_data) = favicon {
-        match insert::insert_favicon_data(pool, url_status_id, favicon_data).await {
-            Ok(()) => summary.favicon_inserted = true,
-            Err(e) => {
-                summary.favicon_failed = true;
-                log::warn!("Failed to insert favicon data for url_status_id {url_status_id}: {e}");
-            }
-        }
-    }
-}
-
-/// Inserts contact links for a record.
-async fn insert_contact_links_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    contact_links: &[crate::parse::ContactLink],
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if !contact_links.is_empty() {
-        match insert::insert_contact_links(pool, url_status_id, contact_links).await {
-            Ok(()) => summary.contact_links_inserted = true,
-            Err(e) => {
-                summary.contact_links_failed = true;
-                log::warn!("Failed to insert contact links for url_status_id {url_status_id}: {e}");
-            }
-        }
-    }
-}
-
 /// Inserts exposed secrets and their decoded JWT claims for a record.
 async fn insert_exposed_secrets_enrichment(
     pool: &SqlitePool,
@@ -347,34 +193,32 @@ async fn insert_exposed_secrets_enrichment(
     exposed_secrets: &[crate::parse::ExposedSecret],
     summary: &mut EnrichmentInsertSummary,
 ) {
-    if !exposed_secrets.is_empty() {
-        match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
-            Ok(ids) => {
-                summary.exposed_secrets_inserted = true;
-                // Collect (secret_id, &DecodedJwt) for any decoded JWTs and
-                // insert them in a single batch transaction. This replaces the
-                // previous per-JWT path that opened/committed once per row.
-                let jwt_items: Vec<(i64, &crate::parse::jwt::DecodedJwt)> = exposed_secrets
-                    .iter()
-                    .zip(&ids)
-                    .filter_map(|(secret, &secret_id)| {
-                        secret.decoded_jwt.as_ref().map(|jwt| (secret_id, jwt))
-                    })
-                    .collect();
-                if !jwt_items.is_empty() {
-                    if let Err(e) = insert::insert_jwt_claims_batch(pool, &jwt_items).await {
-                        log::warn!(
-                            "Failed to insert JWT claims batch for url_status_id {url_status_id}: {e}"
-                        );
-                    }
+    if exposed_secrets.is_empty() {
+        return;
+    }
+    match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
+        Ok(ids) => {
+            summary.exposed_secrets_inserted = true;
+            // Collect (secret_id, &DecodedJwt) for any decoded JWTs and
+            // insert them in a single batch transaction.
+            let jwt_items: Vec<(i64, &crate::parse::jwt::DecodedJwt)> = exposed_secrets
+                .iter()
+                .zip(&ids)
+                .filter_map(|(secret, &secret_id)| {
+                    secret.decoded_jwt.as_ref().map(|jwt| (secret_id, jwt))
+                })
+                .collect();
+            if !jwt_items.is_empty() {
+                if let Err(e) = insert::insert_jwt_claims_batch(pool, &jwt_items).await {
+                    log::warn!(
+                        "Failed to insert JWT claims batch for url_status_id {url_status_id}: {e}"
+                    );
                 }
             }
-            Err(e) => {
-                summary.exposed_secrets_failed = true;
-                log::warn!(
-                    "Failed to insert exposed secrets for url_status_id {url_status_id}: {e}"
-                );
-            }
+        }
+        Err(e) => {
+            summary.exposed_secrets_failed = true;
+            log::warn!("Failed to insert exposed secrets for url_status_id {url_status_id}: {e}");
         }
     }
 }
@@ -384,17 +228,6 @@ async fn insert_exposed_secrets_enrichment(
 /// This function inserts enrichment data (`GeoIP`, WHOIS, structured data, etc.) after the main
 /// URL record has been committed. Failures are logged but don't propagate, ensuring that
 /// enrichment data failures don't prevent URL processing.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `record` - The persisted URL record containing enrichment data
-///
-/// # Returns
-///
-/// An `EnrichmentInsertSummary` tracking which enrichment data types succeeded or failed.
-/// This allows callers to monitor enrichment data insertion health.
 async fn insert_enrichment_data(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -402,29 +235,87 @@ async fn insert_enrichment_data(
 ) -> EnrichmentInsertSummary {
     let mut summary = EnrichmentInsertSummary::default();
 
-    // Insert each type of enrichment data
     insert_partial_failures(pool, url_status_id, record.partial_failures, &mut summary).await;
-    insert_geoip_enrichment(pool, url_status_id, record.geoip.as_ref(), &mut summary).await;
-    insert_structured_data_enrichment(
-        pool,
-        url_status_id,
-        record.structured_data.as_ref(),
-        &mut summary,
-    )
-    .await;
-    insert_social_media_enrichment(
-        pool,
-        url_status_id,
-        &record.social_media_links,
-        &mut summary,
-    )
-    .await;
-    insert_whois_enrichment(pool, url_status_id, record.whois.as_ref(), &mut summary).await;
-    insert_contact_links_enrichment(pool, url_status_id, &record.contact_links, &mut summary).await;
+
+    if let Some((ip_address, geoip_result)) = record.geoip.as_ref() {
+        try_enrich(
+            &format!("GeoIP data for IP '{ip_address}'"),
+            url_status_id,
+            &mut summary.geoip_inserted,
+            &mut summary.geoip_failed,
+            || insert::insert_geoip_data(pool, url_status_id, geoip_result),
+        )
+        .await;
+    }
+
+    if let Some(structured_data) = record.structured_data.as_ref() {
+        try_enrich(
+            "structured data",
+            url_status_id,
+            &mut summary.structured_data_inserted,
+            &mut summary.structured_data_failed,
+            || insert::insert_structured_data(pool, url_status_id, structured_data),
+        )
+        .await;
+    }
+
+    if !record.social_media_links.is_empty() {
+        try_enrich(
+            "social media links",
+            url_status_id,
+            &mut summary.social_media_inserted,
+            &mut summary.social_media_failed,
+            || insert::insert_social_media_links(pool, url_status_id, &record.social_media_links),
+        )
+        .await;
+    }
+
+    if let Some(whois_result) = record.whois.as_ref() {
+        try_enrich(
+            "WHOIS data",
+            url_status_id,
+            &mut summary.whois_inserted,
+            &mut summary.whois_failed,
+            || insert::insert_whois_data(pool, url_status_id, whois_result),
+        )
+        .await;
+    }
+
+    if !record.contact_links.is_empty() {
+        try_enrich(
+            "contact links",
+            url_status_id,
+            &mut summary.contact_links_inserted,
+            &mut summary.contact_links_failed,
+            || insert::insert_contact_links(pool, url_status_id, &record.contact_links),
+        )
+        .await;
+    }
+
     insert_exposed_secrets_enrichment(pool, url_status_id, &record.exposed_secrets, &mut summary)
         .await;
-    insert_analytics_ids_enrichment(pool, url_status_id, &record.analytics_ids, &mut summary).await;
-    insert_favicon_enrichment(pool, url_status_id, record.favicon.as_ref(), &mut summary).await;
+
+    if !record.analytics_ids.is_empty() {
+        try_enrich(
+            "analytics IDs",
+            url_status_id,
+            &mut summary.analytics_ids_inserted,
+            &mut summary.analytics_ids_failed,
+            || insert::insert_analytics_ids(pool, url_status_id, &record.analytics_ids),
+        )
+        .await;
+    }
+
+    if let Some(favicon_data) = record.favicon.as_ref() {
+        try_enrich(
+            "favicon data",
+            url_status_id,
+            &mut summary.favicon_inserted,
+            &mut summary.favicon_failed,
+            || insert::insert_favicon_data(pool, url_status_id, favicon_data),
+        )
+        .await;
+    }
 
     summary
 }

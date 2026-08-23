@@ -5,36 +5,39 @@ use sqlx::SqlitePool;
 use crate::error_handling::DatabaseError;
 use crate::parse::ContactLink;
 use crate::storage::insert::retry::with_sqlite_retry;
+use crate::storage::insert::utils::build_batch_insert_query;
 
 /// Inserts contact links (mailto/tel) into the database.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - Foreign key to `url_status.id`
-/// * `links` - Vector of contact links extracted from HTML
 pub async fn insert_contact_links(
     pool: &SqlitePool,
     url_status_id: i64,
     links: &[ContactLink],
 ) -> Result<(), DatabaseError> {
+    if links.is_empty() {
+        return Ok(());
+    }
+
     with_sqlite_retry(|| async {
+        let query = build_batch_insert_query(
+            "url_contact_links",
+            &["url_status_id", "contact_type", "contact_value", "raw_href"],
+            links.len(),
+            Some(
+                "ON CONFLICT(url_status_id, contact_type, contact_value) DO UPDATE SET raw_href=excluded.raw_href",
+            ),
+        );
+        let mut query_builder = sqlx::query(&query);
         for link in links {
-            sqlx::query(
-                "INSERT INTO url_contact_links (url_status_id, contact_type, contact_value, raw_href)
-                 VALUES (?, ?, ?, ?)
-                 ON CONFLICT(url_status_id, contact_type, contact_value) DO UPDATE SET
-                 raw_href=excluded.raw_href",
-            )
-            .bind(url_status_id)
-            .bind(link.contact_type.as_str())
-            .bind(&link.value)
-            .bind(&link.raw_href)
+            query_builder = query_builder
+                .bind(url_status_id)
+                .bind(link.contact_type.as_str())
+                .bind(&link.value)
+                .bind(&link.raw_href);
+        }
+        query_builder
             .execute(pool)
             .await
             .map_err(DatabaseError::SqlError)?;
-        }
-
         Ok(())
     })
     .await

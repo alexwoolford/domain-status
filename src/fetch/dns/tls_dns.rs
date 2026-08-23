@@ -198,25 +198,13 @@ pub(crate) async fn fetch_tls_and_dns(
 mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
-    use hickory_resolver::config::ResolverOpts;
-    use hickory_resolver::TokioResolver;
+    use crate::initialization::test_resolver;
     use std::sync::Arc;
-
-    fn create_test_resolver() -> TokioResolver {
-        let mut opts = ResolverOpts::default();
-        opts.timeout = std::time::Duration::from_secs(5);
-        opts.attempts = 1;
-        TokioResolver::builder_tokio()
-            .unwrap()
-            .with_options(opts)
-            .build()
-            .expect("resolver builds with default config")
-    }
 
     #[tokio::test]
     async fn test_fetch_tls_and_dns_http_url() {
         crate::initialization::init_crypto_provider();
-        let resolver = create_test_resolver();
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let result = fetch_tls_and_dns(
             "http://example.com",

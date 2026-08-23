@@ -28,11 +28,11 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
 
             // Check if cached version exists and is fresh
             let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await {
-                if let Ok(age) = metadata.last_updated.elapsed() {
-                    age.as_secs() >= geoip::CACHE_TTL_SECS || !cache_file.exists()
-                } else {
-                    true
-                }
+                crate::utils::cache::cache_ttl_exceeded(
+                    metadata.last_updated,
+                    geoip::CACHE_TTL_SECS,
+                    true,
+                ) || !cache_file.exists()
             } else {
                 true
             };

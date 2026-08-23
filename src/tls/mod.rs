@@ -343,6 +343,7 @@ pub async fn get_ssl_certificate_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::initialization::test_resolver;
     use pretty_assertions::assert_eq;
     use rcgen::{
         CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
@@ -351,10 +352,6 @@ mod tests {
     fn init_crypto_for_test() {
         // Initialize crypto provider for TLS tests
         crate::initialization::init_crypto_provider();
-    }
-
-    fn test_resolver() -> std::sync::Arc<TokioResolver> {
-        crate::initialization::init_resolver().expect("resolver for TLS tests")
     }
 
     #[tokio::test]

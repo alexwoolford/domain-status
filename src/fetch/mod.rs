@@ -10,7 +10,9 @@
 //! - `handle_http_request()` - Orchestrates the full HTTP request flow
 //! - `handle_response()` - Processes successful HTTP responses
 
+pub(crate) mod charset;
 mod context;
+pub(crate) mod cookies;
 mod dns;
 pub(crate) mod external_scripts;
 pub(crate) mod favicon;
@@ -19,6 +21,7 @@ mod record;
 mod redirects;
 mod request;
 mod response;
+pub(crate) mod stream;
 mod utils;
 
 pub use context::{NetworkContext, ProcessingContext, RuntimeContext};

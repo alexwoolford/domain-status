@@ -1,6 +1,12 @@
 //! Error retriability and retry logic.
 
-use anyhow::Error;
+use std::future::Future;
+use std::time::Duration;
+
+use anyhow::{Error, Result};
+
+use crate::config::MAX_NETWORK_DOWNLOAD_RETRIES;
+use crate::error_handling::ReqwestErrorExt;
 
 /// Determines if an error is retriable (should be retried).
 ///
@@ -28,59 +34,17 @@ use anyhow::Error;
 /// # Implementation Details
 ///
 /// Uses error chain inspection to properly identify error types without relying on
-/// fragile string matching. Checks for specific error types (`reqwest::Error`, `url::ParseError`,
-/// `sqlx::Error`) via downcasting, which is more reliable than string matching.
+/// fragile string matching. HTTP retriability is delegated to
+/// [`ReqwestErrorExt::is_retriable`] so there is a single source of truth.
 ///
 /// **Default behavior:** Unrecognized errors are NOT retried (fail-fast). Only
 /// explicitly-identified transient errors trigger retries.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use anyhow::Error;
-///
-/// // Timeout error - retriable
-/// let timeout_err = Error::from(reqwest::Error::timeout(...));
-/// assert!(is_retriable_error(&timeout_err));
-///
-/// // URL parse error - not retriable
-/// let parse_err = Error::from(url::ParseError::EmptyHost);
-/// assert!(!is_retriable_error(&parse_err));
-/// ```
 pub(crate) fn is_retriable_error(error: &Error) -> bool {
     // Check error chain for specific error types
     for cause in error.chain() {
-        // Check for reqwest errors (HTTP client errors)
+        // Check for reqwest errors (HTTP client errors) — single source of truth
         if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-            // Check HTTP status codes first
-            if let Some(status) = reqwest_err.status() {
-                let status_code = status.as_u16();
-
-                // 429 (Too Many Requests) is retriable with backoff
-                if status_code == crate::config::HTTP_STATUS_TOO_MANY_REQUESTS {
-                    return true;
-                }
-
-                // Permanent client errors (4xx except 429) - don't retry
-                if (400..500).contains(&status_code) {
-                    return false;
-                }
-
-                // Server errors (5xx) - retry (temporary)
-                if (500..600).contains(&status_code) {
-                    return true;
-                }
-            }
-
-            // Check reqwest error types (network-related errors are retriable)
-            if reqwest_err.is_timeout() || reqwest_err.is_connect() || reqwest_err.is_request() {
-                return true;
-            }
-
-            // Redirect errors, decode errors, etc. are not retriable
-            if reqwest_err.is_redirect() || reqwest_err.is_decode() {
-                return false;
-            }
+            return reqwest_err.is_retriable();
         }
 
         // Check for URL parsing errors (not retriable)
@@ -94,7 +58,6 @@ pub(crate) fn is_retriable_error(error: &Error) -> bool {
         }
 
         // Check for DNS resolution errors (retriable) via structured type, not string matching.
-        // String matching (e.g. msg.contains("dns")) is fragile and can misclassify.
         if cause
             .downcast_ref::<hickory_resolver::net::NetError>()
             .is_some()
@@ -103,10 +66,42 @@ pub(crate) fn is_retriable_error(error: &Error) -> bool {
         }
     }
 
-    // Default: do NOT retry unknown errors. If we can't identify the error type,
-    // it's safer to fail fast than to silently retry 3 times with backoff.
-    // All known-retriable cases (timeouts, DNS, 5xx, 429) are handled above.
+    // Default: do NOT retry unknown errors.
     false
+}
+
+/// Retries an async network download with exponential backoff.
+///
+/// Uses [`MAX_NETWORK_DOWNLOAD_RETRIES`] attempts. Delay between attempts is
+/// `base_delay_secs << (attempt - 1)` (e.g. base 1 → 1s, 2s, 4s; base 2 → 2s, 4s, 8s).
+pub(crate) async fn with_network_download_retry<T, F, Fut>(
+    label: &str,
+    base_delay_secs: u64,
+    mut op: F,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let mut last_error = None;
+    for attempt in 1..=MAX_NETWORK_DOWNLOAD_RETRIES {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_NETWORK_DOWNLOAD_RETRIES {
+                    log::warn!(
+                        "Failed {label} (attempt {attempt}/{MAX_NETWORK_DOWNLOAD_RETRIES}), retrying..."
+                    );
+                    tokio::time::sleep(Duration::from_secs(base_delay_secs << (attempt - 1))).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        anyhow::anyhow!("Failed {label} after {MAX_NETWORK_DOWNLOAD_RETRIES} attempts")
+    }))
 }
 
 #[cfg(test)]

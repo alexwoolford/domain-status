@@ -29,11 +29,8 @@ async fn resolve_from_license_key(cache_path: &Path) -> Option<String> {
     let (cache_file, metadata_file) = geoip_cache_paths(cache_path, "GeoLite2-City");
 
     let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await {
-        if let Ok(age) = metadata.last_updated.elapsed() {
-            age.as_secs() >= geoip::CACHE_TTL_SECS || !cache_file.exists()
-        } else {
-            true
-        }
+        crate::utils::cache::cache_ttl_exceeded(metadata.last_updated, geoip::CACHE_TTL_SECS, true)
+            || !cache_file.exists()
     } else {
         true
     };

@@ -22,20 +22,25 @@ pub(crate) fn parse_json_array(json_str: Option<&String>) -> Option<Vec<String>>
 
 /// Detects the type of a TXT record based on its content.
 /// Returns "SPF", "DMARC", "VERIFICATION", or "OTHER".
+///
+/// SPF/DMARC classification shares predicates with [`crate::dns`] extractors
+/// so case-sensitivity cannot drift.
 pub(crate) fn detect_txt_type(txt: &str) -> &'static str {
-    let txt_lower = txt.to_lowercase();
-    if txt_lower.starts_with("v=spf1") {
+    if crate::dns::is_spf_txt(txt) {
         "SPF"
-    } else if txt_lower.starts_with("v=dmarc1") {
+    } else if crate::dns::is_dmarc_txt(txt) {
         "DMARC"
-    } else if txt_lower.contains("google-site-verification")
-        || txt_lower.contains("ms-verify")
-        || txt_lower.contains("facebook-domain-verification")
-        || txt_lower.contains("atlassian-domain-verification")
-    {
-        "VERIFICATION"
     } else {
-        "OTHER"
+        let txt_lower = txt.to_lowercase();
+        if txt_lower.contains("google-site-verification")
+            || txt_lower.contains("ms-verify")
+            || txt_lower.contains("facebook-domain-verification")
+            || txt_lower.contains("atlassian-domain-verification")
+        {
+            "VERIFICATION"
+        } else {
+            "OTHER"
+        }
     }
 }
 

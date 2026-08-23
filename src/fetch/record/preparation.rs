@@ -177,9 +177,8 @@ mod tests {
     use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
     use crate::fetch::response::{HtmlData, ResponseData};
     use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
+    use crate::initialization::test_resolver;
     use crate::utils::TimingStats;
-    use hickory_resolver::config::ResolverOpts;
-    use hickory_resolver::TokioResolver;
     use std::sync::Arc;
 
     /// Max `GeoIP` lookup time (ms) allowed in tests. Lenient for CI (network/cold cache).
@@ -197,13 +196,7 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let resolver = Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build()
-                .expect("resolver builds with default config"),
-        );
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
         let run_id = Some("test-run".to_string());

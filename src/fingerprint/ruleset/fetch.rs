@@ -10,12 +10,12 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::{MAX_NETWORK_DOWNLOAD_RETRIES, MAX_RULESET_DOWNLOAD_SIZE};
+use crate::config::MAX_RULESET_DOWNLOAD_SIZE;
 use crate::fingerprint::models::Technology;
-use crate::security::{ssrf_safe_redirect_policy, validate_url_safe};
+use crate::security::validate_url_safe;
+use crate::utils::retry::with_network_download_retry;
 
 use super::github::fetch_from_github_directory;
 
@@ -29,18 +29,7 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
     // SSRF protection: validate URL before fetching
     validate_url_safe(url).with_context(|| format!("Unsafe ruleset URL rejected: {url}"))?;
 
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-    use crate::initialization::init_resolver;
-    use crate::security::safe_resolver::SafeResolver;
-
-    let resolver =
-        init_resolver().context("Failed to initialize DNS resolver for ruleset fetch")?;
-    let client = reqwest::Client::builder()
-        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
-        .redirect(ssrf_safe_redirect_policy())
-        .timeout(Duration::from_secs(60))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
-        .build()?;
+    let client = crate::initialization::build_download_client(Duration::from_secs(60))?;
 
     // Check if URL points to a directory (GitHub) or a file
     // For HTTP Archive, we need to fetch all JSON files from the directory
@@ -58,28 +47,12 @@ pub(crate) async fn fetch_from_url(url: &str) -> Result<HashMap<String, Technolo
     // Single file - fetch with retries and size limits
     log::debug!("Fetching single file from: {url}");
 
-    let mut last_error = None;
-    for attempt in 1..=MAX_NETWORK_DOWNLOAD_RETRIES {
-        match fetch_single_file_with_size_limit(&client, url).await {
-            Ok(technologies) => return Ok(technologies),
-            Err(e) => {
-                last_error = Some(e);
-                if attempt < MAX_NETWORK_DOWNLOAD_RETRIES {
-                    log::warn!(
-                        "Failed to fetch ruleset from {url} (attempt {attempt}/{MAX_NETWORK_DOWNLOAD_RETRIES}), retrying..."
-                    );
-                    // Exponential backoff: 1s, 2s, 4s
-                    tokio::time::sleep(Duration::from_secs(1 << (attempt - 1))).await;
-                }
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        anyhow::anyhow!(
-            "Failed to fetch ruleset from {url} after {MAX_NETWORK_DOWNLOAD_RETRIES} attempts"
-        )
-    }))
+    with_network_download_retry(
+        &format!("fetch ruleset from {url}"),
+        1, // Exponential backoff: 1s, 2s, 4s
+        || fetch_single_file_with_size_limit(&client, url),
+    )
+    .await
 }
 
 /// Fetches a single file with size limit enforcement
@@ -87,6 +60,8 @@ async fn fetch_single_file_with_size_limit(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<HashMap<String, Technology>> {
+    use crate::fetch::stream::reject_if_content_length_exceeds;
+
     let response = client.get(url).send().await?;
 
     if !response.status().is_success() {
@@ -97,17 +72,9 @@ async fn fetch_single_file_with_size_limit(
         ));
     }
 
-    // Check content-length header if available
-    if let Some(content_length) = response.content_length() {
-        if content_length > MAX_RULESET_DOWNLOAD_SIZE as u64 {
-            return Err(anyhow::anyhow!(
-                "Ruleset file too large: {content_length} bytes (max: {MAX_RULESET_DOWNLOAD_SIZE} bytes)"
-            ));
-        }
-    }
+    reject_if_content_length_exceeds(&response, MAX_RULESET_DOWNLOAD_SIZE, "Ruleset file")?;
 
     // Read response with size limit
-    // Use bytes() which respects content-length and provides size checking
     let bytes = response.bytes().await?;
 
     if bytes.len() > MAX_RULESET_DOWNLOAD_SIZE {

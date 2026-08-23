@@ -9,10 +9,6 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-/// Cache duration: 30 days
-/// Chrome releases roughly every 4 weeks, so 30 days ensures we stay current
-const CACHE_DURATION: Duration = Duration::from_secs(crate::config::USER_AGENT_CACHE_TTL_SECS);
-
 /// Fallback Chrome version if fetch fails
 /// Updated to Chrome 131 (November 2024)
 const FALLBACK_CHROME_VERSION: &str = "131.0.0.0";
@@ -58,23 +54,11 @@ async fn fetch_latest_chrome_version() -> String {
 
 /// Attempts to fetch Chrome version from a specific source.
 async fn try_fetch_chrome_version(url: &str) -> Result<String, anyhow::Error> {
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
-    use crate::initialization::init_resolver;
-    use crate::security::safe_resolver::SafeResolver;
-    use crate::security::ssrf_safe_redirect_policy;
-    use anyhow::Context;
-    use std::sync::Arc;
+    use crate::initialization::build_download_client;
 
     // Same SSRF posture as GeoIP/ruleset fetches: SafeResolver before connect +
     // redirect policy that re-checks each Location with validate_url_safe.
-    let resolver =
-        init_resolver().context("Failed to initialize DNS resolver for User-Agent fetch")?;
-    let client = reqwest::Client::builder()
-        .dns_resolver(Arc::new(SafeResolver::new(resolver)))
-        .redirect(ssrf_safe_redirect_policy())
-        .timeout(Duration::from_secs(5))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-        .build()?;
+    let client = build_download_client(Duration::from_secs(5))?;
 
     let response = client.get(url).send().await?;
 
@@ -164,10 +148,13 @@ async fn load_from_cache(cache_dir: &Path) -> Result<String, anyhow::Error> {
     let metadata_json = fs::read_to_string(&metadata_path).await?;
     let metadata: UserAgentMetadata = serde_json::from_str(&metadata_json)?;
 
-    // Check if cache is fresh. If last_updated is in the future, elapsed() returns Err — treat as valid (skip age check).
-    match metadata.last_updated.elapsed() {
-        Ok(age) if age > CACHE_DURATION => return Err(anyhow::anyhow!("Cache expired")),
-        Ok(_) | Err(_) => {} // Fresh, or future timestamp (clock skew or test); accept cache
+    // Check if cache is fresh. Future timestamps (clock skew / tests) stay valid.
+    if crate::utils::cache::cache_ttl_exceeded(
+        metadata.last_updated,
+        crate::config::USER_AGENT_CACHE_TTL_SECS,
+        false,
+    ) {
+        return Err(anyhow::anyhow!("Cache expired"));
     }
 
     Ok(metadata.chrome_version)
@@ -185,7 +172,7 @@ async fn save_to_cache(cache_dir: &Path, version: &str) -> Result<(), anyhow::Er
 
     let metadata_path = cache_dir.join("version.json");
     let metadata_json = serde_json::to_string_pretty(&metadata)?;
-    fs::write(&metadata_path, metadata_json).await?;
+    crate::utils::cache::write_atomic(&metadata_path, metadata_json.as_bytes()).await?;
 
     Ok(())
 }

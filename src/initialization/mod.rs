@@ -20,10 +20,13 @@ use rustls::crypto::{ring::default_provider, CryptoProvider};
 use tokio::sync::Semaphore;
 
 // Re-export public API
+pub(crate) use client::build_download_client;
 pub use client::{init_client, init_redirect_client};
 pub use logger::{init_logger_to_file, init_logger_with};
 pub use rate_limiter::{init_rate_limiter, RateLimiter};
 pub use resolver::init_resolver;
+#[cfg(test)]
+pub(crate) use resolver::test_resolver;
 
 /// Initializes a semaphore for controlling concurrency.
 ///

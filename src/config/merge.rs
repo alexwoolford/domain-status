@@ -1,13 +1,66 @@
-//! Config construction: merge file+env key-value map with CLI-derived config.
+//! Config construction: merge typed file+env config with CLI-derived config.
 //!
-//! Precedence: CLI > env > config file > defaults. The CLI layer loads the
-//! file+env map and passes it here so that config building and validation
+//! Precedence: CLI > env > config file > defaults. The CLI layer loads
+//! [`FileConfig`] and passes it here so that config building and validation
 //! stay in the config module.
 
-use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 
+use serde::de::{self, Deserializer, Visitor};
+use serde::Deserialize;
+
 use super::types::{Config, FailOn, LogFormat, LogLevel};
+
+/// File / env overlay for scan settings.
+///
+/// All fields are `Option` so absent keys leave [`Config`] defaults in place.
+/// Deserialized from TOML and `DOMAIN_STATUS_*` via the `config` crate.
+/// Invalid enum/bool values fail deserialization (no silent skip).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct FileConfig {
+    /// URL list path (library / non-CLI embeds; CLI uses the positional arg).
+    pub file: Option<PathBuf>,
+    /// Baseline log level.
+    #[serde(default, deserialize_with = "deserialize_option_log_level")]
+    pub log_level: Option<LogLevel>,
+    /// Scan log file format.
+    #[serde(default, deserialize_with = "deserialize_option_log_format")]
+    pub log_format: Option<LogFormat>,
+    /// `SQLite` database path.
+    pub db_path: Option<PathBuf>,
+    /// Maximum concurrent requests.
+    pub max_concurrency: Option<usize>,
+    /// Per-request HTTP timeout in seconds.
+    pub timeout_seconds: Option<u64>,
+    /// HTTP User-Agent.
+    pub user_agent: Option<String>,
+    /// Requests-per-second cap (`0` disables).
+    pub rate_limit_rps: Option<u32>,
+    /// Fingerprints URL or local path.
+    pub fingerprints: Option<String>,
+    /// `GeoIP` database path or download URL.
+    pub geoip: Option<String>,
+    /// Optional status HTTP server port.
+    pub status_port: Option<u16>,
+    /// Enable WHOIS/RDAP lookups.
+    #[serde(default, deserialize_with = "deserialize_option_bool")]
+    pub enable_whois: Option<bool>,
+    /// Shared cache root.
+    pub cache_dir: Option<PathBuf>,
+    /// Fetch first-party external scripts for analysis.
+    #[serde(default, deserialize_with = "deserialize_option_bool")]
+    pub scan_external_scripts: Option<bool>,
+    /// Exit-code failure policy.
+    #[serde(default, deserialize_with = "deserialize_option_fail_on")]
+    pub fail_on: Option<FailOn>,
+    /// Failure % threshold when `fail_on` is `pct>`.
+    pub fail_on_pct_threshold: Option<u8>,
+    /// Scan log file path.
+    pub log_file: Option<PathBuf>,
+    /// Drain timeout after the input queue is empty (seconds).
+    pub drain_timeout_secs: Option<u64>,
+}
 
 /// Parsers for string values from config file / env (case-insensitive).
 fn parse_log_level(s: &str) -> Option<LogLevel> {
@@ -39,86 +92,256 @@ fn parse_fail_on(s: &str) -> Option<FailOn> {
 }
 
 fn parse_bool(s: &str) -> Option<bool> {
-    match s.to_lowercase().as_str() {
+    match s.trim().to_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Some(true),
         "false" | "0" | "no" | "off" => Some(false),
         _ => None,
     }
 }
 
-/// Applies key-value config (from file + env) onto `Config`.
-/// Only known keys are applied; invalid values are skipped.
-#[allow(clippy::implicit_hasher)] // Internal function; always called with std HashMap, no need for generic hasher
-pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, String>) {
-    for (key, value) in map {
-        let key_lower = key.to_lowercase();
-        match key_lower.as_str() {
-            "file" => config.file = PathBuf::from(value),
-            "db_path" => config.db_path = PathBuf::from(value),
-            "log_file" => config.log_file = Some(PathBuf::from(value)),
-            "log_level" => {
-                if let Some(lvl) = parse_log_level(value) {
-                    config.log_level = lvl;
-                }
-            }
-            "log_format" => {
-                if let Some(fmt) = parse_log_format(value) {
-                    config.log_format = fmt;
-                }
-            }
-            "max_concurrency" => {
-                if let Ok(n) = value.parse::<usize>() {
-                    config.max_concurrency = n;
-                }
-            }
-            "timeout_seconds" => {
-                if let Ok(n) = value.parse::<u64>() {
-                    config.timeout_seconds = n;
-                }
-            }
-            "drain_timeout_secs" => {
-                if let Ok(n) = value.parse::<u64>() {
-                    config.drain_timeout_secs = n;
-                }
-            }
-            "user_agent" => config.user_agent.clone_from(value),
-            "rate_limit_rps" => {
-                if let Ok(n) = value.parse::<u32>() {
-                    config.rate_limit_rps = n;
-                }
-            }
-            "fingerprints" => config.fingerprints = Some(value.clone()),
-            "geoip" => config.geoip = Some(value.clone()),
-            "status_port" => {
-                if let Ok(n) = value.parse::<u16>() {
-                    config.status_port = Some(n);
-                }
-            }
-            "enable_whois" => {
-                if let Some(b) = parse_bool(value) {
-                    config.enable_whois = b;
-                }
-            }
-            "cache_dir" => {
-                config.cache_dir = Some(PathBuf::from(value));
-            }
-            "scan_external_scripts" => {
-                if let Some(b) = parse_bool(value) {
-                    config.scan_external_scripts = b;
-                }
-            }
-            "fail_on" => {
-                if let Some(f) = parse_fail_on(value) {
-                    config.fail_on = f;
-                }
-            }
-            "fail_on_pct_threshold" => {
-                if let Ok(n) = value.parse::<u8>() {
-                    config.fail_on_pct_threshold = n;
-                }
-            }
-            _ => {}
+fn deserialize_option_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptBoolVisitor;
+
+    impl<'de> Visitor<'de> for OptBoolVisitor {
+        type Value = Option<bool>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a boolean or bool-like string (true/false, 1/0, yes/no, on/off)")
         }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            parse_bool(v)
+                .map(Some)
+                .ok_or_else(|| E::custom(format!("invalid boolean value: {v:?}")))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            match v {
+                0 => Ok(Some(false)),
+                1 => Ok(Some(true)),
+                _ => Err(E::custom(format!("invalid boolean integer: {v}"))),
+            }
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            match v {
+                0 => Ok(Some(false)),
+                1 => Ok(Some(true)),
+                _ => Err(E::custom(format!("invalid boolean integer: {v}"))),
+            }
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D2: Deserializer<'de>>(
+            self,
+            deserializer: D2,
+        ) -> Result<Self::Value, D2::Error> {
+            deserializer.deserialize_any(OptBoolVisitor)
+        }
+    }
+
+    deserializer.deserialize_any(OptBoolVisitor)
+}
+
+fn deserialize_option_fail_on<'de, D>(deserializer: D) -> Result<Option<FailOn>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptFailOnVisitor;
+
+    impl<'de> Visitor<'de> for OptFailOnVisitor {
+        type Value = Option<FailOn>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("fail_on: never | any-failure | any_failure | pct>")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            parse_fail_on(v)
+                .map(Some)
+                .ok_or_else(|| E::custom(format!("invalid fail_on value: {v:?}")))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D2: Deserializer<'de>>(
+            self,
+            deserializer: D2,
+        ) -> Result<Self::Value, D2::Error> {
+            deserializer.deserialize_any(OptFailOnVisitor)
+        }
+    }
+
+    deserializer.deserialize_any(OptFailOnVisitor)
+}
+
+fn deserialize_option_log_level<'de, D>(deserializer: D) -> Result<Option<LogLevel>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptLogLevelVisitor;
+
+    impl<'de> Visitor<'de> for OptLogLevelVisitor {
+        type Value = Option<LogLevel>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("log_level: error | warn | info | debug | trace")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            parse_log_level(v)
+                .map(Some)
+                .ok_or_else(|| E::custom(format!("invalid log_level value: {v:?}")))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D2: Deserializer<'de>>(
+            self,
+            deserializer: D2,
+        ) -> Result<Self::Value, D2::Error> {
+            deserializer.deserialize_any(OptLogLevelVisitor)
+        }
+    }
+
+    deserializer.deserialize_any(OptLogLevelVisitor)
+}
+
+fn deserialize_option_log_format<'de, D>(deserializer: D) -> Result<Option<LogFormat>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptLogFormatVisitor;
+
+    impl<'de> Visitor<'de> for OptLogFormatVisitor {
+        type Value = Option<LogFormat>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("log_format: plain | json")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            parse_log_format(v)
+                .map(Some)
+                .ok_or_else(|| E::custom(format!("invalid log_format value: {v:?}")))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D2: Deserializer<'de>>(
+            self,
+            deserializer: D2,
+        ) -> Result<Self::Value, D2::Error> {
+            deserializer.deserialize_any(OptLogFormatVisitor)
+        }
+    }
+
+    deserializer.deserialize_any(OptLogFormatVisitor)
+}
+
+/// Applies a typed file/env overlay onto `Config` (only `Some` fields).
+pub fn apply_file_config(config: &mut Config, file: &FileConfig) {
+    if let Some(ref path) = file.file {
+        config.file.clone_from(path);
+    }
+    if let Some(ref path) = file.db_path {
+        config.db_path.clone_from(path);
+    }
+    if let Some(ref path) = file.log_file {
+        config.log_file = Some(path.clone());
+    }
+    if let Some(ref lvl) = file.log_level {
+        config.log_level = lvl.clone();
+    }
+    if let Some(fmt) = file.log_format {
+        config.log_format = fmt;
+    }
+    if let Some(n) = file.max_concurrency {
+        config.max_concurrency = n;
+    }
+    if let Some(n) = file.timeout_seconds {
+        config.timeout_seconds = n;
+    }
+    if let Some(n) = file.drain_timeout_secs {
+        config.drain_timeout_secs = n;
+    }
+    if let Some(ref ua) = file.user_agent {
+        config.user_agent.clone_from(ua);
+    }
+    if let Some(n) = file.rate_limit_rps {
+        config.rate_limit_rps = n;
+    }
+    if let Some(ref fp) = file.fingerprints {
+        config.fingerprints = Some(fp.clone());
+    }
+    if let Some(ref geo) = file.geoip {
+        config.geoip = Some(geo.clone());
+    }
+    if let Some(n) = file.status_port {
+        config.status_port = Some(n);
+    }
+    if let Some(b) = file.enable_whois {
+        config.enable_whois = b;
+    }
+    if let Some(ref path) = file.cache_dir {
+        config.cache_dir = Some(path.clone());
+    }
+    if let Some(b) = file.scan_external_scripts {
+        config.scan_external_scripts = b;
+    }
+    if let Some(ref f) = file.fail_on {
+        config.fail_on = f.clone();
+    }
+    if let Some(n) = file.fail_on_pct_threshold {
+        config.fail_on_pct_threshold = n;
     }
 }
 
@@ -129,20 +352,19 @@ pub fn apply_file_env_map_to_config(config: &mut Config, map: &HashMap<String, S
 /// is overwritten (backward compatible). Use `Some` so file/env values are preserved
 /// for options the user did not set on the CLI or via env.
 ///
-/// Call this from the CLI layer after loading the file+env map and converting
+/// Call this from the CLI layer after loading [`FileConfig`] and converting
 /// the scan command to `Config` via `config_from_scan_command(scan_cmd)`.
 #[must_use]
-#[allow(clippy::implicit_hasher)] // Internal function; always called with std HashMap, no need for generic hasher
 pub fn merge_file_env_and_cli(
-    file_env_map: Option<&HashMap<String, String>>,
+    file_env: Option<&FileConfig>,
     cli_config: Config,
     cli_explicit: Option<&[&str]>,
 ) -> Config {
     let overwrite = |key: &str| -> bool { cli_explicit.is_none_or(|keys| keys.contains(&key)) };
 
     let mut config = Config::default();
-    if let Some(map) = file_env_map {
-        apply_file_env_map_to_config(&mut config, map);
+    if let Some(file) = file_env {
+        apply_file_config(&mut config, file);
     }
 
     if overwrite("file") {
@@ -216,13 +438,20 @@ pub fn merge_file_env_and_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn file_config_from_json(value: serde_json::Value) -> Result<FileConfig, serde_json::Error> {
+        serde_json::from_value(value)
+    }
 
     #[test]
     fn test_merge_preserves_file_env_when_cli_not_explicit() {
-        let mut file_env = HashMap::new();
-        file_env.insert("file".to_string(), "/path/to/urls.txt".to_string());
-        file_env.insert("log_level".to_string(), "debug".to_string());
-        file_env.insert("max_concurrency".to_string(), "100".to_string());
+        let file_env = FileConfig {
+            file: Some(PathBuf::from("/path/to/urls.txt")),
+            log_level: Some(LogLevel::Debug),
+            max_concurrency: Some(100),
+            ..Default::default()
+        };
 
         let cli_config = Config {
             file: PathBuf::from("/cli/urls.txt"),
@@ -262,8 +491,10 @@ mod tests {
 
     #[test]
     fn test_merge_applies_explicit_drain_timeout_secs() {
-        let mut file_env = HashMap::new();
-        file_env.insert("drain_timeout_secs".to_string(), "45".to_string());
+        let file_env = FileConfig {
+            drain_timeout_secs: Some(45),
+            ..Default::default()
+        };
 
         let cli_config = Config {
             drain_timeout_secs: 90,
@@ -281,26 +512,19 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_fail_on_invalid_skipped_valid_applied_cli_overrides() {
-        // Invalid fail_on is skipped → default Never preserved
-        let mut invalid = HashMap::new();
-        invalid.insert("fail_on".to_string(), "boom".to_string());
-        let merged_invalid = merge_file_env_and_cli(
-            Some(&invalid),
-            Config {
-                fail_on: FailOn::Never,
-                ..Default::default()
-            },
-            Some(&[]),
-        );
+    fn test_merge_fail_on_invalid_rejected_valid_applied_cli_overrides() {
+        // Invalid fail_on fails deserialization (no silent skip)
+        let err = file_config_from_json(json!({"fail_on": "boom"})).unwrap_err();
         assert!(
-            matches!(merged_invalid.fail_on, FailOn::Never),
-            "invalid fail_on must leave default Never"
+            err.to_string().contains("fail_on") || err.to_string().contains("boom"),
+            "invalid fail_on must fail deserialize, got: {err}"
         );
 
         // Valid file value applied when CLI not explicit
-        let mut valid = HashMap::new();
-        valid.insert("fail_on".to_string(), "pct>".to_string());
+        let valid = FileConfig {
+            fail_on: Some(FailOn::PctGreaterThan),
+            ..Default::default()
+        };
         let merged_valid = merge_file_env_and_cli(
             Some(&valid),
             Config {
@@ -328,26 +552,15 @@ mod tests {
             "explicit CLI fail_on must override file"
         );
 
-        // Invalid bool for enable_whois is skipped (default false preserved)
-        let mut bad_bool = HashMap::new();
-        bad_bool.insert("enable_whois".to_string(), "maybe".to_string());
-        let merged_bool = merge_file_env_and_cli(
-            Some(&bad_bool),
-            Config {
-                enable_whois: false,
-                cache_dir: None,
-                ..Default::default()
-            },
-            Some(&[]),
-        );
+        // Invalid bool for enable_whois fails deserialization
+        let bool_err = file_config_from_json(json!({"enable_whois": "maybe"})).unwrap_err();
         assert!(
-            !merged_bool.enable_whois,
-            "invalid enable_whois must leave default false"
+            bool_err.to_string().contains("bool") || bool_err.to_string().contains("maybe"),
+            "invalid enable_whois must fail deserialize, got: {bool_err}"
         );
 
         // CLI-style any-failure must parse from env/TOML
-        let mut any_failure = HashMap::new();
-        any_failure.insert("fail_on".to_string(), "any-failure".to_string());
+        let any_failure = file_config_from_json(json!({"fail_on": "any-failure"})).unwrap();
         let merged_any = merge_file_env_and_cli(
             Some(&any_failure),
             Config {
@@ -363,32 +576,31 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_bool_skipped_preserves_existing_value() {
-        let mut config = Config {
-            enable_whois: true,
-            scan_external_scripts: true,
-            ..Default::default()
-        };
-        let mut map = HashMap::new();
-        map.insert("enable_whois".to_string(), "maybe".to_string());
-        map.insert("scan_external_scripts".to_string(), " nah ".to_string());
-        apply_file_env_map_to_config(&mut config, &map);
+    fn test_invalid_bool_deserialize_fails_instead_of_forcing_false() {
+        // Previously silent skip could leave stale true; invalid values must error.
+        let err = file_config_from_json(json!({
+            "enable_whois": "maybe",
+            "scan_external_scripts": " nah "
+        }))
+        .unwrap_err();
         assert!(
-            config.enable_whois,
-            "invalid enable_whois must not force false over an existing true"
+            err.to_string().contains("bool")
+                || err.to_string().contains("maybe")
+                || err.to_string().contains("nah"),
+            "invalid bools must fail deserialize, got: {err}"
         );
-        assert!(
-            config.scan_external_scripts,
-            "invalid scan_external_scripts must not force false over an existing true"
-        );
+        assert!(parse_bool("maybe").is_none());
+        assert!(parse_bool(" nah ").is_none());
     }
 
     /// Adversarial: `--no-whois` on the CLI must beat `enable_whois=true` from the config
     /// file, even though `no_whois` and `enable_whois` are different keys under the hood.
     #[test]
     fn test_no_whois_cli_flag_overrides_toml_enable_whois_true() {
-        let mut file_env = HashMap::new();
-        file_env.insert("enable_whois".to_string(), "true".to_string());
+        let file_env = FileConfig {
+            enable_whois: Some(true),
+            ..Default::default()
+        };
 
         // `--no-whois` set: explicit key list includes "no_whois" (not "enable_whois").
         let merged = merge_file_env_and_cli(
@@ -408,8 +620,10 @@ mod tests {
     /// Without `--no-whois`, file/env `enable_whois=true` must still apply normally.
     #[test]
     fn test_enable_whois_true_from_file_applies_without_no_whois_flag() {
-        let mut file_env = HashMap::new();
-        file_env.insert("enable_whois".to_string(), "true".to_string());
+        let file_env = FileConfig {
+            enable_whois: Some(true),
+            ..Default::default()
+        };
 
         let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
         assert!(
@@ -423,8 +637,7 @@ mod tests {
     #[test]
     fn test_scan_external_scripts_parses_permissive_truthy_strings() {
         for truthy in ["yes", "true", "1", "on", "YES", "True"] {
-            let mut file_env = HashMap::new();
-            file_env.insert("scan_external_scripts".to_string(), truthy.to_string());
+            let file_env = file_config_from_json(json!({"scan_external_scripts": truthy})).unwrap();
 
             let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
             assert!(
@@ -434,8 +647,7 @@ mod tests {
         }
 
         for falsy in ["no", "false", "0", "off"] {
-            let mut file_env = HashMap::new();
-            file_env.insert("scan_external_scripts".to_string(), falsy.to_string());
+            let file_env = file_config_from_json(json!({"scan_external_scripts": falsy})).unwrap();
 
             let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
             assert!(
@@ -443,5 +655,38 @@ mod tests {
                 "scan_external_scripts={falsy:?} must parse to false"
             );
         }
+    }
+
+    #[test]
+    fn test_fail_on_aliases_deserialize() {
+        for alias in ["any-failure", "any_failure", "anyfailure", "ANY-FAILURE"] {
+            let fc = file_config_from_json(json!({"fail_on": alias})).unwrap();
+            assert_eq!(fc.fail_on, Some(FailOn::AnyFailure), "alias={alias}");
+        }
+        let pct = file_config_from_json(json!({"fail_on": "pct>"})).unwrap();
+        assert_eq!(pct.fail_on, Some(FailOn::PctGreaterThan));
+    }
+
+    #[test]
+    fn test_file_config_deserializes_via_config_crate_toml() {
+        let settings = config::Config::builder()
+            .add_source(config::File::from_str(
+                r#"
+                max_concurrency = 42
+                enable_whois = true
+                fail_on = "any-failure"
+                scan_external_scripts = "yes"
+                log_level = "debug"
+                "#,
+                config::FileFormat::Toml,
+            ))
+            .build()
+            .expect("build");
+        let fc: FileConfig = settings.try_deserialize().expect("deserialize FileConfig");
+        assert_eq!(fc.max_concurrency, Some(42));
+        assert_eq!(fc.enable_whois, Some(true));
+        assert_eq!(fc.fail_on, Some(FailOn::AnyFailure));
+        assert_eq!(fc.scan_external_scripts, Some(true));
+        assert_eq!(fc.log_level, Some(LogLevel::Debug));
     }
 }

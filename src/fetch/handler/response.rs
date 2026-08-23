@@ -396,8 +396,8 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
+    use crate::initialization::test_resolver;
     use crate::utils::TimingStats;
-    use hickory_resolver::{config::ResolverOpts, TokioResolver};
     use httptest::{matchers::*, responders::*, Expectation, Server};
     use std::sync::Arc;
 
@@ -422,13 +422,7 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let resolver = Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build()
-                .expect("resolver builds with default config"),
-        );
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
         let pool = Arc::new(
@@ -733,13 +727,7 @@ mod tests {
                 .build()
                 .expect("Failed to create redirect client"),
         );
-        let resolver = Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build()
-                .expect("resolver builds with default config"),
-        );
+        let resolver = test_resolver();
         let error_stats = Arc::new(ProcessingStats::new());
         let timing_stats = Arc::new(TimingStats::new());
 

@@ -18,7 +18,7 @@ Uses `just` as the task runner (install: `cargo install just`).
 | Lint | `just lint` (clippy with `--locked -D warnings`) |
 | Run tests | `just test` (excludes network-dependent / `#[ignore]`) |
 | Run single test | `cargo test test_name --all-features --locked` |
-| Run E2E tests | `just test-e2e` (network `#[ignore]`, skips `stress_*`) |
+| Run E2E tests | `just test-e2e` (network `#[ignore]`) |
 | Testing posture | See [docs/TESTING.md](docs/TESTING.md) — coverage is informational, not a gate |
 | Docs check | `just docs-check` (rustdoc examples + warning cleanliness) |
 | Full CI locally | `just ci` |
@@ -72,12 +72,11 @@ Cargo workspace with a `cli/` member (`domain_status_cli`) for CLI argument defi
 - **Line length**: 100 chars (`rustfmt.toml`)
 - **Clippy**: 17 deny-level lints in root `Cargo.toml`, including `too_many_lines` (>100), `cognitive_complexity`, `cast_possible_truncation`, `needless_pass_by_value`
 - **TLS**: rustls only (no native-tls/OpenSSL dependency)
-- **Tests**: `#[ignore]` for network-dependent tests; `proptest` for property-based; `insta` for snapshots (text `.snap`); `wiremock`/`httpmock` for HTTP mocking; `rstest` for parameterized
+- **Tests**: `#[ignore]` for network-dependent tests; `proptest` for property-based; `insta` for snapshots (text `.snap`); `wiremock` for HTTP mocking; `rstest` for parameterized
 
 ## Testing Notes
 
 - Prefer **contract** tests (intent) over characterization; see [docs/TESTING.md](docs/TESTING.md)
 - Snapshot tests use `insta` with text `.snap` files — run `cargo insta review` after updating
 - Integration tests in `tests/` use mock HTTP servers and temp SQLite databases
-- Stress demos (`tests/stress_*.rs`) are zero-assert narratives; CI and `just test-e2e` skip them via `--skip stress_`
 - Pre-commit hooks available: `just install-hooks` (includes gitleaks secret scanning)

@@ -143,8 +143,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
 
-    use hickory_resolver::config::ResolverOpts;
-    use hickory_resolver::TokioResolver;
+    use crate::initialization::test_resolver;
     use tokio::sync::Semaphore;
     use tokio_util::sync::CancellationToken;
 
@@ -153,17 +152,14 @@ mod tests {
     use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
     use crate::fingerprint::FingerprintRuleset;
     use crate::runtime_metrics::RuntimeMetrics;
-    use crate::storage::{insert_run_metadata, run_migrations, RunMetadata};
+    use crate::storage::test_helpers::create_test_pool as create_test_sqlite_pool;
+    use crate::storage::{insert_run_metadata, RunMetadata};
     use crate::utils::TimingStats;
 
     use super::*;
 
     async fn create_test_pool() -> crate::storage::DbPool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("test pool");
-        run_migrations(&pool).await.expect("migrations");
-        Arc::new(pool)
+        Arc::new(create_test_sqlite_pool().await)
     }
 
     /// `finalize_scan` returns a `ScanReport` with correct totals and `run_id`; does not panic.
@@ -200,13 +196,7 @@ mod tests {
                 .build()
                 .expect("redirect client"),
         );
-        let resolver = Arc::new(
-            TokioResolver::builder_tokio()
-                .unwrap()
-                .with_options(ResolverOpts::default())
-                .build()
-                .expect("resolver builds with default config"),
-        );
+        let resolver = test_resolver();
 
         let shared_ctx = Arc::new(ProcessingContext::new(
             NetworkContext::new(client, redirect_client, resolver),

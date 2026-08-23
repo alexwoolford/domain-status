@@ -17,7 +17,7 @@ cargo test status_server::handlers::status
 cargo test status_server::handlers::metrics -- --nocapture
 ```
 
-Also: `just test` (default suite), `just test-e2e` (ignored network tests, skips `stress_`), `just check` (fmt + lint + docs + test).
+Also: `just test` (default suite), `just test-e2e` (ignored network tests), `just check` (fmt + lint + docs + test).
 
 ## Quality gates
 
@@ -52,13 +52,8 @@ cargo test --doc
 ### Manual / live-network tests
 
 - Intentionally `#[ignore]`; not part of the deterministic CI signal.
-- Prefer `just test-e2e` (or `cargo test --all-features --all-targets --locked -- --ignored --skip stress_`).
+- Prefer `just test-e2e` (or `cargo test --all-features --all-targets --locked -- --ignored`).
 - If one finds a real bug, add a deterministic regression before fixing production code.
-
-### Stress demos
-
-- Files matching `tests/stress_*.rs` are exploratory zero-assert narratives, not correctness gates.
-- Kept ignored by default; skipped by CI e2e via `--skip stress_`.
 
 ## What default CI proves (`just test` / `cargo test`)
 
@@ -79,16 +74,7 @@ cargo test --doc
 ## What default CI does **not** prove
 
 - Live GitHub fingerprint downloads (use `--fingerprints` fixtures or `#[ignore]` network tests)
-- Slow stress / narrative demos under `tests/stress_*.rs`
-- Full multi-OS network e2e (`just test-e2e`, which also skips `stress_`)
-
-## Stress vs e2e
-
-| Command | Behavior |
-|---------|----------|
-| GitHub CI e2e job | `cargo test --all-features --all-targets --locked -- --ignored --skip stress_` |
-| `just test-e2e` | Same: ignored tests **excluding** `stress_*` |
-| Manual stress demos | `cargo test --test 'stress_*' -- --ignored --nocapture` |
+- Full multi-OS network e2e (`just test-e2e`)
 
 ## Coverage (Codecov / tarpaulin)
 

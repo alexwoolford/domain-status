@@ -18,7 +18,7 @@ mod records;
 mod resolution;
 
 // Re-export public API
-pub use extract::{extract_dmarc_record, extract_spf_record};
+pub use extract::{extract_dmarc_record, extract_spf_record, is_dmarc_txt, is_spf_txt};
 pub use records::{
     lookup_aaaa_records, lookup_caa_records, lookup_cname_records, lookup_mx_records,
     lookup_ns_records, lookup_txt_records,

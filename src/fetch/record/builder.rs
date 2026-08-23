@@ -8,36 +8,12 @@
 use regex::Regex;
 use std::collections::HashSet;
 
-use crate::storage::UrlRecord;
-
-/// Returns the PSL registrable domain (eTLD+1) for a given FQDN.
-///
-/// Uses the well-tested `psl::domain_str()` which correctly implements
-/// the Public Suffix List algorithm. For most domains this gives the expected
-/// organizational domain (e.g., `www.facebook.com` -> `facebook.com`).
-///
-/// For wildcard PSL entries like `*.cloudfront.net`, the registrable domain
-/// equals the full FQDN (e.g., `d123.cloudfront.net`) because each subdomain
-/// under a wildcard suffix is independently registered. This is correct per PSL
-/// rules — the same behavior as Go's `publicsuffix.EffectiveTLDPlusOne()`.
-fn root_domain(fqdn: &str) -> Option<String> {
-    // psl::domain_str returns None for bare PSL suffixes like "akamaihd.net" or
-    // "googleapis.com" (they're public suffixes, not registrable domains).
-    // Fall back to the FQDN itself — it's still meaningful as an organizational identity.
-    psl::domain_str(fqdn)
-        .map(std::string::ToString::to_string)
-        .or_else(|| {
-            if psl::suffix_str(fqdn).is_some() {
-                Some(fqdn.to_string())
-            } else {
-                None
-            }
-        })
-}
+use crate::domain::root_domain;
+use crate::fetch::cookies::extract_cookie_infos;
 use crate::fetch::dns::{AdditionalDnsData, TlsDnsData};
 use crate::fetch::external_scripts::collect_script_hosts;
 use crate::fetch::response::{HtmlData, ResponseData};
-use crate::storage::{CookieInfo, PersistedUrlRecord};
+use crate::storage::{PersistedUrlRecord, UrlRecord};
 
 /// Extracts FQDNs and registrable domains from a Content-Security-Policy header value.
 /// Parses directives like `default-src 'self' *.cdn.example.com; script-src https://analytics.com`
@@ -73,60 +49,6 @@ fn extract_csp_domains(csp: &str) -> Vec<(String, String, Option<String>)> {
         }
     }
     results
-}
-
-/// Parses `Set-Cookie` headers into `CookieInfo` structs.
-fn extract_cookies(headers: &reqwest::header::HeaderMap) -> Vec<CookieInfo> {
-    headers
-        .get_all(reqwest::header::SET_COOKIE)
-        .iter()
-        .filter_map(|val| {
-            let s = val.to_str().ok()?;
-            let parts: Vec<&str> = s.split(';').collect();
-            let name_value = parts.first()?;
-            let name = name_value.split('=').next()?.trim().to_string();
-            if name.is_empty() {
-                return None;
-            }
-
-            let lower = s.to_lowercase();
-            let secure = lower.contains("secure");
-            let http_only = lower.contains("httponly");
-            let same_site = parts.iter().find_map(|p| {
-                let p = p.trim().to_lowercase();
-                if p.starts_with("samesite=") {
-                    Some(p.trim_start_matches("samesite=").trim().to_string())
-                } else {
-                    None
-                }
-            });
-            let domain = parts.iter().find_map(|p| {
-                let p = p.trim();
-                if p.to_lowercase().starts_with("domain=") {
-                    Some(p[7..].trim().to_string())
-                } else {
-                    None
-                }
-            });
-            let path = parts.iter().find_map(|p| {
-                let p = p.trim();
-                if p.to_lowercase().starts_with("path=") {
-                    Some(p[5..].trim().to_string())
-                } else {
-                    None
-                }
-            });
-
-            Some(CookieInfo {
-                name,
-                secure,
-                http_only,
-                same_site,
-                domain,
-                path,
-            })
-        })
-        .collect()
 }
 
 /// Builds a `UrlRecord` from extracted response data.
@@ -286,7 +208,7 @@ pub(crate) fn build_persisted_url_record(
         .unwrap_or_default();
 
     // Extract cookie security info from Set-Cookie headers
-    let cookies = extract_cookies(&params.resp_data.headers);
+    let cookies = extract_cookie_infos(&params.resp_data.headers);
 
     let script_hosts = collect_script_hosts(
         &params.resp_data.final_url,
