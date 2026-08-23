@@ -35,8 +35,7 @@ pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_METHODS: &str = "Access-Control-All
 /// Access-Control-Allow-Headers header
 pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_HEADERS: &str = "Access-Control-Allow-Headers";
 /// Access-Control-Allow-Credentials header
-pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS: &str =
-    "Access-Control-Allow-Credentials";
+pub(crate) const HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS: &str = "Access-Control-Allow-Credentials";
 /// Access-Control-Expose-Headers header
 pub(crate) const HEADER_ACCESS_CONTROL_EXPOSE_HEADERS: &str = "Access-Control-Expose-Headers";
 /// Access-Control-Max-Age header

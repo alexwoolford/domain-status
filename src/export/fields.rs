@@ -1041,7 +1041,12 @@ pub(crate) const EXPORT_FIELDS: &[ExportField] = &[
         id: "hsts_max_age",
         csv: Some(CsvSpec {
             name: "hsts_max_age",
-            extract: |row| row.main.hsts_max_age.map(|v| v.to_string()).unwrap_or_default(),
+            extract: |row| {
+                row.main
+                    .hsts_max_age
+                    .map(|v| v.to_string())
+                    .unwrap_or_default()
+            },
         }),
         parquet: Some(ParquetSpec {
             name: "hsts_max_age",

@@ -15,7 +15,8 @@ pub(crate) fn detect_cdn_provider(
     cname_chain_json: Option<&str>,
     nameservers_json: Option<&str>,
 ) -> Option<String> {
-    if let Some(provider) = detect_from_headers(http_headers).or_else(|| detect_from_headers(security_headers))
+    if let Some(provider) =
+        detect_from_headers(http_headers).or_else(|| detect_from_headers(security_headers))
     {
         return Some(provider);
     }

@@ -407,9 +407,25 @@ mod tests {
     use std::sync::Arc;
 
     async fn create_test_context(server: &Server) -> ProcessingContext {
-        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
+        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico
+        // and same-origin well-known probes (security.txt / robots.txt).
         server.expect(
             Expectation::matching(request::method_path("GET", "/favicon.ico"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/.well-known/security.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/security.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/robots.txt"))
                 .times(0..)
                 .respond_with(status_code(404)),
         );
@@ -700,9 +716,25 @@ mod tests {
             ),
         );
 
-        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico.
+        // IP hosts are valid domain keys; successful HTML paths may fetch /favicon.ico
+        // and same-origin well-known probes (security.txt / robots.txt).
         server.expect(
             Expectation::matching(request::method_path("GET", "/favicon.ico"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/.well-known/security.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/security.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/robots.txt"))
                 .times(0..)
                 .respond_with(status_code(404)),
         );

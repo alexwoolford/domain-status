@@ -379,7 +379,6 @@ pub struct UrlRecordInsertParams<'a> {
     pub robots_txt: Option<&'a crate::fetch::well_known::RobotsTxtData>,
 }
 
-
 impl<'a> UrlRecordInsertParams<'a> {
     /// Build params from a complete [`crate::storage::record::PersistedUrlRecord`].
     ///
@@ -692,7 +691,6 @@ async fn insert_cookies(
         log::warn!("Failed to insert cookies for {url_status_id}: {e}");
     }
 }
-
 
 /// Inserts parsed `security.txt` into `url_security_txt`.
 async fn insert_security_txt(

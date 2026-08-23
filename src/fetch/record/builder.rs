@@ -243,7 +243,6 @@ pub(crate) fn build_persisted_url_record(
         params.additional_dns.nameservers.as_deref(),
     );
 
-
     // Compute cert_is_mismatched: check if host matches any SAN or CN.
     // Uses sans_vec (not tls_dns_data.subject_alternative_names which was already .take()'d).
     let domain = &params.resp_data.host;
