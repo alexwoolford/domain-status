@@ -118,6 +118,22 @@ mod tests {
                 .times(0..)
                 .respond_with(status_code(404)),
         );
+        // Same-origin enrichment probes from the scan pipeline.
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/.well-known/security.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/security.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/robots.txt"))
+                .times(0..)
+                .respond_with(status_code(404)),
+        );
 
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let input_file = temp_dir.path().join("urls.txt");
