@@ -118,7 +118,6 @@ pub struct UrlRecord {
     pub cdn_provider: Option<String>,
 }
 
-
 impl UrlRecord {
     /// Minimal `UrlRecord` for unit/integration tests.
     ///
@@ -177,7 +176,6 @@ impl UrlRecord {
         }
     }
 }
-
 
 /// Represents a failed URL processing attempt for database insertion.
 ///

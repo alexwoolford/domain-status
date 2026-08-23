@@ -330,7 +330,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
-            well_known: crate::fetch::well_known::WellKnownData::default(),
+                well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
 
@@ -373,7 +373,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
-            well_known: crate::fetch::well_known::WellKnownData::default(),
+                well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
 
@@ -413,7 +413,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
-            well_known: crate::fetch::well_known::WellKnownData::default(),
+                well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
         let elapsed = start.elapsed();
@@ -545,7 +545,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
-            well_known: crate::fetch::well_known::WellKnownData::default(),
+                well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
         let elapsed = start.elapsed();
@@ -593,7 +593,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
-            well_known: crate::fetch::well_known::WellKnownData::default(),
+                well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
 

@@ -48,7 +48,6 @@ pub struct PersistedUrlRecord {
     pub robots_txt: Option<crate::fetch::well_known::RobotsTxtData>,
 }
 
-
 /// Parsed cookie security attributes.
 #[derive(Debug)]
 pub struct CookieInfo {

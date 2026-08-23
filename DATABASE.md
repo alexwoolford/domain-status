@@ -3,7 +3,7 @@
 `domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
 The schema is created by migrations (`migrations/0001_initial_schema.sql` through
-`migrations/0014_drop_unpopulated_columns.sql`) and follows a simple pattern:
+`migrations/0015_observation_enrichments.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result

@@ -99,7 +99,6 @@ pub fn extract_bimi_record(txt_records: &[String]) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-
 #[cfg(test)]
 mod email_auth_tests {
     use super::*;
@@ -114,8 +113,12 @@ mod email_auth_tests {
             "v=TLSRPTv1; rua=mailto:a@b.c".to_string(),
             "v=BIMI1; l=https://example.com/l.svg".to_string(),
         ];
-        assert!(extract_mta_sts_record(&txts).unwrap().starts_with("v=STSv1"));
-        assert!(extract_tls_rpt_record(&txts).unwrap().starts_with("v=TLSRPTv1"));
+        assert!(extract_mta_sts_record(&txts)
+            .unwrap()
+            .starts_with("v=STSv1"));
+        assert!(extract_tls_rpt_record(&txts)
+            .unwrap()
+            .starts_with("v=TLSRPTv1"));
         assert!(extract_bimi_record(&txts).unwrap().starts_with("v=BIMI1"));
     }
 }

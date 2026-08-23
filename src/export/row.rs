@@ -675,7 +675,7 @@ pub async fn build_export_row(
         url_status_id,
     )
     .await?;
-    
+
     let script_hosts: Vec<ScriptHostRecord> = sqlx::query(
         "SELECT host, registrable_domain, is_first_party FROM url_script_hosts WHERE url_status_id = ? ORDER BY host LIMIT ?",
     )
@@ -702,7 +702,7 @@ pub async fn build_export_row(
         .collect::<Vec<_>>()
         .join("; ");
 
-let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
+    let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
         "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id LIMIT ?",
     )
     .bind(url_status_id)
