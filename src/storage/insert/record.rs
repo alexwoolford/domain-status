@@ -404,6 +404,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         let result = insert_persisted_url_record(&pool, record).await;
@@ -485,6 +487,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         let result = insert_persisted_url_record(&pool, record).await;
@@ -625,6 +629,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         let result = insert_persisted_url_record(&pool, record).await;
@@ -704,6 +710,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         let result = insert_persisted_url_record(&pool, record).await;
@@ -759,6 +767,8 @@ mod tests {
             cookies: &[],
             resource_hints: &[],
             script_hosts: &[],
+        security_txt: None,
+        robots_txt: None,
         })
         .await
         .expect("Failed to insert URL record");
@@ -789,6 +799,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         // Should succeed even if some enrichment fails
@@ -845,6 +857,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         // Should succeed - main record and technologies should be inserted
@@ -899,6 +913,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         // Should succeed even with no enrichment data
@@ -940,6 +956,8 @@ mod tests {
             cookies: Vec::new(),
             resource_hints: Vec::new(),
             script_hosts: vec![],
+        security_txt: None,
+        robots_txt: None,
         };
 
         // Should fail - main record insertion failure propagates

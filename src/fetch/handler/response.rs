@@ -78,6 +78,7 @@ struct EnrichmentResult {
     tls_handshake_us: u64,
     favicon_result: Option<crate::fetch::favicon::FaviconData>,
     external_script_scan: crate::fetch::external_scripts::ExternalScriptScanResult,
+    well_known: crate::fetch::well_known::WellKnownData,
 }
 
 /// Run independent enrichments in parallel: tech detection, DNS/TLS, favicon, scripts.
@@ -87,7 +88,7 @@ async fn parallel_enrich(
     ctx: &ProcessingContext,
     final_url_str: &str,
 ) -> Result<EnrichmentResult, Error> {
-    let (tech_result, dns_result, favicon_result, external_script_scan) = tokio::join!(
+    let (tech_result, dns_result, favicon_result, external_script_scan, well_known) = tokio::join!(
         async {
             use crate::fetch::record::detect_technologies_safely;
 
@@ -122,7 +123,8 @@ async fn parallel_enrich(
             } else {
                 crate::fetch::external_scripts::ExternalScriptScanResult::default()
             }
-        }
+        },
+        crate::fetch::well_known::fetch_well_known(&ctx.network.client, final_url_str)
     );
 
     let (technologies_vec, tech_detection_us) = tech_result;
@@ -155,6 +157,7 @@ async fn parallel_enrich(
         tls_handshake_us,
         favicon_result,
         external_script_scan,
+        well_known,
     })
 }
 
@@ -285,6 +288,7 @@ async fn persist(
         additional_dns,
         partial_failures,
         favicon_result,
+        well_known,
         ..
     } = enrichment;
 
@@ -301,6 +305,7 @@ async fn persist(
             timestamp,
             ctx,
             favicon: favicon_result,
+            well_known,
         })
         .await;
 

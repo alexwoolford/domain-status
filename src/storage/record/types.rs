@@ -44,7 +44,10 @@ pub struct PersistedUrlRecord {
     pub resource_hints: Vec<(String, String)>, // (hint_type, href); hint_type: preconnect/dns-prefetch/preload/prefetch/modulepreload
     /// Unique hosts from `<script src>` (resolved against final URL)
     pub script_hosts: Vec<ScriptHostInfo>,
+    pub security_txt: Option<crate::fetch::well_known::SecurityTxtData>,
+    pub robots_txt: Option<crate::fetch::well_known::RobotsTxtData>,
 }
+
 
 /// Parsed cookie security attributes.
 #[derive(Debug)]

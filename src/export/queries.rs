@@ -207,7 +207,11 @@ pub(crate) fn build_export_query<'a>(
                 us.http_status, us.http_status_text, us.response_time_seconds, us.title,
                 us.description, us.meta_robots, us.tls_version, us.ssl_cert_subject,
                 us.ssl_cert_issuer, us.ssl_cert_valid_to_ms, us.cipher_suite, us.key_algorithm,
-                us.spf_record, us.dmarc_record, us.observed_at_ms, us.run_id,
+                us.spf_record, us.dmarc_record,
+                us.mta_sts_record, us.tls_rpt_record, us.bimi_record,
+                us.hsts_max_age, us.hsts_include_subdomains, us.hsts_preload,
+                us.cdn_provider,
+                us.observed_at_ms, us.run_id,
                 us.body_sha256, us.content_length, us.http_version,
                 us.content_type, us.canonical_url, us.cert_fingerprint_sha256,
                 us.body_truncated

@@ -47,7 +47,7 @@ mod tests {
     ];
 
     /// Satellite tables persisted but not flattened into CSV/Parquet today.
-    const SATELLITE_DB_ONLY: &[&str] = &["url_script_hosts"];
+    const SATELLITE_DB_ONLY: &[&str] = &[];
 
     fn csv_has_column(name: &str) -> bool {
         fields::csv_column_names().any(|n| n == name)
@@ -129,10 +129,10 @@ mod tests {
         }
         assert_eq!(
             CSV_FIELD_ORDER.len(),
-            83,
+            91,
             "CSV column count drifted — edit EXPORT_FIELDS / CSV_FIELD_ORDER"
         );
-        assert_eq!(SATELLITE_DB_ONLY, &["url_script_hosts"]);
+        assert_eq!(SATELLITE_DB_ONLY, &[] as &[&str]);
 
         let mut seen_pq = std::collections::HashSet::new();
         for id in PARQUET_FIELD_ORDER {
@@ -143,7 +143,7 @@ mod tests {
             );
         }
         let len = build_schema().fields().len();
-        assert_eq!(len, 67, "parquet schema field count drifted: {len}");
+        assert_eq!(len, 75, "parquet schema field count drifted: {len}");
         assert_eq!(PARQUET_FIELD_ORDER.len(), len);
 
         let parquet_only = PARQUET_FIELD_ORDER

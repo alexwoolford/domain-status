@@ -10,7 +10,7 @@
 
 **domain_status** is a concurrent URL/domain scanner. Give it a list of URLs; it captures HTTP status, TLS certificates, DNS, technology fingerprints, and related signals in one pass, and stores results in **SQLite** for relational analysis (1:many satellites for technologies, secrets, redirects, DNS rows, and more). Export the same run to Parquet or JSONL when you want DuckDB / data-lake workflows or shell pipelines—SQLite remains the source of truth.
 
-**Who it's for:** DevOps/SRE, security analysts, threat-intel / OSINT researchers, and anyone managing large URL/domain portfolios who wants one tool instead of stitching curl, whois, and Wappalyzer together.
+**Who it's for:** DevOps/SRE, security analysts, threat-intel / OSINT researchers, light-touch tech diligence / portfolio intelligence (e.g. PE ops), and anyone managing large URL/domain portfolios who wants one tool instead of stitching curl, whois, and Wappalyzer together.
 
 ## Quick Start
 
@@ -64,11 +64,26 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 | WHOIS | `--enable-whois` (disable with `--no-whois` if TOML enabled it) |
 | External script scan | `--scan-external-scripts` (off by default; secrets + static tech on first-party bodies) |
 
+### Diligence profile (recommended for infosec / light PE review)
+
+Keep day-to-day defaults light. For a fuller observational pass without re-scanning later, enable optional enrichments together:
+
+```bash
+# Requires MAXMIND_LICENSE_KEY in the environment for GeoIP auto-download
+domain_status scan urls.txt \
+  --enable-whois \
+  --geoip \
+  --scan-external-scripts
+```
+
+This turns on WHOIS/RDAP, GeoIP/ASN, and first-party external script bodies (secrets + static tech). Core HTTP/TLS/DNS/headers/`security.txt`/`robots.txt` capture runs regardless.
+
+
 ## Features (core)
 
 - HTTP status, redirects, response metadata
 - TLS certificate fields (resolves all public IPs, IPv4-first, so dual-stack hosts with broken IPv6 egress still get a certificate)
-- DNS (NS/TXT/MX + SPF/DMARC)
+- DNS (NS/TXT/MX + SPF/DMARC/MTA-STS/TLS-RPT/BIMI), parsed HSTS, CDN taxonomy, `security.txt` / `robots.txt`
 - Technology fingerprints + exposed secrets (static analysis; no JS execution). Fingerprints use headers/cookies/meta/HTML/`scriptSrc` URLs/inline script text/DNS/cert issuer from the initial response. With `--scan-external-scripts`, first-party fetched script bodies also feed secret detection and Wappalyzer `scripts` tech patterns.
 - Security findings (`no_https`, `weak_tls`, `invalid_certificate`) — real observed issues only; header *presence* (HSTS/CSP/etc.) is captured separately and "missing header" is a query, not a precomputed warning (see [DATABASE.md](DATABASE.md))
 - SQLite fact table + satellite tables; `summary` command

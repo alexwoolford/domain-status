@@ -34,6 +34,8 @@ pub struct RecordPreparationParams<'a> {
     pub ctx: &'a crate::fetch::ProcessingContext,
     /// Favicon data (fetched in parallel with tech detection and DNS/TLS)
     pub favicon: Option<crate::fetch::favicon::FaviconData>,
+    /// security.txt / robots.txt (fetched in parallel with other enrichments)
+    pub well_known: crate::fetch::well_known::WellKnownData,
 }
 
 /// Prepares a complete record for database insertion.
@@ -165,6 +167,7 @@ pub async fn prepare_record_for_insertion(
         run_id: params.ctx.runtime.run_id.clone(),
         favicon: params.favicon,
         additional_dns: params.additional_dns,
+        well_known: params.well_known,
     });
 
     (persisted_record, (geoip_lookup_us, whois_lookup_us))
@@ -295,6 +298,9 @@ mod tests {
             mx_records: None,
             spf_record: None,
             dmarc_record: None,
+            mta_sts_record: None,
+            tls_rpt_record: None,
+            bimi_record: None,
             cname_chain: None,
             aaaa_records: None,
             caa_records: None,
@@ -324,6 +330,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
 
@@ -366,6 +373,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
 
@@ -405,6 +413,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
         let elapsed = start.elapsed();
@@ -464,6 +473,7 @@ mod tests {
             timestamp: chrono::Utc::now().timestamp_millis(),
             ctx: &ctx,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
         })
         .await;
 
@@ -498,6 +508,7 @@ mod tests {
             timestamp: chrono::Utc::now().timestamp_millis(),
             ctx: &ctx,
             favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
         })
         .await;
 
@@ -534,6 +545,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
         let elapsed = start.elapsed();
@@ -581,6 +593,7 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 ctx: &ctx,
                 favicon: None,
+            well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
 

@@ -226,6 +226,18 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
             },
             "spf_record": export_row.main.spf_record,
             "dmarc_record": export_row.main.dmarc_record,
+            "mta_sts_record": export_row.main.mta_sts_record,
+            "tls_rpt_record": export_row.main.tls_rpt_record,
+            "bimi_record": export_row.main.bimi_record,
+            "hsts_max_age": export_row.main.hsts_max_age,
+            "hsts_include_subdomains": export_row.main.hsts_include_subdomains,
+            "hsts_preload": export_row.main.hsts_preload,
+            "cdn_provider": export_row.main.cdn_provider,
+            "script_hosts": export_row.script_hosts.iter().map(|h| json!({
+                "host": h.host,
+                "registrable_domain": h.registrable_domain,
+                "is_first_party": h.is_first_party
+            })).collect::<Vec<_>>(),
             "analytics_ids": analytics_ids,
             "analytics_count": export_row.analytics_count,
             "social_media_links": social_media_links,

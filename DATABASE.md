@@ -46,6 +46,9 @@ erDiagram
     url_status ||--o{ url_cookies : has
     url_status ||--o{ url_resource_hints : has
     url_status ||--o{ url_script_hosts : has
+    url_status ||--o| url_security_txt : has
+    url_status ||--o| url_robots_txt : has
+    url_status ||--o{ url_robots_directives : has
 
     url_exposed_secrets ||--o| url_jwt_claims : has
 
@@ -109,6 +112,13 @@ Important characteristics:
 | `ssl_cert_valid_to_ms` | `INTEGER` | Epoch milliseconds |
 | `spf_record` | `TEXT` | Convenience extraction from TXT records |
 | `dmarc_record` | `TEXT` | Convenience extraction from TXT records |
+| `mta_sts_record` | `TEXT` | MTA-STS TXT from `_mta-sts.<domain>` |
+| `tls_rpt_record` | `TEXT` | TLS-RPT TXT from `_smtp._tls.<domain>` |
+| `bimi_record` | `TEXT` | BIMI TXT from `default._bimi.<domain>` |
+| `hsts_max_age` | `INTEGER` | Parsed `Strict-Transport-Security` max-age (seconds) |
+| `hsts_include_subdomains` | `INTEGER` | 1 if HSTS `includeSubDomains` present |
+| `hsts_preload` | `INTEGER` | 1 if HSTS `preload` present |
+| `cdn_provider` | `TEXT` | Best-effort CDN/edge slug from headers + DNS |
 | `body_sha256` | `TEXT` | SHA-256 hash of the response body (content fingerprinting) |
 | `body_truncated` | `INTEGER NOT NULL DEFAULT 0` | 1 if the body hit the 2 MB scan cap (prefix still scanned) |
 | `external_scripts_eligible` | `INTEGER NOT NULL DEFAULT 0` | First-party `<script src>` candidates when `--scan-external-scripts` is on |
@@ -183,6 +193,9 @@ Captures non-fatal enrichment failures associated with otherwise successful `url
 | `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
 | `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload (`hint_type` stored lowercase) | `hint_type`, `href` |
 | `url_script_hosts` | Unique hosts from `<script src>` (resolved against final URL) | `host`, `registrable_domain`, `is_first_party` |
+| `url_security_txt` | Parsed RFC 9116 `security.txt` (one row per URL) | `source_url`, `http_status`, `contacts`, `expires`, `policy`, `hiring`, `raw_body` |
+| `url_robots_txt` | Fetched `/robots.txt` parent row | `http_status`, `raw_body` |
+| `url_robots_directives` | Parsed robots directives (no sitemap crawl) | `directive`, `value` |
 
 > **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
 > a zone apex (e.g. `example.com`), so this table is typically empty for

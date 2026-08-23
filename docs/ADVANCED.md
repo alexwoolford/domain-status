@@ -88,3 +88,14 @@ pass the SSRF `is_public_ip` check are attempted.
 ## Library embeds
 
 See [docs.rs/domain_status](https://docs.rs/domain_status). Prefer `Config` + `run_scan` + export/summary; advanced modules may narrow in 0.x.
+
+
+## Diligence profile
+
+For portfolio infosec or light tech diligence, prefer one thorough observational run over re-scanning with extra flags later:
+
+- `--enable-whois` — registrar / creation / expiration facts
+- `--geoip` (or `MAXMIND_LICENSE_KEY`) — ASN / geo
+- `--scan-external-scripts` — first-party script bodies for secrets + static `scripts` tech patterns
+
+Same-pass captures that always run (no flags): security headers (including CORS/COOP/COEP/CORP and CSP-Report-Only), parsed HSTS columns, CDN provider taxonomy, MTA-STS / TLS-RPT / BIMI TXT, `/.well-known/security.txt`, and `/robots.txt` (directives only; sitemaps are listed, not crawled).

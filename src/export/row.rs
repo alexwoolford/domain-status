@@ -115,6 +115,13 @@ pub struct MainRowData {
     pub key_algorithm: Option<String>,
     pub spf_record: Option<String>,
     pub dmarc_record: Option<String>,
+    pub mta_sts_record: Option<String>,
+    pub tls_rpt_record: Option<String>,
+    pub bimi_record: Option<String>,
+    pub hsts_max_age: Option<i64>,
+    pub hsts_include_subdomains: Option<bool>,
+    pub hsts_preload: Option<bool>,
+    pub cdn_provider: Option<String>,
     pub timestamp: i64,
     pub run_id: Option<String>,
     pub body_sha256: Option<String>,
@@ -174,6 +181,14 @@ pub struct AnalyticsIdRecord {
     pub tracking_id: String,
 }
 
+/// Host from a page `<script src>` attribute.
+#[derive(Debug, Clone)]
+pub struct ScriptHostRecord {
+    pub host: String,
+    pub registrable_domain: Option<String>,
+    pub is_first_party: bool,
+}
+
 /// CAA record for export.
 #[derive(Debug)]
 pub struct CaaRecord {
@@ -229,6 +244,8 @@ pub struct ExportRow {
     pub analytics_count: usize,
     /// Analytics IDs as structured data (safe from delimiter corruption)
     pub analytics_ids: Vec<AnalyticsIdRecord>,
+    pub script_hosts: Vec<ScriptHostRecord>,
+    pub script_hosts_str: String,
 
     /// Social media links (as "platform:url" strings)
     pub social_media_links_str: String,
@@ -337,6 +354,13 @@ pub fn extract_main_row_data(row: &sqlx::sqlite::SqliteRow) -> MainRowData {
         key_algorithm: row.get("key_algorithm"),
         spf_record: row.get("spf_record"),
         dmarc_record: row.get("dmarc_record"),
+        mta_sts_record: row.get("mta_sts_record"),
+        tls_rpt_record: row.get("tls_rpt_record"),
+        bimi_record: row.get("bimi_record"),
+        hsts_max_age: row.get("hsts_max_age"),
+        hsts_include_subdomains: row.get("hsts_include_subdomains"),
+        hsts_preload: row.get("hsts_preload"),
+        cdn_provider: row.get("cdn_provider"),
         timestamp: row.get("observed_at_ms"),
         run_id: row.get("run_id"),
         body_sha256: row.get("body_sha256"),
@@ -651,7 +675,34 @@ pub async fn build_export_row(
         url_status_id,
     )
     .await?;
-    let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
+    
+    let script_hosts: Vec<ScriptHostRecord> = sqlx::query(
+        "SELECT host, registrable_domain, is_first_party FROM url_script_hosts WHERE url_status_id = ? ORDER BY host LIMIT ?",
+    )
+    .bind(main.id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| ScriptHostRecord {
+        host: r.get("host"),
+        registrable_domain: r.get("registrable_domain"),
+        is_first_party: r.get::<i64, _>("is_first_party") != 0,
+    })
+    .collect();
+    let script_hosts_str = script_hosts
+        .iter()
+        .map(|h| {
+            if h.is_first_party {
+                format!("{} (1p)", h.host)
+            } else {
+                h.host.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+
+let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
         "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id LIMIT ?",
     )
     .bind(url_status_id)
@@ -853,6 +904,8 @@ pub async fn build_export_row(
         analytics_ids_str,
         analytics_count,
         analytics_ids,
+        script_hosts,
+        script_hosts_str,
         social_media_links_str,
         social_media_count,
         social_media_links,

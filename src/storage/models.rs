@@ -102,7 +102,22 @@ pub struct UrlRecord {
     pub cert_is_mismatched: Option<bool>,
     /// Meta refresh redirect URL from `<meta http-equiv="refresh">`
     pub meta_refresh_url: Option<String>,
+    /// Parsed HSTS max-age (seconds), when Strict-Transport-Security present
+    pub hsts_max_age: Option<i64>,
+    /// HSTS includeSubDomains directive present
+    pub hsts_include_subdomains: Option<bool>,
+    /// HSTS preload directive present
+    pub hsts_preload: Option<bool>,
+    /// MTA-STS TXT record (`_mta-sts.<domain>`)
+    pub mta_sts_record: Option<String>,
+    /// TLS-RPT TXT record (`_smtp._tls.<domain>`)
+    pub tls_rpt_record: Option<String>,
+    /// BIMI TXT record (`default._bimi.<domain>`)
+    pub bimi_record: Option<String>,
+    /// Best-effort CDN/edge provider slug from headers/DNS
+    pub cdn_provider: Option<String>,
 }
+
 
 impl UrlRecord {
     /// Minimal `UrlRecord` for unit/integration tests.
@@ -152,9 +167,17 @@ impl UrlRecord {
             cert_is_wildcard: None,
             cert_is_mismatched: None,
             meta_refresh_url: None,
+            hsts_max_age: None,
+            hsts_include_subdomains: None,
+            hsts_preload: None,
+            mta_sts_record: None,
+            tls_rpt_record: None,
+            bimi_record: None,
+            cdn_provider: None,
         }
     }
 }
+
 
 /// Represents a failed URL processing attempt for database insertion.
 ///
