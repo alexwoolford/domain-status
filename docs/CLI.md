@@ -10,12 +10,23 @@ domain_status summary               # Last (or --run-id) run digest
 domain_status export                # Optional flatten (csv|jsonl|parquet)
 ```
 
-## Config precedence
+## How to configure
 
-`CLI flags` > `DOMAIN_STATUS_*` env (and clap-bound env) > TOML file > defaults.
+Four surfaces, two jobs (plus a local seed):
+
+| Surface | Job |
+|---------|-----|
+| **CLI flags** | Day-to-day / one-off overrides |
+| **TOML** | Repeatable job profile (checked in, shared) |
+| **`DOMAIN_STATUS_*` env** | Containers, CI, systemd |
+| **`.env`** | Local convenience that *only* seeds process env — **not** a separate merge tier |
+
+Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do not put secrets in TOML.
+
+**Precedence:** `CLI flags` > `DOMAIN_STATUS_*` env (via clap) > TOML file > defaults.
 
 - Config file path: `--config` **wins** over `DOMAIN_STATUS_CONFIG_FILE`; else cwd `domain_status.toml` if present.
-- `.env` (cwd, else next to the binary) seeds the process environment before clap/config run; it does not override already-set env vars.
+- `.env` (cwd, else next to the binary) loads before clap runs; it does not override already-set env vars.
 - Secrets stay env / `.env` only: `MAXMIND_LICENSE_KEY`, `GITHUB_TOKEN` (no CLI flags).
 
 ## Scan config matrix

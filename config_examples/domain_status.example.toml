@@ -1,15 +1,14 @@
 # Example configuration for domain_status (optional).
 #
 # Use: --config path/to/this/file
-# DOMAIN_STATUS_* env vars override file values; CLI overrides both.
-# Precedence: CLI > env > file > defaults.
+# Precedence: CLI > DOMAIN_STATUS_* env (clap) > this file > defaults.
 # `--config` wins over DOMAIN_STATUS_CONFIG_FILE.
 #
 # Copy to domain_status.toml in the cwd, or:
 #   domain_status scan --config ./domain_status.toml urls.txt
 #
-# Prefer CLI for day-to-day use; use TOML and/or env for repeatable jobs.
-# Secrets (MAXMIND_LICENSE_KEY, GITHUB_TOKEN) belong in env / .env — not here.
+# Prefer CLI day-to-day; for repeatable jobs pick TOML *or* env (not both for the
+# same knobs unless you intentionally override). Secrets stay in env / .env.
 #
 # Note: `file` is used by the library Config default / non-CLI embeds.
 # The CLI scan command always requires a positional URL list (`urls.txt` or `-`).

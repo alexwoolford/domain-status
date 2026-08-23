@@ -1,8 +1,8 @@
-//! Config construction: merge typed file+env config with CLI-derived config.
+//! Config construction: merge typed TOML [`FileConfig`] with CLI-derived config.
 //!
-//! Precedence: CLI > env > config file > defaults. The CLI layer loads
-//! [`FileConfig`] and passes it here so that config building and validation
-//! stay in the config module.
+//! Precedence: CLI > env (via clap before this merge) > config file > defaults.
+//! The CLI layer loads [`FileConfig`] and passes it here so config building and
+//! validation stay in the config module.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -12,10 +12,11 @@ use serde::Deserialize;
 
 use super::types::{Config, FailOn, LogFormat, LogLevel};
 
-/// File / env overlay for scan settings.
+/// TOML overlay for scan settings.
 ///
 /// All fields are `Option` so absent keys leave [`Config`] defaults in place.
-/// Deserialized from TOML and `DOMAIN_STATUS_*` via the `config` crate.
+/// Deserialized from TOML via the `config` crate. Env (`DOMAIN_STATUS_*`) is
+/// applied through clap, not this struct.
 /// Invalid enum/bool values fail deserialization (no silent skip).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct FileConfig {
@@ -287,7 +288,7 @@ where
     deserializer.deserialize_any(OptLogFormatVisitor)
 }
 
-/// Applies a typed file/env overlay onto `Config` (only `Some` fields).
+/// Applies a typed TOML overlay onto `Config` (only `Some` fields).
 pub fn apply_file_config(config: &mut Config, file: &FileConfig) {
     if let Some(ref path) = file.file {
         config.file.clone_from(path);
@@ -345,25 +346,25 @@ pub fn apply_file_config(config: &mut Config, file: &FileConfig) {
     }
 }
 
-/// Builds `Config` with precedence: CLI > env > config file > defaults.
+/// Builds `Config` with precedence: CLI > env (clap) > config file > defaults.
 ///
 /// When `cli_explicit` is `Some(keys)`, only config fields whose name is in `keys` are
-/// overwritten with `cli_config`; others keep file+env values. When `None`, every field
-/// is overwritten (backward compatible). Use `Some` so file/env values are preserved
+/// overwritten with `cli_config`; others keep file values. When `None`, every field
+/// is overwritten (backward compatible). Use `Some` so file values are preserved
 /// for options the user did not set on the CLI or via env.
 ///
 /// Call this from the CLI layer after loading [`FileConfig`] and converting
 /// the scan command to `Config` via `config_from_scan_command(scan_cmd)`.
 #[must_use]
-pub fn merge_file_env_and_cli(
-    file_env: Option<&FileConfig>,
+pub fn merge_file_and_cli(
+    file: Option<&FileConfig>,
     cli_config: Config,
     cli_explicit: Option<&[&str]>,
 ) -> Config {
     let overwrite = |key: &str| -> bool { cli_explicit.is_none_or(|keys| keys.contains(&key)) };
 
     let mut config = Config::default();
-    if let Some(file) = file_env {
+    if let Some(file) = file {
         apply_file_config(&mut config, file);
     }
 
@@ -445,8 +446,8 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_preserves_file_env_when_cli_not_explicit() {
-        let file_env = FileConfig {
+    fn test_merge_preserves_file_when_cli_not_explicit() {
+        let file = FileConfig {
             file: Some(PathBuf::from("/path/to/urls.txt")),
             log_level: Some(LogLevel::Debug),
             max_concurrency: Some(100),
@@ -460,38 +461,37 @@ mod tests {
             ..Default::default()
         };
 
-        // Explicit empty: user set nothing, so file+env values are preserved
-        let merged = merge_file_env_and_cli(Some(&file_env), cli_config.clone(), Some(&[]));
+        // Explicit empty: user set nothing, so file values are preserved
+        let merged = merge_file_and_cli(Some(&file), cli_config.clone(), Some(&[]));
         assert!(
             matches!(merged.log_level, LogLevel::Debug),
-            "file+env log_level preserved when not explicit"
+            "file log_level preserved when not explicit"
         );
         assert_eq!(
             merged.max_concurrency, 100,
-            "file+env max_concurrency preserved when not explicit"
+            "file max_concurrency preserved when not explicit"
         );
 
         // Only log_level explicitly set: only it is overwritten
-        let merged2 =
-            merge_file_env_and_cli(Some(&file_env), cli_config.clone(), Some(&["log_level"]));
+        let merged2 = merge_file_and_cli(Some(&file), cli_config.clone(), Some(&["log_level"]));
         assert!(
             matches!(merged2.log_level, LogLevel::Info),
             "cli log_level overwrites when explicit"
         );
         assert_eq!(
             merged2.max_concurrency, 100,
-            "file+env max_concurrency still preserved"
+            "file max_concurrency still preserved"
         );
 
         // None: backward compat, all overwritten
-        let merged3 = merge_file_env_and_cli(Some(&file_env), cli_config, None);
+        let merged3 = merge_file_and_cli(Some(&file), cli_config, None);
         assert!(matches!(merged3.log_level, LogLevel::Info));
         assert_eq!(merged3.max_concurrency, 30);
     }
 
     #[test]
     fn test_merge_applies_explicit_drain_timeout_secs() {
-        let file_env = FileConfig {
+        let file = FileConfig {
             drain_timeout_secs: Some(45),
             ..Default::default()
         };
@@ -501,13 +501,12 @@ mod tests {
             ..Default::default()
         };
 
-        // Not explicit: file/env value wins
-        let merged = merge_file_env_and_cli(Some(&file_env), cli_config.clone(), Some(&[]));
+        // Not explicit: file value wins
+        let merged = merge_file_and_cli(Some(&file), cli_config.clone(), Some(&[]));
         assert_eq!(merged.drain_timeout_secs, 45);
 
         // Explicit CLI flag wins
-        let merged2 =
-            merge_file_env_and_cli(Some(&file_env), cli_config, Some(&["drain_timeout_secs"]));
+        let merged2 = merge_file_and_cli(Some(&file), cli_config, Some(&["drain_timeout_secs"]));
         assert_eq!(merged2.drain_timeout_secs, 90);
     }
 
@@ -525,7 +524,7 @@ mod tests {
             fail_on: Some(FailOn::PctGreaterThan),
             ..Default::default()
         };
-        let merged_valid = merge_file_env_and_cli(
+        let merged_valid = merge_file_and_cli(
             Some(&valid),
             Config {
                 fail_on: FailOn::Never,
@@ -539,7 +538,7 @@ mod tests {
         );
 
         // Explicit CLI any_failure overrides file pct>
-        let merged_cli = merge_file_env_and_cli(
+        let merged_cli = merge_file_and_cli(
             Some(&valid),
             Config {
                 fail_on: FailOn::AnyFailure,
@@ -561,7 +560,7 @@ mod tests {
 
         // CLI-style any-failure must parse from env/TOML
         let any_failure = file_config_from_json(json!({"fail_on": "any-failure"})).unwrap();
-        let merged_any = merge_file_env_and_cli(
+        let merged_any = merge_file_and_cli(
             Some(&any_failure),
             Config {
                 fail_on: FailOn::Never,
@@ -571,7 +570,7 @@ mod tests {
         );
         assert!(
             matches!(merged_any.fail_on, FailOn::AnyFailure),
-            "fail_on=any-failure must apply from file/env"
+            "fail_on=any-failure must apply from file"
         );
     }
 
@@ -597,14 +596,14 @@ mod tests {
     /// file, even though `no_whois` and `enable_whois` are different keys under the hood.
     #[test]
     fn test_no_whois_cli_flag_overrides_toml_enable_whois_true() {
-        let file_env = FileConfig {
+        let file = FileConfig {
             enable_whois: Some(true),
             ..Default::default()
         };
 
         // `--no-whois` set: explicit key list includes "no_whois" (not "enable_whois").
-        let merged = merge_file_env_and_cli(
-            Some(&file_env),
+        let merged = merge_file_and_cli(
+            Some(&file),
             Config {
                 enable_whois: true, // irrelevant: overwrite("enable_whois") is false here
                 ..Default::default()
@@ -617,15 +616,15 @@ mod tests {
         );
     }
 
-    /// Without `--no-whois`, file/env `enable_whois=true` must still apply normally.
+    /// Without `--no-whois`, file `enable_whois=true` must still apply normally.
     #[test]
     fn test_enable_whois_true_from_file_applies_without_no_whois_flag() {
-        let file_env = FileConfig {
+        let file = FileConfig {
             enable_whois: Some(true),
             ..Default::default()
         };
 
-        let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
+        let merged = merge_file_and_cli(Some(&file), Config::default(), Some(&[]));
         assert!(
             merged.enable_whois,
             "file enable_whois=true must apply when --no-whois was not set"
@@ -637,9 +636,9 @@ mod tests {
     #[test]
     fn test_scan_external_scripts_parses_permissive_truthy_strings() {
         for truthy in ["yes", "true", "1", "on", "YES", "True"] {
-            let file_env = file_config_from_json(json!({"scan_external_scripts": truthy})).unwrap();
+            let file = file_config_from_json(json!({"scan_external_scripts": truthy})).unwrap();
 
-            let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
+            let merged = merge_file_and_cli(Some(&file), Config::default(), Some(&[]));
             assert!(
                 merged.scan_external_scripts,
                 "scan_external_scripts={truthy:?} must parse to true"
@@ -647,9 +646,9 @@ mod tests {
         }
 
         for falsy in ["no", "false", "0", "off"] {
-            let file_env = file_config_from_json(json!({"scan_external_scripts": falsy})).unwrap();
+            let file = file_config_from_json(json!({"scan_external_scripts": falsy})).unwrap();
 
-            let merged = merge_file_env_and_cli(Some(&file_env), Config::default(), Some(&[]));
+            let merged = merge_file_and_cli(Some(&file), Config::default(), Some(&[]));
             assert!(
                 !merged.scan_external_scripts,
                 "scan_external_scripts={falsy:?} must parse to false"
