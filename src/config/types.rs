@@ -215,7 +215,7 @@ impl Default for Config {
             fingerprints: None,
             geoip: None,
             status_port: None,
-            enable_whois: false,
+            enable_whois: true,
             cache_dir: None,
             scan_external_scripts: false,
             fail_on: FailOn::Never,
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(config.rate_limit_rps, 15);
         assert_eq!(config.fail_on, FailOn::Never);
         assert_eq!(config.fail_on_pct_threshold, 10);
-        assert!(!config.enable_whois);
+        assert!(config.enable_whois);
         assert!(config.fingerprints.is_none());
         assert!(config.geoip.is_none());
         assert!(config.status_port.is_none());

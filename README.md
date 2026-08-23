@@ -58,25 +58,24 @@ Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cac
 
 ### Optional enrichments
 
-| Feature | How to enable |
-|---------|----------------|
+| Feature | How to enable / disable |
+|---------|-------------------------|
 | GeoIP | Set `MAXMIND_LICENSE_KEY` in `.env`, or pass `--geoip` |
-| WHOIS | `--enable-whois` (disable with `--no-whois` if TOML enabled it) |
+| WHOIS | **On by default**; disable with `--no-whois` (or `enable_whois = false` in TOML) |
 | External script scan | `--scan-external-scripts` (off by default; secrets + static tech on first-party bodies) |
 
 ### Diligence profile (recommended for infosec / light PE review)
 
-Keep day-to-day defaults light. For a fuller observational pass without re-scanning later, enable optional enrichments together:
+WHOIS is on by default. For a fuller observational pass, add GeoIP and first-party script bodies:
 
 ```bash
 # Requires MAXMIND_LICENSE_KEY in the environment for GeoIP auto-download
 domain_status scan urls.txt \
-  --enable-whois \
   --geoip \
   --scan-external-scripts
 ```
 
-This turns on WHOIS/RDAP, GeoIP/ASN, and first-party external script bodies (secrets + static tech). Core HTTP/TLS/DNS/headers/`security.txt`/`robots.txt` capture runs regardless.
+This keeps WHOIS/RDAP, and adds GeoIP/ASN plus first-party external script bodies (secrets + static tech). Core HTTP/TLS/DNS/headers/`security.txt`/`robots.txt` capture runs regardless. Use `--no-whois` for cheap bulk crawls.
 
 
 ## Features (core)

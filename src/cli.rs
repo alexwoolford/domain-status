@@ -211,23 +211,31 @@ fn init_scan_logging(
     Ok(())
 }
 
+/// Fixed-width bar keeps the line from wrapping when counters grow (`wide_bar` + Unicode
+/// msg caused garbled redraws on resize / accidental Enter). Width 30 leaves room for
+/// large `pos`/`len` and ASCII ok/fail/skip on a typical 80-col terminal.
 const PROGRESS_BAR_TEMPLATE: &str =
-    "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos}/{len} ({percent}%) {msg}";
+    "{spinner:.green} [{elapsed_precise}] {bar:30.cyan/blue} {pos}/{len} ({percent}%) {msg}";
+
+#[cfg(test)]
+const PROGRESS_BAR_WIDTH: usize = 30;
 
 fn progress_status_message(completed: usize, failed: usize, skipped: usize) -> String {
-    format!("✓{completed} ✗{failed} ⊘{skipped}")
+    format!("ok={completed} fail={failed} skip={skipped}")
 }
 
-/// Columns used by everything except `{wide_bar}` (ANSI ignored; spinner = 1 cell).
+/// Columns used by everything except the fixed bar (ANSI ignored; spinner = 1 cell).
 #[cfg(test)]
 fn estimate_progress_fixed_cols(elapsed_precise: &str, pos: u64, len: u64, msg: &str) -> usize {
     let percent = pos.saturating_mul(100).checked_div(len).unwrap_or(0);
     let percent_s = format!("({percent}%)");
+    // spinner + spaces/brackets + elapsed + bar + pos/len + percent + msg
     1 + 1
         + 1
         + elapsed_precise.len()
         + 1
         + 1
+        + PROGRESS_BAR_WIDTH
         + 1
         + pos.to_string().len()
         + 1
@@ -238,20 +246,16 @@ fn estimate_progress_fixed_cols(elapsed_precise: &str, pos: u64, len: u64, msg: 
         + msg.chars().count()
 }
 
-/// Visible columns after `{wide_bar}` fills leftover terminal width (or 0 if chrome is wider).
+/// Total visible columns for the progress line at a given terminal width.
 #[cfg(test)]
 fn estimate_progress_line_cols(
     elapsed_precise: &str,
     pos: u64,
     len: u64,
     msg: &str,
-    term_cols: Option<usize>,
+    _term_cols: Option<usize>,
 ) -> usize {
-    let fixed = estimate_progress_fixed_cols(elapsed_precise, pos, len, msg);
-    match term_cols {
-        Some(width) if width > fixed => width,
-        _ => fixed,
-    }
+    estimate_progress_fixed_cols(elapsed_precise, pos, len, msg)
 }
 
 fn create_progress_bar() -> Result<Arc<ProgressBar>> {
@@ -260,7 +264,7 @@ fn create_progress_bar() -> Result<Arc<ProgressBar>> {
         ProgressStyle::default_bar()
             .template(PROGRESS_BAR_TEMPLATE)
             .context("Failed to create progress bar template")?
-            .progress_chars("█▓░"),
+            .progress_chars("##-"),
     );
     pb.enable_steady_tick(Duration::from_millis(100));
     Ok(pb)
@@ -277,7 +281,12 @@ fn create_progress_callback(
     })
 }
 
-async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
+fn should_show_progress_bar(no_progress: bool) -> bool {
+    use std::io::IsTerminal;
+    !no_progress && std::io::stderr().is_terminal()
+}
+
+async fn execute_scan_with_reporting(mut config: Config, no_progress: bool) -> Result<i32> {
     let log_file = config
         .log_file
         .as_ref()
@@ -289,15 +298,25 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
         config.log_level_filter_override,
     )?;
 
-    let pb = create_progress_bar()?;
-    config.progress_callback = Some(create_progress_callback(Arc::clone(&pb)));
+    let progress_bar = if should_show_progress_bar(no_progress) {
+        let pb = create_progress_bar()?;
+        config.progress_callback = Some(create_progress_callback(Arc::clone(&pb)));
+        Some(pb)
+    } else {
+        None
+    };
     init_crypto_provider();
 
     let report = run_scan(config.clone())
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let Some(pb) = progress_bar {
+        pb.finish_and_clear();
+    }
+
     eprintln!(
-        "✅ Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+        "Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
         report.total_urls,
         if report.total_urls == 1 { "" } else { "s" },
         report.successful,
@@ -306,7 +325,7 @@ async fn execute_scan_with_reporting(mut config: Config) -> Result<i32> {
     );
     eprintln!("Results saved in {}", report.db_path.display());
     eprintln!(
-        "💡 Tip: Use `domain_status summary` for a quick report, `domain_status export --format csv` to export, or query the database directly."
+        "Tip: Use `domain_status summary` for a quick report, `domain_status export --format csv` to export, or query the database directly."
     );
 
     Ok(evaluate_exit_code(
@@ -418,8 +437,9 @@ pub async fn run_cli_command(
 ) -> Result<i32> {
     match cli_command {
         CliCommand::Scan(scan_cmd) => {
+            let no_progress = scan_cmd.no_progress;
             let config = build_config_from_scan_command(scan_cmd, scan_arg_matches)?;
-            execute_scan_with_reporting(config).await
+            execute_scan_with_reporting(config, no_progress).await
         }
         CliCommand::Export(export_cmd) => execute_export_command(export_cmd).await,
         CliCommand::Summary(summary_cmd) => execute_summary_command(summary_cmd).await,
@@ -568,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_line_fits_80_cols_after_multi_day_scan() {
+    fn progress_line_width_is_stable_and_independent_of_terminal_cols() {
         let early_elapsed = "00:00:01";
         let late_elapsed = "7d 21:27:56";
         let early_msg = progress_status_message(0, 0, 0);
@@ -578,15 +598,43 @@ mod tests {
             estimate_progress_line_cols(late_elapsed, 402_970, 752_906, &late_msg, Some(80));
         let late_40 =
             estimate_progress_line_cols(late_elapsed, 402_970, 752_906, &late_msg, Some(40));
-        assert!(
-            late_80 <= 80,
-            "wide_bar should keep the 7-day line within 80 cols (got {late_80})"
+        // Fixed `{bar:N}` ignores terminal width (unlike `{wide_bar}`).
+        assert_eq!(
+            late_80, late_40,
+            "progress chrome must not depend on terminal width"
         );
-        assert_eq!(early, 80, "wide_bar should fill leftover columns");
         assert!(
-            late_40 > 40,
-            "chrome alone can still exceed a 40-col window (got {late_40})"
+            early <= 80,
+            "early progress chrome should fit a typical 80-col terminal (got {early})"
         );
+        // Huge counters + long elapsed can still exceed 80; keep a sane upper bound.
+        assert!(
+            late_80 <= 110,
+            "late multi-day chrome should stay reasonably bounded (got {late_80})"
+        );
+    }
+
+    #[test]
+    fn scan_defaults_enable_whois_and_no_whois_disables() {
+        let on = parse_cli_command_from(["domain_status", "scan", "urls.txt"]).unwrap();
+        match on {
+            CliCommand::Scan(cmd) => {
+                assert!(cmd.enable_whois, "WHOIS should be on by default");
+                assert!(!cmd.no_whois);
+                assert!(!cmd.no_progress);
+            }
+            CliCommand::Export(_) | CliCommand::Summary(_) => panic!("expected scan"),
+        }
+
+        let off =
+            parse_cli_command_from(["domain_status", "scan", "urls.txt", "--no-whois"]).unwrap();
+        match off {
+            CliCommand::Scan(cmd) => {
+                let config = config_from_scan_command(cmd);
+                assert!(!config.enable_whois, "--no-whois must disable WHOIS");
+            }
+            CliCommand::Export(_) | CliCommand::Summary(_) => panic!("expected scan"),
+        }
     }
 
     #[test]
@@ -673,6 +721,7 @@ mod tests {
             status_port: Some(8080),
             enable_whois: true,
             no_whois: false,
+            no_progress: false,
             cache_dir: None,
             scan_external_scripts: true,
             fail_on: CliFailOn::AnyFailure,

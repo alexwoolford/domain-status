@@ -116,7 +116,7 @@ GeoIP is best-effort and only active when configured.
 
 ### WHOIS
 
-WHOIS/RDAP is disabled unless `--enable-whois` is set.
+WHOIS/RDAP is **on by default**. Disable with `--no-whois` (or `enable_whois = false` in TOML).
 
 - cache location: `…/domain_status/whois/`
 - cache TTL: 7 days
