@@ -104,7 +104,7 @@ When extending what a scan persists (or exports), use this checklist so parallel
 
 ### New CLI / config flag
 
-Update clap (`cli/`), `Config` + `Default`, file/env merge arms, and `SCAN_CONFIG_ARG_IDS` together — missing one step silently ignores the flag for file/env.
+Update clap (`cli/`), `Config` + `Default`, file merge arms, and `SCAN_CONFIG_ARG_IDS` together — missing one step silently ignores the flag for file overlay.
 
 ## Testing Expectations
 

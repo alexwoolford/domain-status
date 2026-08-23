@@ -76,17 +76,17 @@ where
     CliCommand::try_parse_from(args)
 }
 
-/// Loads config from optional file and env vars with prefix `DOMAIN_STATUS_`.
+/// Loads optional TOML config file only.
 ///
-/// Precedence when merging later: CLI > env > file > defaults.
-/// Returns `Ok(None)` when no config file is requested and no default file exists
-/// and env contributes nothing useful — still returns `Some` with an empty
-/// [`FileConfig`] when the builder succeeds (env-only overlays).
+/// `DOMAIN_STATUS_*` scan settings are applied via clap `env =` (not here), so env is
+/// not double-bound. Precedence when merging later: CLI > env (clap) > file > defaults.
+///
+/// Returns `Ok(None)` when no config file is requested and cwd has no `domain_status.toml`.
 ///
 /// # Errors
-/// Fails when a requested config file is missing or invalid, or when file/env
-/// values cannot be deserialized into [`FileConfig`] (invalid enums/bools).
-fn load_file_env_config(explicit_config_path: Option<&Path>) -> Result<Option<FileConfig>> {
+/// Fails when a requested config file is missing or invalid, or when file values
+/// cannot be deserialized into [`FileConfig`] (invalid enums/bools).
+fn load_file_config(explicit_config_path: Option<&Path>) -> Result<Option<FileConfig>> {
     // CLI `--config` wins over DOMAIN_STATUS_CONFIG_FILE (documented precedence).
     let config_name = explicit_config_path.map(Path::to_path_buf).or_else(|| {
         std::env::var("DOMAIN_STATUS_CONFIG_FILE")
@@ -94,27 +94,28 @@ fn load_file_env_config(explicit_config_path: Option<&Path>) -> Result<Option<Fi
             .map(std::path::PathBuf::from)
     });
 
-    let mut builder = config::Config::builder();
-
-    if let Some(ref path) = config_name {
+    let file_source = if let Some(ref path) = config_name {
         warn_if_world_readable(path);
         let path_str = path.to_string_lossy();
-        builder = builder.add_source(config::File::with_name(path_str.as_ref()).required(true));
+        Some(config::File::with_name(path_str.as_ref()).required(true))
     } else if Path::new("domain_status.toml").exists() {
-        builder = builder.add_source(config::File::with_name("domain_status").required(false));
+        Some(config::File::with_name("domain_status").required(false))
     } else {
-        // No file source; env-only is still useful
-    }
+        None
+    };
 
-    builder = builder.add_source(config::Environment::with_prefix("DOMAIN_STATUS"));
+    let Some(file_source) = file_source else {
+        return Ok(None);
+    };
 
-    match builder.build() {
-        Ok(settings) => match settings.try_deserialize::<FileConfig>() {
-            Ok(file_config) => Ok(Some(file_config)),
-            Err(e) => Err(anyhow::anyhow!("Invalid configuration: {e}")),
-        },
-        Err(e) => Err(anyhow::anyhow!("Failed to load configuration: {e}")),
-    }
+    let settings = config::Config::builder()
+        .add_source(file_source)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to load configuration: {e}"))?;
+    let file_config = settings
+        .try_deserialize::<FileConfig>()
+        .map_err(|e| anyhow::anyhow!("Invalid configuration: {e}"))?;
+    Ok(Some(file_config))
 }
 
 /// Scan CLI arg ids that correspond to config fields. Used to detect which values
@@ -163,20 +164,20 @@ fn get_explicit_config_keys(scan_matches: &clap::ArgMatches) -> Vec<&'static str
     keys
 }
 
-/// Builds `Config` with precedence: CLI > env > config file > defaults.
+/// Builds `Config` with precedence: CLI > env (clap) > config file > defaults.
 /// When `scan_arg_matches` is `Some`, only fields explicitly set by the user (CLI or env)
-/// overwrite file+env; others keep file/env values. When `None`, all CLI-derived values
-/// overwrite (backward compatible).
+/// overwrite the file overlay; others keep file values. When `None`, all CLI-derived
+/// values overwrite (backward compatible).
 fn build_config_from_scan_command(
     scan_cmd: ScanCommand,
     scan_arg_matches: Option<&clap::ArgMatches>,
 ) -> Result<Config> {
-    let file_env = load_file_env_config(scan_cmd.config.as_deref())?;
+    let file = load_file_config(scan_cmd.config.as_deref())?;
     let cli_config = config_from_scan_command(scan_cmd);
     let cli_explicit = scan_arg_matches.map(get_explicit_config_keys);
     let explicit_slice = cli_explicit.as_deref();
-    Ok(crate::config::merge_file_env_and_cli(
-        file_env.as_ref(),
+    Ok(crate::config::merge_file_and_cli(
+        file.as_ref(),
         cli_config,
         explicit_slice,
     ))
@@ -426,7 +427,7 @@ async fn execute_summary_command(summary_cmd: SummaryCommand) -> Result<i32> {
 
 /// Execute a parsed CLI command and return the intended process exit code.
 ///
-/// When `scan_arg_matches` is `Some`, config merge only overwrites file/env for fields
+/// When `scan_arg_matches` is `Some`, config merge only overwrites file overlay for fields
 /// explicitly set by the user (CLI or env). When `None`, all CLI-derived values overwrite.
 ///
 /// # Errors
@@ -612,6 +613,63 @@ mod tests {
             late_80 <= 110,
             "late multi-day chrome should stay reasonably bounded (got {late_80})"
         );
+    }
+
+    #[test]
+    fn load_file_config_reads_toml_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cfg.toml");
+        std::fs::write(&path, "max_concurrency = 7\nenable_whois = true\n").unwrap();
+
+        // File loader must not consult DOMAIN_STATUS_* (clap owns env). Avoid set_var
+        // here so parallel CLI parse tests are not poisoned.
+        let loaded = load_file_config(Some(&path)).unwrap().expect("toml loaded");
+        assert_eq!(loaded.max_concurrency, Some(7));
+        assert_eq!(loaded.enable_whois, Some(true));
+    }
+
+    #[test]
+    fn load_file_config_errors_on_missing_explicit_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.toml");
+        assert!(
+            load_file_config(Some(&missing)).is_err(),
+            "explicit missing config path must error"
+        );
+    }
+
+    #[test]
+    fn merge_explicit_cli_env_keys_override_toml_file() {
+        let file = FileConfig {
+            max_concurrency: Some(7),
+            enable_whois: Some(true),
+            ..Default::default()
+        };
+        let cli_config = Config {
+            max_concurrency: 99,
+            enable_whois: false,
+            ..Config::default()
+        };
+        // Simulate clap marking env/CLI as explicit for these keys.
+        let merged = crate::config::merge_file_and_cli(
+            Some(&file),
+            cli_config,
+            Some(&["max_concurrency", "enable_whois"]),
+        );
+        assert_eq!(merged.max_concurrency, 99);
+        assert!(!merged.enable_whois);
+
+        let preserved = crate::config::merge_file_and_cli(
+            Some(&file),
+            Config {
+                max_concurrency: 99,
+                enable_whois: false,
+                ..Config::default()
+            },
+            Some(&[]), // nothing explicit → keep TOML
+        );
+        assert_eq!(preserved.max_concurrency, 7);
+        assert!(preserved.enable_whois);
     }
 
     #[test]

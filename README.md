@@ -100,9 +100,11 @@ This keeps WHOIS/RDAP, and adds GeoIP/ASN plus first-party external script bodie
 
 **Day-to-day:** CLI flags (`domain_status scan --help`). Prefer `-v` / `-q` for log verbosity.
 
-**Repeatable jobs:** one of TOML (`--config ./domain_status.toml` or cwd `domain_status.toml`) **or** `DOMAIN_STATUS_*` env — not both as equal first-class paths. **`--config` wins** over `DOMAIN_STATUS_CONFIG_FILE`.
+**Repeatable jobs:** pick **one** of TOML (`--config ./domain_status.toml` or cwd `domain_status.toml`) **or** `DOMAIN_STATUS_*` env for the job profile; use CLI only to override. Mixing TOML and env for the same knobs works (env wins) but is harder to reason about. **`--config` wins** over `DOMAIN_STATUS_CONFIG_FILE`.
 
-**Secrets stay in env:** `MAXMIND_LICENSE_KEY`, `GITHUB_TOKEN`.
+**Local secrets:** put `MAXMIND_LICENSE_KEY` / `GITHUB_TOKEN` in `.env` or the real environment — never in TOML. `.env` only seeds process env; it is not a fifth precedence tier.
+
+Precedence: CLI > `DOMAIN_STATUS_*` > TOML > defaults. Details: [docs/CLI.md](docs/CLI.md).
 
 Example TOML: [`config_examples/domain_status.example.toml`](config_examples/domain_status.example.toml).
 
