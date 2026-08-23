@@ -1465,6 +1465,37 @@ mod tests {
         assert_eq!(count, 2);
     }
 
+    /// Build insert params with empty optional satellites (tests only).
+    fn insert_params_with_tech_redirects<'a>(
+        pool: &'a SqlitePool,
+        record: &'a UrlRecord,
+        empty_headers: &'a HashMap<String, String>,
+        empty_oids: &'a HashSet<String>,
+        empty_sans: &'a [String],
+        redirect_chain: &'a [(String, u16)],
+        technologies: &'a [crate::fingerprint::DetectedTechnology],
+    ) -> UrlRecordInsertParams<'a> {
+        UrlRecordInsertParams {
+            pool,
+            record,
+            security_headers: empty_headers,
+            http_headers: empty_headers,
+            oids: empty_oids,
+            redirect_chain,
+            technologies,
+            subject_alternative_names: empty_sans,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
+        }
+    }
+
     /// Adversarial: UPSERT must DELETE stale satellite rows before re-inserting.
     /// Without the `URL_STATUS_SATELLITE_TABLES` cleanup, rescans leave orphan techs/redirects.
     #[tokio::test]
@@ -1487,25 +1518,15 @@ mod tests {
             ("https://example.com".to_string(), 200),
         ];
 
-        let id1 = insert_url_record(UrlRecordInsertParams {
-            pool: &pool,
-            record: &record,
-            security_headers: &empty_headers,
-            http_headers: &empty_headers,
-            oids: &empty_oids,
-            redirect_chain: &redirects_first,
-            technologies: &tech_a,
-            subject_alternative_names: &empty_sans,
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            script_hosts: &[],
-            security_txt: None,
-            robots_txt: None,
-        })
+        let id1 = insert_url_record(insert_params_with_tech_redirects(
+            &pool,
+            &record,
+            &empty_headers,
+            &empty_oids,
+            &empty_sans,
+            &redirects_first,
+            &tech_a,
+        ))
         .await
         .expect("first insert");
 
@@ -1532,25 +1553,15 @@ mod tests {
         }];
         let redirects_second: Vec<(String, u16)> = Vec::new();
 
-        let id2 = insert_url_record(UrlRecordInsertParams {
-            pool: &pool,
-            record: &record,
-            security_headers: &empty_headers,
-            http_headers: &empty_headers,
-            oids: &empty_oids,
-            redirect_chain: &redirects_second,
-            technologies: &tech_b,
-            subject_alternative_names: &empty_sans,
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            script_hosts: &[],
-            security_txt: None,
-            robots_txt: None,
-        })
+        let id2 = insert_url_record(insert_params_with_tech_redirects(
+            &pool,
+            &record,
+            &empty_headers,
+            &empty_oids,
+            &empty_sans,
+            &redirects_second,
+            &tech_b,
+        ))
         .await
         .expect("upsert");
 

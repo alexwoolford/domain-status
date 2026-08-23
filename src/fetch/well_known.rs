@@ -12,7 +12,7 @@ const WELL_KNOWN_TIMEOUT_SECS: u64 = 5;
 
 /// Parsed RFC 9116 `security.txt` fields (plus raw body).
 #[derive(Debug, Clone, Default)]
-pub(crate) struct SecurityTxtData {
+pub struct SecurityTxtData {
     pub source_url: String,
     pub http_status: u16,
     pub contacts: Vec<String>,
@@ -28,7 +28,7 @@ pub(crate) struct SecurityTxtData {
 
 /// Parsed `robots.txt` (directives only; sitemaps listed, not fetched).
 #[derive(Debug, Clone, Default)]
-pub(crate) struct RobotsTxtData {
+pub struct RobotsTxtData {
     pub http_status: u16,
     pub raw_body: String,
     pub directives: Vec<(String, String)>,

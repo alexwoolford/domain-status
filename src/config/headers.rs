@@ -84,9 +84,9 @@ pub(crate) const HEADER_CF_CACHE_STATUS: &str = "CF-Cache-Status";
 pub(crate) const HEADER_X_SERVED_BY: &str = "X-Served-By";
 /// Via header (proxy chain information)
 pub(crate) const HEADER_VIA: &str = "Via";
-/// CloudFront request ID
+/// `CloudFront` request ID
 pub(crate) const HEADER_X_AMZ_CF_ID: &str = "X-Amz-Cf-Id";
-/// CloudFront PoP
+/// `CloudFront` `PoP`
 pub(crate) const HEADER_X_AMZ_CF_POP: &str = "X-Amz-Cf-Pop";
 /// Azure Front Door / CDN ref
 pub(crate) const HEADER_X_AZURE_REF: &str = "X-Azure-Ref";

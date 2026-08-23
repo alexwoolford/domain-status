@@ -101,7 +101,7 @@ fn append_opt_i32(builder: &mut Int32Builder, value: Option<i32>) {
 }
 
 /// Write a batch of `ExportRows` as a `RecordBatch` to the Parquet writer.
-#[allow(clippy::too_many_lines)] // Populates ~80 Arrow column builders sequentially; one block per column
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // Sequential ~80-column Arrow appends
 fn write_batch(
     writer: &mut ArrowWriter<File>,
     schema: &Arc<Schema>,
