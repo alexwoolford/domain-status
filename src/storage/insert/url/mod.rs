@@ -498,6 +498,7 @@ impl<'a> UrlRecordInsertParams<'a> {
     /// Unit tests that need non-empty satellites should still construct the
     /// struct literally (or start from this and override after copying fields).
     #[must_use]
+    #[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
     pub fn with_empty_satellites(
         pool: &'a SqlitePool,
         record: &'a UrlRecord,
@@ -552,6 +553,7 @@ impl<'a> UrlRecordInsertParams<'a> {
 ///
 /// # Errors
 /// Returns `Err` when the transaction or any insert fails.
+#[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
 pub async fn insert_url_record(params: UrlRecordInsertParams<'_>) -> Result<i64, DatabaseError> {
     insert_url_record_with_outcome(params)
         .await

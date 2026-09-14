@@ -4,10 +4,6 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = [
-    # parquet still pulls paste transitively (through 59.x); remove once arrow/parquet drops it.
-    "RUSTSEC-2024-0436",
-]
 
 # Dependency license policy (not the project license — domain_status is MIT).
 # Checked by `just deny` / CI. Non-crate data (fingerprints, gitleaks rules,
