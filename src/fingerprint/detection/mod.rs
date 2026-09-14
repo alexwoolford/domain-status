@@ -149,7 +149,9 @@ fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &Fingerprin
 
 /// Protocol / transport flags that belong in headers/TLS columns, not the stack inventory.
 fn is_denylisted_technology(name: &str) -> bool {
-    name.eq_ignore_ascii_case("HTTP/3") || name.eq_ignore_ascii_case("HSTS")
+    name.eq_ignore_ascii_case("HTTP/2")
+        || name.eq_ignore_ascii_case("HTTP/3")
+        || name.eq_ignore_ascii_case("HSTS")
 }
 
 fn finalize_detections(
@@ -381,8 +383,15 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     #[test]
-    fn test_finalize_detections_drops_http3_and_hsts() {
+    fn test_finalize_detections_drops_http2_http3_and_hsts() {
         let mut detected = HashMap::new();
+        detected.insert(
+            "HTTP/2".to_string(),
+            TechInfo {
+                version: None,
+                is_implied: false,
+            },
+        );
         detected.insert(
             "HTTP/3".to_string(),
             TechInfo {
@@ -424,6 +433,7 @@ mod tests {
         let names: Vec<_> = out.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"nginx"));
         assert!(names.contains(&"Re:amaze"));
+        assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("HTTP/2")));
         assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("HTTP/3")));
         assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("HSTS")));
         let re = out.iter().find(|t| t.name == "Re:amaze").unwrap();
