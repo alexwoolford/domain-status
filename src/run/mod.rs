@@ -65,6 +65,45 @@ impl Drop for InFlightGuard {
     }
 }
 
+fn domain_from_url_or_raw(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| url.to_string())
+}
+
+async fn insert_abort_url_failure(
+    pool: &DbPool,
+    run_id: Option<&str>,
+    url: &str,
+    error_type: ErrorType,
+    error_message: String,
+    elapsed_time_seconds: Option<f64>,
+) -> bool {
+    let record = UrlFailureRecord {
+        url: url.to_string(),
+        final_url: None,
+        domain: domain_from_url_or_raw(url),
+        final_domain: None,
+        error_type,
+        error_message,
+        http_status: None,
+        retry_count: 0,
+        elapsed_time_seconds,
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        run_id: run_id.map(str::to_string),
+        redirect_chain: vec![],
+        response_headers: vec![],
+    };
+    match insert_url_failure(pool.as_ref(), &record).await {
+        Ok(_) => true,
+        Err(e) => {
+            log::error!("Failed to insert {error_type} url_failures row for {url}: {e}");
+            false
+        }
+    }
+}
+
 /// Records a `url_failures` row for each URL whose task was abandoned at the
 /// drain timeout. Returns the number of rows successfully inserted.
 ///
@@ -77,36 +116,44 @@ async fn record_drain_timeout_failures(
     drain_timeout_secs: u64,
     abandoned: &[String],
 ) -> usize {
-    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut inserted = 0usize;
     for url in abandoned {
-        let domain = url::Url::parse(url)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_string))
-            .unwrap_or_else(|| url.clone());
-        let record = UrlFailureRecord {
-            url: url.clone(),
-            final_url: None,
-            domain,
-            final_domain: None,
-            error_type: ErrorType::ProcessUrlTimeout,
-            error_message: format!(
+        let ok = insert_abort_url_failure(
+            pool,
+            Some(run_id),
+            url,
+            ErrorType::ProcessUrlTimeout,
+            format!(
                 "Aborted at scan drain timeout ({drain_timeout_secs}s expired); task did not finish in time"
             ),
-            http_status: None,
-            retry_count: 0,
-            elapsed_time_seconds: None,
-            timestamp: now_ms,
-            run_id: Some(run_id.to_string()),
-            redirect_chain: vec![],
-            response_headers: vec![],
-        };
-        match insert_url_failure(pool.as_ref(), &record).await {
-            Ok(_) => inserted += 1,
-            Err(e) => log::error!("Failed to insert drain-timeout url_failures row for {url}: {e}"),
+            None,
+        )
+        .await;
+        if ok {
+            inserted += 1;
         }
     }
     inserted
+}
+
+/// Persists a `url_failures` row when a worker sees cooperative cancel (Ctrl-C).
+///
+/// Drain timeout uses [`record_drain_timeout_failures`]; this path must also write
+/// a fact row so finalize `COUNT(*)` matches live `failed_urls`.
+pub(super) async fn record_cooperative_cancel_failure(
+    pool: &DbPool,
+    run_id: Option<&str>,
+    url: &str,
+) {
+    let _ = insert_abort_url_failure(
+        pool,
+        run_id,
+        url,
+        ErrorType::ScanCancelled,
+        format!("Scan cancelled before URL finished processing: {url}"),
+        None,
+    )
+    .await;
 }
 
 pub use resources::{ScanLoopResult, ScanResources, UrlTaskParams};

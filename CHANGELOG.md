@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.
+- Cookie UPSERT refreshes `domain` and `path` on same-name conflict; `url_status` insert-vs-update is detected from `INSERT … DO NOTHING`, not a pre-check `SELECT`.
+
 ## [0.1.29] - 2026-08-23
 
 ### Added

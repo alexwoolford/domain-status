@@ -209,6 +209,8 @@ pub enum ErrorType {
     HttpRequestGatewayTimeout,      // 504 Gateway Timeout
     // Note: Less common status codes (406, 521, etc.) are categorized as HttpRequestOtherError
     ProcessUrlTimeout,
+    /// Cooperative cancel (Ctrl-C) aborted the URL before it finished.
+    ScanCancelled,
     // DNS errors
     DnsForwardLookupError,
     DnsNsLookupError,
@@ -286,6 +288,7 @@ impl ErrorType {
             ErrorType::HttpRequestServiceUnavailable => "Service Unavailable (503)",
             ErrorType::HttpRequestGatewayTimeout => "Gateway Timeout (504)",
             ErrorType::ProcessUrlTimeout => "Process URL timeout",
+            ErrorType::ScanCancelled => "Scan cancelled",
             ErrorType::DnsForwardLookupError => "DNS forward lookup error",
             ErrorType::DnsNsLookupError => "DNS NS lookup error",
             ErrorType::DnsTxtLookupError => "DNS TXT lookup error",
@@ -379,6 +382,7 @@ mod tests {
             ErrorType::SatelliteInsertError.as_str(),
             "Satellite insert error"
         );
+        assert_eq!(ErrorType::ScanCancelled.as_str(), "Scan cancelled");
     }
 
     #[test]

@@ -60,6 +60,7 @@ cargo test --doc
 - Leaf correctness: parsers, fingerprint matching helpers, storage inserts, secrets corpus
 - Orchestration / integrity contracts that must not soft-skip:
   - UPSERT clears stale **core** satellite rows; enrichment children are replaced in a second writer transaction ([ADR 0007](adr/0007-satellite-insert-failure-policy.md)); a core satellite SQL `Err` lands in `url_partial_failures`
+  - Cooperative cancel persists a `url_failures` row; CORE/ENRICHMENT satellite lists match insert call sites
   - Offline `implies` / exclude detection (fixture rulesets, no network)
   - Offline `run_scan` with local fingerprints + wiremock (status, counters, satellites, versions/`is_implied`)
   - Config merge (`fail_on`, `--no-whois`, bool synonyms)

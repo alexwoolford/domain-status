@@ -2,7 +2,7 @@
 
 This document summarizes dependency and CI practices for supply chain security.
 
-**Last reviewed:** 2026-07-23 (dependency cleanup: version policy, parquet 59 / thrift removal, whois-service unvendor).
+**Last reviewed:** 2026-09-14 (`whois-service` remains `[patch.crates-io]` / `vendor/whois-service` until crates.io disables reqwest default-tls).
 
 ---
 
