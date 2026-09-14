@@ -20,32 +20,105 @@ pub struct HstsDirectives {
 
 /// Parses a raw `Strict-Transport-Security` header value into structured directives.
 ///
-/// The header is a semicolon-separated list of directives, e.g.:
-/// `max-age=31536000; includeSubDomains; preload`
-///
-/// Directive names are matched case-insensitively per RFC 6797. Unknown directives
-/// are ignored. `max-age` values that fail to parse as `u64` are treated as absent.
+/// Callers may pass the header value alone or a quoted / prefixed form such as
+/// `Strict-Transport-Security: max-age=31536000`. Directives may be separated by
+/// `;` or `,`. Directive names are matched case-insensitively per RFC 6797.
+/// Unknown directives are ignored. `max-age` values that fail to parse as `u64`
+/// are treated as absent. The raw header remains the storage source of truth.
 pub fn parse_hsts_directive(value: &str) -> HstsDirectives {
+    let normalized = normalize_hsts_value(value);
     let mut result = HstsDirectives::default();
 
-    for part in value.split(';') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-
-        if let Some((name, val)) = part.split_once('=') {
-            if name.trim().eq_ignore_ascii_case("max-age") {
-                result.max_age = val.trim().trim_matches('"').parse::<u64>().ok();
-            }
-        } else if part.eq_ignore_ascii_case("includeSubDomains") {
-            result.include_subdomains = true;
-        } else if part.eq_ignore_ascii_case("preload") {
-            result.preload = true;
-        }
+    for segment in normalized.split(';') {
+        apply_hsts_segment(segment, &mut result);
     }
 
     result
+}
+
+fn normalize_hsts_value(value: &str) -> String {
+    let mut s = value.trim();
+    if let Some(unquoted) = strip_matching_quotes(s) {
+        s = unquoted.trim();
+    }
+    const PREFIX: &str = "strict-transport-security:";
+    let lower = s.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_prefix(PREFIX)
+        .and_then(|_| s.get(PREFIX.len()..))
+    {
+        rest.trim().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+fn strip_matching_quotes(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 {
+        return None;
+    }
+    let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
+    if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+        Some(&s[1..s.len() - 1])
+    } else {
+        None
+    }
+}
+
+fn apply_hsts_segment(segment: &str, result: &mut HstsDirectives) {
+    if let Some(raw_age) = max_age_value(segment) {
+        result.max_age = parse_max_age_number(raw_age);
+    }
+    apply_hsts_flags(segment, result);
+}
+
+fn max_age_value(segment: &str) -> Option<&str> {
+    let lower = segment.to_ascii_lowercase();
+    for key in ["max-age", "maxage"] {
+        if let Some(pos) = lower.find(key) {
+            let after_key = segment.get(pos + key.len()..)?.trim_start();
+            if let Some(rest) = after_key.strip_prefix('=') {
+                return Some(rest);
+            }
+        }
+    }
+    None
+}
+
+/// Digits in `max-age`, ignoring grouping commas/`_` and stopping at the next token.
+fn parse_max_age_number(raw: &str) -> Option<u64> {
+    let raw = raw.trim().trim_matches('"').trim();
+    let mut digits = String::new();
+    for c in raw.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if c == ',' || c == '_' {
+            continue;
+        } else if c.is_ascii_whitespace() {
+            if digits.is_empty() {
+                continue;
+            }
+            break;
+        } else {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+fn apply_hsts_flags(text: &str, result: &mut HstsDirectives) {
+    for token in text.split(|c: char| !c.is_ascii_alphabetic()) {
+        if token.eq_ignore_ascii_case("includesubdomains") {
+            result.include_subdomains = true;
+        } else if token.eq_ignore_ascii_case("preload") {
+            result.preload = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -104,5 +177,41 @@ mod tests {
         assert_eq!(parsed.max_age, Some(100));
         assert!(!parsed.include_subdomains);
         assert!(!parsed.preload);
+    }
+
+    #[test]
+    fn test_parse_hsts_quoted_header_value() {
+        let parsed = parse_hsts_directive("\"max-age=31536000; includeSubDomains\"");
+        assert_eq!(parsed.max_age, Some(31_536_000));
+        assert!(parsed.include_subdomains);
+    }
+
+    #[test]
+    fn test_parse_hsts_header_name_prefix() {
+        let parsed = parse_hsts_directive("Strict-Transport-Security: max-age=3600; preload");
+        assert_eq!(parsed.max_age, Some(3600));
+        assert!(parsed.preload);
+    }
+
+    #[test]
+    fn test_parse_hsts_comma_separated_directives() {
+        let parsed = parse_hsts_directive("max-age=31536000, includeSubDomains, preload");
+        assert_eq!(parsed.max_age, Some(31_536_000));
+        assert!(parsed.include_subdomains);
+        assert!(parsed.preload);
+    }
+
+    #[test]
+    fn test_parse_hsts_grouping_commas_in_max_age() {
+        let parsed = parse_hsts_directive("max-age=7,889,238; includeSubDomains");
+        assert_eq!(parsed.max_age, Some(7_889_238));
+        assert!(parsed.include_subdomains);
+    }
+
+    #[test]
+    fn test_parse_hsts_flexible_max_age_spacing() {
+        let parsed = parse_hsts_directive("max-age = 31536000 ; includeSubDomains");
+        assert_eq!(parsed.max_age, Some(31_536_000));
+        assert!(parsed.include_subdomains);
     }
 }

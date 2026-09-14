@@ -75,6 +75,7 @@ pub(crate) fn build_ssrf_client(
     };
 
     let mut builder = ClientBuilder::new()
+        .use_rustls_tls()
         .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .redirect(redirect)
         .timeout(opts.timeout)
@@ -400,6 +401,28 @@ mod tests {
         assert!(
             result.is_err(),
             "Page-fetch client must reject invalid (self-signed) certificates; got Ok"
+        );
+    }
+
+    /// Known HTTP/2 origin: rustls + ALPN must negotiate `h2`, not silently fall back to HTTP/1.1.
+    /// Run with: cargo test -- --ignored (e2e job runs these).
+    #[tokio::test]
+    #[ignore] // Requires network; uses cloudflare.com
+    async fn test_init_client_negotiates_http2_via_alpn() {
+        let config = create_test_config();
+        let client = init_client(&config, test_resolver())
+            .await
+            .expect("Should create client");
+        let response = client
+            .get("https://www.cloudflare.com/")
+            .send()
+            .await
+            .expect("HTTPS GET to a known HTTP/2 origin should succeed");
+        assert_eq!(
+            response.version(),
+            reqwest::Version::HTTP_2,
+            "scan client must negotiate HTTP/2 via ALPN (got {:?})",
+            response.version()
         );
     }
 }

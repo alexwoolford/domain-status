@@ -57,6 +57,11 @@ pub async fn lookup_ns_records(
     }
 }
 
+/// True when a TXT RDATA string is worth classifying and storing.
+pub(crate) fn is_storable_txt(txt: &str) -> bool {
+    !txt.trim().is_empty()
+}
+
 /// Queries TXT (text) records for a domain.
 ///
 /// # Arguments
@@ -91,8 +96,6 @@ pub async fn lookup_txt_records(
             let txt_records: Vec<String> = lookup
                 .answers()
                 .iter()
-                // Cap the number of TXT records to prevent memory/storage exhaustion
-                .take(crate::config::MAX_TXT_RECORD_COUNT)
                 .filter_map(|record| {
                     if let RData::TXT(txt) = &record.data {
                         // TXT records can contain multiple strings - join them
@@ -126,6 +129,8 @@ pub async fn lookup_txt_records(
                         None
                     }
                 })
+                .filter(|txt| is_storable_txt(txt))
+                .take(crate::config::MAX_TXT_RECORD_COUNT)
                 .collect();
             Ok(txt_records)
         }
@@ -335,5 +340,12 @@ mod tests {
             worst_case_bytes <= 100 * 1024,
             "Worst case TXT bytes per domain should be under 100KB"
         );
+    }
+
+    #[test]
+    fn test_is_storable_txt_rejects_empty_and_whitespace() {
+        assert!(!super::is_storable_txt(""));
+        assert!(!super::is_storable_txt(" \t\n"));
+        assert!(super::is_storable_txt("v=spf1 ~all"));
     }
 }

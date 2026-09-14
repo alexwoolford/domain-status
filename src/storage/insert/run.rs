@@ -93,6 +93,43 @@ pub async fn update_run_stats(
     Ok(())
 }
 
+/// Fact-table row counts for a run (`url_status` / `url_failures`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunFactCounts {
+    pub successful_urls: i64,
+    pub failed_urls: i64,
+}
+
+/// Counts committed success and failure rows for `run_id`.
+///
+/// In-memory atomics can undercount when a commit succeeds and `select!` then
+/// cancels before `handle_success` / `handle_failure` increment counters.
+pub(crate) async fn count_run_fact_rows(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<RunFactCounts, DatabaseError> {
+    let successful_urls: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM url_status WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .map_err(DatabaseError::SqlError)?;
+    let failed_urls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_failures WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    Ok(RunFactCounts {
+        successful_urls,
+        failed_urls,
+    })
+}
+
+/// Saturating `COUNT(*)` → `i32` for `runs.*_urls` columns.
+pub(crate) fn saturating_i32_count(count: i64) -> i32 {
+    i32::try_from(count.max(0)).unwrap_or(i32::MAX)
+}
+
 /// Query run history from the database.
 ///
 /// Returns all completed runs sorted by `start_time_ms` (most recent first).
@@ -189,7 +226,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    use crate::storage::test_helpers::create_test_pool;
+    use crate::storage::test_helpers::{create_test_pool, create_test_url_status};
 
     #[tokio::test]
     async fn test_insert_run_metadata_basic() {
@@ -327,6 +364,78 @@ mod tests {
             .expect("Failed to count runs");
 
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_saturating_i32_count_clamps_non_negative() {
+        assert_eq!(saturating_i32_count(0), 0);
+        assert_eq!(saturating_i32_count(42), 42);
+        assert_eq!(saturating_i32_count(-1), 0);
+        assert_eq!(saturating_i32_count(i64::from(i32::MAX)), i32::MAX);
+        assert_eq!(saturating_i32_count(i64::from(i32::MAX) + 1), i32::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_count_run_fact_rows() {
+        let pool = create_test_pool().await;
+        insert_run_metadata(
+            &pool,
+            &RunMetadata {
+                run_id: "count-run",
+                start_time_ms: 1,
+                version: "0.1.0",
+                fingerprints_source: None,
+                fingerprints_version: None,
+                geoip_version: None,
+            },
+        )
+        .await
+        .expect("insert run");
+
+        create_test_url_status(
+            &pool,
+            "a.example.com",
+            "a.example.com",
+            200,
+            Some("count-run"),
+            1,
+        )
+        .await;
+        create_test_url_status(
+            &pool,
+            "b.example.com",
+            "b.example.com",
+            200,
+            Some("count-run"),
+            1,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO url_failures (
+                attempted_url, initial_domain, error_type, error_message,
+                retry_count, observed_at_ms, run_id
+            ) VALUES ('https://fail.example.com/', 'fail.example.com', 'timeout', 't', 0, 1, 'count-run')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert failure");
+
+        let facts = count_run_fact_rows(&pool, "count-run")
+            .await
+            .expect("count facts");
+        assert_eq!(facts.successful_urls, 2);
+        assert_eq!(facts.failed_urls, 1);
+
+        let empty = count_run_fact_rows(&pool, "missing-run")
+            .await
+            .expect("count missing run");
+        assert_eq!(
+            empty,
+            RunFactCounts {
+                successful_urls: 0,
+                failed_urls: 0,
+            }
+        );
     }
 
     #[tokio::test]

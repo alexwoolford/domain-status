@@ -56,6 +56,8 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 | `--fail-on-pct-threshold` | `DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD` | `fail_on_pct_threshold` | `10` |
 | `--drain-timeout-secs` | `DOMAIN_STATUS_DRAIN_TIMEOUT_SECS` | `drain_timeout_secs` | `10` |
 
+`--rate-limit-rps` is **URL admission** (one token per input URL), not per-HTTP-request RPS. Redirects, favicon, external scripts, TLS probe, and WHOIS share that token.
+
 TOML/`DOMAIN_STATUS_FAIL_ON` also accept `any_failure` / `anyfailure` as aliases of `any-failure`.
 
 ## Export / summary

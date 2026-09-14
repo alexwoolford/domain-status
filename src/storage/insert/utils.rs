@@ -424,7 +424,10 @@ mod tests {
     #[test]
     fn test_detect_txt_type_other() {
         assert_eq!(detect_txt_type("some other text record"), "OTHER");
-        assert_eq!(detect_txt_type(""), "OTHER");
+        // Empty/whitespace TXT is filtered before classify/insert (`is_storable_txt`);
+        // it is not a stored `record_type`.
+        assert!(!crate::dns::is_storable_txt(""));
+        assert!(!crate::dns::is_storable_txt("   "));
     }
 
     #[test]

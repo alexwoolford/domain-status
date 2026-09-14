@@ -73,6 +73,7 @@ fn extract_raw_field(raw_text: &str, labels: &[&str]) -> Option<String> {
 
 pub(crate) fn enrich_result_from_raw_text(mut result: WhoisResult) -> WhoisResult {
     let Some(raw_text) = result.raw_text.as_deref() else {
+        result.registrant_country = iso_alpha2_country(result.registrant_country.take());
         return result;
     };
 
@@ -92,16 +93,27 @@ pub(crate) fn enrich_result_from_raw_text(mut result: WhoisResult) -> WhoisResul
             extract_raw_field(raw_text, &["Registrant Country", "Registrant Country Code"]);
     }
 
+    result.registrant_country = iso_alpha2_country(result.registrant_country.take());
     result
+}
+
+/// Keep `registrant_country` only when it is ISO 3166-1 alpha-2 (stored uppercase).
+fn iso_alpha2_country(value: Option<String>) -> Option<String> {
+    let trimmed = value?.trim().to_string();
+    if trimmed.len() == 2 && trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
+        Some(trimmed.to_ascii_uppercase())
+    } else {
+        None
+    }
 }
 
 /// Converts an internal WHOIS payload to our application result.
 pub(crate) fn convert_payload(payload: &WhoisPayload) -> WhoisResult {
     let Some(parsed) = &payload.parsed else {
-        return WhoisResult {
+        return enrich_result_from_raw_text(WhoisResult {
             raw_text: Some(payload.raw_text.clone()),
             ..Default::default()
-        };
+        });
     };
 
     let creation_date = parsed
@@ -490,6 +502,42 @@ mod tests {
 
         assert_eq!(result.registrant_org.as_deref(), Some("Example Org"));
         assert_eq!(result.registrant_country.as_deref(), Some("CA"));
+    }
+
+    #[test]
+    fn test_registrant_country_privacy_redaction_is_not_stored() {
+        let result = enrich_result_from_raw_text(WhoisResult {
+            raw_text: Some(
+                "Registrant Organization: Example Org\nRegistrant Country: REDACTED FOR PRIVACY"
+                    .to_string(),
+            ),
+            ..WhoisResult::default()
+        });
+
+        assert_eq!(result.registrant_org.as_deref(), Some("Example Org"));
+        assert_eq!(result.registrant_country, None);
+        assert!(
+            result
+                .raw_text
+                .as_deref()
+                .is_some_and(|raw| raw.contains("REDACTED FOR PRIVACY")),
+            "privacy prose must remain in raw_response/raw_text"
+        );
+    }
+
+    #[test]
+    fn test_registrant_country_iso_alpha2_uppercase_only() {
+        let us = enrich_result_from_raw_text(WhoisResult {
+            raw_text: Some("Registrant Country: us".to_string()),
+            ..WhoisResult::default()
+        });
+        assert_eq!(us.registrant_country.as_deref(), Some("US"));
+
+        let usa = enrich_result_from_raw_text(WhoisResult {
+            raw_text: Some("Registrant Country: USA".to_string()),
+            ..WhoisResult::default()
+        });
+        assert_eq!(usa.registrant_country, None);
     }
 
     #[test]

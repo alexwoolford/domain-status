@@ -45,8 +45,8 @@ This document summarizes dependency and CI practices for supply chain security.
 
 ## Cargo.toml and dependencies
 
-- **TLS:** reqwest is used with `default-features = false` and `features = ["rustls-tls", ...]` — no native TLS.
-- **WHOIS:** `whois-service` `^0.3` from crates.io (`default-features = false`). The former `vendor/whois-service` patch (0.2.1) was removed once 0.3.0 stopped pulling `rustls-pemfile`.
+- **TLS:** reqwest is used with `default-features = false` and `features = ["rustls-tls", ...]` — no native TLS. `whois-service` 0.3.0 from crates.io still enables reqwest `default-tls`; `[patch.crates-io]` overlays `vendor/whois-service` so RDAP uses rustls-only reqwest (`cargo tree -i native-tls` empty).
+- **WHOIS:** `whois-service` `^0.3` (`default-features = false`, no HTTP server). Patch is a one-line reqwest TLS change on 0.3.0; drop it when upstream disables reqwest defaults.
 - **Parquet/Arrow:** `arrow` / `parquet` `^59`. Parquet 59 drops the `thrift` crate dependency (the previous Dependabot thrift ignore is no longer needed). `paste` remains transitive until upstream removes it.
 - **Large/analytical crates:** arrow/parquet are used for export only; they add size and the `paste` advisory ignore. Acceptable for the feature; keep deny ignores documented and minimal.
 

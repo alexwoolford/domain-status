@@ -34,14 +34,16 @@ fn parse_set_cookie(s: &str) -> Option<ParsedSetCookie> {
     let lower = s.to_lowercase();
     let secure = lower.contains("secure");
     let http_only = lower.contains("httponly");
-    let same_site = parts.iter().find_map(|p| {
-        let p = p.trim().to_lowercase();
-        if p.starts_with("samesite=") {
-            Some(p.trim_start_matches("samesite=").trim().to_string())
-        } else {
-            None
-        }
-    });
+    let same_site = parts
+        .iter()
+        .find_map(|p| {
+            let p = p.trim();
+            let prefix = p.get(..9)?;
+            prefix
+                .eq_ignore_ascii_case("samesite=")
+                .then(|| allowlisted_same_site(p.get(9..).unwrap_or("").trim()))
+        })
+        .flatten();
     let domain = parts.iter().find_map(|p| {
         let p = p.trim();
         if p.to_lowercase().starts_with("domain=") {
@@ -68,6 +70,20 @@ fn parse_set_cookie(s: &str) -> Option<ParsedSetCookie> {
         domain,
         path,
     })
+}
+
+/// RFC 6265bis `SameSite`: only `Strict` / `Lax` / `None` (stored lowercase).
+fn allowlisted_same_site(raw: &str) -> Option<String> {
+    let token = raw.trim();
+    if token.eq_ignore_ascii_case("strict") {
+        Some("strict".to_string())
+    } else if token.eq_ignore_ascii_case("lax") {
+        Some("lax".to_string())
+    } else if token.eq_ignore_ascii_case("none") {
+        Some("none".to_string())
+    } else {
+        None
+    }
 }
 
 fn parse_all_set_cookies(headers: &HeaderMap) -> Vec<ParsedSetCookie> {
@@ -211,5 +227,68 @@ mod tests {
 
         let cookies = extract_cookies_name_value_map(&headers);
         assert_eq!(cookies.get("session"), Some(&"".to_string()));
+    }
+
+    #[test]
+    fn test_extract_cookie_infos_samesite_allowlist() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("a=1; SameSite=Lax"),
+        );
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("b=1; SameSite=NONE"),
+        );
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("c=1; SameSite=true"),
+        );
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("d=1; SameSite=1"),
+        );
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("e=1; SameSite=stric"),
+        );
+
+        let cookies = extract_cookie_infos(&headers);
+        assert_eq!(cookies.len(), 5);
+        assert_eq!(cookies[0].same_site.as_deref(), Some("lax"));
+        assert_eq!(cookies[1].same_site.as_deref(), Some("none"));
+        assert_eq!(cookies[2].same_site, None);
+        assert_eq!(cookies[3].same_site, None);
+        assert_eq!(cookies[4].same_site, None);
+    }
+
+    #[test]
+    fn test_extract_cookie_infos_concatenated_set_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("session=abc123; Path=/; SameSite=Strict"),
+        );
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("theme=dark; Path=/; SameSite=Lax"),
+        );
+
+        let cookies = extract_cookie_infos(&headers);
+        assert_eq!(cookies.len(), 2);
+        assert_eq!(cookies[0].same_site.as_deref(), Some("strict"));
+        assert_eq!(cookies[1].same_site.as_deref(), Some("lax"));
+
+        let mut jammed = HeaderMap::new();
+        jammed.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("a=1; Path=/; SameSite=Lax, b=2; SameSite=None"),
+        );
+        let jammed_cookies = extract_cookie_infos(&jammed);
+        assert_eq!(jammed_cookies.len(), 1);
+        assert_eq!(
+            jammed_cookies[0].same_site, None,
+            "comma-concatenated SameSite token is not an allowlisted value"
+        );
     }
 }
