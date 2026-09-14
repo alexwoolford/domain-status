@@ -49,11 +49,11 @@ pub fn extract_structured_data(document: &Html, html: &str) -> StructuredData {
         if let Some(obj) = json_value.as_object() {
             if let Some(type_value) = obj.get("@type") {
                 if let Some(type_str) = type_value.as_str() {
-                    schema_types.push(type_str.to_string());
+                    push_schema_type(&mut schema_types, type_str);
                 } else if let Some(type_array) = type_value.as_array() {
                     for t in type_array {
                         if let Some(t_str) = t.as_str() {
-                            schema_types.push(t_str.into());
+                            push_schema_type(&mut schema_types, t_str);
                         }
                     }
                 }
@@ -72,6 +72,13 @@ pub fn extract_structured_data(document: &Html, html: &str) -> StructuredData {
         open_graph,
         twitter_cards,
         schema_types,
+    }
+}
+
+fn push_schema_type(schema_types: &mut Vec<String>, type_str: &str) {
+    let trimmed = type_str.trim();
+    if !trimmed.is_empty() {
+        schema_types.push(trimmed.to_string());
     }
 }
 
@@ -311,5 +318,23 @@ mod tests {
         let document = Html::parse_document(html);
         let data = extract_structured_data(&document, html);
         assert_eq!(data.json_ld.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_structured_data_skips_blank_schema_type() {
+        let html =
+            r#"<html><head><script type="application/ld+json">{"@type":""}</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(data.json_ld.len(), 1);
+        assert!(data.schema_types.is_empty());
+    }
+
+    #[test]
+    fn test_extract_structured_data_skips_blank_schema_type_in_array() {
+        let html = r#"<html><head><script type="application/ld+json">{"@type":["", " Article "]}</script></head></html>"#;
+        let document = Html::parse_document(html);
+        let data = extract_structured_data(&document, html);
+        assert_eq!(data.schema_types, vec!["Article".to_string()]);
     }
 }

@@ -54,8 +54,13 @@ pub(crate) async fn insert_txt_records(
         // Pre-compute record types for all TXT records
         let txt_with_types: Vec<(&String, String)> = txts
             .iter()
+            .filter(|txt| crate::dns::is_storable_txt(txt))
             .map(|txt| (txt, detect_txt_type(txt).to_string()))
             .collect();
+
+        if txt_with_types.is_empty() {
+            return;
+        }
 
         if let Err(e) = insert_key_value_batch(
             tx,
@@ -355,6 +360,30 @@ mod tests {
                 .expect("Failed to count TXT records");
 
         assert_eq!(count, 2, "Rescan should not create duplicate TXT records");
+    }
+
+    #[tokio::test]
+    async fn test_insert_txt_records_skips_empty() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let mut tx = pool.begin().await.expect("Failed to start transaction");
+        let txt_records_json = Some(r#"["", "   ", "v=spf1 ~all"]"#.to_string());
+
+        insert_txt_records(&mut tx, url_status_id, txt_records_json.as_ref()).await;
+        tx.commit().await.expect("Failed to commit transaction");
+
+        let rows = sqlx::query(
+            "SELECT record_value, record_type FROM url_txt_records WHERE url_status_id = ?",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to fetch TXT records");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get::<String, _>("record_type"), "SPF");
+        assert_eq!(rows[0].get::<String, _>("record_value"), "v=spf1 ~all");
     }
 
     #[tokio::test]

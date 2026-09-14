@@ -78,11 +78,47 @@ pub async fn insert_structured_data(
         let schema_rows: Vec<(String, String)> = structured_data
             .schema_types
             .iter()
-            .map(|t| (t.clone(), String::new()))
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .map(|t| (t.to_string(), String::new()))
             .collect();
         insert_structured_rows(pool, url_status_id, "schema_type", &schema_rows).await?;
 
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::StructuredData;
+    use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
+    use sqlx::Row;
+
+    #[tokio::test]
+    async fn test_insert_structured_data_skips_empty_schema_type() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let structured_data = StructuredData {
+            schema_types: vec![String::new(), "  ".to_string(), "WebPage".to_string()],
+            ..StructuredData::default()
+        };
+
+        insert_structured_data(&pool, url_status_id, &structured_data)
+            .await
+            .expect("insert structured data");
+
+        let rows = sqlx::query(
+            "SELECT property_name FROM url_structured_data
+             WHERE url_status_id = ? AND data_type = 'schema_type'",
+        )
+        .bind(url_status_id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch schema_type rows");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get::<String, _>("property_name"), "WebPage");
+    }
 }

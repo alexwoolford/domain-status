@@ -22,6 +22,7 @@ pub use extract::{
     extract_bimi_record, extract_dmarc_record, extract_mta_sts_record, extract_spf_record,
     extract_tls_rpt_record, is_bimi_txt, is_dmarc_txt, is_mta_sts_txt, is_spf_txt, is_tls_rpt_txt,
 };
+pub(crate) use records::is_storable_txt;
 pub use records::{
     lookup_aaaa_records, lookup_caa_records, lookup_cname_records, lookup_mx_records,
     lookup_ns_records, lookup_txt_records,

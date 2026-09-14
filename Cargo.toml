@@ -164,8 +164,8 @@ flate2 = "^1.1"
 tar = "^0.4"
 dotenvy = "^0.15"
 config = { version = "^0.14", default-features = false, features = ["toml"] }
-# 0.3.0 on crates.io uses reqwest 0.12 + rustls without rustls-pemfile (the reason
-# we previously vendored 0.2.1). Keep default-features off to avoid native-tls.
+# 0.3.0 on crates.io uses reqwest 0.12 with default-tls (native-tls). Keep
+# default-features off (no HTTP server) and patch reqwest to rustls-only.
 whois-service = { version = "^0.3", default-features = false }
 axum = "^0.8"
 include_dir = "^0.7"
@@ -199,3 +199,8 @@ rstest = "^0.26"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
 tower = "^0.5"
 rcgen = "^0.14"
+
+[patch.crates-io]
+# crates.io whois-service 0.3.0 enables reqwest default features (native-tls).
+# This overlay keeps json/gzip and forces rustls-tls so the scan graph has no OpenSSL.
+whois-service = { path = "vendor/whois-service" }

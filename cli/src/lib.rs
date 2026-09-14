@@ -74,6 +74,8 @@ pub struct ScanCommand {
     #[arg(long, default_value = DEFAULT_USER_AGENT, env = "DOMAIN_STATUS_USER_AGENT")]
     pub user_agent: String,
 
+    /// URL admission rate (tokens/sec). Not per-HTTP-request RPS; redirects, favicon,
+    /// TLS, and WHOIS share one token per input URL. `0` disables.
     #[arg(long, default_value_t = 15, env = "DOMAIN_STATUS_RATE_LIMIT_RPS")]
     pub rate_limit_rps: u32,
 
