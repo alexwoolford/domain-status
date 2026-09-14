@@ -145,35 +145,10 @@ const SCAN_CONFIG_ARG_IDS: &[&str] = &[
 /// CLI-only scan arg ids (not [`FileConfig`] fields).
 const SCAN_CONFIG_CLI_ONLY_ARG_IDS: &[&str] = &["no_whois"];
 
-const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-const fn slice_contains(haystack: &[&str], needle: &str) -> bool {
-    let mut i = 0;
-    while i < haystack.len() {
-        if bytes_eq(haystack[i].as_bytes(), needle.as_bytes()) {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
 const fn keys_subset(subset: &[&str], superset: &[&str]) -> bool {
     let mut i = 0;
     while i < subset.len() {
-        if !slice_contains(superset, subset[i]) {
+        if !crate::const_str::slice_contains(superset, subset[i]) {
             return false;
         }
         i += 1;
@@ -185,8 +160,8 @@ const fn scan_config_ids_are_file_or_cli_only() -> bool {
     let mut i = 0;
     while i < SCAN_CONFIG_ARG_IDS.len() {
         let id = SCAN_CONFIG_ARG_IDS[i];
-        if !slice_contains(crate::config::FILE_CONFIG_OVERLAY_KEYS, id)
-            && !slice_contains(SCAN_CONFIG_CLI_ONLY_ARG_IDS, id)
+        if !crate::const_str::slice_contains(crate::config::FILE_CONFIG_OVERLAY_KEYS, id)
+            && !crate::const_str::slice_contains(SCAN_CONFIG_CLI_ONLY_ARG_IDS, id)
         {
             return false;
         }

@@ -446,35 +446,10 @@ pub(crate) const URL_STATUS_ENRICHMENT_SATELLITE_TABLES: &[&str] = &[
     "url_whois",
 ];
 
-const fn satellite_bytes_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-const fn satellite_slice_contains(haystack: &[&str], needle: &str) -> bool {
-    let mut i = 0;
-    while i < haystack.len() {
-        if satellite_bytes_eq(haystack[i].as_bytes(), needle.as_bytes()) {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
 const fn core_and_enrichment_overlap() -> bool {
     let mut i = 0;
     while i < URL_STATUS_CORE_SATELLITE_TABLES.len() {
-        if satellite_slice_contains(
+        if crate::const_str::slice_contains(
             URL_STATUS_ENRICHMENT_SATELLITE_TABLES,
             URL_STATUS_CORE_SATELLITE_TABLES[i],
         ) {

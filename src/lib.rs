@@ -63,6 +63,7 @@ mod cache_paths;
 pub mod cli;
 mod clock;
 pub mod config;
+mod const_str;
 mod dns;
 mod domain;
 mod error_handling;

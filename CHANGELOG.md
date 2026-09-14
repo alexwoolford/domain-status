@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.
+- File-local polish: shared const `bytes_eq` helpers; enrichment insert outcomes are a write enum; JSON-LD rows use `property_name` `@document`.
 
 ### Fixed
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.

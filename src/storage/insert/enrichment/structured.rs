@@ -70,7 +70,7 @@ pub(crate) async fn insert_structured_data_in_tx(
                 "Failed to serialize JSON-LD: {e}"
             )))
         })?;
-        json_ld_rows.push((String::new(), json_str));
+        json_ld_rows.push(("@document".to_string(), json_str));
     }
     insert_structured_rows(tx, url_status_id, "json_ld", &json_ld_rows).await?;
 
@@ -131,5 +131,35 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get::<String, _>("property_name"), "WebPage");
+    }
+
+    #[tokio::test]
+    async fn test_insert_json_ld_uses_document_property_name() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let document = serde_json::json!({"@type": "WebPage", "name": "Example"});
+        let structured_data = StructuredData {
+            json_ld: vec![document.clone()],
+            ..StructuredData::default()
+        };
+
+        insert_structured_data(&pool, url_status_id, &structured_data)
+            .await
+            .expect("insert structured data");
+
+        let row = sqlx::query(
+            "SELECT property_name, property_value FROM url_structured_data
+             WHERE url_status_id = ? AND data_type = 'json_ld'",
+        )
+        .bind(url_status_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch json_ld row");
+
+        assert_eq!(row.get::<String, _>("property_name"), "@document");
+        assert_eq!(
+            row.get::<String, _>("property_value"),
+            serde_json::to_string(&document).expect("serialize fixture")
+        );
     }
 }

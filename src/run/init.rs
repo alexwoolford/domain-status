@@ -149,10 +149,10 @@ pub async fn init_scan_resources(
             .await
             .context("Failed to initialize HTTP client")?
     };
-    // redirect_client must use Policy::none() so redirect chains are resolved manually (SSRF
-    // validation per hop). When dependency_overrides.http_client is set, we do not use it for
-    // redirect_client, since that client may follow redirects; we always build the redirect
-    // client via init_redirect_client so it has redirects disabled.
+    // Dedicated Policy::none() client for hop-by-hop redirect resolution (SSRF
+    // validation per hop). Do not reuse dependency_overrides.http_client here: that
+    // override may follow redirects. A separate Arc keeps a separate connection pool
+    // from the page-fetch client.
     let redirect_client = init_redirect_client(&config, Arc::clone(&resolver))
         .await
         .context("Failed to initialize redirect client")?;

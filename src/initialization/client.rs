@@ -137,12 +137,12 @@ pub async fn init_client(
     Ok(Arc::new(client))
 }
 
-/// Initializes a shared HTTP client for redirect resolution.
+/// Initializes a dedicated HTTP client for hop-by-hop redirect resolution.
 ///
-/// The primary fetch client and redirect client share the same low-level
-/// configuration; separate constructors keep call-site intent clear.
-/// Redirects remain disabled; redirect traversal is performed manually
-/// so the scanner can inspect and validate each hop.
+/// Same builder as [`init_client`] (`RedirectMode::None`). Callers keep a
+/// separate `Arc` so the redirect path has its own connection pool and is never
+/// the test-injected `dependency_overrides.http_client` (that client may follow
+/// redirects). Traversal stays manual via `resolve_redirect_chain()`.
 ///
 /// # Errors
 ///
@@ -151,8 +151,7 @@ pub async fn init_redirect_client(
     config: &Config,
     resolver: Arc<TokioResolver>,
 ) -> Result<Arc<reqwest::Client>, reqwest::Error> {
-    let client = build_ssrf_client(resolver, SsrfClientOptions::scan(config))?;
-    Ok(Arc::new(client))
+    init_client(config, resolver).await
 }
 
 #[cfg(test)]
@@ -263,24 +262,6 @@ mod tests {
         config.timeout_seconds = u64::MAX / 1000; // Large but reasonable timeout
         let result = init_client(&config, test_resolver()).await;
         // Should succeed (Duration handles large values gracefully)
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_init_redirect_client_empty_user_agent() {
-        // Test that empty user agent works for redirect client too
-        let mut config = create_test_config();
-        config.user_agent = String::new();
-        let result = init_redirect_client(&config, test_resolver()).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_init_redirect_client_zero_timeout() {
-        // Test that zero timeout works for redirect client
-        let mut config = create_test_config();
-        config.timeout_seconds = 0;
-        let result = init_redirect_client(&config, test_resolver()).await;
         assert!(result.is_ok());
     }
 
