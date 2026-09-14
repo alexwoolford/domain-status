@@ -116,7 +116,8 @@ pub struct Config {
     /// HTTP User-Agent header value
     pub user_agent: String,
 
-    /// Requests per second cap (0 to disable). If you see 429s, lower this and re-run.
+    /// URL admission tokens per second (`0` disables). Redirects, favicon, scripts,
+    /// TLS, and WHOIS share that token. If you see 429s, lower this and re-run.
     pub rate_limit_rps: u32,
 
     /// Fingerprints source URL or local path
@@ -268,7 +269,7 @@ impl Config {
     /// Maximum allowed concurrency to prevent resource exhaustion.
     pub const MAX_CONCURRENCY: usize = 500;
 
-    /// Maximum allowed rate limit (requests per second).
+    /// Maximum allowed URL-admission rate (tokens per second).
     pub const MAX_RATE_LIMIT_RPS: u32 = 100;
 
     /// Validates the configuration and returns any validation errors.

@@ -85,7 +85,7 @@ pass the SSRF `is_public_ip` check are attempted.
 
 - `--timeout-seconds` is per HTTP request; overall per-URL processing budget is a separate hardcoded cap (~35s).
 - `--drain-timeout-secs` aborts in-flight work after the input queue empties — raise for WHOIS-heavy small batches.
-- Rate limiting: lower `--rate-limit-rps` if you see 429s.
+- Rate limiting: `--rate-limit-rps` is URL **admission** (one token per input URL), not per-HTTP RPS. Lower it if you see 429s.
 
 ## Library embeds
 

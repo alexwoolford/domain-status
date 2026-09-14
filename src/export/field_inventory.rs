@@ -29,7 +29,10 @@ mod tests {
         self, flat_shared_fields, CSV_FIELD_ORDER, EXPORT_FIELDS, PARQUET_FIELD_ORDER,
     };
     use crate::export::parquet::build_schema;
-    use crate::storage::insert::url::URL_STATUS_COLUMN_DEFS;
+    use crate::storage::insert::url::{
+        URL_STATUS_COLUMN_DEFS, URL_STATUS_CORE_SATELLITE_TABLES,
+        URL_STATUS_ENRICHMENT_SATELLITE_TABLES,
+    };
 
     /// Captured on `url_status` but intentionally omitted from flat CSV/Parquet.
     ///
@@ -47,7 +50,15 @@ mod tests {
     ];
 
     /// Satellite tables persisted but not flattened into CSV/Parquet today.
-    const SATELLITE_DB_ONLY: &[&str] = &[];
+    /// Query `SQLite` (or add an export later). Listed so the omission is deliberate.
+    const SATELLITE_DB_ONLY: &[&str] = &[
+        "url_cookies",
+        "url_security_txt",
+        "url_robots_txt",
+        "url_robots_directives",
+        "url_csp_domains",
+        "url_resource_hints",
+    ];
 
     fn csv_has_column(name: &str) -> bool {
         fields::csv_column_names().any(|n| n == name)
@@ -132,7 +143,6 @@ mod tests {
             91,
             "CSV column count drifted — edit EXPORT_FIELDS / CSV_FIELD_ORDER"
         );
-        assert_eq!(SATELLITE_DB_ONLY, &[] as &[&str]);
 
         let mut seen_pq = std::collections::HashSet::new();
         for id in PARQUET_FIELD_ORDER {
@@ -167,6 +177,25 @@ mod tests {
             assert!(
                 !csv_has_column(name),
                 "{name} unexpectedly appeared in CSV — update URL_STATUS_DB_ONLY or export it"
+            );
+        }
+    }
+
+    #[test]
+    fn satellite_db_only_tables_are_documented_children() {
+        let children: std::collections::HashSet<&str> = URL_STATUS_CORE_SATELLITE_TABLES
+            .iter()
+            .chain(URL_STATUS_ENRICHMENT_SATELLITE_TABLES)
+            .copied()
+            .collect();
+        for name in SATELLITE_DB_ONLY {
+            assert!(
+                children.contains(name),
+                "SATELLITE_DB_ONLY entry {name} is not a url_status satellite table"
+            );
+            assert!(
+                !csv_has_column(name),
+                "{name} unexpectedly appeared as a CSV column — update SATELLITE_DB_ONLY or export it"
             );
         }
     }

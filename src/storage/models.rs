@@ -213,6 +213,7 @@ pub struct UrlFailureRecord {
 ///
 /// This struct maps to the `url_partial_failures` table. The `timestamp` field
 /// is stored as milliseconds since Unix epoch.
+#[derive(Debug, Clone)]
 pub struct UrlPartialFailureRecord {
     pub url_status_id: i64,     // Foreign key to url_status.id
     pub error_type: ErrorType,  // Categorized error type (DNS/TLS errors)

@@ -22,7 +22,7 @@ During a scan it may:
 | Database path | `./domain_status.db` | Scans and exports both default here |
 | Max concurrency | `30` | Global worker limit |
 | Max per domain | `5` | Set `0` to disable the per-domain cap |
-| Initial rate limit | `15` RPS | Adaptive limiter adjusts this when enabled |
+| Initial rate limit | `15` URL-admission tokens/sec | One token per input URL, not per HTTP request |
 | HTTP timeout | `10s` | Request timeout |
 | Overall per-URL timeout | `35s` | Guardrail around the full processing pipeline |
 | DNS timeout | `3s` | Resolver attempts once and fails fast |

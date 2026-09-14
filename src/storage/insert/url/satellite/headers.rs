@@ -10,13 +10,11 @@ pub(crate) async fn insert_security_headers(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     security_headers: &std::collections::HashMap<String, String>,
-) {
+) -> Result<(), sqlx::Error> {
     if security_headers.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // The raw HSTS value is stored verbatim below; this just surfaces its parsed
-    // directives at debug level for troubleshooting without requiring a schema change.
     if let Some(hsts_value) = security_headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
@@ -31,10 +29,9 @@ pub(crate) async fn insert_security_headers(
         );
     }
 
-    // Convert HashMap to Vec for consistent ordering
     let headers: Vec<(&String, &String)> = security_headers.iter().collect();
 
-    if let Err(e) = insert_key_value_batch(
+    insert_key_value_batch(
         tx,
         "url_security_headers",
         "url_status_id",
@@ -45,14 +42,6 @@ pub(crate) async fn insert_security_headers(
         Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
     )
     .await
-    {
-        log::warn!(
-            "Failed to batch insert {} security headers for url_status_id {}: {}",
-            headers.len(),
-            url_status_id,
-            e
-        );
-    }
 }
 
 /// Inserts HTTP headers into `url_http_headers` table using batch insert.
@@ -60,15 +49,14 @@ pub(crate) async fn insert_http_headers(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     http_headers: &std::collections::HashMap<String, String>,
-) {
+) -> Result<(), sqlx::Error> {
     if http_headers.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // Convert HashMap to Vec for consistent ordering
     let headers: Vec<(&String, &String)> = http_headers.iter().collect();
 
-    if let Err(e) = insert_key_value_batch(
+    insert_key_value_batch(
         tx,
         "url_http_headers",
         "url_status_id",
@@ -79,14 +67,6 @@ pub(crate) async fn insert_http_headers(
         Some("ON CONFLICT(url_status_id, header_name) DO UPDATE SET header_value=excluded.header_value"),
     )
     .await
-    {
-        log::warn!(
-            "Failed to batch insert {} HTTP headers for url_status_id {}: {}",
-            headers.len(),
-            url_status_id,
-            e
-        );
-    }
 }
 
 #[cfg(test)]
@@ -113,7 +93,9 @@ mod tests {
             "default-src 'self'".to_string(),
         );
 
-        insert_security_headers(&mut tx, url_status_id, &security_headers).await;
+        insert_security_headers(&mut tx, url_status_id, &security_headers)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
@@ -147,7 +129,9 @@ mod tests {
             "Strict-Transport-Security".to_string(),
             "max-age=31536000".to_string(),
         );
-        insert_security_headers(&mut tx1, url_status_id, &security_headers1).await;
+        insert_security_headers(&mut tx1, url_status_id, &security_headers1)
+            .await
+            .expect("insert");
         tx1.commit().await.expect("Failed to commit transaction");
 
         // Insert again with updated value
@@ -157,7 +141,9 @@ mod tests {
             "Strict-Transport-Security".to_string(),
             "max-age=63072000".to_string(),
         );
-        insert_security_headers(&mut tx2, url_status_id, &security_headers2).await;
+        insert_security_headers(&mut tx2, url_status_id, &security_headers2)
+            .await
+            .expect("insert");
         tx2.commit().await.expect("Failed to commit transaction");
 
         // Verify updated value
@@ -182,7 +168,9 @@ mod tests {
         http_headers.insert("Server".to_string(), "nginx/1.18.0".to_string());
         http_headers.insert("X-Powered-By".to_string(), "PHP/7.4".to_string());
 
-        insert_http_headers(&mut tx, url_status_id, &http_headers).await;
+        insert_http_headers(&mut tx, url_status_id, &http_headers)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion

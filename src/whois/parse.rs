@@ -74,6 +74,7 @@ fn extract_raw_field(raw_text: &str, labels: &[&str]) -> Option<String> {
 pub(crate) fn enrich_result_from_raw_text(mut result: WhoisResult) -> WhoisResult {
     let Some(raw_text) = result.raw_text.as_deref() else {
         result.registrant_country = iso_alpha2_country(result.registrant_country.take());
+        result.registrant_org = sanitize_registrant_org(result.registrant_org.take());
         return result;
     };
 
@@ -94,6 +95,7 @@ pub(crate) fn enrich_result_from_raw_text(mut result: WhoisResult) -> WhoisResul
     }
 
     result.registrant_country = iso_alpha2_country(result.registrant_country.take());
+    result.registrant_org = sanitize_registrant_org(result.registrant_org.take());
     result
 }
 
@@ -105,6 +107,27 @@ fn iso_alpha2_country(value: Option<String>) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Drop WHOIS privacy/redaction boilerplate; the raw lookup stays in `raw_text`.
+fn sanitize_registrant_org(value: Option<String>) -> Option<String> {
+    let trimmed = value?.trim().to_string();
+    if trimmed.is_empty() || is_privacy_org_prose(&trimmed) {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn is_privacy_org_prose(value: &str) -> bool {
+    let upper = value.to_ascii_uppercase();
+    upper.contains("REDACT")
+        || upper.contains("PRIVACY PROTECTION")
+        || upper.contains("WHOIS PRIVACY")
+        || upper.contains("FOR PRIVACY")
+        || upper.contains("DATA PROTECTED")
+        || upper == "PRIVACY"
+        || upper == "REDACTED"
 }
 
 /// Converts an internal WHOIS payload to our application result.
@@ -516,6 +539,26 @@ mod tests {
 
         assert_eq!(result.registrant_org.as_deref(), Some("Example Org"));
         assert_eq!(result.registrant_country, None);
+        assert!(
+            result
+                .raw_text
+                .as_deref()
+                .is_some_and(|raw| raw.contains("REDACTED FOR PRIVACY")),
+            "privacy prose must remain in raw_response/raw_text"
+        );
+    }
+
+    #[test]
+    fn test_registrant_org_privacy_redaction_is_not_stored() {
+        let result = enrich_result_from_raw_text(WhoisResult {
+            raw_text: Some(
+                "Registrant Organization: REDACTED FOR PRIVACY\nRegistrant Country: US".to_string(),
+            ),
+            ..WhoisResult::default()
+        });
+
+        assert_eq!(result.registrant_org, None);
+        assert_eq!(result.registrant_country.as_deref(), Some("US"));
         assert!(
             result
                 .raw_text

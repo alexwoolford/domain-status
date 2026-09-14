@@ -10,15 +10,13 @@ pub(crate) async fn insert_oids(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     oids: &std::collections::HashSet<String>,
-) {
+) -> Result<(), sqlx::Error> {
     if oids.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // Convert HashSet to Vec for consistent ordering
     let oids_vec: Vec<&String> = oids.iter().collect();
 
-    // Batch insert: build VALUES clause for all OIDs
     let query = build_batch_insert_query(
         "url_certificate_oids",
         &["url_status_id", "oid"],
@@ -31,14 +29,8 @@ pub(crate) async fn insert_oids(
         query_builder = query_builder.bind(url_status_id).bind(*oid);
     }
 
-    if let Err(e) = query_builder.execute(&mut **tx).await {
-        log::warn!(
-            "Failed to batch insert {} OIDs for url_status_id {}: {}",
-            oids_vec.len(),
-            url_status_id,
-            e
-        );
-    }
+    query_builder.execute(&mut **tx).await?;
+    Ok(())
 }
 
 /// Inserts certificate Subject Alternative Names (SANs) into `url_certificate_sans` table using batch insert.
@@ -46,13 +38,11 @@ pub(crate) async fn insert_certificate_sans(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     subject_alternative_names: &[String],
-) {
+) -> Result<(), sqlx::Error> {
     if subject_alternative_names.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // SANs are stored in a separate table to enable graph analysis (linking domains sharing certificates)
-    // Batch insert: build VALUES clause for all SANs
     let query = build_batch_insert_query(
         "url_certificate_sans",
         &["url_status_id", "san_value"],
@@ -65,14 +55,8 @@ pub(crate) async fn insert_certificate_sans(
         query_builder = query_builder.bind(url_status_id).bind(san);
     }
 
-    if let Err(e) = query_builder.execute(&mut **tx).await {
-        log::warn!(
-            "Failed to batch insert {} certificate SANs for url_status_id {}: {}",
-            subject_alternative_names.len(),
-            url_status_id,
-            e
-        );
-    }
+    query_builder.execute(&mut **tx).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -93,7 +77,9 @@ mod tests {
         oids.insert("1.3.6.1.4.1.311".to_string());
         oids.insert("1.2.840.113549".to_string());
 
-        insert_oids(&mut tx, url_status_id, &oids).await;
+        insert_oids(&mut tx, url_status_id, &oids)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
@@ -120,7 +106,9 @@ mod tests {
         oids.insert("1.3.6.1.4.1.311".to_string());
         oids.insert("1.3.6.1.4.1.311".to_string()); // Duplicate (HashSet will dedupe)
 
-        insert_oids(&mut tx, url_status_id, &oids).await;
+        insert_oids(&mut tx, url_status_id, &oids)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify only one entry
@@ -146,7 +134,9 @@ mod tests {
             "*.example.com".to_string(),
         ];
 
-        insert_certificate_sans(&mut tx, url_status_id, &sans).await;
+        insert_certificate_sans(&mut tx, url_status_id, &sans)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
@@ -175,7 +165,9 @@ mod tests {
             "example.com".to_string(), // Duplicate
         ];
 
-        insert_certificate_sans(&mut tx, url_status_id, &sans).await;
+        insert_certificate_sans(&mut tx, url_status_id, &sans)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify only one entry (ON CONFLICT DO NOTHING)

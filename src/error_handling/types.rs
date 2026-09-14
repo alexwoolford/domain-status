@@ -221,6 +221,8 @@ pub enum ErrorType {
     TlsCertificateError,
     // Technology detection errors
     TechnologyDetectionError,
+    /// SQL insert of a `url_status` satellite/enrichment child failed; the fact row still committed.
+    SatelliteInsertError,
 }
 
 /// Types of warnings that can occur during URL processing.
@@ -293,6 +295,7 @@ impl ErrorType {
             ErrorType::DnsCaaLookupError => "DNS CAA lookup error",
             ErrorType::TlsCertificateError => "TLS certificate error",
             ErrorType::TechnologyDetectionError => "Technology detection error",
+            ErrorType::SatelliteInsertError => "Satellite insert error",
         }
     }
 }
@@ -372,6 +375,10 @@ mod tests {
         );
         assert_eq!(ErrorType::DnsNsLookupError.as_str(), "DNS NS lookup error");
         assert_eq!(ErrorType::HttpRequestNotFound.as_str(), "Not Found (404)");
+        assert_eq!(
+            ErrorType::SatelliteInsertError.as_str(),
+            "Satellite insert error"
+        );
     }
 
     #[test]

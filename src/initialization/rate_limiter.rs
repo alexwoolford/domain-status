@@ -1,16 +1,17 @@
 //! Rate limiter initialization.
 //!
-//! This module provides a token-bucket rate limiter for controlling request rate.
+//! This module provides a token-bucket limiter for URL admission (one token per input URL).
 
 use std::sync::Arc;
 use tokio::sync::Semaphore as TokioSemaphore;
 use tokio::time::{interval, Duration as TokioDuration};
 
-/// Token-bucket rate limiter for controlling request rate.
+/// Token-bucket limiter for URL admission.
 ///
 /// Implements a token bucket algorithm where tokens are replenished at a fixed
-/// rate (requests per second). Each request consumes a token, and requests
-/// are blocked when no tokens are available.
+/// rate (tokens per second). Each **input URL** consumes a token before the
+/// per-URL task starts; redirects, favicon, external scripts, TLS, and WHOIS
+/// share that token. Waiters block when no tokens are available.
 ///
 /// # Behavior
 ///
@@ -23,7 +24,7 @@ use tokio::time::{interval, Duration as TokioDuration};
 pub struct RateLimiter {
     permits: Arc<TokioSemaphore>,
     capacity: usize,
-    /// Fixed requests per second (set at creation, never changed).
+    /// Fixed URL-admission tokens per second (set at creation, never changed).
     rps: u32,
     /// Held to keep the `CancellationToken` alive for the background refill task.
     _shutdown: tokio_util::sync::CancellationToken,
@@ -98,12 +99,12 @@ impl RateLimiter {
 
 /// Initializes a token-bucket rate limiter.
 ///
-/// Creates a rate limiter that controls request rate using a token bucket algorithm.
+/// Creates a limiter that controls URL admission using a token bucket algorithm.
 /// If `rps` is 0, rate limiting is disabled and `None` is returned.
 ///
 /// # Arguments
 ///
-/// * `rps` - Requests per second (0 disables rate limiting)
+/// * `rps` - URL-admission tokens per second (0 disables rate limiting)
 /// * `burst` - Burst capacity (maximum tokens in bucket)
 ///
 /// # Returns

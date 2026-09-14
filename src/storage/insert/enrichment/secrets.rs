@@ -1,16 +1,13 @@
 //! Exposed secret insertion.
 
-use sqlx::{Acquire, SqlitePool};
+use sqlx::{Acquire, Sqlite, SqlitePool, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::ExposedSecret;
 use crate::storage::insert::retry::with_sqlite_retry;
 
 /// Inserts detected exposed secrets and returns their database row IDs.
-///
-/// All inserts are wrapped in a single transaction so that a noisy page (a
-/// hundred `generic-api-key` matches) commits with one fsync rather than N.
-/// The returned IDs correspond 1:1 with the input `secrets` slice.
+#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
 pub async fn insert_exposed_secrets(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -22,30 +19,42 @@ pub async fn insert_exposed_secrets(
     with_sqlite_retry(|| async {
         let mut conn = pool.acquire().await.map_err(DatabaseError::SqlError)?;
         let mut tx = conn.begin().await.map_err(DatabaseError::SqlError)?;
-        let mut ids = Vec::with_capacity(secrets.len());
-        for secret in secrets {
-            let row: (i64,) = sqlx::query_as(
-                "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
-                 VALUES (?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(url_status_id, secret_type, matched_value) DO UPDATE SET
-                 severity=excluded.severity, location=excluded.location, context=excluded.context
-                 RETURNING id",
-            )
-            .bind(url_status_id)
-            .bind(&secret.secret_type)
-            .bind(&secret.matched_value)
-            .bind(secret.severity.as_str())
-            .bind(secret.location.as_ref())
-            .bind(&secret.context)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(DatabaseError::SqlError)?;
-            ids.push(row.0);
-        }
+        let ids = insert_exposed_secrets_in_tx(&mut tx, url_status_id, secrets).await?;
         tx.commit().await.map_err(DatabaseError::SqlError)?;
         Ok(ids)
     })
     .await
+}
+
+pub(crate) async fn insert_exposed_secrets_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    secrets: &[ExposedSecret],
+) -> Result<Vec<i64>, DatabaseError> {
+    if secrets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::with_capacity(secrets.len());
+    for secret in secrets {
+        let row: (i64,) = sqlx::query_as(
+            "INSERT INTO url_exposed_secrets (url_status_id, secret_type, matched_value, severity, location, context)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(url_status_id, secret_type, matched_value) DO UPDATE SET
+                 severity=excluded.severity, location=excluded.location, context=excluded.context
+                 RETURNING id",
+        )
+        .bind(url_status_id)
+        .bind(&secret.secret_type)
+        .bind(&secret.matched_value)
+        .bind(secret.severity.as_str())
+        .bind(secret.location.as_ref())
+        .bind(&secret.context)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+        ids.push(row.0);
+    }
+    Ok(ids)
 }
 
 #[cfg(test)]

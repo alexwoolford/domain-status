@@ -17,12 +17,14 @@ mod social;
 mod structured;
 mod whois;
 
-pub use analytics::insert_analytics_ids;
-pub use contact::insert_contact_links;
-pub use favicon::insert_favicon_data;
-pub use geoip::insert_geoip_data;
-pub use jwt_claims::insert_jwt_claims_batch;
+pub(crate) use analytics::insert_analytics_ids_in_tx;
+pub(crate) use contact::insert_contact_links_in_tx;
+pub(crate) use favicon::insert_favicon_data_in_tx;
+pub(crate) use geoip::insert_geoip_data_in_tx;
+pub(crate) use jwt_claims::insert_jwt_claims_batch_in_tx;
+#[cfg(test)]
 pub use secrets::insert_exposed_secrets;
-pub use social::insert_social_media_links;
-pub use structured::insert_structured_data;
-pub use whois::insert_whois_data;
+pub(crate) use secrets::insert_exposed_secrets_in_tx;
+pub(crate) use social::insert_social_media_links_in_tx;
+pub(crate) use structured::insert_structured_data_in_tx;
+pub(crate) use whois::insert_whois_data_in_tx;

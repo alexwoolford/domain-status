@@ -166,6 +166,9 @@ Stores failed URL processing attempts.
 ### `url_partial_failures`
 
 Captures non-fatal enrichment failures associated with otherwise successful `url_status` rows.
+Scan-time DNS/TLS misses use their usual `error_type` strings. Child-table SQL insert
+failures use `Satellite insert error` with a message `table_name: driver message`
+(see [ADR 0007](docs/adr/0007-satellite-insert-failure-policy.md)).
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -259,6 +262,23 @@ The current `url_whois` schema uses:
 
 These names replace older or more ambiguous variants that may appear in stale docs or old queries.
 
+`registrant_country` is stored only when it is ISO 3166-1 alpha-2. `registrant_org`
+drops WHOIS privacy/redaction prose (`REDACTED FOR PRIVACY`, proxy boilerplate);
+the raw lookup remains in `raw_response`.
+
+### Flat export vs SQLite
+
+CSV/Parquet/JSONL flatten a subset of capture. Query SQLite (or add an export
+later) for the rest. Intentional omissions are pinned in
+`src/export/field_inventory.rs`:
+
+- `URL_STATUS_DB_ONLY` — `url_status` columns kept off spreadsheets (cert flags,
+  not-before, script-scan completeness, `meta_refresh_url`)
+- `SATELLITE_DB_ONLY` — satellite tables with no flat-export columns today
+  (`url_cookies`, `url_security_txt`, `url_robots_txt` / `url_robots_directives`,
+  `url_csp_domains`, `url_resource_hints`)
+- `url_whois.registrant_org` is captured but not flattened (country is exported)
+
 ### Observation fidelity
 
 Values are stored as observed. Do not "repair" them in queries:
@@ -266,6 +286,7 @@ Values are stored as observed. Do not "repair" them in queries:
 - **Nonstandard HTTP status** (`702`, `777`, `999`, …) — origin/WAF codes, not scanner sentinels.
 - **JSON-LD `property_name`** — empty by design; the JSON-LD document is in `property_value`.
 - **IPv6 in `url_ipv6_addresses` / `ip_address`** — DNS-published strings (`IpAddr::to_string()`). A value such as `a01:4f8:…` (no leading `2`) or `100::1` is the RDATA, not truncation.
+- **TLS on dual-stack hosts** — the handshake prefers IPv4 among DNS-published public addresses (`order_public_addrs_ipv4_first` in `src/tls/mod.rs`). Empty `tls_version` / cert columns mean no usable public address or a handshake failure, not “IPv6 has no IPv4 fallback.”
 - **Email-auth convenience columns vs `url_txt_records`** — `url_txt_records` is the **apex** TXT set. `dmarc_record`, `mta_sts_record`, `tls_rpt_record`, and `bimi_record` are lookups at `_dmarc.`, `_mta-sts.`, `_smtp._tls.`, and `default._bimi.` respectively. Absence from apex TXT does not mean the special-name record is missing (or vice versa). `spf_record` *is* taken from the apex TXT set.
 
 ### Security signals (no dedicated warnings table)
@@ -307,7 +328,9 @@ Scans produced with older binaries may still contain (until migrated):
   (dropped by migration `0012_drop_deprecated_satellites.sql`).
 - Columns `keywords`, `is_mobile_friendly`, `body_word_count`, `body_line_count`, and
   `url_favicons.base64_data` (dropped by migration `0014_drop_unpopulated_columns.sql`).
-- Empty TLS on rows whose `ip_address` is IPv6 (no IPv4 fallback yet). Prefer newer binaries for dual-stack cert coverage.
+- Empty TLS on rows whose `ip_address` is IPv6, from binaries before IPv4-first TLS
+  handshake ordering. Current builds prefer IPv4 among public DNS addresses (see
+  Observation fidelity above).
 
 ### Secret findings
 
