@@ -48,8 +48,16 @@ pub async fn process_url_task(params: UrlTaskParams) {
         progress_callback,
     } = params;
 
+    let progress = TaskProgress {
+        successful_urls: &successful_urls,
+        skipped_urls: &skipped_urls,
+        failed_urls: &failed_urls,
+        total_urls_for_callback,
+        progress_callback: &progress_callback,
+    };
+
     if cancel.is_cancelled() {
-        failed_urls.fetch_add(1, Ordering::Relaxed);
+        handle_cancelled(&url, &ctx, &progress).await;
         return;
     }
 
@@ -58,14 +66,14 @@ pub async fn process_url_task(params: UrlTaskParams) {
         tokio::select! {
             () = limiter.acquire() => {}
             () = cancel.cancelled() => {
-                failed_urls.fetch_add(1, Ordering::Relaxed);
+                handle_cancelled(&url, &ctx, &progress).await;
                 return;
             }
         }
     }
 
     if cancel.is_cancelled() {
-        failed_urls.fetch_add(1, Ordering::Relaxed);
+        handle_cancelled(&url, &ctx, &progress).await;
         return;
     }
 
@@ -81,17 +89,9 @@ pub async fn process_url_task(params: UrlTaskParams) {
             crate::utils::process_url(url, ctx.clone()),
         ) => r,
         () = cancel.cancelled() => {
-            failed_urls.fetch_add(1, Ordering::Relaxed);
+            handle_cancelled(&url_for_logging, &ctx, &progress).await;
             return;
         }
-    };
-
-    let progress = TaskProgress {
-        successful_urls: &successful_urls,
-        skipped_urls: &skipped_urls,
-        failed_urls: &failed_urls,
-        total_urls_for_callback,
-        progress_callback: &progress_callback,
     };
 
     match result {
@@ -115,6 +115,34 @@ pub async fn process_url_task(params: UrlTaskParams) {
         }
         Err(_) => handle_timeout(&url_for_logging, process_start, &ctx, &progress).await,
     }
+}
+
+/// Persist a `url_failures` row, then count the URL as failed.
+///
+/// Cooperative cancel used to increment `failed_urls` and return with no fact
+/// row; finalize then overwrote `runs.failed_urls` from `url_failures` COUNT.
+async fn handle_cancelled(
+    url: &Arc<str>,
+    ctx: &Arc<crate::fetch::ProcessingContext>,
+    progress: &TaskProgress<'_>,
+) {
+    super::record_cooperative_cancel_failure(
+        &ctx.pool,
+        ctx.runtime.run_id.as_deref(),
+        url.as_ref(),
+    )
+    .await;
+    progress.failed_urls.fetch_add(1, Ordering::Relaxed);
+    invoke_progress_callback(
+        progress.progress_callback.as_ref(),
+        progress.successful_urls,
+        progress.failed_urls,
+        progress.skipped_urls,
+        progress.total_urls_for_callback,
+    );
+    ctx.runtime
+        .error_stats
+        .increment_error(ErrorType::ScanCancelled);
 }
 
 /// Handle successful URL processing.
@@ -231,12 +259,15 @@ async fn handle_timeout(
 
 #[cfg(test)]
 mod tests {
+    use super::super::resources::UrlTaskParams;
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
     use crate::initialization::test_resolver;
     use crate::utils::TimingStats;
     use std::sync::atomic::AtomicUsize;
+    use tokio::sync::Semaphore;
+    use tokio_util::sync::CancellationToken;
 
     /// Builds a minimal `ProcessingContext` with migrations so `record_url_failure` can succeed.
     async fn minimal_ctx_with_migrations() -> Arc<ProcessingContext> {
@@ -501,5 +532,48 @@ mod tests {
 
         assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
         assert_eq!(progress_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_process_url_task_cancel_persists_url_failure() {
+        let ctx = minimal_ctx_with_migrations().await;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.acquire_owned().await.expect("permit");
+        let successful_urls = Arc::new(AtomicUsize::new(0));
+        let skipped_urls = Arc::new(AtomicUsize::new(0));
+        let failed_urls = Arc::new(AtomicUsize::new(0));
+
+        process_url_task(UrlTaskParams {
+            url: Arc::from("https://example.com/cancelled"),
+            ctx: Arc::clone(&ctx),
+            cancel,
+            permit,
+            request_limiter: None,
+            successful_urls,
+            skipped_urls,
+            failed_urls: Arc::clone(&failed_urls),
+            total_urls_for_callback: 1,
+            progress_callback: None,
+        })
+        .await;
+
+        assert_eq!(failed_urls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            ctx.runtime
+                .error_stats
+                .get_error_count(ErrorType::ScanCancelled),
+            1
+        );
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_failures WHERE error_type = ? AND attempted_url = ?",
+        )
+        .bind(ErrorType::ScanCancelled.as_str())
+        .bind("https://example.com/cancelled")
+        .fetch_one(ctx.pool.as_ref())
+        .await
+        .expect("count url_failures");
+        assert_eq!(count, 1, "cooperative cancel must leave a url_failures row");
     }
 }

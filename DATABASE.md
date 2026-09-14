@@ -193,7 +193,7 @@ failures use `Satellite insert error` with a message `table_name: driver message
 | `url_ipv6_addresses` | AAAA records stored as DNS-published (`IpAddr::to_string()`); unusual forms such as a missing leading `2` or `100::1` are answers as returned, not formatter truncation | `ipv6_address` |
 | `url_caa_records` | Certificate Authority Authorization | `flag`, `tag`, `value` |
 | `url_csp_domains` | Domains from Content-Security-Policy | `directive`, `fqdn`, `registrable_domain` |
-| `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path` |
+| `url_cookies` | Cookie security attributes | `cookie_name`, `secure`, `http_only`, `same_site`, `domain`, `path`. Unique on `(url_status_id, cookie_name)` only (not Domain+Path); same-name `Set-Cookie` headers collapse, last write wins including `domain`/`path`. |
 | `url_resource_hints` | `<link>` resource hints: preconnect, dns-prefetch, preload, prefetch, modulepreload (`hint_type` stored lowercase) | `hint_type`, `href` |
 | `url_script_hosts` | Unique hosts from `<script src>` (resolved against final URL) | `host`, `registrable_domain`, `is_first_party` |
 | `url_security_txt` | Parsed RFC 9116 `security.txt` (one row per URL) | `source_url`, `http_status`, `contacts`, `expires`, `encryption`, `acknowledgments`, `preferred_languages`, `canonical`, `policy`, `hiring`, `raw_body` |

@@ -266,22 +266,51 @@ pub(crate) fn url_status_column_names() -> impl Iterator<Item = &'static str> {
     URL_STATUS_COLUMN_DEFS.iter().map(|c| c.name)
 }
 
-fn url_status_upsert_sql() -> String {
+fn bind_url_status_column<'q>(
+    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>>,
+    col: &UrlStatusColumn,
+    record: &'q UrlRecord,
+    valid_from_millis: Option<i64>,
+    valid_to_millis: Option<i64>,
+) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
+    match (col.extract)(record, valid_from_millis, valid_to_millis) {
+        UrlStatusBind::Text(v) => query.bind(v),
+        UrlStatusBind::OptText(v) => query.bind(v),
+        UrlStatusBind::U16(v) => query.bind(v),
+        UrlStatusBind::U32(v) => query.bind(v),
+        UrlStatusBind::I64(v) => query.bind(v),
+        UrlStatusBind::OptI64(v) => query.bind(v),
+        UrlStatusBind::F64(v) => query.bind(v),
+        UrlStatusBind::Bool(v) => query.bind(v),
+        UrlStatusBind::OptBool(v) => query.bind(v),
+    }
+}
+
+/// Insert-or-ignore so `RETURNING id` is present only on a new row (conflict is not TOCTOU).
+fn url_status_insert_sql() -> String {
     let columns = url_status_column_names().collect::<Vec<_>>().join(", ");
     let placeholders = std::iter::repeat_n("?", URL_STATUS_COLUMN_DEFS.len())
         .collect::<Vec<_>>()
         .join(", ");
-    let updates = url_status_column_names()
-        .filter(|&col| col != "initial_domain")
-        .map(|col| format!("{col}=excluded.{col}"))
-        .collect::<Vec<_>>()
-        .join(",\n            ");
     format!(
         "INSERT INTO url_status (
             {columns}
         ) VALUES ({placeholders})
-        ON CONFLICT(run_id, initial_domain) DO UPDATE SET
+        ON CONFLICT(run_id, initial_domain) DO NOTHING
+        RETURNING id"
+    )
+}
+
+fn url_status_update_sql() -> String {
+    let updates = url_status_column_names()
+        .filter(|&col| col != "initial_domain")
+        .map(|col| format!("{col}=?"))
+        .collect::<Vec<_>>()
+        .join(",\n            ");
+    format!(
+        "UPDATE url_status SET
             {updates}
+        WHERE run_id = ? AND initial_domain = ?
         RETURNING id"
     )
 }
@@ -294,19 +323,84 @@ fn bind_url_status_query<'q>(
 ) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
     let mut q = query;
     for col in URL_STATUS_COLUMN_DEFS {
-        q = match (col.extract)(record, valid_from_millis, valid_to_millis) {
-            UrlStatusBind::Text(v) => q.bind(v),
-            UrlStatusBind::OptText(v) => q.bind(v),
-            UrlStatusBind::U16(v) => q.bind(v),
-            UrlStatusBind::U32(v) => q.bind(v),
-            UrlStatusBind::I64(v) => q.bind(v),
-            UrlStatusBind::OptI64(v) => q.bind(v),
-            UrlStatusBind::F64(v) => q.bind(v),
-            UrlStatusBind::Bool(v) => q.bind(v),
-            UrlStatusBind::OptBool(v) => q.bind(v),
-        };
+        q = bind_url_status_column(q, col, record, valid_from_millis, valid_to_millis);
     }
     q
+}
+
+fn bind_url_status_update_query<'q>(
+    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>>,
+    record: &'q UrlRecord,
+    valid_from_millis: Option<i64>,
+    valid_to_millis: Option<i64>,
+) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
+    let mut q = query;
+    for col in URL_STATUS_COLUMN_DEFS {
+        if col.name == "initial_domain" {
+            continue;
+        }
+        q = bind_url_status_column(q, col, record, valid_from_millis, valid_to_millis);
+    }
+    q.bind(record.run_id.as_deref())
+        .bind(&record.initial_domain)
+}
+
+/// Insert a new `url_status` row, or update on `(run_id, initial_domain)` conflict.
+///
+/// `inserted` comes from whether `INSERT … DO NOTHING` returned an id, not a
+/// pre-UPSERT `SELECT` (that check raced under concurrent duplicate domains).
+async fn upsert_url_status_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    record: &UrlRecord,
+    valid_from_millis: Option<i64>,
+    valid_to_millis: Option<i64>,
+) -> Result<(i64, bool), DatabaseError> {
+    let insert_sql = url_status_insert_sql();
+    let inserted_id = bind_url_status_query(
+        sqlx::query_scalar::<_, i64>(&insert_sql),
+        record,
+        valid_from_millis,
+        valid_to_millis,
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| {
+        log::error!(
+            "Failed to insert UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {} (SQL: INSERT INTO url_status ... ON CONFLICT DO NOTHING)",
+            record.initial_domain,
+            record.final_domain,
+            record.status,
+            record.timestamp,
+            e
+        );
+        DatabaseError::SqlError(e)
+    })?;
+
+    if let Some(id) = inserted_id {
+        return Ok((id, true));
+    }
+
+    let update_sql = url_status_update_sql();
+    let id = bind_url_status_update_query(
+        sqlx::query_scalar::<_, i64>(&update_sql),
+        record,
+        valid_from_millis,
+        valid_to_millis,
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| {
+        log::error!(
+            "Failed to update UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {} (SQL: UPDATE url_status ...)",
+            record.initial_domain,
+            record.final_domain,
+            record.status,
+            record.timestamp,
+            e
+        );
+        DatabaseError::SqlError(e)
+    })?;
+    Ok((id, false))
 }
 
 /// Core satellites inserted inside the `url_status` transaction.
@@ -339,6 +433,7 @@ pub(crate) const URL_STATUS_CORE_SATELLITE_TABLES: &[&str] = &[
 /// Enrichment satellites inserted after the `url_status` transaction commits.
 ///
 /// DELETE + INSERT share one writer transaction in `insert_enrichment_data`.
+/// `url_jwt_claims` is omitted: those rows cascade-delete from `url_exposed_secrets`.
 pub(crate) const URL_STATUS_ENRICHMENT_SATELLITE_TABLES: &[&str] = &[
     "url_analytics_ids",
     "url_structured_data",
@@ -584,47 +679,8 @@ async fn insert_url_record_impl(
     // Start transaction for atomic dual-write
     let mut tx = params.pool.begin().await.map_err(DatabaseError::SqlError)?;
 
-    let inserted = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM url_status WHERE run_id = ? AND initial_domain = ?",
-    )
-    .bind(params.record.run_id.as_deref())
-    .bind(&params.record.initial_domain)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(DatabaseError::SqlError)?
-    .is_none();
-
-    // 1. Insert into main url_status table
-    // Use RETURNING clause to get the ID in a single query (SQLite 3.35.0+)
-    // This eliminates the need for a separate SELECT query and improves performance
-    let upsert_sql = url_status_upsert_sql();
-    let url_status_id_result = bind_url_status_query(
-        sqlx::query_scalar::<_, i64>(&upsert_sql),
-        params.record,
-        valid_from_millis,
-        valid_to_millis,
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| {
-        log::error!(
-            "Failed to insert UrlRecord for domain {} (final_domain: {}, status: {}, timestamp: {}): {} (SQL: INSERT INTO url_status ... ON CONFLICT)",
-            params.record.initial_domain,
-            params.record.final_domain,
-            params.record.status,
-            params.record.timestamp,
-            e
-        );
-        DatabaseError::SqlError(e)
-    });
-
-    let url_status_id = match url_status_id_result {
-        Ok(id) => id,
-        Err(e) => {
-            // Transaction rolls back on Drop when not committed.
-            return Err(e);
-        }
-    };
+    let (url_status_id, inserted) =
+        upsert_url_status_row(&mut tx, params.record, valid_from_millis, valid_to_millis).await?;
 
     // Insert into core satellite tables (see URL_STATUS_CORE_SATELLITE_TABLES).
     //
@@ -824,6 +880,10 @@ async fn insert_csp_domains(
 }
 
 /// Inserts cookie security info into `url_cookies` table.
+///
+/// Unique on `(url_status_id, cookie_name)` only — browsers key cookies by
+/// name + Domain + Path, so two `Set-Cookie` headers with the same name collapse
+/// here (last write wins, including `domain` / `path`).
 async fn insert_cookies(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
@@ -844,7 +904,11 @@ async fn insert_cookies(
             "path",
         ],
         cookies.len(),
-        Some("ON CONFLICT(url_status_id, cookie_name) DO UPDATE SET secure=excluded.secure, http_only=excluded.http_only, same_site=excluded.same_site"),
+        Some(
+            "ON CONFLICT(url_status_id, cookie_name) DO UPDATE SET \
+             secure=excluded.secure, http_only=excluded.http_only, \
+             same_site=excluded.same_site, domain=excluded.domain, path=excluded.path",
+        ),
     );
     let mut qb = sqlx::query(&query);
     for c in cookies {
@@ -1014,6 +1078,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use crate::storage::migrations::run_migrations;
+    use crate::storage::CookieInfo;
 
     #[test]
     fn url_status_column_defs_are_unique_and_ordered_with_names_iter() {
@@ -1549,6 +1614,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_insert_cookies_same_name_updates_domain_and_path() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-1").await;
+        let record = create_test_url_record();
+        let security_headers = HashMap::new();
+        let http_headers = HashMap::new();
+        let oids = HashSet::new();
+        let cookies = [
+            CookieInfo {
+                name: "sid".to_string(),
+                secure: false,
+                http_only: false,
+                same_site: Some("Lax".to_string()),
+                domain: Some("a.example".to_string()),
+                path: Some("/a".to_string()),
+            },
+            CookieInfo {
+                name: "sid".to_string(),
+                secure: true,
+                http_only: true,
+                same_site: Some("None".to_string()),
+                domain: Some("b.example".to_string()),
+                path: Some("/b".to_string()),
+            },
+        ];
+
+        let id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &security_headers,
+            http_headers: &http_headers,
+            oids: &oids,
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &[],
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &cookies,
+            resource_hints: &[],
+            script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
+        })
+        .await
+        .expect("insert cookies");
+
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_cookies WHERE url_status_id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count cookies");
+        assert_eq!(n, 1, "name-only UNIQUE collapses duplicate cookie names");
+
+        let row = sqlx::query(
+            "SELECT cookie_name, secure, http_only, same_site, domain, path
+             FROM url_cookies WHERE url_status_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch cookie");
+
+        assert_eq!(row.get::<String, _>("cookie_name"), "sid");
+        assert_eq!(row.get::<i64, _>("secure"), 1);
+        assert_eq!(row.get::<i64, _>("http_only"), 1);
+        assert_eq!(row.get::<String, _>("same_site"), "None");
+        assert_eq!(row.get::<String, _>("domain"), "b.example");
+        assert_eq!(row.get::<String, _>("path"), "/b");
+    }
+
+    #[tokio::test]
     async fn test_insert_url_record_same_final_different_initial_keeps_two_rows() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-1").await;
@@ -2064,6 +2202,102 @@ mod tests {
         assert_eq!(
             seen.len(),
             URL_STATUS_CORE_SATELLITE_TABLES.len() + URL_STATUS_ENRICHMENT_SATELLITE_TABLES.len()
+        );
+    }
+
+    fn rust_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
+        let start = src
+            .find(sig)
+            .unwrap_or_else(|| panic!("missing function `{sig}`"));
+        let after = &src[start..];
+        let brace = after.find('{').expect("function body");
+        let body_start = brace + 1;
+        let mut depth = 1usize;
+        for (i, b) in after[body_start..].bytes().enumerate() {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &after[body_start..body_start + i];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unclosed function `{sig}`");
+    }
+
+    fn quoted_nth_after_marker<'a>(body: &'a str, marker: &str, n: usize) -> Vec<&'a str> {
+        let mut tables = Vec::new();
+        let mut rest = body;
+        while let Some(i) = rest.find(marker) {
+            rest = &rest[i + marker.len()..];
+            let mut found = Vec::new();
+            let mut search = rest;
+            for _ in 0..=n {
+                let Some(q) = search.find('"') else {
+                    break;
+                };
+                search = &search[q + 1..];
+                let end = search.find('"').expect("closing quote");
+                found.push(&search[..end]);
+                search = &search[end + 1..];
+            }
+            tables.push(*found.get(n).unwrap_or_else(|| {
+                panic!("{marker} missing quoted arg {n}");
+            }));
+            rest = search;
+        }
+        tables
+    }
+
+    #[test]
+    fn core_satellite_delete_list_matches_insert_call_sites() {
+        let src = include_str!("mod.rs");
+        let impl_body = rust_fn_body(src, "async fn insert_url_record_impl");
+        let mut written: HashSet<&str> =
+            quoted_nth_after_marker(impl_body, "record_satellite_write(", 0)
+                .into_iter()
+                .collect();
+        let robots_body = rust_fn_body(src, "async fn insert_robots_txt");
+        assert!(
+            robots_body.contains("url_robots_directives"),
+            "insert_robots_txt must write url_robots_directives (nested under url_robots_txt)"
+        );
+        written.insert("url_robots_directives");
+        let listed: HashSet<&str> = URL_STATUS_CORE_SATELLITE_TABLES.iter().copied().collect();
+        assert_eq!(
+            written, listed,
+            "CORE satellite DELETE list must match insert_url_record_impl writes"
+        );
+    }
+
+    #[test]
+    fn enrichment_satellite_delete_list_matches_insert_call_sites() {
+        let src = include_str!("../record.rs");
+        let txn_body = rust_fn_body(src, "async fn insert_enrichment_txn");
+        let mut written: HashSet<&str> = quoted_nth_after_marker(txn_body, "try_enrich_tx(", 1)
+            .into_iter()
+            .collect();
+        written.insert("url_exposed_secrets");
+        written.insert("url_partial_failures");
+        let listed: HashSet<&str> = URL_STATUS_ENRICHMENT_SATELLITE_TABLES
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(
+            written, listed,
+            "ENRICHMENT satellite DELETE list must match insert_enrichment_txn writes"
+        );
+        let secrets_body = rust_fn_body(src, "async fn insert_exposed_secrets_in_tx");
+        assert!(
+            secrets_body.contains("url_jwt_claims"),
+            "JWT claims are written with secrets and CASCADE on url_exposed_secrets delete"
+        );
+        assert!(
+            !listed.contains("url_jwt_claims"),
+            "url_jwt_claims must stay off the ENRICHMENT DELETE list (CASCADE from secrets)"
         );
     }
 
