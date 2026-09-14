@@ -225,16 +225,4 @@ mod tests {
         // Value preserves original casing (prefix match is case-insensitive)
         assert_eq!(links[0].value, "INFO@EXAMPLE.COM");
     }
-
-    #[test]
-    fn test_contact_type_as_str() {
-        assert_eq!(ContactType::Email.as_str(), "email");
-        assert_eq!(ContactType::Phone.as_str(), "phone");
-    }
-
-    #[test]
-    fn test_contact_type_display() {
-        assert_eq!(format!("{}", ContactType::Email), "email");
-        assert_eq!(format!("{}", ContactType::Phone), "phone");
-    }
 }

@@ -34,6 +34,29 @@ use vendored::load_vendored_ruleset;
 /// narrowed caches (missing dns/certIssuer/scripts) are not reused.
 const CACHE_SCHEMA_VERSION: &str = "3";
 
+/// Cache filename stem for a source list (schema-prefixed so old caches miss).
+fn fingerprint_cache_key(sources: &[String]) -> String {
+    if sources.is_empty() {
+        log::warn!("Fingerprint sources is empty, using default cache key");
+        format!("default-schema{CACHE_SCHEMA_VERSION}")
+    } else if sources.len() == 1 {
+        let material = format!("{CACHE_SCHEMA_VERSION}\n{}", sources[0]);
+        format!("{:x}", Sha256::digest(material.as_bytes()))
+    } else {
+        let combined = format!("{CACHE_SCHEMA_VERSION}\n{}", sources.join("\n"));
+        format!("{:x}", Sha256::digest(combined.as_bytes()))
+    }
+}
+
+/// Operator-visible `metadata.source`: one URL, or newline-joined when merged.
+fn fingerprint_source_label(sources: &[String]) -> String {
+    if sources.len() == 1 {
+        sources[0].clone()
+    } else {
+        sources.join("\n")
+    }
+}
+
 /// Default URLs for fingerprint sources (merged; order matches wappalyzergo: enthec then `HTTPArchive`).
 /// wappalyzergo uses the same two sources; we merge with later overwriting earlier for the same technology.
 const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
@@ -141,30 +164,9 @@ pub async fn init_ruleset(
         std::path::Path::to_path_buf,
     );
 
-    // Create a cache key from all sources + schema version.
-    // Use SHA256 hash to avoid URL character issues and ensure deterministic caching.
-    // The actual sources are stored in metadata.source for human readability.
     // Schema version invalidates caches written before dns/certIssuer/scripts were retained.
-    let cache_key = if sources.is_empty() {
-        // Fallback to default cache key if sources is somehow empty (should never happen)
-        log::warn!("Fingerprint sources is empty, using default cache key");
-        format!("default-schema{CACHE_SCHEMA_VERSION}")
-    } else if sources.len() == 1 {
-        // Single source: use hash to handle special characters in URLs
-        let material = format!("{CACHE_SCHEMA_VERSION}\n{}", sources[0]);
-        format!("{:x}", Sha256::digest(material.as_bytes()))
-    } else {
-        // Multiple sources: hash the joined sources (using newline as delimiter)
-        let combined = format!("{CACHE_SCHEMA_VERSION}\n{}", sources.join("\n"));
-        format!("{:x}", Sha256::digest(combined.as_bytes()))
-    };
-
-    // Create expected_sources string for cache validation (newline-separated)
-    let expected_sources = if sources.len() == 1 {
-        sources[0].clone()
-    } else {
-        sources.join("\n")
-    };
+    let cache_key = fingerprint_cache_key(&sources);
+    let expected_sources = fingerprint_source_label(&sources);
 
     // Try to load from cache first
     if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
@@ -345,12 +347,7 @@ async fn fetch_ruleset_from_multiple_sources(
         versions.join(";")
     };
 
-    // Use newline separator for sources (human-readable and avoids URL character issues)
-    let source_str = if sources.len() == 1 {
-        sources[0].clone()
-    } else {
-        sources.join("\n")
-    };
+    let source_str = fingerprint_source_label(sources);
 
     let metadata = FingerprintMetadata {
         source: source_str.clone(),
@@ -582,126 +579,50 @@ mod tests {
     }
 
     #[test]
-    fn test_version_string_construction() {
-        // Test that version string construction works correctly
-        // The code at line 254-258 handles empty and non-empty versions
-        let empty_versions: Vec<String> = vec![];
-        let version = if empty_versions.is_empty() {
-            "unknown".to_string()
-        } else {
-            empty_versions.join(";")
-        };
-        assert_eq!(version, "unknown");
-
-        let versions = ["source1:abc123".to_string(), "source2:def456".to_string()];
-        let version = versions.join(";");
-        assert_eq!(version, "source1:abc123;source2:def456");
-    }
-
-    #[test]
-    fn test_source_string_construction() {
-        // Test that source string construction works correctly
-        // The code at line 260 uses sources.join("+")
-        let sources = [
-            "https://source1.com".to_string(),
-            "https://source2.com".to_string(),
-        ];
-        let source_str = sources.join("+");
-        assert_eq!(source_str, "https://source1.com+https://source2.com");
-    }
-
-    #[test]
-    fn test_cache_key_construction_single_source() {
-        // Mirrors production: schema version prefixed so old narrowed caches miss.
-        let schema = "2";
-        let sources = ["https://source.com".to_string()];
-        let material = format!("{schema}\n{}", sources[0]);
-        let cache_key = format!("{:x}", Sha256::digest(material.as_bytes()));
-
+    fn fingerprint_source_label_joins_multiple_sources_with_newlines() {
         assert_eq!(
-            cache_key.len(),
-            64,
-            "SHA256 hash should be 64 hex characters"
+            fingerprint_source_label(&["https://only.com".to_string()]),
+            "https://only.com"
         );
-        assert!(
-            cache_key.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should only contain hex digits"
-        );
-
-        let expected_hash = format!("{:x}", Sha256::digest(b"2\nhttps://source.com"));
-        assert_eq!(cache_key, expected_hash);
-    }
-
-    #[test]
-    fn test_cache_key_construction_multiple_sources() {
-        let schema = "2";
-        let sources = [
-            "https://source1.com".to_string(),
-            "https://source2.com".to_string(),
-        ];
-        let combined = format!("{schema}\n{}", sources.join("\n"));
-        let cache_key = format!("{:x}", Sha256::digest(combined.as_bytes()));
-
         assert_eq!(
-            cache_key.len(),
-            64,
-            "SHA256 hash should be 64 hex characters"
+            fingerprint_source_label(&[
+                "https://source1.com".to_string(),
+                "https://source2.com".to_string()
+            ]),
+            "https://source1.com\nhttps://source2.com"
         );
-        assert!(
-            cache_key.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should only contain hex digits"
-        );
-
-        let expected_hash = format!(
-            "{:x}",
-            Sha256::digest(b"2\nhttps://source1.com\nhttps://source2.com")
-        );
-        assert_eq!(cache_key, expected_hash);
     }
 
     #[test]
-    fn test_cache_key_construction_empty_sources_fallback() {
-        let sources: Vec<String> = vec![];
-        let cache_key = if sources.is_empty() {
-            "default-schema2".to_string()
-        } else if sources.len() == 1 {
-            let material = format!("2\n{}", sources[0]);
-            format!("{:x}", Sha256::digest(material.as_bytes()))
-        } else {
-            let combined = format!("2\n{}", sources.join("\n"));
-            format!("{:x}", Sha256::digest(combined.as_bytes()))
-        };
-        assert_eq!(cache_key, "default-schema2");
+    fn fingerprint_cache_key_empty_sources_uses_schema_default() {
+        assert_eq!(
+            fingerprint_cache_key(&[]),
+            format!("default-schema{CACHE_SCHEMA_VERSION}")
+        );
     }
 
     #[test]
-    fn test_cache_key_hash_determinism() {
-        // Test that the same inputs always produce the same hash
-        let source = "https://example.com".to_string();
-
-        let hash1 = format!("{:x}", Sha256::digest(source.as_bytes()));
-        let hash2 = format!("{:x}", Sha256::digest(source.as_bytes()));
-
-        assert_eq!(hash1, hash2, "Hash should be deterministic");
-        assert_eq!(hash1.len(), 64, "Hash should be 64 hex characters");
+    fn fingerprint_cache_key_does_not_treat_plus_as_source_delimiter() {
+        let plus_in_url = fingerprint_cache_key(&["https://a.com+https://b.com".to_string()]);
+        let two_sources =
+            fingerprint_cache_key(&["https://a.com".to_string(), "https://b.com".to_string()]);
+        assert_ne!(plus_in_url, two_sources);
+        assert_ne!(
+            fingerprint_cache_key(&["https://source.com".to_string()]),
+            two_sources
+        );
     }
 
     #[test]
-    fn test_cache_key_handles_special_url_characters() {
-        // Test that hash handles URLs with special characters that would break string concatenation
-        let sources = [
+    fn fingerprint_cache_key_handles_special_url_characters() {
+        let key = fingerprint_cache_key(&[
             "https://example.com/path?query=value&other=123".to_string(),
             "https://example.com/path#fragment+with+special%20chars".to_string(),
-        ];
-
-        let combined = sources.join("\n");
-        let cache_key = format!("{:x}", Sha256::digest(combined.as_bytes()));
-
-        // Should produce valid hash regardless of special characters
-        assert_eq!(cache_key.len(), 64, "Hash should be 64 hex characters");
+        ]);
+        assert_eq!(key.len(), 64, "SHA256 hex digest is 64 characters");
         assert!(
-            cache_key.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should only contain hex digits"
+            key.chars().all(|c| c.is_ascii_hexdigit()),
+            "cache key should be hex: {key}"
         );
     }
 }

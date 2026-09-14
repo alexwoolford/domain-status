@@ -63,7 +63,8 @@ cargo test --doc
   - Cooperative cancel persists a `url_failures` row; CORE/ENRICHMENT satellite lists match insert call sites
   - Offline `implies` / exclude detection (fixture rulesets, no network)
   - Offline `run_scan` with local fingerprints + wiremock (status, counters, satellites, versions/`is_implied`)
-  - Config merge (`fail_on`, `--no-whois`, bool synonyms)
+  - Config merge (`fail_on`, `--no-whois`, bool synonyms); file overlay TOML sentinels land on `Config`
+  - `url_status` column defs match INSERT/UPDATE order and migrated `PRAGMA table_info`
   - Partial failure + drain exclusivity + `evaluate_exit_code`
   - Fast concurrency smoke (`max_concurrency` ceiling)
   - `query_scan_summary` against a seeded DB

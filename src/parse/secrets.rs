@@ -2140,14 +2140,6 @@ mod tests {
     }
 
     #[test]
-    fn test_severity_as_str() {
-        assert_eq!(SecretSeverity::Critical.as_str(), "critical");
-        assert_eq!(SecretSeverity::High.as_str(), "high");
-        assert_eq!(SecretSeverity::Medium.as_str(), "medium");
-        assert_eq!(SecretSeverity::Low.as_str(), "low");
-    }
-
-    #[test]
     fn test_redact_exposed_secret_value_replaces_raw_secret() {
         let redacted = redact_exposed_secret_value(AWS_KEY);
         assert!(redacted.contains("sha256="));

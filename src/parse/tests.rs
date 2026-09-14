@@ -17,6 +17,23 @@ fn test_extract_title_basic() {
 }
 
 #[test]
+fn test_extract_title_mixed_case_tags() {
+    let stats = test_error_stats();
+    for html in [
+        r#"<html><head><TITLE>Test</TITLE></head></html>"#,
+        r#"<html><head><Title>Test</Title></head></html>"#,
+        r#"<html><head><tItLe>Test</tItLe></head></html>"#,
+    ] {
+        let document = Html::parse_document(html);
+        assert_eq!(
+            extract_title(&document, &stats),
+            "Test",
+            "parser must extract title from mixed-case tags: {html}"
+        );
+    }
+}
+
+#[test]
 fn test_extract_title_with_whitespace() {
     // Common gotcha: titles with extra whitespace/newlines
     let html = r#"<html><head><title>

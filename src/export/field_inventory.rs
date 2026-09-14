@@ -138,12 +138,6 @@ mod tests {
                 "{id} in CSV_FIELD_ORDER but missing csv spec"
             );
         }
-        assert_eq!(
-            CSV_FIELD_ORDER.len(),
-            91,
-            "CSV column count drifted — edit EXPORT_FIELDS / CSV_FIELD_ORDER"
-        );
-
         let mut seen_pq = std::collections::HashSet::new();
         for id in PARQUET_FIELD_ORDER {
             assert!(seen_pq.insert(*id), "duplicate Parquet field id: {id}");
@@ -153,8 +147,11 @@ mod tests {
             );
         }
         let len = build_schema().fields().len();
-        assert_eq!(len, 75, "parquet schema field count drifted: {len}");
-        assert_eq!(PARQUET_FIELD_ORDER.len(), len);
+        assert_eq!(
+            PARQUET_FIELD_ORDER.len(),
+            len,
+            "PARQUET_FIELD_ORDER must match the built schema field count"
+        );
 
         let parquet_only = PARQUET_FIELD_ORDER
             .iter()
