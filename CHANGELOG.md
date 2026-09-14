@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.
+
 ### Fixed
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.
 - Cookie UPSERT refreshes `domain` and `path` on same-name conflict; `url_status` insert-vs-update is detected from `INSERT … DO NOTHING`, not a pre-check `SELECT`.

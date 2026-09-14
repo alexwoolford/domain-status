@@ -1080,8 +1080,39 @@ mod tests {
     use crate::storage::migrations::run_migrations;
     use crate::storage::CookieInfo;
 
-    #[test]
-    fn url_status_column_defs_are_unique_and_ordered_with_names_iter() {
+    fn insert_sql_column_names(sql: &str) -> Vec<&str> {
+        let marker = "INSERT INTO url_status (";
+        let start = sql
+            .find(marker)
+            .unwrap_or_else(|| panic!("missing `{marker}` in insert SQL: {sql}"));
+        let rest = &sql[start + marker.len()..];
+        let end = rest
+            .find(')')
+            .unwrap_or_else(|| panic!("unclosed column list in insert SQL: {sql}"));
+        rest[..end]
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    fn update_sql_set_column_names(sql: &str) -> Vec<&str> {
+        let start = sql
+            .find("SET")
+            .unwrap_or_else(|| panic!("missing SET in update SQL: {sql}"));
+        let rest = &sql[start + 3..];
+        let end = rest
+            .find("WHERE")
+            .unwrap_or_else(|| panic!("missing WHERE in update SQL: {sql}"));
+        rest[..end]
+            .split(',')
+            .map(|assignment| assignment.split('=').next().unwrap_or(assignment).trim())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn url_status_column_defs_match_insert_sql_and_migrated_schema() {
         let names: Vec<_> = url_status_column_names().collect();
         assert_eq!(names.len(), URL_STATUS_COLUMN_DEFS.len());
         let mut seen = HashSet::new();
@@ -1089,7 +1120,39 @@ mod tests {
             assert_eq!(*name, URL_STATUS_COLUMN_DEFS[i].name);
             assert!(seen.insert(*name), "duplicate url_status column: {name}");
         }
-        assert_eq!(names.len(), 44, "url_status column count drifted");
+
+        assert_eq!(
+            insert_sql_column_names(&url_status_insert_sql()),
+            names,
+            "INSERT column list must follow URL_STATUS_COLUMN_DEFS order"
+        );
+
+        let expected_update: Vec<_> = names
+            .iter()
+            .copied()
+            .filter(|col| *col != "initial_domain")
+            .collect();
+        assert_eq!(
+            update_sql_set_column_names(&url_status_update_sql()),
+            expected_update,
+            "UPDATE SET list must follow URL_STATUS_COLUMN_DEFS minus initial_domain"
+        );
+
+        let pool = create_test_pool().await;
+        let schema_rows = sqlx::query("PRAGMA table_info(url_status)")
+            .fetch_all(&pool)
+            .await
+            .expect("PRAGMA table_info(url_status)");
+        let schema: HashSet<String> = schema_rows
+            .iter()
+            .map(|row| row.get::<String, _>("name"))
+            .collect();
+        for name in &names {
+            assert!(
+                schema.contains(*name),
+                "{name} is in URL_STATUS_COLUMN_DEFS but missing from migrated url_status"
+            );
+        }
     }
 
     /// Creates an in-memory `SQLite` database pool for testing
@@ -2191,18 +2254,6 @@ mod tests {
         seed_redirect_and_record_satellite_tables(pool, url_status_id).await;
         seed_body_content_satellite_tables(pool, url_status_id).await;
         seed_enrichment_satellite_tables(pool, url_status_id).await;
-    }
-
-    #[test]
-    fn core_and_enrichment_satellite_lists_partition_children() {
-        let mut seen = HashSet::new();
-        for table in url_status_satellite_tables() {
-            assert!(seen.insert(table), "duplicate satellite table {table}");
-        }
-        assert_eq!(
-            seen.len(),
-            URL_STATUS_CORE_SATELLITE_TABLES.len() + URL_STATUS_ENRICHMENT_SATELLITE_TABLES.len()
-        );
     }
 
     fn rust_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {

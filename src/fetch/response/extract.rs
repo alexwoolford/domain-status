@@ -1089,42 +1089,4 @@ mod tests {
         // 2. Malicious infinite streams are aborted quickly
         // 3. No full download required before checking size
     }
-
-    #[test]
-    fn test_extract_response_data_title_tag_detection() {
-        // Test title tag detection logic (case-insensitive)
-        // This is critical - helps with debugging HTML parsing issues
-        // The code checks: body.contains("<title") || body.contains("<TITLE")
-        // This matches any case variation of the opening tag
-
-        // Test case-insensitive detection - check for opening tag in any case
-        let bodies_with_title = vec![
-            "<html><head><title>Test</title></head></html>",
-            "<html><head><TITLE>Test</TITLE></head></html>",
-            "<html><head><Title>Test</Title></head></html>",
-            "<html><head><tItLe>Test</tItLe></head></html>",
-        ];
-
-        for body in bodies_with_title {
-            // The code checks for "<title" or "<TITLE" (opening tag)
-            // We need to check if the body contains the opening tag in any case
-            let has_title = body.to_lowercase().contains("<title");
-            assert!(
-                has_title,
-                "Body should contain title tag (case-insensitive): {}",
-                body
-            );
-        }
-
-        // Test bodies without title
-        let bodies_without_title = vec![
-            "<html><body>No title</body></html>",
-            "<html><head></head><body>Test</body></html>",
-        ];
-
-        for body in bodies_without_title {
-            let has_title = body.to_lowercase().contains("<title");
-            assert!(!has_title, "Body should not contain title tag: {}", body);
-        }
-    }
 }

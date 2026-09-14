@@ -328,7 +328,6 @@ impl InfoType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strum::IntoEnumIterator;
 
     /// Regression guard for `DatabaseError::FileCreationError`'s source chain.
     ///
@@ -363,81 +362,5 @@ mod tests {
             .downcast_ref::<std::io::Error>()
             .expect("source should downcast to io::Error");
         assert_eq!(io_err.kind(), std::io::ErrorKind::PermissionDenied);
-    }
-
-    #[test]
-    fn test_error_type_as_str() {
-        // Test a few error types to verify as_str() works
-        assert_eq!(
-            ErrorType::HttpRequestTimeoutError.as_str(),
-            "HTTP request timeout error"
-        );
-        assert_eq!(
-            ErrorType::HttpRequestBotDetectionError.as_str(),
-            "Bot detection (403 Forbidden)"
-        );
-        assert_eq!(ErrorType::DnsNsLookupError.as_str(), "DNS NS lookup error");
-        assert_eq!(ErrorType::HttpRequestNotFound.as_str(), "Not Found (404)");
-        assert_eq!(
-            ErrorType::SatelliteInsertError.as_str(),
-            "Satellite insert error"
-        );
-        assert_eq!(ErrorType::ScanCancelled.as_str(), "Scan cancelled");
-    }
-
-    #[test]
-    fn test_warning_type_as_str() {
-        assert_eq!(
-            WarningType::MissingMetaDescription.as_str(),
-            "Missing meta description"
-        );
-        assert_eq!(WarningType::MissingTitle.as_str(), "Missing title");
-    }
-
-    #[test]
-    fn test_info_type_as_str() {
-        assert_eq!(InfoType::HttpRedirect.as_str(), "HTTP redirect");
-        assert_eq!(InfoType::HttpsRedirect.as_str(), "HTTP to HTTPS redirect");
-        assert_eq!(InfoType::BotDetection403.as_str(), "Bot detection (403)");
-        assert_eq!(InfoType::MultipleRedirects.as_str(), "Multiple redirects");
-    }
-
-    #[test]
-    fn test_all_error_types_have_string_representation() {
-        // Verify all error types have non-empty string representations
-        for error_type in ErrorType::iter() {
-            let str_repr = error_type.as_str();
-            assert!(
-                !str_repr.is_empty(),
-                "{:?} should have non-empty string",
-                error_type
-            );
-        }
-    }
-
-    #[test]
-    fn test_all_warning_types_have_string_representation() {
-        // Verify all warning types have non-empty string representations
-        for warning_type in WarningType::iter() {
-            let str_repr = warning_type.as_str();
-            assert!(
-                !str_repr.is_empty(),
-                "{:?} should have non-empty string",
-                warning_type
-            );
-        }
-    }
-
-    #[test]
-    fn test_all_info_types_have_string_representation() {
-        // Verify all info types have non-empty string representations
-        for info_type in InfoType::iter() {
-            let str_repr = info_type.as_str();
-            assert!(
-                !str_repr.is_empty(),
-                "{:?} should have non-empty string",
-                info_type
-            );
-        }
     }
 }

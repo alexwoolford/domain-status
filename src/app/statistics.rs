@@ -63,7 +63,6 @@ mod tests {
     use super::*;
     use crate::error_handling::ProcessingStats;
     use crate::storage::{update_run_stats, RunStats};
-    use crate::utils::TimingStats;
     use anyhow::{Context, Result};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -117,60 +116,6 @@ mod tests {
         );
 
         Ok(())
-    }
-
-    #[test]
-    fn test_print_error_statistics_no_errors() {
-        let stats = ProcessingStats::new();
-        // Should not panic when there are no errors
-        print_error_statistics(&stats);
-    }
-
-    #[test]
-    fn test_print_error_statistics_with_errors() {
-        let stats = ProcessingStats::new();
-        stats.increment_error(ErrorType::HttpRequestTimeoutError);
-        stats.increment_error(ErrorType::HttpRequestTimeoutError);
-        stats.increment_error(ErrorType::DnsNsLookupError);
-        // Should not panic when there are errors
-        print_error_statistics(&stats);
-    }
-
-    #[test]
-    fn test_print_error_statistics_with_warnings() {
-        let stats = ProcessingStats::new();
-        stats.increment_warning(WarningType::MissingMetaDescription);
-        stats.increment_warning(WarningType::MissingTitle);
-        // Should not panic when there are warnings
-        print_error_statistics(&stats);
-    }
-
-    #[test]
-    fn test_print_error_statistics_with_info() {
-        let stats = ProcessingStats::new();
-        stats.increment_info(InfoType::HttpRedirect);
-        stats.increment_info(InfoType::HttpsRedirect);
-        // Should not panic when there are info metrics
-        print_error_statistics(&stats);
-    }
-
-    #[test]
-    fn test_print_error_statistics_all_types() {
-        let stats = ProcessingStats::new();
-        stats.increment_error(ErrorType::HttpRequestTimeoutError);
-        stats.increment_warning(WarningType::MissingMetaDescription);
-        stats.increment_info(InfoType::HttpRedirect);
-        // Should handle all types together
-        print_error_statistics(&stats);
-    }
-
-    #[test]
-    fn test_print_timing_statistics() {
-        let timing_stats = Arc::new(TimingStats::default());
-        // Should not panic
-        print_timing_statistics(&timing_stats, Some(true), Some(true));
-        print_timing_statistics(&timing_stats, Some(false), Some(false));
-        print_timing_statistics(&timing_stats, None, None);
     }
 
     #[tokio::test]

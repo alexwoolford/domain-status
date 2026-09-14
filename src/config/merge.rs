@@ -716,11 +716,97 @@ mod tests {
     }
 
     #[test]
-    fn file_config_overlay_keys_are_unique_and_complete() {
-        assert_eq!(FILE_CONFIG_OVERLAY_KEYS.len(), 18);
+    fn file_config_overlay_keys_are_unique() {
         let mut seen = std::collections::HashSet::new();
         for key in FILE_CONFIG_OVERLAY_KEYS {
             assert!(seen.insert(*key), "duplicate overlay key {key}");
+        }
+    }
+
+    /// Sentinel TOML line for one overlay key. Adding a `FILE_CONFIG_OVERLAY_KEYS`
+    /// entry without a sentinel (or without a Config assertion below) fails this
+    /// test — not a magic `len() == N`.
+    fn overlay_key_sentinel_toml(key: &str) -> String {
+        let line = match key {
+            "file" => r#"file = "/sentinel/urls.txt""#,
+            "log_level" => r#"log_level = "debug""#,
+            "log_format" => r#"log_format = "json""#,
+            "db_path" => r#"db_path = "/sentinel/scan.db""#,
+            "max_concurrency" => "max_concurrency = 77",
+            "timeout_seconds" => "timeout_seconds = 42",
+            "user_agent" => r#"user_agent = "SentinelAgent/1.0""#,
+            "rate_limit_rps" => "rate_limit_rps = 3",
+            "fingerprints" => r#"fingerprints = "/sentinel/fp.json""#,
+            "geoip" => r#"geoip = "/sentinel/geo.mmdb""#,
+            "status_port" => "status_port = 9999",
+            "enable_whois" => "enable_whois = false",
+            "cache_dir" => r#"cache_dir = "/sentinel/cache""#,
+            "scan_external_scripts" => "scan_external_scripts = true",
+            "fail_on" => r#"fail_on = "any-failure""#,
+            "fail_on_pct_threshold" => "fail_on_pct_threshold = 25",
+            "log_file" => r#"log_file = "/sentinel/scan.log""#,
+            "drain_timeout_secs" => "drain_timeout_secs = 99",
+            other => panic!(
+                "overlay key {other} has no sentinel TOML; add a line here and assert Config"
+            ),
+        };
+        line.to_string()
+    }
+
+    fn assert_overlay_sentinel_on_config(config: &Config, key: &str) {
+        match key {
+            "file" => assert_eq!(config.file, PathBuf::from("/sentinel/urls.txt")),
+            "log_level" => assert_eq!(config.log_level, LogLevel::Debug),
+            "log_format" => assert_eq!(config.log_format, LogFormat::Json),
+            "db_path" => assert_eq!(config.db_path, PathBuf::from("/sentinel/scan.db")),
+            "max_concurrency" => assert_eq!(config.max_concurrency, 77),
+            "timeout_seconds" => assert_eq!(config.timeout_seconds, 42),
+            "user_agent" => assert_eq!(config.user_agent, "SentinelAgent/1.0"),
+            "rate_limit_rps" => assert_eq!(config.rate_limit_rps, 3),
+            "fingerprints" => {
+                assert_eq!(config.fingerprints.as_deref(), Some("/sentinel/fp.json"));
+            }
+            "geoip" => assert_eq!(config.geoip.as_deref(), Some("/sentinel/geo.mmdb")),
+            "status_port" => assert_eq!(config.status_port, Some(9999)),
+            "enable_whois" => assert!(!config.enable_whois),
+            "cache_dir" => {
+                assert_eq!(
+                    config.cache_dir.as_deref(),
+                    Some(PathBuf::from("/sentinel/cache").as_path())
+                );
+            }
+            "scan_external_scripts" => assert!(config.scan_external_scripts),
+            "fail_on" => assert_eq!(config.fail_on, FailOn::AnyFailure),
+            "fail_on_pct_threshold" => assert_eq!(config.fail_on_pct_threshold, 25),
+            "log_file" => {
+                assert_eq!(
+                    config.log_file.as_deref(),
+                    Some(PathBuf::from("/sentinel/scan.log").as_path())
+                );
+            }
+            "drain_timeout_secs" => assert_eq!(config.drain_timeout_secs, 99),
+            other => panic!("overlay key {other} has no Config assertion"),
+        }
+    }
+
+    #[test]
+    fn file_config_overlay_toml_sentinels_land_on_config() {
+        let toml = FILE_CONFIG_OVERLAY_KEYS
+            .iter()
+            .map(|key| overlay_key_sentinel_toml(key))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let settings = config::Config::builder()
+            .add_source(config::File::from_str(&toml, config::FileFormat::Toml))
+            .build()
+            .expect("build overlay sentinel TOML");
+        let fc: FileConfig = settings
+            .try_deserialize()
+            .expect("deserialize FileConfig from overlay sentinels");
+        let mut config = Config::default();
+        apply_file_config(&mut config, &fc);
+        for key in FILE_CONFIG_OVERLAY_KEYS {
+            assert_overlay_sentinel_on_config(&config, key);
         }
     }
 }
