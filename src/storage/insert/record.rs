@@ -13,64 +13,73 @@ use crate::storage::insert::{self, SatelliteWriteFailure, UrlUpsertOutcome};
 use crate::storage::models::UrlPartialFailureRecord;
 use crate::storage::PersistedUrlRecord;
 
+/// Outcome of one optional enrichment insert (`inserted && failed` is impossible).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EnrichmentWrite {
+    /// No payload for this enrichment type.
+    #[default]
+    Skipped,
+    /// Insert succeeded.
+    Inserted,
+    /// Insert returned `Err`.
+    Failed,
+}
+
+impl EnrichmentWrite {
+    fn as_log_str(self) -> &'static str {
+        match self {
+            Self::Skipped => "n/a",
+            Self::Inserted => "ok",
+            Self::Failed => "failed",
+        }
+    }
+
+    const fn is_failed(self) -> bool {
+        matches!(self, Self::Failed)
+    }
+}
+
 /// Summary of enrichment data insertion results.
 ///
 /// Tracks which enrichment data types succeeded or failed to insert.
 /// This allows callers to monitor enrichment data insertion health
 /// without blocking the main record insertion.
 #[derive(Debug, Clone, Default)]
-#[allow(clippy::struct_excessive_bools)] // Each bool tracks success/failure of a distinct enrichment type; not flags
 pub struct EnrichmentInsertSummary {
     /// Number of partial failures successfully inserted
     pub partial_failures_inserted: usize,
     /// Number of partial failures that failed to insert
     pub partial_failures_failed: usize,
-    /// Whether `GeoIP` data was successfully inserted
-    pub geoip_inserted: bool,
-    /// Whether `GeoIP` data insertion failed
-    pub geoip_failed: bool,
-    /// Whether structured data was successfully inserted
-    pub structured_data_inserted: bool,
-    /// Whether structured data insertion failed
-    pub structured_data_failed: bool,
-    /// Whether social media links were successfully inserted
-    pub social_media_inserted: bool,
-    /// Whether social media links insertion failed
-    pub social_media_failed: bool,
-    /// Whether WHOIS data was successfully inserted
-    pub whois_inserted: bool,
-    /// Whether WHOIS data insertion failed
-    pub whois_failed: bool,
-    /// Whether analytics IDs were successfully inserted
-    pub analytics_ids_inserted: bool,
-    /// Whether analytics IDs insertion failed
-    pub analytics_ids_failed: bool,
-    /// Whether favicon data was successfully inserted
-    pub favicon_inserted: bool,
-    /// Whether favicon data insertion failed
-    pub favicon_failed: bool,
-    /// Whether contact links were successfully inserted
-    pub contact_links_inserted: bool,
-    /// Whether contact links insertion failed
-    pub contact_links_failed: bool,
-    /// Whether exposed secrets were successfully inserted
-    pub exposed_secrets_inserted: bool,
-    /// Whether exposed secrets insertion failed
-    pub exposed_secrets_failed: bool,
+    /// `GeoIP` row write.
+    pub geoip: EnrichmentWrite,
+    /// Structured-data row write.
+    pub structured_data: EnrichmentWrite,
+    /// Social-media links write.
+    pub social_media: EnrichmentWrite,
+    /// WHOIS row write.
+    pub whois: EnrichmentWrite,
+    /// Analytics IDs write.
+    pub analytics_ids: EnrichmentWrite,
+    /// Favicon row write.
+    pub favicon: EnrichmentWrite,
+    /// Contact links write.
+    pub contact_links: EnrichmentWrite,
+    /// Exposed secrets write.
+    pub exposed_secrets: EnrichmentWrite,
 }
 
 impl EnrichmentInsertSummary {
     /// Returns the total number of enrichment operations that failed.
     pub fn total_failures(&self) -> usize {
         self.partial_failures_failed
-            + usize::from(self.geoip_failed)
-            + usize::from(self.structured_data_failed)
-            + usize::from(self.social_media_failed)
-            + usize::from(self.whois_failed)
-            + usize::from(self.analytics_ids_failed)
-            + usize::from(self.favicon_failed)
-            + usize::from(self.contact_links_failed)
-            + usize::from(self.exposed_secrets_failed)
+            + usize::from(self.geoip.is_failed())
+            + usize::from(self.structured_data.is_failed())
+            + usize::from(self.social_media.is_failed())
+            + usize::from(self.whois.is_failed())
+            + usize::from(self.analytics_ids.is_failed())
+            + usize::from(self.favicon.is_failed())
+            + usize::from(self.contact_links.is_failed())
+            + usize::from(self.exposed_secrets.is_failed())
     }
 
     /// Returns true if any enrichment operations failed.
@@ -83,15 +92,14 @@ fn try_enrich_tx(
     label: &str,
     table: &'static str,
     url_status_id: i64,
-    inserted: &mut bool,
-    failed: &mut bool,
+    status: &mut EnrichmentWrite,
     insert_failures: &mut Vec<SatelliteWriteFailure>,
     result: Result<(), DatabaseError>,
 ) {
     match result {
-        Ok(()) => *inserted = true,
+        Ok(()) => *status = EnrichmentWrite::Inserted,
         Err(e) => {
-            *failed = true;
+            *status = EnrichmentWrite::Failed;
             log::warn!("Failed to insert {label} for url_status_id {url_status_id}: {e}");
             insert_failures.push(SatelliteWriteFailure {
                 table,
@@ -155,7 +163,7 @@ async fn insert_exposed_secrets_in_tx(
     match insert::enrichment::insert_exposed_secrets_in_tx(tx, url_status_id, exposed_secrets).await
     {
         Ok(ids) => {
-            summary.exposed_secrets_inserted = true;
+            summary.exposed_secrets = EnrichmentWrite::Inserted;
             let jwt_items: Vec<(i64, &crate::parse::jwt::DecodedJwt)> = exposed_secrets
                 .iter()
                 .zip(&ids)
@@ -178,7 +186,7 @@ async fn insert_exposed_secrets_in_tx(
             }
         }
         Err(e) => {
-            summary.exposed_secrets_failed = true;
+            summary.exposed_secrets = EnrichmentWrite::Failed;
             log::warn!("Failed to insert exposed secrets for url_status_id {url_status_id}: {e}");
             insert_failures.push(SatelliteWriteFailure {
                 table: "url_exposed_secrets",
@@ -238,8 +246,7 @@ async fn insert_enrichment_txn(
             &format!("GeoIP data for IP '{ip_address}'"),
             "url_geoip",
             url_status_id,
-            &mut summary.geoip_inserted,
-            &mut summary.geoip_failed,
+            &mut summary.geoip,
             &mut insert_failures,
             insert::enrichment::insert_geoip_data_in_tx(&mut tx, url_status_id, geoip_result).await,
         );
@@ -250,8 +257,7 @@ async fn insert_enrichment_txn(
             "structured data",
             "url_structured_data",
             url_status_id,
-            &mut summary.structured_data_inserted,
-            &mut summary.structured_data_failed,
+            &mut summary.structured_data,
             &mut insert_failures,
             insert::enrichment::insert_structured_data_in_tx(
                 &mut tx,
@@ -267,8 +273,7 @@ async fn insert_enrichment_txn(
             "social media links",
             "url_social_media_links",
             url_status_id,
-            &mut summary.social_media_inserted,
-            &mut summary.social_media_failed,
+            &mut summary.social_media,
             &mut insert_failures,
             insert::enrichment::insert_social_media_links_in_tx(
                 &mut tx,
@@ -284,8 +289,7 @@ async fn insert_enrichment_txn(
             "WHOIS data",
             "url_whois",
             url_status_id,
-            &mut summary.whois_inserted,
-            &mut summary.whois_failed,
+            &mut summary.whois,
             &mut insert_failures,
             insert::enrichment::insert_whois_data_in_tx(&mut tx, url_status_id, whois_result).await,
         );
@@ -296,8 +300,7 @@ async fn insert_enrichment_txn(
             "contact links",
             "url_contact_links",
             url_status_id,
-            &mut summary.contact_links_inserted,
-            &mut summary.contact_links_failed,
+            &mut summary.contact_links,
             &mut insert_failures,
             insert::enrichment::insert_contact_links_in_tx(
                 &mut tx,
@@ -322,8 +325,7 @@ async fn insert_enrichment_txn(
             "analytics IDs",
             "url_analytics_ids",
             url_status_id,
-            &mut summary.analytics_ids_inserted,
-            &mut summary.analytics_ids_failed,
+            &mut summary.analytics_ids,
             &mut insert_failures,
             insert::enrichment::insert_analytics_ids_in_tx(
                 &mut tx,
@@ -339,8 +341,7 @@ async fn insert_enrichment_txn(
             "favicon data",
             "url_favicons",
             url_status_id,
-            &mut summary.favicon_inserted,
-            &mut summary.favicon_failed,
+            &mut summary.favicon,
             &mut insert_failures,
             insert::enrichment::insert_favicon_data_in_tx(&mut tx, url_status_id, favicon_data)
                 .await,
@@ -408,14 +409,14 @@ pub async fn insert_persisted_url_record(
             domain,
             enrichment_summary.partial_failures_inserted,
             enrichment_summary.partial_failures_inserted + enrichment_summary.partial_failures_failed,
-            if enrichment_summary.geoip_inserted { "ok" } else if enrichment_summary.geoip_failed { "failed" } else { "n/a" },
-            if enrichment_summary.structured_data_inserted { "ok" } else if enrichment_summary.structured_data_failed { "failed" } else { "n/a" },
-            if enrichment_summary.social_media_inserted { "ok" } else if enrichment_summary.social_media_failed { "failed" } else { "n/a" },
-            if enrichment_summary.contact_links_inserted { "ok" } else if enrichment_summary.contact_links_failed { "failed" } else { "n/a" },
-            if enrichment_summary.exposed_secrets_inserted { "ok" } else if enrichment_summary.exposed_secrets_failed { "failed" } else { "n/a" },
-            if enrichment_summary.whois_inserted { "ok" } else if enrichment_summary.whois_failed { "failed" } else { "n/a" },
-            if enrichment_summary.analytics_ids_inserted { "ok" } else if enrichment_summary.analytics_ids_failed { "failed" } else { "n/a" },
-            if enrichment_summary.favicon_inserted { "ok" } else if enrichment_summary.favicon_failed { "failed" } else { "n/a" }
+            enrichment_summary.geoip.as_log_str(),
+            enrichment_summary.structured_data.as_log_str(),
+            enrichment_summary.social_media.as_log_str(),
+            enrichment_summary.contact_links.as_log_str(),
+            enrichment_summary.exposed_secrets.as_log_str(),
+            enrichment_summary.whois.as_log_str(),
+            enrichment_summary.analytics_ids.as_log_str(),
+            enrichment_summary.favicon.as_log_str()
         );
     }
 
@@ -1155,11 +1156,9 @@ mod tests {
         // This is critical - incorrect counting would break monitoring/logging
         let summary = EnrichmentInsertSummary {
             partial_failures_failed: 2,
-            geoip_failed: true,
-            structured_data_failed: true,
-            social_media_failed: false,
-            whois_failed: false,
-            analytics_ids_failed: true,
+            geoip: EnrichmentWrite::Failed,
+            structured_data: EnrichmentWrite::Failed,
+            analytics_ids: EnrichmentWrite::Failed,
             ..Default::default()
         };
 
@@ -1178,7 +1177,7 @@ mod tests {
     fn test_enrichment_insert_summary_has_failures_true() {
         // Test that has_failures returns true when any failure exists
         let summary = EnrichmentInsertSummary {
-            geoip_failed: true,
+            geoip: EnrichmentWrite::Failed,
             ..Default::default()
         };
         assert!(summary.has_failures());
@@ -1209,11 +1208,11 @@ mod tests {
         // This is critical - ensures all failure types are tracked
         let summary = EnrichmentInsertSummary {
             partial_failures_failed: 3,
-            geoip_failed: true,
-            structured_data_failed: true,
-            social_media_failed: true,
-            whois_failed: true,
-            analytics_ids_failed: true,
+            geoip: EnrichmentWrite::Failed,
+            structured_data: EnrichmentWrite::Failed,
+            social_media: EnrichmentWrite::Failed,
+            whois: EnrichmentWrite::Failed,
+            analytics_ids: EnrichmentWrite::Failed,
             ..Default::default()
         };
         // Should count: 3 (partial) + 5 (all other types) = 8
@@ -1228,22 +1227,12 @@ mod tests {
         let summary = EnrichmentInsertSummary {
             partial_failures_inserted: 2,
             partial_failures_failed: 1,
-            geoip_inserted: true,
-            geoip_failed: false,
-            structured_data_inserted: false,
-            structured_data_failed: true,
-            social_media_inserted: true,
-            social_media_failed: false,
-            whois_inserted: true,
-            whois_failed: false,
-            analytics_ids_inserted: false,
-            analytics_ids_failed: true,
-            favicon_inserted: false,
-            favicon_failed: false,
-            contact_links_inserted: false,
-            contact_links_failed: false,
-            exposed_secrets_inserted: false,
-            exposed_secrets_failed: false,
+            geoip: EnrichmentWrite::Inserted,
+            structured_data: EnrichmentWrite::Failed,
+            social_media: EnrichmentWrite::Inserted,
+            whois: EnrichmentWrite::Inserted,
+            analytics_ids: EnrichmentWrite::Failed,
+            ..Default::default()
         };
         // Should count: 1 (partial) + 1 (structured) + 1 (analytics) = 3
         assert_eq!(summary.total_failures(), 3);
@@ -1268,23 +1257,15 @@ mod tests {
         // This is critical - ensures success is correctly tracked
         let summary = EnrichmentInsertSummary {
             partial_failures_inserted: 5,
-            partial_failures_failed: 0,
-            geoip_inserted: true,
-            geoip_failed: false,
-            structured_data_inserted: true,
-            structured_data_failed: false,
-            social_media_inserted: true,
-            social_media_failed: false,
-            whois_inserted: true,
-            whois_failed: false,
-            analytics_ids_inserted: true,
-            analytics_ids_failed: false,
-            favicon_inserted: true,
-            favicon_failed: false,
-            contact_links_inserted: true,
-            contact_links_failed: false,
-            exposed_secrets_inserted: true,
-            exposed_secrets_failed: false,
+            geoip: EnrichmentWrite::Inserted,
+            structured_data: EnrichmentWrite::Inserted,
+            social_media: EnrichmentWrite::Inserted,
+            whois: EnrichmentWrite::Inserted,
+            analytics_ids: EnrichmentWrite::Inserted,
+            favicon: EnrichmentWrite::Inserted,
+            contact_links: EnrichmentWrite::Inserted,
+            exposed_secrets: EnrichmentWrite::Inserted,
+            ..Default::default()
         };
         assert_eq!(summary.total_failures(), 0);
         assert!(!summary.has_failures());

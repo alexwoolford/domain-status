@@ -223,7 +223,7 @@ failures use `Satellite insert error` with a message `table_name: driver message
 |------|---------|-------------|
 | `url_geoip` | GeoIP/ASN enrichment | `country_code`, `country_name`, `region`, `city`, `latitude`, `longitude`, `postal_code`, `timezone`, `asn`, `asn_org` |
 | `url_whois` | WHOIS/RDAP enrichment | `creation_date_ms`, `expiration_date_ms`, `updated_date_ms`, `registrar`, `registrant_country`, `registrant_org`, `whois_statuses`, `nameservers_json`, `raw_response` |
-| `url_structured_data` | JSON-LD, Open Graph, Twitter, schema-derived properties. JSON-LD rows use empty `property_name` (the blob is `property_value`); `schema_type` rows use `@type` as `property_name` | `data_type`, `property_name`, `property_value` |
+| `url_structured_data` | JSON-LD, Open Graph, Twitter, schema-derived properties. JSON-LD rows use `property_name` `@document` (the blob is `property_value`); `schema_type` rows use `@type` as `property_name` | `data_type`, `property_name`, `property_value` |
 | `url_social_media_links` | Social profile links | `platform`, `profile_url`, `identifier` |
 | `url_analytics_ids` | Analytics/tracking IDs | `provider`, `tracking_id` |
 | `url_contact_links` | `mailto:` and `tel:` links | `contact_type`, `contact_value`, `raw_href` |
@@ -284,7 +284,7 @@ later) for the rest. Intentional omissions are pinned in
 Values are stored as observed. Do not "repair" them in queries:
 
 - **Nonstandard HTTP status** (`702`, `777`, `999`, …) — origin/WAF codes, not scanner sentinels.
-- **JSON-LD `property_name`** — empty by design; the JSON-LD document is in `property_value`.
+- **JSON-LD `property_name`** — `@document` by design; the JSON-LD document is in `property_value`.
 - **IPv6 in `url_ipv6_addresses` / `ip_address`** — DNS-published strings (`IpAddr::to_string()`). A value such as `a01:4f8:…` (no leading `2`) or `100::1` is the RDATA, not truncation.
 - **TLS on dual-stack hosts** — the handshake prefers IPv4 among DNS-published public addresses (`order_public_addrs_ipv4_first` in `src/tls/mod.rs`). Empty `tls_version` / cert columns mean no usable public address or a handshake failure, not “IPv6 has no IPv4 fallback.”
 - **Email-auth convenience columns vs `url_txt_records`** — `url_txt_records` is the **apex** TXT set. `dmarc_record`, `mta_sts_record`, `tls_rpt_record`, and `bimi_record` are lookups at `_dmarc.`, `_mta-sts.`, `_smtp._tls.`, and `default._bimi.` respectively. Absence from apex TXT does not mean the special-name record is missing (or vice versa). `spf_record` *is* taken from the apex TXT set.
