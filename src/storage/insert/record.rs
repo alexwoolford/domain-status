@@ -431,6 +431,7 @@ mod tests {
         AnalyticsId, AnalyticsProvider, SocialMediaLink, SocialPlatform, StructuredData,
     };
     use crate::storage::models::UrlRecord;
+    use crate::storage::CookieInfo;
     use crate::whois::WhoisResult;
     use chrono::{DateTime, NaiveDate};
     use sqlx::Row;
@@ -616,6 +617,59 @@ mod tests {
         assert_eq!(
             geo_count_after, 0,
             "enrichment rewrite with empty GeoIP must clear the previous row"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_satellite_insert_error_persists_to_url_partial_failures() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        sqlx::query(
+            "CREATE TRIGGER cookies_forced_insert_failure
+             BEFORE INSERT ON url_cookies
+             BEGIN
+               SELECT RAISE(ABORT, 'forced satellite insert failure');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install insert-failure trigger");
+
+        let mut record = empty_persisted(create_test_url_record());
+        record.cookies = vec![CookieInfo {
+            name: "session".to_string(),
+            secure: true,
+            http_only: true,
+            same_site: Some("lax".to_string()),
+            domain: None,
+            path: Some("/".to_string()),
+        }];
+
+        let upsert = insert_persisted_url_record(&pool, record)
+            .await
+            .expect("url_status must still commit when a satellite insert fails");
+
+        let cookie_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_cookies WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count cookies");
+        assert_eq!(cookie_count, 0, "failed cookie insert must not leave a row");
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ?",
+        )
+        .bind(upsert.id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch partial failures");
+        assert!(
+            rows.iter().any(|(error_type, message)| {
+                error_type == "Satellite insert error" && message.starts_with("url_cookies:")
+            }),
+            "core satellite SQL Err must land in url_partial_failures, got {rows:?}"
         );
     }
 
@@ -936,72 +990,6 @@ mod tests {
                 .await
                 .expect("Failed to count analytics IDs");
         assert_eq!(analytics_count, 0);
-    }
-
-    #[tokio::test]
-    async fn test_insert_enrichment_data_partial_failure_handled() {
-        // Test that partial failure insertion failures don't prevent other enrichment
-        // This is critical - one enrichment failure shouldn't break all enrichment
-        let pool = create_test_pool().await;
-        create_test_run(&pool, "test-run-123").await;
-
-        // Create a URL status record first
-        let url_record = create_test_url_record();
-        let _url_status_id = insert::url::insert_url_record(insert::url::UrlRecordInsertParams {
-            pool: &pool,
-            record: &url_record,
-            security_headers: &HashMap::new(),
-            http_headers: &HashMap::new(),
-            oids: &HashSet::new(),
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            script_hosts: &[],
-            security_txt: None,
-            robots_txt: None,
-        })
-        .await
-        .expect("Failed to insert URL record");
-
-        // Create record with partial failures
-        // Note: We can't easily simulate insertion failure, but we verify the error handling path exists
-        let record = PersistedUrlRecord {
-            url_record: create_test_url_record(),
-            security_headers: HashMap::new(),
-            http_headers: HashMap::new(),
-            oids: HashSet::new(),
-            redirect_chain: vec![],
-            technologies: vec![],
-            subject_alternative_names: vec![],
-            analytics_ids: vec![],
-            geoip: None,
-            structured_data: None,
-            social_media_links: vec![],
-            contact_links: vec![],
-            exposed_secrets: vec![],
-            whois: None,
-            partial_failures: vec![], // Empty for this test
-            favicon: None,
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: Vec::new(),
-            cookies: Vec::new(),
-            resource_hints: Vec::new(),
-            script_hosts: vec![],
-            security_txt: None,
-            robots_txt: None,
-        };
-
-        // Should succeed even if some enrichment fails
-        let result = insert_persisted_url_record(&pool, record).await;
-        assert!(result.is_ok());
     }
 
     #[tokio::test]
