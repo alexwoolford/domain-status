@@ -33,7 +33,7 @@ cargo test --doc
 | Kind | Meaning | Example |
 |------|---------|---------|
 | **Contract** | Fixture in → exact outcomes that hurt if wrong | UPSERT clears satellites; offline implies; `evaluate_exit_code` |
-| **Characterization** | Proves current behavior / no panic | Soft-skip on network; `let _ = result`; OR-any error strings |
+| **Characterization** | Proves current behavior / no panic | Soft-skip on network; field-discard after `Ok`; OR-any error strings |
 
 ## Test taxonomy
 
@@ -66,6 +66,7 @@ cargo test --doc
   - Config merge (`fail_on`, `--no-whois`, bool synonyms); file overlay TOML sentinels land on `Config`
   - `url_status` column defs match INSERT/UPDATE order and migrated `PRAGMA table_info`
   - Partial failure + drain exclusivity + `evaluate_exit_code`
+  - Live `/status` and `/metrics` expose `partial_failures` / `satellite_insert_errors` (does not change `--fail-on`)
   - Fast concurrency smoke (`max_concurrency` ceiling)
   - `query_scan_summary` against a seeded DB
   - Export named-field intent (`redirect_count`, `body_truncated`)

@@ -76,6 +76,16 @@ domain_status scan missing.txt
 echo $?  # 1
 ```
 
+## Accounting planes (success vs incomplete)
+
+`--fail-on` uses `report.failed`, which is the `url_failures` / `failed_urls` count. Three other planes exist and **do not** change the exit code:
+
+- **`url_status` / `successful_urls`** — a persisted observation. Child tables may still be missing.
+- **`skipped_urls`** — invalid/SSRF input, duplicate lines in the same run, or UPSERT update of an existing `(run_id, initial_domain)` row. Not a failure.
+- **`url_partial_failures`** — scan-time DNS/TLS misses and satellite SQL insert gaps (`error_type` = `Satellite insert error`). See [ADR 0007](adr/0007-satellite-insert-failure-policy.md). Live `/metrics` and `/status` expose `partial_failures` and `satellite_insert_errors`; finalize logs the fact-table counts.
+
+`ProcessingStats` on stderr is a fourth, in-memory taxonomy (errors/warnings/info) used for the scan banner; it is not the exit-policy numerator.
+
 ## Notes
 
 - The `export` subcommand returns `0` on success and `1` on failure.

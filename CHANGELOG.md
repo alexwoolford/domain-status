@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.
 - File-local polish: shared const `bytes_eq` helpers; enrichment insert outcomes are a write enum; JSON-LD rows use `property_name` `@document`.
+- Docs match runtime: no per-domain concurrency cap; WHOIS on by default (ADR 0002); `url_technologies` is a core satellite and `url_favicons` is enrichment; storage is two writer transactions (ADR 0007). `/status` and `/metrics` expose `url_partial_failures` counts without changing exit policy.
+- Split `url_status` insert into `columns.rs` (fact-row registry), `core_satellites.rs` (CORE vs ENRICHMENT lists), and `upsert.rs` (in-txn writers) with no behavior change.
 
 ### Fixed
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.

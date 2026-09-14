@@ -145,6 +145,14 @@ domain_status_failed_urls {failed}
 # TYPE domain_status_skipped_urls gauge
 domain_status_skipped_urls {skipped}
 
+# HELP domain_status_partial_failures url_partial_failures rows (incomplete success; does not increment failed_urls)
+# TYPE domain_status_partial_failures gauge
+domain_status_partial_failures {partial_failures}
+
+# HELP domain_status_satellite_insert_errors url_partial_failures rows with error_type Satellite insert error
+# TYPE domain_status_satellite_insert_errors gauge
+domain_status_satellite_insert_errors {satellite_insert_errors}
+
 # HELP domain_status_attempted_urls Number of URLs that have entered processing or early-skip
 # TYPE domain_status_attempted_urls gauge
 domain_status_attempted_urls {attempted}
@@ -225,6 +233,8 @@ domain_status_current_rps {current_rps}
         },
         retries = state.runtime_metrics.retried_requests(),
         non_retriable = state.runtime_metrics.non_retriable_failures(),
+        partial_failures = state.runtime_metrics.partial_failure_rows(),
+        satellite_insert_errors = state.runtime_metrics.satellite_insert_errors(),
         current_rps = state
             .request_limiter
             .as_ref()
@@ -279,6 +289,8 @@ mod tests {
         assert!(body_str.contains("domain_status_successful_urls"));
         assert!(body_str.contains("domain_status_skipped_urls"));
         assert!(body_str.contains("domain_status_failed_urls"));
+        assert!(body_str.contains("domain_status_partial_failures"));
+        assert!(body_str.contains("domain_status_satellite_insert_errors"));
         assert!(body_str.contains("domain_status_percentage_complete"));
         assert!(body_str.contains("domain_status_percentage_dispatched"));
         assert!(body_str.contains("domain_status_windowed_rate_per_second"));
@@ -317,6 +329,7 @@ mod tests {
         state.runtime_metrics = Arc::new({
             let metrics = crate::runtime_metrics::RuntimeMetrics::default();
             metrics.record_retry();
+            metrics.record_partial_failures(3, 1);
             metrics
         });
 
@@ -328,6 +341,8 @@ mod tests {
         assert!(metrics.contains("domain_status_timing_http_request_ms 2"));
         assert!(metrics.contains("domain_status_timing_total_ms 2"));
         assert!(metrics.contains("domain_status_runtime_retries_total 1"));
+        assert!(metrics.contains("domain_status_partial_failures 3"));
+        assert!(metrics.contains("domain_status_satellite_insert_errors 1"));
         assert!(metrics.contains(r#"domain_status_phase{phase="scanning"} 1"#));
     }
 

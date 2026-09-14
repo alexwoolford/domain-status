@@ -1,11 +1,7 @@
-//! Test demonstrating HTTP client timeout bug.
+//! Regression: page-fetch client sets `connect_timeout` (not only a global timeout).
 //!
-//! **BUG**: The `reqwest::Client` is configured with only a global timeout,
-//! but does NOT set:
-//! - `connect_timeout()` for TCP connection phase
-//! - Custom DNS resolver with `DNS_TIMEOUT_SECS`
-//!
-//! This means DNS/TCP/TLS operations can hang longer than intended.
+//! A blackhole connect must fail in ~5s rather than hanging until the 10s
+//! request timeout.
 
 use std::time::{Duration, Instant};
 

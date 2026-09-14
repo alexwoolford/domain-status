@@ -603,23 +603,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_already_loaded_returns_metadata() {
-        // Test that already loaded database returns metadata without reload (lines 141-147)
-        // This is critical - prevents unnecessary reloads when database is already loaded
-        // Note: This is hard to test in unit tests as we'd need to actually load a database
-        // But we verify the code path exists and handles the case correctly
+    async fn test_init_geoip_missing_file_fails_consistently() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // First call (will fail, but sets up the check)
         let result1 = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
-        assert!(result1.is_err());
-
-        // Second call with same path - if it were loaded, would return metadata
-        // The code at line 106 checks if metadata.source == path
-        // If match, returns metadata without reload (line 146)
         let result2 = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
-        assert!(result2.is_err()); // Still fails because not actually loaded
-
-        // The important thing is that the code path exists and would work if database was loaded
+        assert!(result1.is_err(), "missing MMDB must fail the first init");
+        assert!(
+            result2.is_err(),
+            "missing MMDB must fail again (nothing was loaded to short-circuit)"
+        );
     }
 }

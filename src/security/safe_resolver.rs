@@ -183,6 +183,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "live DNS; run with --ignored"]
     async fn test_safe_resolver_public_domain() {
         let hickory = crate::initialization::init_resolver().expect("resolver");
         let resolver = SafeResolver::new(hickory);

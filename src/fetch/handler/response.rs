@@ -315,6 +315,10 @@ async fn persist(
             log::error!("Failed to insert record for URL {final_url_for_logging}: {e}");
             anyhow::anyhow!("Database write failed: {e}")
         })?;
+    ctx.runtime.runtime_metrics.record_partial_failures(
+        upsert.partial_failures_inserted,
+        upsert.satellite_insert_errors_inserted,
+    );
 
     Ok((geoip_lookup_us, whois_lookup_us, upsert.inserted))
 }

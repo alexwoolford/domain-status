@@ -48,6 +48,8 @@ impl EnrichmentWrite {
 pub struct EnrichmentInsertSummary {
     /// Number of partial failures successfully inserted
     pub partial_failures_inserted: usize,
+    /// Subset of inserted rows with `error_type` = `Satellite insert error`.
+    pub satellite_insert_errors_inserted: usize,
     /// Number of partial failures that failed to insert
     pub partial_failures_failed: usize,
     /// `GeoIP` row write.
@@ -139,7 +141,12 @@ async fn insert_partial_failures_in_tx(
     for mut partial_failure in partial_failures.into_iter().chain(extras) {
         partial_failure.url_status_id = url_status_id;
         match insert::insert_url_partial_failure_in_tx(tx, &partial_failure).await {
-            Ok(_) => summary.partial_failures_inserted += 1,
+            Ok(_) => {
+                summary.partial_failures_inserted += 1;
+                if partial_failure.error_type == ErrorType::SatelliteInsertError {
+                    summary.satellite_insert_errors_inserted += 1;
+                }
+            }
             Err(e) => {
                 summary.partial_failures_failed += 1;
                 log::warn!(
@@ -420,7 +427,11 @@ pub async fn insert_persisted_url_record(
         );
     }
 
-    Ok(upsert)
+    Ok(UrlUpsertOutcome {
+        partial_failures_inserted: enrichment_summary.partial_failures_inserted,
+        satellite_insert_errors_inserted: enrichment_summary.satellite_insert_errors_inserted,
+        ..upsert
+    })
 }
 
 #[cfg(test)]

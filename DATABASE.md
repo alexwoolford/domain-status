@@ -75,7 +75,7 @@ One row per scan invocation.
 | `total_urls` | `INTEGER DEFAULT 0` | Total URLs attempted |
 | `successful_urls` | `INTEGER DEFAULT 0` | Successful URL observations |
 | `failed_urls` | `INTEGER DEFAULT 0` | Failed URL attempts |
-| `skipped_urls` | `INTEGER DEFAULT 0` | URLs intentionally skipped (e.g. duplicate domain in same run) |
+| `skipped_urls` | `INTEGER DEFAULT 0` | URLs that did not insert a new `url_status` row: invalid/SSRF skips, duplicate input lines, and UPSERT `Updated` (same `run_id` + `initial_domain`) |
 
 ### `url_status`
 
@@ -181,7 +181,16 @@ failures use `Satellite insert error` with a message `table_name: driver message
 
 ## Successful-Observation Satellites
 
-### DNS and redirect satellites
+Writes use two SQLite transactions per URL ([ADR 0007](docs/adr/0007-satellite-insert-failure-policy.md)):
+
+- **Core** (`URL_STATUS_CORE_SATELLITE_TABLES`) — inserted inside the `url_status` UPSERT transaction. On conflict, these children are deleted and rewritten in that same transaction.
+- **Enrichment** (`URL_STATUS_ENRICHMENT_SATELLITE_TABLES`) — replaced in a **second** writer transaction after the fact row commits, so readers never see an empty GeoIP/WHOIS/secrets window. `url_jwt_claims` is omitted from that list: those rows cascade-delete from `url_exposed_secrets`.
+
+A successful `url_status` row can still have missing children. Query `url_partial_failures` (`error_type` = `Satellite insert error`) to distinguish insert gaps from “not observed.”
+
+### DNS, robots, and page-structure satellites (core)
+
+These tables are in-transaction with `url_status`.
 
 | Table | Purpose | Key columns |
 |------|---------|-------------|
@@ -199,6 +208,7 @@ failures use `Satellite insert error` with a message `table_name: driver message
 | `url_security_txt` | Parsed RFC 9116 `security.txt` (one row per URL) | `source_url`, `http_status`, `contacts`, `expires`, `encryption`, `acknowledgments`, `preferred_languages`, `canonical`, `policy`, `hiring`, `raw_body` |
 | `url_robots_txt` | Fetched `/robots.txt` parent row | `http_status`, `raw_body` |
 | `url_robots_directives` | Parsed robots directives (no sitemap crawl) | `directive`, `value` |
+| `url_technologies` | Directly observed fingerprint matches. `HTTP/3` and `HSTS` are **not** inserted (use headers / `http_version` / TLS). Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 
 > **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
 > a zone apex (e.g. `example.com`), so this table is typically empty for
@@ -207,7 +217,7 @@ failures use `Satellite insert error` with a message `table_name: driver message
 > provider-side flattening) to a plain A/AAAA record, which is invisible here.
 > Don't read an empty `url_cname_records` row as "not behind a CDN."
 
-### HTTP and TLS satellites
+### HTTP and TLS satellites (core)
 
 | Table | Purpose | Key columns |
 |------|---------|-------------|
@@ -215,9 +225,8 @@ failures use `Satellite insert error` with a message `table_name: driver message
 | `url_security_headers` | Security-focused header subset | `header_name`, `header_value` |
 | `url_certificate_oids` | Certificate OIDs | `oid` |
 | `url_certificate_sans` | Certificate SANs | `san_value` |
-| `url_favicons` | Favicon URL + Shodan-compatible hash | `favicon_url`, `hash` |
 
-### Enrichment satellites
+### Enrichment satellites (second writer transaction)
 
 | Table | Purpose | Key columns |
 |------|---------|-------------|
@@ -227,9 +236,10 @@ failures use `Satellite insert error` with a message `table_name: driver message
 | `url_social_media_links` | Social profile links | `platform`, `profile_url`, `identifier` |
 | `url_analytics_ids` | Analytics/tracking IDs | `provider`, `tracking_id` |
 | `url_contact_links` | `mailto:` and `tel:` links | `contact_type`, `contact_value`, `raw_href` |
-| `url_technologies` | Directly observed fingerprint matches. `HTTP/3` and `HSTS` are **not** inserted (use headers / `http_version` / TLS). Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
 | `url_exposed_secrets` | Gitleaks-style secret findings in page content | `secret_type`, `matched_value`, `severity`, `location`, `context` |
-| `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`) | `id`, `exposed_secret_id`, `header_json`, `payload_json`, `algorithm`, `token_type`, `issuer`, `subject`, `audience`, `expiration_ms`, `issued_at_ms`, `not_before_ms`, `jwt_id` |
+| `url_jwt_claims` | Decoded JWT header + payload (1:1 with `url_exposed_secrets`; cascade-delete, not in the enrichment DELETE list) | `id`, `exposed_secret_id`, `header_json`, `payload_json`, `algorithm`, `token_type`, `issuer`, `subject`, `audience`, `expiration_ms`, `issued_at_ms`, `not_before_ms`, `jwt_id` |
+| `url_favicons` | Favicon URL + Shodan-compatible hash | `favicon_url`, `hash` |
+| `url_partial_failures` | Scan-time misses and satellite SQL insert gaps written in the enrichment transaction (see table above) | `error_type`, `error_message` |
 
 ## Failure Satellites
 

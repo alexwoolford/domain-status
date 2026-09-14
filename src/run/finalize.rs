@@ -7,9 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 
-use crate::app::statistics::print_error_statistics;
+use crate::app::statistics::{print_error_statistics, print_partial_failure_counts};
 use crate::app::{log_progress, print_timing_statistics, shutdown_gracefully};
-use crate::storage::insert::{count_run_fact_rows, saturating_i32_count};
+use crate::storage::insert::{
+    count_run_fact_rows, count_run_partial_failures, saturating_i32_count,
+};
 use crate::storage::{update_run_stats, RunStats};
 
 use super::{ScanLoopResult, ScanReport, ScanResources};
@@ -87,6 +89,36 @@ pub async fn finalize_scan(
     )
     .await
     .context("Failed to update run statistics")?;
+
+    let partials =
+        count_run_partial_failures(resources.shared_ctx.pool.as_ref(), &resources.run_id)
+            .await
+            .context("Failed to count url_partial_failures for run")?;
+    let live_partials = resources
+        .shared_ctx
+        .runtime
+        .runtime_metrics
+        .partial_failure_rows();
+    let live_satellite = resources
+        .shared_ctx
+        .runtime
+        .runtime_metrics
+        .satellite_insert_errors();
+    if i64::try_from(live_partials).unwrap_or(i64::MAX) != partials.total {
+        log::warn!(
+            "partial_failures atomic={} disagrees with url_partial_failures COUNT(*)={}; logging fact-table count",
+            live_partials,
+            partials.total
+        );
+    }
+    if i64::try_from(live_satellite).unwrap_or(i64::MAX) != partials.satellite_insert_errors {
+        log::warn!(
+            "satellite_insert_errors atomic={} disagrees with COUNT(*)={}; logging fact-table count",
+            live_satellite,
+            partials.satellite_insert_errors
+        );
+    }
+    print_partial_failure_counts(partials.total, partials.satellite_insert_errors);
 
     // Checkpoint WAL file for clean database state
     if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")

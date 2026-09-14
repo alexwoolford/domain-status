@@ -361,17 +361,13 @@ mod tests {
         let resolver = test_resolver();
         // Test with a well-known domain that should have a valid certificate
         let result = get_ssl_certificate_info("example.com".to_string(), resolver.as_ref()).await;
-        // This may succeed or fail depending on network, but should not panic
-        match result {
-            Ok(cert_info) => {
-                // If successful, verify we got some certificate data
-                assert!(cert_info.subject.is_some() || cert_info.issuer.is_some());
-            }
-            Err(_e) => {
-                // Network errors are acceptable in tests - just verify it's an error
-                // Don't check error message as it may vary
-            }
-        }
+        let cert_info = result.unwrap_or_else(|e| {
+            panic!("ignored live TLS test must handshake example.com, got {e}")
+        });
+        assert!(
+            cert_info.subject.is_some() || cert_info.issuer.is_some(),
+            "certificate should include subject or issuer"
+        );
     }
 
     #[tokio::test]

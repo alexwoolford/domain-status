@@ -79,24 +79,17 @@ mod tests {
     use crate::initialization::test_resolver;
 
     #[tokio::test]
+    #[ignore = "live DNS; run with --ignored"]
     async fn test_resolve_host_to_ip_success() {
         let resolver = test_resolver();
-        // Use a well-known domain that should resolve
-        // Note: This test makes a real DNS call, so it may fail in CI if DNS is blocked
-        // or if the domain is unreachable. Consider mocking for more reliable CI.
-        let result = resolve_host_to_ip("example.com", &resolver).await;
-        if let Ok(ip) = result {
-            assert!(!ip.is_empty(), "IP address should not be empty");
-            // Verify it's a valid IP (IPv4 or IPv6)
-            assert!(
-                ip.contains('.') || ip.contains(':'),
-                "IP address should be valid format"
-            );
-        } else {
-            // If DNS resolution fails (e.g., in CI without network), skip the test
-            // This is acceptable since the function logic is correct
-            eprintln!("DNS resolution failed (likely CI environment), skipping test");
-        }
+        let ip = resolve_host_to_ip("example.com", &resolver)
+            .await
+            .expect("example.com should resolve when network DNS is available");
+        assert!(!ip.is_empty(), "IP address should not be empty");
+        assert!(
+            ip.contains('.') || ip.contains(':'),
+            "IP address should be IPv4 or IPv6, got {ip}"
+        );
     }
 
     #[tokio::test]
@@ -113,24 +106,17 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "live reverse DNS; run with --ignored"]
     async fn test_reverse_dns_lookup_success() {
         let resolver = test_resolver();
-        // Use a well-known IP (Google's DNS: 8.8.8.8)
-        // Note: Reverse DNS may or may not be configured, so we test both cases
-        // Note: This test makes a real DNS call, so it may fail in CI if DNS is blocked
-        let result = reverse_dns_lookup("8.8.8.8", &resolver).await;
-        if result.is_ok() {
-            // Result may be Some or None depending on PTR record configuration
-            // Both are valid outcomes
-            if let Ok(Some(hostname)) = result {
-                assert!(
-                    !hostname.is_empty(),
-                    "Hostname should not be empty if present"
-                );
-            }
-        } else {
-            // If reverse DNS lookup fails (e.g., in CI without network), skip the test
-            eprintln!("Reverse DNS lookup failed (likely CI environment), skipping test");
+        let result = reverse_dns_lookup("8.8.8.8", &resolver)
+            .await
+            .expect("PTR lookup should complete when network DNS is available");
+        if let Some(hostname) = result {
+            assert!(
+                !hostname.is_empty(),
+                "PTR hostname should not be empty when present"
+            );
         }
     }
 

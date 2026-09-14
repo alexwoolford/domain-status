@@ -97,8 +97,17 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let result = init_asn_database(temp_dir.path()).await;
-        assert!(result.is_ok());
-        // Should return Ok but not load database
+        assert!(
+            result.is_ok(),
+            "ASN init without a license must not abort the scan"
+        );
+        assert!(
+            crate::geoip::GEOIP_ASN_READER
+                .read()
+                .expect("ASN reader lock")
+                .is_none(),
+            "ASN reader must stay unloaded without MAXMIND_LICENSE_KEY"
+        );
     }
 
     #[tokio::test]
@@ -107,18 +116,33 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let result = init_asn_database(temp_dir.path()).await;
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "empty MAXMIND_LICENSE_KEY must degrade, not abort"
+        );
+        assert!(
+            crate::geoip::GEOIP_ASN_READER
+                .read()
+                .expect("ASN reader lock")
+                .is_none(),
+            "ASN reader must stay unloaded with an empty license key"
+        );
     }
 
     #[tokio::test]
     async fn test_init_asn_database_already_loaded() {
-        // Test when database is already loaded
-        // First, we'd need to load it, but in unit tests it's not loaded
-        // So this test verifies the check doesn't panic
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should return Ok (either already loaded or not loaded due to no license)
-        assert!(result.is_ok());
+        let first = init_asn_database(temp_dir.path()).await;
+        let second = init_asn_database(temp_dir.path()).await;
+        assert!(first.is_ok() && second.is_ok());
+        assert!(
+            crate::geoip::GEOIP_ASN_READER
+                .read()
+                .expect("ASN reader lock")
+                .is_none(),
+            "without a license, repeated init must keep the ASN reader unloaded"
+        );
     }
 
     #[tokio::test]
@@ -130,8 +154,17 @@ mod tests {
 
         // This will attempt to download, which will fail, but should handle gracefully
         let result = init_asn_database(temp_dir.path()).await;
-        // Should return Ok even if download fails (logs warning but continues)
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "failed ASN download must not abort the scan"
+        );
+        assert!(
+            crate::geoip::GEOIP_ASN_READER
+                .read()
+                .expect("ASN reader lock")
+                .is_none(),
+            "ASN reader must stay unloaded when MaxMind download fails"
+        );
     }
 
     #[tokio::test]
