@@ -10,7 +10,7 @@ During a scan it may:
 
 - open outbound HTTP/S connections
 - perform DNS lookups using the system resolver configuration
-- optionally perform WHOIS/RDAP lookups
+- perform WHOIS/RDAP lookups (on by default; disable with `--no-whois`)
 - optionally download and cache fingerprint and GeoIP assets
 - write into a local SQLite database in WAL mode
 - optionally expose a local-only status server on `127.0.0.1`
@@ -20,8 +20,7 @@ During a scan it may:
 | Setting | Default | Notes |
 |---------|---------|-------|
 | Database path | `./domain_status.db` | Scans and exports both default here |
-| Max concurrency | `30` | Global worker limit |
-| Max per domain | `5` | Set `0` to disable the per-domain cap |
+| Max concurrency | `30` | Global worker limit (no per-domain cap) |
 | Initial rate limit | `15` URL-admission tokens/sec | One token per input URL, not per HTTP request |
 | HTTP timeout | `10s` | Request timeout |
 | Overall per-URL timeout | `35s` | Guardrail around the full processing pipeline |

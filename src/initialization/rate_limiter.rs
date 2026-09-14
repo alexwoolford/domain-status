@@ -75,9 +75,9 @@ fn compute_refill_permits(
 impl RateLimiter {
     /// Acquires a permit from the rate limiter, blocking until one is available.
     ///
-    /// If the semaphore is closed (e.g., during shutdown), the acquire is skipped
-    /// and a warning is logged. This prevents requests from flooding the target
-    /// during shutdown race conditions.
+    /// If the semaphore is closed (e.g., during shutdown), the wait is skipped
+    /// and a warning is logged. Remaining admissions then proceed without the
+    /// RPS cap — shutdown can briefly unpin rate limiting.
     pub async fn acquire(&self) {
         match self.permits.acquire().await {
             Ok(permit) => {

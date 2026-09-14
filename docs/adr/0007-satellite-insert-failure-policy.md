@@ -32,6 +32,7 @@ Trade-offs:
 
 ## Related Code
 
-- `src/storage/insert/url/mod.rs` (`URL_STATUS_CORE_SATELLITE_TABLES`)
+- `src/storage/insert/url/core_satellites.rs` (`URL_STATUS_CORE_SATELLITE_TABLES`)
+- `src/storage/insert/url/upsert.rs` (core UPSERT + in-txn satellite writes)
 - `src/storage/insert/record.rs` (`insert_enrichment_data`)
 - `src/error_handling/types.rs` (`ErrorType::SatelliteInsertError`)

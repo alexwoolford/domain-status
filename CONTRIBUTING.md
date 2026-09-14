@@ -88,7 +88,7 @@ When extending what a scan persists (or exports), use this checklist so parallel
 
 1. Add a migration under `migrations/` and update [`DATABASE.md`](DATABASE.md).
 2. Add the field to [`UrlRecord`](src/storage/models.rs) (and `UrlRecord::test_default`).
-3. Add one entry to [`URL_STATUS_COLUMN_DEFS`](src/storage/insert/url/mod.rs) (name + bind extractor). Do **not** hand-edit a separate bind chain — SQL and binds are derived from this table.
+3. Add one entry to [`URL_STATUS_COLUMN_DEFS`](src/storage/insert/url/columns.rs) (name + bind extractor). Do **not** hand-edit a separate bind chain — SQL and binds are derived from this table.
 4. Populate the field in the fetch/build path (`build_url_record` / capture structs).
 5. Decide export:
    - Flat export (CSV/Parquet/JSONL): update `MainRowData` / `extract_main_row_data`, export query, and format serializers (`CSV_COLUMN_DEFS`, Parquet schema, JSONL). Add to `URL_STATUS_REQUIRED_IN_FLAT_EXPORT` in [`field_inventory.rs`](src/export/field_inventory.rs) if consumers must see it.
@@ -99,7 +99,7 @@ When extending what a scan persists (or exports), use this checklist so parallel
 1. Migration + `DATABASE.md`.
 2. Insert helper under `src/storage/insert/url/satellite/` (core) or `src/storage/insert/enrichment/` (enrichment).
 3. Wire into `PersistedUrlRecord` / `build_persisted_url_record`. Core satellites also need `UrlRecordInsertParams`, `from_persisted_record`, and `with_empty_satellites`. Enrichment goes through `insert_enrichment_data` instead.
-4. Add the table name to [`URL_STATUS_CORE_SATELLITE_TABLES`](src/storage/insert/url/mod.rs) (in-transaction children) or [`URL_STATUS_ENRICHMENT_SATELLITE_TABLES`](src/storage/insert/url/mod.rs) (post-commit children). UPSERT cleanup and upsert-clear tests use those lists; do not put an enrichment table on the core DELETE list.
+4. Add the table name to [`URL_STATUS_CORE_SATELLITE_TABLES`](src/storage/insert/url/core_satellites.rs) (in-transaction children) or [`URL_STATUS_ENRICHMENT_SATELLITE_TABLES`](src/storage/insert/url/core_satellites.rs) (post-commit children). UPSERT cleanup and upsert-clear tests use those lists; do not put an enrichment table on the core DELETE list.
 5. Export only if needed (same decision as above; satellite-only tables often stay DB-queryable — document in `SATELLITE_DB_ONLY` when intentional).
 
 ### New CLI / config flag

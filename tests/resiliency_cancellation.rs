@@ -219,8 +219,8 @@ async fn test_cancellation_during_simple_insert() {
 // - Zero satellite records
 // - No orphaned data
 //
-// **Why This Matters:** The design document (src/storage/insert/url/mod.rs:165-175)
-// states that satellite inserts handle errors internally and don't propagate them.
+// **Why This Matters:** Core satellite inserts in `src/storage/insert/url/upsert.rs`
+// handle errors internally and don't propagate them.
 // But what happens if the *transaction itself* is dropped during satellite writes?
 // We need to verify that Drop-based rollback works correctly.
 //-----------------------------------------------------------------------------

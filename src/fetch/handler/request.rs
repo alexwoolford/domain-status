@@ -297,6 +297,19 @@ mod tests {
         )
     }
 
+    fn assert_db_insert_failed(result: Result<crate::fetch::UrlProcessOutcome, anyhow::Error>) {
+        let error_msg = result
+            .expect_err("expected SQLite insert failure without migrations")
+            .to_string();
+        assert!(
+            error_msg.contains("Database")
+                || error_msg.contains("migration")
+                || error_msg.contains("no such table")
+                || error_msg.contains("url_status"),
+            "Expected database/schema error, got: {error_msg}"
+        );
+    }
+
     #[tokio::test]
     async fn test_handle_http_request_success() {
         let server = Server::run();
@@ -313,19 +326,7 @@ mod tests {
         let start_time = std::time::Instant::now();
 
         // Request + domain extraction succeed; insert fails without migrations.
-        let result = handle_http_request(&ctx, &url, start_time).await;
-        assert!(
-            result.is_err(),
-            "expected DB insert failure without migrations"
-        );
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("Database")
-                || error_msg.contains("migration")
-                || error_msg.contains("no such table")
-                || error_msg.contains("url_status"),
-            "Expected database/schema error, got: {error_msg}"
-        );
+        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
     }
 
     #[tokio::test]
@@ -341,9 +342,9 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        let _result = handle_http_request(&ctx, &url, start_time).await;
+        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
         // 403 pages are processed through handle_response (OSINT data preserved).
-        // Result may be Ok or Err (e.g. missing migrations); bot detection must still be tracked.
+        // Insert fails without migrations; bot detection must still be tracked.
 
         assert_eq!(
             ctx.runtime
@@ -366,8 +367,8 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        let _result = handle_http_request(&ctx, &url, start_time).await;
-        // 404 pages are now processed through handle_response (OSINT data preserved).
+        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
+        // 404 pages are processed through handle_response (OSINT data preserved).
         // 404 should NOT trigger bot detection metric.
 
         assert_eq!(
@@ -514,8 +515,8 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // This will fail at database insertion, but redirect tracking should work
-        let _result = handle_http_request(&ctx, &start_url, start_time).await;
+        // Request succeeds through the redirect; insert fails without migrations.
+        assert_db_insert_failed(handle_http_request(&ctx, &start_url, start_time).await);
 
         // Redirect should be tracked
         assert_eq!(
@@ -541,13 +542,15 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // Test with a URL that would trigger HTTP->HTTPS detection
-        // Since httptest uses http://, we can't fully test this, but we can verify
-        // the redirect tracking logic doesn't panic
-        let _result = handle_http_request(&ctx, &url, start_time).await;
-
-        // Should not panic and should handle redirects
-        // (Actual HTTP->HTTPS detection requires real redirect, tested in integration)
+        // httptest cannot change scheme, so HttpsRedirect stays 0; insert still fails
+        // without migrations after a same-scheme 200.
+        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
+        assert_eq!(
+            ctx.runtime
+                .error_stats
+                .get_info_count(crate::error_handling::InfoType::HttpsRedirect),
+            0
+        );
     }
 
     /// Adversarial: redirect chain that ends in 4xx; outcome must be Err and redirect must be tracked.
@@ -668,8 +671,8 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // This will fail at database insertion, but redirect tracking should work
-        let _result = handle_http_request(&ctx, &start_url, start_time).await;
+        // Request succeeds through the redirect chain; insert fails without migrations.
+        assert_db_insert_failed(handle_http_request(&ctx, &start_url, start_time).await);
 
         // Multiple redirects (>2) should be tracked
         assert_eq!(
@@ -706,15 +709,7 @@ mod tests {
 
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
-
-        // This will fail at database insertion, but request headers should be sent
-        // The RequestHeaders::apply_to_request_builder is called in handle_http_request
-        // If headers weren't applied, the request would still work, but we verify
-        // the code path exists and doesn't panic
-        let _result = handle_http_request(&ctx, &url, start_time).await;
-
-        // The key is that RequestHeaders::apply_to_request_builder is called
-        // and the request completes (fails at database, but HTTP request succeeds)
+        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
     }
 
     #[tokio::test]
@@ -733,26 +728,21 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        let _initial_error_count = ctx
+        let initial_error_count = ctx
             .runtime
             .error_stats
-            .get_error_count(crate::error_handling::ErrorType::HttpRequestOtherError);
+            .get_error_count(crate::error_handling::ErrorType::HttpRequestInternalServerError);
 
         let result = handle_http_request(&ctx, &url, start_time).await;
-
-        // Should return error
         assert!(result.is_err());
-
-        // Error stats should be updated (update_error_stats is called)
-        // We can't easily verify the exact count without accessing internal state,
-        // but we verify the function doesn't panic and error handling works
-        let _final_error_count = ctx
+        let final_error_count = ctx
             .runtime
             .error_stats
-            .get_error_count(crate::error_handling::ErrorType::HttpRequestOtherError);
-
-        // The key is that update_error_stats was called (verified by no panic)
-        // Exact count verification would require exposing internal state
+            .get_error_count(crate::error_handling::ErrorType::HttpRequestInternalServerError);
+        assert!(
+            final_error_count > initial_error_count,
+            "HTTP 500 should increment HttpRequestInternalServerError"
+        );
     }
 
     #[tokio::test]
@@ -780,14 +770,9 @@ mod tests {
 
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
+        assert_db_insert_failed(handle_http_request(&ctx, &start_url, start_time).await);
 
-        // This will fail at database insertion, but alt-svc handling should work
-        let _result = handle_http_request(&ctx, &start_url, start_time).await;
-
-        // The key is that the alt-svc header handling code path is executed
-        // (lines 91-101 in request.rs) without panicking
-        // Actual verification would require inspecting the response headers,
-        // which is difficult with the current architecture
+        // The alt-svc header handling path ran before the insert failed.
     }
 
     #[tokio::test]
@@ -809,11 +794,6 @@ mod tests {
 
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
-
-        // This will fail at database insertion, but alt-svc handling should work
-        let _result = handle_http_request(&ctx, &url, start_time).await;
-
-        // The key is that the code at line 91 (!response.headers().contains_key("alt-svc"))
-        // correctly detects existing header and doesn't add duplicate
+        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
     }
 }

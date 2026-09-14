@@ -192,6 +192,10 @@ pub struct StatusResponse {
     pub concurrency_in_use: Option<usize>,
     pub retried_requests: usize,
     pub non_retriable_failures: usize,
+    /// Persisted `url_partial_failures` rows (does not increment `failed_urls`).
+    pub partial_failures: usize,
+    /// Subset with `error_type` = `Satellite insert error`.
+    pub satellite_insert_errors: usize,
     pub errors: ErrorCounts,
     pub warnings: WarningCounts,
     pub info: InfoCounts,
@@ -321,6 +325,8 @@ mod tests {
             concurrency_in_use: Some(10),
             retried_requests: 4,
             non_retriable_failures: 2,
+            partial_failures: 0,
+            satellite_insert_errors: 0,
             errors: ErrorCounts {
                 total: 5,
                 timeout: 2,
@@ -376,6 +382,8 @@ mod tests {
             concurrency_in_use: None,
             retried_requests: 0,
             non_retriable_failures: 0,
+            partial_failures: 0,
+            satellite_insert_errors: 0,
             errors: ErrorCounts {
                 total: 0,
                 timeout: 0,

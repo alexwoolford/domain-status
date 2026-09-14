@@ -36,7 +36,7 @@ Caches (fingerprints/GeoIP/WHOIS/UA) default under the platform cache dir + `dom
 2. **Status Server** (optional) — Axum HTTP server with `/health`, `/status`, `/metrics`
 3. **URL Processing Loop** (`mod.rs`) — Concurrent dispatch via Tokio JoinSet, token-bucket rate limiting
 4. **Per-URL Task** (`task.rs`) — HTTP fetch, redirect chain, DNS, TLS, HTML parsing, fingerprinting, enrichments
-5. **Storage** — SQLite inserts with UPSERT semantics, per-URL transactions
+5. **Storage** — SQLite UPSERT: one transaction for `url_status` plus core satellites, then a second writer transaction for enrichment satellites ([ADR 0007](docs/adr/0007-satellite-insert-failure-policy.md))
 6. **Finalization** (`finalize.rs`) — Drain queue, compute stats, export (CSV/JSONL/Parquet)
 
 ### Key Source Modules
@@ -46,7 +46,7 @@ Caches (fingerprints/GeoIP/WHOIS/UA) default under the platform cache dir + `dom
 - **`src/run/`** — Scan orchestration (entry: `run_scan()`)
 - **`src/fetch/`** — HTTP requests, redirect resolution, DNS, favicon hashing
 - **`src/fingerprint/`** — Technology detection against a loaded/vendored Wappalyzer-compatible ruleset (`patterns.rs` has matching helpers, not the rule catalog)
-- **`src/storage/`** — SQLite layer (pool, migrations, insert/, failure/)
+- **`src/storage/`** — SQLite layer (pool, migrations, insert/, failure/). URL insert: `insert/url/columns.rs` (fact-row registry), `core_satellites.rs` (CORE vs ENRICHMENT lists), `upsert.rs` (in-txn writers)
 - **`src/export/`** — CSV, JSONL, Parquet export with query builders
 - **`src/whois/`** — WHOIS/RDAP lookup with disk-based caching
 - **`src/tls/`** — Certificate DER parsing, cipher suite extraction

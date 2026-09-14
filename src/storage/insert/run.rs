@@ -125,6 +125,38 @@ pub(crate) async fn count_run_fact_rows(
     })
 }
 
+/// `url_partial_failures` counts for a run (does not affect `failed_urls`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunPartialFailureCounts {
+    pub total: i64,
+    pub satellite_insert_errors: i64,
+}
+
+/// Counts persisted partial-failure rows for `run_id`.
+pub(crate) async fn count_run_partial_failures(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<RunPartialFailureCounts, DatabaseError> {
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM url_partial_failures WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await
+            .map_err(DatabaseError::SqlError)?;
+    let satellite_insert_errors: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM url_partial_failures WHERE run_id = ? AND error_type = ?",
+    )
+    .bind(run_id)
+    .bind(crate::error_handling::ErrorType::SatelliteInsertError.as_str())
+    .fetch_one(pool)
+    .await
+    .map_err(DatabaseError::SqlError)?;
+    Ok(RunPartialFailureCounts {
+        total,
+        satellite_insert_errors,
+    })
+}
+
 /// Saturating `COUNT(*)` → `i32` for `runs.*_urls` columns.
 pub(crate) fn saturating_i32_count(count: i64) -> i32 {
     i32::try_from(count.max(0)).unwrap_or(i32::MAX)
@@ -434,6 +466,69 @@ mod tests {
             RunFactCounts {
                 successful_urls: 0,
                 failed_urls: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_count_run_partial_failures() {
+        let pool = create_test_pool().await;
+        insert_run_metadata(
+            &pool,
+            &RunMetadata {
+                run_id: "partial-run",
+                start_time_ms: 1,
+                version: "0.1.0",
+                fingerprints_source: None,
+                fingerprints_version: None,
+                geoip_version: None,
+            },
+        )
+        .await
+        .expect("insert run");
+        let url_status_id = create_test_url_status(
+            &pool,
+            "a.example.com",
+            "a.example.com",
+            200,
+            Some("partial-run"),
+            1,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO url_partial_failures (
+                url_status_id, error_type, error_message, observed_at_ms, run_id
+            ) VALUES (?, ?, 'mx timeout', 1, 'partial-run')",
+        )
+        .bind(url_status_id)
+        .bind(crate::error_handling::ErrorType::DnsMxLookupError.as_str())
+        .execute(&pool)
+        .await
+        .expect("insert dns partial");
+        sqlx::query(
+            "INSERT INTO url_partial_failures (
+                url_status_id, error_type, error_message, observed_at_ms, run_id
+            ) VALUES (?, ?, 'url_cookies: constraint', 1, 'partial-run')",
+        )
+        .bind(url_status_id)
+        .bind(crate::error_handling::ErrorType::SatelliteInsertError.as_str())
+        .execute(&pool)
+        .await
+        .expect("insert satellite partial");
+
+        let counts = count_run_partial_failures(&pool, "partial-run")
+            .await
+            .expect("count partials");
+        assert_eq!(counts.total, 2);
+        assert_eq!(counts.satellite_insert_errors, 1);
+        let empty = count_run_partial_failures(&pool, "missing-run")
+            .await
+            .expect("count missing");
+        assert_eq!(
+            empty,
+            RunPartialFailureCounts {
+                total: 0,
+                satellite_insert_errors: 0,
             }
         );
     }

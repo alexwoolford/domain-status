@@ -58,6 +58,15 @@ pub fn print_error_statistics(error_stats: &ProcessingStats) {
     }
 }
 
+/// Logs `url_partial_failures` fact-table counts. These do not increment `failed_urls`.
+pub fn print_partial_failure_counts(total: i64, satellite_insert_errors: i64) {
+    if total > 0 {
+        info!(
+            "Partial failures ({total} url_partial_failures rows, {satellite_insert_errors} satellite insert errors). These do not increment failed_urls."
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

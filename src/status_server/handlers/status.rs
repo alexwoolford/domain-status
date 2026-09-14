@@ -70,6 +70,8 @@ pub(crate) fn build_status_response(state: &StatusState, elapsed: f64) -> Status
         concurrency_in_use: concurrency_in_use(state),
         retried_requests: state.runtime_metrics.retried_requests(),
         non_retriable_failures: state.runtime_metrics.non_retriable_failures(),
+        partial_failures: state.runtime_metrics.partial_failure_rows(),
+        satellite_insert_errors: state.runtime_metrics.satellite_insert_errors(),
         errors: ErrorCounts {
             total: state.error_stats.total_errors(),
             timeout: state
@@ -286,6 +288,8 @@ mod tests {
         assert_eq!(response.phase, "scanning");
         assert_eq!(response.retried_requests, 1);
         assert_eq!(response.non_retriable_failures, 1);
+        assert_eq!(response.partial_failures, 0);
+        assert_eq!(response.satellite_insert_errors, 0);
         assert_eq!(response.errors.total, 3);
         assert_eq!(response.errors.timeout, 2);
         assert_eq!(response.errors.dns_error, 1);
@@ -295,6 +299,21 @@ mod tests {
         assert_eq!(timing.count, 1);
         assert_eq!(timing.averages.http_request_ms, 2);
         assert_eq!(timing.averages.total_ms, 2);
+    }
+
+    #[test]
+    fn test_build_status_response_includes_partial_failure_counts() {
+        let mut state = test_status_state(10, 4, 3, 0, 1);
+        state.runtime_metrics = Arc::new({
+            let metrics = crate::runtime_metrics::RuntimeMetrics::default();
+            metrics.record_partial_failures(4, 2);
+            metrics
+        });
+        let response = build_status_response(&state, 1.0);
+        assert_eq!(response.successful_urls, 3);
+        assert_eq!(response.failed_urls, 0);
+        assert_eq!(response.partial_failures, 4);
+        assert_eq!(response.satellite_insert_errors, 2);
     }
 
     #[test]

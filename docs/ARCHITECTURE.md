@@ -8,8 +8,8 @@ At a high level:
 
 1. CLI parses a scan or export command.
 2. Scan startup initializes caches, clients, resolver, rate limiting, database pool, and migrations.
-3. URL processing gathers HTTP, DNS, TLS, fingerprint, and optional enrichment data.
-4. Results are written into SQLite and later exported as CSV, JSONL, or Parquet.
+3. URL processing gathers HTTP, DNS, TLS, fingerprint, and enrichment data (WHOIS on by default; GeoIP when configured).
+4. Results are written into SQLite in two writer transactions — core `url_status` plus in-transaction satellites, then enrichment rewrite ([ADR 0007](adr/0007-satellite-insert-failure-policy.md)) — and later exported as CSV, JSONL, or Parquet.
 5. Optional status endpoints expose live progress and metrics.
 
 ## Code Map

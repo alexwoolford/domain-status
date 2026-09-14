@@ -59,7 +59,7 @@ Trade-offs:
 ## Operational Notes
 
 - GeoIP failures log a warning and scanning continues without GeoIP enrichment
-- WHOIS is opt-in and returns `None` on timeout or backend failure
+- WHOIS/RDAP is on by default; disable with `--no-whois`. Lookups return `None` on timeout or backend failure
 - runtime metrics and status endpoints are the preferred place to surface degradation signals
 
 ## Related Code
