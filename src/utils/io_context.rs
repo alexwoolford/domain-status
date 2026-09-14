@@ -72,6 +72,7 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
     if parent.as_os_str().is_empty() || parent == Path::new(".") {
         return Ok(());
     }
+    #[cfg(unix)]
     let already_exists = parent.is_dir();
     std::fs::create_dir_all(parent)?;
     #[cfg(unix)]
