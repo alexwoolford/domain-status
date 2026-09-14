@@ -10,13 +10,11 @@ pub(crate) async fn insert_redirect_chain(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     redirect_chain: &[(String, u16)],
-) {
+) -> Result<(), sqlx::Error> {
     if redirect_chain.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // Batch insert: build VALUES clause for all redirects
-    // Preserve sequence order (redirects happen in order, 1-based)
     let query = build_batch_insert_query(
         "url_redirect_chain",
         &["url_status_id", "sequence_order", "redirect_url", "http_status"],
@@ -26,9 +24,8 @@ pub(crate) async fn insert_redirect_chain(
 
     let mut query_builder = sqlx::query(&query);
     for (index, (url, status)) in redirect_chain.iter().enumerate() {
-        // Redirect chains are short (< 20 hops), index + 1 fits in i32
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let sequence_order = (index + 1) as i32; // 1-based ordering
+        let sequence_order = (index + 1) as i32;
         let status_i32 = i32::from(*status);
         query_builder = query_builder
             .bind(url_status_id)
@@ -37,14 +34,8 @@ pub(crate) async fn insert_redirect_chain(
             .bind(status_i32);
     }
 
-    if let Err(e) = query_builder.execute(&mut **tx).await {
-        log::warn!(
-            "Failed to batch insert {} redirect chain URLs for url_status_id {}: {}",
-            redirect_chain.len(),
-            url_status_id,
-            e
-        );
-    }
+    query_builder.execute(&mut **tx).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -66,7 +57,9 @@ mod tests {
             ("https://www.example.com".to_string(), 200),
         ];
 
-        insert_redirect_chain(&mut tx, url_status_id, &redirect_chain).await;
+        insert_redirect_chain(&mut tx, url_status_id, &redirect_chain)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion with correct sequence order

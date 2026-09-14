@@ -6,10 +6,12 @@
 
 use sqlx::SqlitePool;
 
-use crate::error_handling::DatabaseError;
+use crate::error_handling::{DatabaseError, ErrorType};
+use crate::storage::insert::retry::with_sqlite_retry;
+use crate::storage::insert::url::URL_STATUS_ENRICHMENT_SATELLITE_TABLES;
+use crate::storage::insert::{self, SatelliteWriteFailure, UrlUpsertOutcome};
+use crate::storage::models::UrlPartialFailureRecord;
 use crate::storage::PersistedUrlRecord;
-
-use crate::storage::insert::{self, UrlUpsertOutcome};
 
 /// Summary of enrichment data insertion results.
 ///
@@ -77,24 +79,289 @@ impl EnrichmentInsertSummary {
     }
 }
 
-/// Runs an enrichment insert and records success/failure on the summary flags.
-async fn try_enrich<F, Fut>(
+fn try_enrich_tx(
     label: &str,
+    table: &'static str,
     url_status_id: i64,
     inserted: &mut bool,
     failed: &mut bool,
-    insert: F,
-) where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<(), DatabaseError>>,
-{
-    match insert().await {
+    insert_failures: &mut Vec<SatelliteWriteFailure>,
+    result: Result<(), DatabaseError>,
+) {
+    match result {
         Ok(()) => *inserted = true,
         Err(e) => {
             *failed = true;
             log::warn!("Failed to insert {label} for url_status_id {url_status_id}: {e}");
+            insert_failures.push(SatelliteWriteFailure {
+                table,
+                message: e.to_string(),
+            });
         }
     }
+}
+
+fn satellite_write_to_partial_failure(
+    url_status_id: i64,
+    timestamp: i64,
+    run_id: Option<String>,
+    failure: &SatelliteWriteFailure,
+) -> UrlPartialFailureRecord {
+    UrlPartialFailureRecord {
+        url_status_id,
+        error_type: ErrorType::SatelliteInsertError,
+        error_message: format!("{}: {}", failure.table, failure.message),
+        timestamp,
+        run_id,
+    }
+}
+
+async fn insert_partial_failures_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    partial_failures: Vec<UrlPartialFailureRecord>,
+    extra: &[SatelliteWriteFailure],
+    timestamp: i64,
+    run_id: Option<String>,
+    summary: &mut EnrichmentInsertSummary,
+) {
+    let extras = extra.iter().map(|failure| {
+        satellite_write_to_partial_failure(url_status_id, timestamp, run_id.clone(), failure)
+    });
+    for mut partial_failure in partial_failures.into_iter().chain(extras) {
+        partial_failure.url_status_id = url_status_id;
+        match insert::insert_url_partial_failure_in_tx(tx, &partial_failure).await {
+            Ok(_) => summary.partial_failures_inserted += 1,
+            Err(e) => {
+                summary.partial_failures_failed += 1;
+                log::warn!(
+                    "Failed to insert partial failure for url_status_id {url_status_id}: {e}"
+                );
+            }
+        }
+    }
+}
+
+async fn insert_exposed_secrets_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    url_status_id: i64,
+    exposed_secrets: &[crate::parse::ExposedSecret],
+    summary: &mut EnrichmentInsertSummary,
+    insert_failures: &mut Vec<SatelliteWriteFailure>,
+) {
+    if exposed_secrets.is_empty() {
+        return;
+    }
+    match insert::enrichment::insert_exposed_secrets_in_tx(tx, url_status_id, exposed_secrets).await
+    {
+        Ok(ids) => {
+            summary.exposed_secrets_inserted = true;
+            let jwt_items: Vec<(i64, &crate::parse::jwt::DecodedJwt)> = exposed_secrets
+                .iter()
+                .zip(&ids)
+                .filter_map(|(secret, &secret_id)| {
+                    secret.decoded_jwt.as_ref().map(|jwt| (secret_id, jwt))
+                })
+                .collect();
+            if !jwt_items.is_empty() {
+                if let Err(e) =
+                    insert::enrichment::insert_jwt_claims_batch_in_tx(tx, &jwt_items).await
+                {
+                    log::warn!(
+                        "Failed to insert JWT claims batch for url_status_id {url_status_id}: {e}"
+                    );
+                    insert_failures.push(SatelliteWriteFailure {
+                        table: "url_jwt_claims",
+                        message: e.to_string(),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            summary.exposed_secrets_failed = true;
+            log::warn!("Failed to insert exposed secrets for url_status_id {url_status_id}: {e}");
+            insert_failures.push(SatelliteWriteFailure {
+                table: "url_exposed_secrets",
+                message: e.to_string(),
+            });
+        }
+    }
+}
+
+/// Replaces enrichment satellites in one writer transaction after the fact row commits.
+async fn insert_enrichment_data(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    record: PersistedUrlRecord,
+    core_satellite_failures: Vec<SatelliteWriteFailure>,
+) -> EnrichmentInsertSummary {
+    match with_sqlite_retry(|| {
+        insert_enrichment_txn(pool, url_status_id, &record, &core_satellite_failures)
+    })
+    .await
+    {
+        Ok(summary) => summary,
+        Err(e) => {
+            log::warn!(
+                "Enrichment transaction failed for url_status_id {url_status_id}: {e}; prior enrichment rows kept"
+            );
+            EnrichmentInsertSummary {
+                partial_failures_failed: core_satellite_failures.len()
+                    + record.partial_failures.len(),
+                ..EnrichmentInsertSummary::default()
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)] // One insert path per enrichment satellite
+async fn insert_enrichment_txn(
+    pool: &SqlitePool,
+    url_status_id: i64,
+    record: &PersistedUrlRecord,
+    core_satellite_failures: &[SatelliteWriteFailure],
+) -> Result<EnrichmentInsertSummary, DatabaseError> {
+    let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+    super::utils::delete_child_rows(
+        &mut tx,
+        URL_STATUS_ENRICHMENT_SATELLITE_TABLES,
+        url_status_id,
+    )
+    .await
+    .map_err(DatabaseError::SqlError)?;
+
+    let mut summary = EnrichmentInsertSummary::default();
+    let mut insert_failures = Vec::new();
+
+    if let Some((ip_address, geoip_result)) = record.geoip.as_ref() {
+        try_enrich_tx(
+            &format!("GeoIP data for IP '{ip_address}'"),
+            "url_geoip",
+            url_status_id,
+            &mut summary.geoip_inserted,
+            &mut summary.geoip_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_geoip_data_in_tx(&mut tx, url_status_id, geoip_result).await,
+        );
+    }
+
+    if let Some(structured_data) = record.structured_data.as_ref() {
+        try_enrich_tx(
+            "structured data",
+            "url_structured_data",
+            url_status_id,
+            &mut summary.structured_data_inserted,
+            &mut summary.structured_data_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_structured_data_in_tx(
+                &mut tx,
+                url_status_id,
+                structured_data,
+            )
+            .await,
+        );
+    }
+
+    if !record.social_media_links.is_empty() {
+        try_enrich_tx(
+            "social media links",
+            "url_social_media_links",
+            url_status_id,
+            &mut summary.social_media_inserted,
+            &mut summary.social_media_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_social_media_links_in_tx(
+                &mut tx,
+                url_status_id,
+                &record.social_media_links,
+            )
+            .await,
+        );
+    }
+
+    if let Some(whois_result) = record.whois.as_ref() {
+        try_enrich_tx(
+            "WHOIS data",
+            "url_whois",
+            url_status_id,
+            &mut summary.whois_inserted,
+            &mut summary.whois_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_whois_data_in_tx(&mut tx, url_status_id, whois_result).await,
+        );
+    }
+
+    if !record.contact_links.is_empty() {
+        try_enrich_tx(
+            "contact links",
+            "url_contact_links",
+            url_status_id,
+            &mut summary.contact_links_inserted,
+            &mut summary.contact_links_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_contact_links_in_tx(
+                &mut tx,
+                url_status_id,
+                &record.contact_links,
+            )
+            .await,
+        );
+    }
+
+    insert_exposed_secrets_in_tx(
+        &mut tx,
+        url_status_id,
+        &record.exposed_secrets,
+        &mut summary,
+        &mut insert_failures,
+    )
+    .await;
+
+    if !record.analytics_ids.is_empty() {
+        try_enrich_tx(
+            "analytics IDs",
+            "url_analytics_ids",
+            url_status_id,
+            &mut summary.analytics_ids_inserted,
+            &mut summary.analytics_ids_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_analytics_ids_in_tx(
+                &mut tx,
+                url_status_id,
+                &record.analytics_ids,
+            )
+            .await,
+        );
+    }
+
+    if let Some(favicon_data) = record.favicon.as_ref() {
+        try_enrich_tx(
+            "favicon data",
+            "url_favicons",
+            url_status_id,
+            &mut summary.favicon_inserted,
+            &mut summary.favicon_failed,
+            &mut insert_failures,
+            insert::enrichment::insert_favicon_data_in_tx(&mut tx, url_status_id, favicon_data)
+                .await,
+        );
+    }
+
+    let mut all_write_failures = core_satellite_failures.to_vec();
+    all_write_failures.append(&mut insert_failures);
+    insert_partial_failures_in_tx(
+        &mut tx,
+        url_status_id,
+        record.partial_failures.clone(),
+        &all_write_failures,
+        record.url_record.timestamp,
+        record.url_record.run_id.clone(),
+        &mut summary,
+    )
+    .await;
+
+    tx.commit().await.map_err(DatabaseError::SqlError)?;
+    Ok(summary)
 }
 
 /// Inserts a complete URL persistence record directly into the database.
@@ -124,18 +391,13 @@ pub async fn insert_persisted_url_record(
         e
     })?;
     let url_status_id = upsert.id;
+    let satellite_insert_failures = upsert.satellite_insert_failures.clone();
 
-    // Insert enrichment data
-    // Note: Enrichment data is inserted AFTER the main transaction commits.
-    // This design choice ensures that:
-    // 1. Main URL record is always saved (even if enrichment fails)
-    // 2. Enrichment data failures don't prevent URL processing
-    // 3. Partial enrichment data is better than no data at all
-    //
-    // Trade-off: If enrichment insertion fails, we have inconsistent state (main record exists
-    // but enrichment data is missing). This is acceptable because enrichment data is optional
-    // and failures are logged for monitoring.
-    let enrichment_summary = insert_enrichment_data(pool, url_status_id, record).await;
+    // Enrichment DELETE+INSERT share one writer transaction so readers never see
+    // an empty gap after the fact row commits, and core satellite SQL failures
+    // land in url_partial_failures with scan-time partials.
+    let enrichment_summary =
+        insert_enrichment_data(pool, url_status_id, record, satellite_insert_failures).await;
 
     // Log summary if there were any failures (for monitoring/debugging)
     if enrichment_summary.has_failures() {
@@ -159,170 +421,11 @@ pub async fn insert_persisted_url_record(
 
     Ok(upsert)
 }
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `url_status_id` - The ID of the main URL record
-/// * `partial_failures` - Vector of partial failure records
-/// * `summary` - Summary to update with insertion results
-async fn insert_partial_failures(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    partial_failures: Vec<crate::storage::models::UrlPartialFailureRecord>,
-    summary: &mut EnrichmentInsertSummary,
-) {
-    for mut partial_failure in partial_failures {
-        partial_failure.url_status_id = url_status_id;
-        match insert::insert_url_partial_failure(pool, &partial_failure).await {
-            Ok(_) => summary.partial_failures_inserted += 1,
-            Err(e) => {
-                summary.partial_failures_failed += 1;
-                log::warn!(
-                    "Failed to insert partial failure for url_status_id {url_status_id}: {e}"
-                );
-            }
-        }
-    }
-}
-
-/// Inserts exposed secrets and their decoded JWT claims for a record.
-async fn insert_exposed_secrets_enrichment(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    exposed_secrets: &[crate::parse::ExposedSecret],
-    summary: &mut EnrichmentInsertSummary,
-) {
-    if exposed_secrets.is_empty() {
-        return;
-    }
-    match insert::insert_exposed_secrets(pool, url_status_id, exposed_secrets).await {
-        Ok(ids) => {
-            summary.exposed_secrets_inserted = true;
-            // Collect (secret_id, &DecodedJwt) for any decoded JWTs and
-            // insert them in a single batch transaction.
-            let jwt_items: Vec<(i64, &crate::parse::jwt::DecodedJwt)> = exposed_secrets
-                .iter()
-                .zip(&ids)
-                .filter_map(|(secret, &secret_id)| {
-                    secret.decoded_jwt.as_ref().map(|jwt| (secret_id, jwt))
-                })
-                .collect();
-            if !jwt_items.is_empty() {
-                if let Err(e) = insert::insert_jwt_claims_batch(pool, &jwt_items).await {
-                    log::warn!(
-                        "Failed to insert JWT claims batch for url_status_id {url_status_id}: {e}"
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            summary.exposed_secrets_failed = true;
-            log::warn!("Failed to insert exposed secrets for url_status_id {url_status_id}: {e}");
-        }
-    }
-}
-
-/// Inserts all enrichment data for a record.
-///
-/// This function inserts enrichment data (`GeoIP`, WHOIS, structured data, etc.) after the main
-/// URL record has been committed. Failures are logged but don't propagate, ensuring that
-/// enrichment data failures don't prevent URL processing.
-async fn insert_enrichment_data(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    record: PersistedUrlRecord,
-) -> EnrichmentInsertSummary {
-    let mut summary = EnrichmentInsertSummary::default();
-
-    insert_partial_failures(pool, url_status_id, record.partial_failures, &mut summary).await;
-
-    if let Some((ip_address, geoip_result)) = record.geoip.as_ref() {
-        try_enrich(
-            &format!("GeoIP data for IP '{ip_address}'"),
-            url_status_id,
-            &mut summary.geoip_inserted,
-            &mut summary.geoip_failed,
-            || insert::insert_geoip_data(pool, url_status_id, geoip_result),
-        )
-        .await;
-    }
-
-    if let Some(structured_data) = record.structured_data.as_ref() {
-        try_enrich(
-            "structured data",
-            url_status_id,
-            &mut summary.structured_data_inserted,
-            &mut summary.structured_data_failed,
-            || insert::insert_structured_data(pool, url_status_id, structured_data),
-        )
-        .await;
-    }
-
-    if !record.social_media_links.is_empty() {
-        try_enrich(
-            "social media links",
-            url_status_id,
-            &mut summary.social_media_inserted,
-            &mut summary.social_media_failed,
-            || insert::insert_social_media_links(pool, url_status_id, &record.social_media_links),
-        )
-        .await;
-    }
-
-    if let Some(whois_result) = record.whois.as_ref() {
-        try_enrich(
-            "WHOIS data",
-            url_status_id,
-            &mut summary.whois_inserted,
-            &mut summary.whois_failed,
-            || insert::insert_whois_data(pool, url_status_id, whois_result),
-        )
-        .await;
-    }
-
-    if !record.contact_links.is_empty() {
-        try_enrich(
-            "contact links",
-            url_status_id,
-            &mut summary.contact_links_inserted,
-            &mut summary.contact_links_failed,
-            || insert::insert_contact_links(pool, url_status_id, &record.contact_links),
-        )
-        .await;
-    }
-
-    insert_exposed_secrets_enrichment(pool, url_status_id, &record.exposed_secrets, &mut summary)
-        .await;
-
-    if !record.analytics_ids.is_empty() {
-        try_enrich(
-            "analytics IDs",
-            url_status_id,
-            &mut summary.analytics_ids_inserted,
-            &mut summary.analytics_ids_failed,
-            || insert::insert_analytics_ids(pool, url_status_id, &record.analytics_ids),
-        )
-        .await;
-    }
-
-    if let Some(favicon_data) = record.favicon.as_ref() {
-        try_enrich(
-            "favicon data",
-            url_status_id,
-            &mut summary.favicon_inserted,
-            &mut summary.favicon_failed,
-            || insert::insert_favicon_data(pool, url_status_id, favicon_data),
-        )
-        .await;
-    }
-
-    summary
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error_handling::ErrorType;
     use crate::geoip::GeoIpResult;
     use crate::parse::{
         AnalyticsId, AnalyticsProvider, SocialMediaLink, SocialPlatform, StructuredData,
@@ -375,6 +478,53 @@ mod tests {
         record
     }
 
+    fn empty_persisted(url_record: UrlRecord) -> PersistedUrlRecord {
+        PersistedUrlRecord {
+            url_record,
+            security_headers: HashMap::new(),
+            http_headers: HashMap::new(),
+            oids: HashSet::new(),
+            redirect_chain: vec![],
+            technologies: vec![],
+            subject_alternative_names: vec![],
+            analytics_ids: vec![],
+            geoip: None,
+            structured_data: None,
+            social_media_links: vec![],
+            contact_links: vec![],
+            exposed_secrets: vec![],
+            whois: None,
+            partial_failures: vec![],
+            favicon: None,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: Vec::new(),
+            cookies: Vec::new(),
+            resource_hints: Vec::new(),
+            script_hosts: vec![],
+            security_txt: None,
+            robots_txt: None,
+        }
+    }
+
+    #[test]
+    fn satellite_insert_failure_maps_to_partial_failure_type() {
+        let rec = satellite_write_to_partial_failure(
+            1,
+            2,
+            Some("run".into()),
+            &SatelliteWriteFailure {
+                table: "url_cookies",
+                message: "locked".into(),
+            },
+        );
+        assert_eq!(rec.error_type, ErrorType::SatelliteInsertError);
+        assert_eq!(rec.error_message, "url_cookies: locked");
+        assert_eq!(rec.url_status_id, 1);
+        assert_eq!(rec.run_id.as_deref(), Some("run"));
+    }
+
     #[tokio::test]
     async fn test_insert_persisted_url_record_basic() {
         let pool = create_test_pool().await;
@@ -421,6 +571,52 @@ mod tests {
 
         assert_eq!(row.get::<String, _>("initial_domain"), "example.com");
         assert_eq!(row.get::<String, _>("title"), "Example Domain");
+    }
+
+    #[tokio::test]
+    async fn test_enrichment_rewrite_clears_stale_geoip() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        let geoip = GeoIpResult {
+            country_code: Some("US".to_string()),
+            country_name: Some("United States".to_string()),
+            region: None,
+            city: None,
+            latitude: None,
+            longitude: None,
+            postal_code: None,
+            timezone: None,
+            asn: None,
+            asn_org: None,
+        };
+        let mut first = empty_persisted(create_test_url_record());
+        first.geoip = Some(("1.2.3.4".to_string(), geoip));
+        let upsert = insert_persisted_url_record(&pool, first)
+            .await
+            .expect("first insert");
+        let geo_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_geoip WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count geoip");
+        assert_eq!(geo_count, 1);
+
+        let second = empty_persisted(create_test_url_record());
+        insert_persisted_url_record(&pool, second)
+            .await
+            .expect("rewrite without geoip");
+        let geo_count_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_geoip WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count geoip after rewrite");
+        assert_eq!(
+            geo_count_after, 0,
+            "enrichment rewrite with empty GeoIP must clear the previous row"
+        );
     }
 
     #[allow(clippy::too_many_lines)]

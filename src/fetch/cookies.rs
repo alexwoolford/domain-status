@@ -22,8 +22,8 @@ struct ParsedSetCookie {
 }
 
 fn parse_set_cookie(s: &str) -> Option<ParsedSetCookie> {
-    let parts: Vec<&str> = s.split(';').collect();
-    let name_value = parts.first()?;
+    let mut parts = s.split(';');
+    let name_value = parts.next()?;
     let mut nv = name_value.splitn(2, '=');
     let name = nv.next()?.trim().to_string();
     if name.is_empty() {
@@ -31,35 +31,47 @@ fn parse_set_cookie(s: &str) -> Option<ParsedSetCookie> {
     }
     let value = nv.next().map(|v| v.trim().to_string());
 
-    let lower = s.to_lowercase();
-    let secure = lower.contains("secure");
-    let http_only = lower.contains("httponly");
-    let same_site = parts
-        .iter()
-        .find_map(|p| {
-            let p = p.trim();
-            let prefix = p.get(..9)?;
-            prefix
-                .eq_ignore_ascii_case("samesite=")
-                .then(|| allowlisted_same_site(p.get(9..).unwrap_or("").trim()))
-        })
-        .flatten();
-    let domain = parts.iter().find_map(|p| {
-        let p = p.trim();
-        if p.to_lowercase().starts_with("domain=") {
-            Some(p[7..].trim().to_string())
-        } else {
-            None
+    let mut secure = false;
+    let mut http_only = false;
+    let mut same_site = None;
+    let mut same_site_invalid = false;
+    let mut domain = None;
+    let mut path = None;
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
         }
-    });
-    let path = parts.iter().find_map(|p| {
-        let p = p.trim();
-        if p.to_lowercase().starts_with("path=") {
-            Some(p[5..].trim().to_string())
-        } else {
-            None
+        let (attr_name, attr_value) = match part.split_once('=') {
+            Some((n, v)) => (n.trim(), Some(v.trim())),
+            None => (part, None),
+        };
+        if attr_name.eq_ignore_ascii_case("secure") {
+            secure = true;
+        } else if attr_name.eq_ignore_ascii_case("httponly") {
+            http_only = true;
+        } else if attr_name.eq_ignore_ascii_case("samesite") {
+            match attr_value.and_then(allowlisted_same_site) {
+                Some(value) if same_site.is_none() && !same_site_invalid => {
+                    same_site = Some(value);
+                }
+                None => {
+                    // Comma-jammed or otherwise non-allowlisted tokens (e.g.
+                    // `SameSite=Lax, b=2`) must not let a later `SameSite=None`
+                    // from a concatenated second cookie win.
+                    same_site = None;
+                    same_site_invalid = true;
+                }
+                Some(_) => {}
+            }
+        } else if attr_name.eq_ignore_ascii_case("domain") {
+            domain = attr_value
+                .filter(|v| !v.is_empty())
+                .map(std::string::ToString::to_string);
+        } else if attr_name.eq_ignore_ascii_case("path") {
+            path = attr_value.map(std::string::ToString::to_string);
         }
-    });
+    }
 
     Some(ParsedSetCookie {
         name,
@@ -290,5 +302,35 @@ mod tests {
             jammed_cookies[0].same_site, None,
             "comma-concatenated SameSite token is not an allowlisted value"
         );
+    }
+
+    #[test]
+    fn test_extract_cookie_infos_secure_httponly_are_attribute_tokens() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("session=abc; Path=/insecure; Domain=httponly.example"),
+        );
+
+        let cookies = extract_cookie_infos(&headers);
+        assert_eq!(cookies.len(), 1);
+        assert!(
+            !cookies[0].secure,
+            "Path=/insecure must not set the Secure flag"
+        );
+        assert!(
+            !cookies[0].http_only,
+            "Domain containing httponly must not set HttpOnly"
+        );
+        assert_eq!(cookies[0].path.as_deref(), Some("/insecure"));
+
+        let mut flagged = HeaderMap::new();
+        flagged.append(
+            reqwest::header::SET_COOKIE,
+            HeaderValue::from_static("session=abc; Path=/; HttpOnly; Secure"),
+        );
+        let flagged_cookies = extract_cookie_infos(&flagged);
+        assert!(flagged_cookies[0].secure);
+        assert!(flagged_cookies[0].http_only);
     }
 }

@@ -12,6 +12,32 @@ use serde::Deserialize;
 
 use super::types::{Config, FailOn, LogFormat, LogLevel};
 
+/// TOML overlay keys matching [`FileConfig`] fields 1:1.
+///
+/// [`crate::cli`] compile-time checks that every key is listed in
+/// `SCAN_CONFIG_ARG_IDS` so a new file field cannot silently ignore CLI/env
+/// overlay detection. Keep this list in lockstep with the struct below.
+pub(crate) const FILE_CONFIG_OVERLAY_KEYS: &[&str] = &[
+    "file",
+    "log_level",
+    "log_format",
+    "db_path",
+    "max_concurrency",
+    "timeout_seconds",
+    "user_agent",
+    "rate_limit_rps",
+    "fingerprints",
+    "geoip",
+    "status_port",
+    "enable_whois",
+    "cache_dir",
+    "scan_external_scripts",
+    "fail_on",
+    "fail_on_pct_threshold",
+    "log_file",
+    "drain_timeout_secs",
+];
+
 /// TOML overlay for scan settings.
 ///
 /// All fields are `Option` so absent keys leave [`Config`] defaults in place.
@@ -36,7 +62,7 @@ pub struct FileConfig {
     pub timeout_seconds: Option<u64>,
     /// HTTP User-Agent.
     pub user_agent: Option<String>,
-    /// Requests-per-second cap (`0` disables).
+    /// URL admission tokens per second (`0` disables). Not per-HTTP-request RPS.
     pub rate_limit_rps: Option<u32>,
     /// Fingerprints URL or local path.
     pub fingerprints: Option<String>,
@@ -687,5 +713,14 @@ mod tests {
         assert_eq!(fc.fail_on, Some(FailOn::AnyFailure));
         assert_eq!(fc.scan_external_scripts, Some(true));
         assert_eq!(fc.log_level, Some(LogLevel::Debug));
+    }
+
+    #[test]
+    fn file_config_overlay_keys_are_unique_and_complete() {
+        assert_eq!(FILE_CONFIG_OVERLAY_KEYS.len(), 18);
+        let mut seen = std::collections::HashSet::new();
+        for key in FILE_CONFIG_OVERLAY_KEYS {
+            assert!(seen.insert(*key), "duplicate overlay key {key}");
+        }
     }
 }

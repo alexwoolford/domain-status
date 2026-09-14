@@ -99,12 +99,12 @@ When extending what a scan persists (or exports), use this checklist so parallel
 1. Migration + `DATABASE.md`.
 2. Insert helper under `src/storage/insert/url/satellite/` (core) or `src/storage/insert/enrichment/` (enrichment).
 3. Wire into `PersistedUrlRecord` / `build_persisted_url_record`. Core satellites also need `UrlRecordInsertParams`, `from_persisted_record`, and `with_empty_satellites`. Enrichment goes through `insert_enrichment_data` instead.
-4. Add the table name to [`URL_STATUS_SATELLITE_TABLES`](src/storage/insert/url/mod.rs) so UPSERT cleanup clears stale rows (production and upsert-clear tests share this list).
+4. Add the table name to [`URL_STATUS_CORE_SATELLITE_TABLES`](src/storage/insert/url/mod.rs) (in-transaction children) or [`URL_STATUS_ENRICHMENT_SATELLITE_TABLES`](src/storage/insert/url/mod.rs) (post-commit children). UPSERT cleanup and upsert-clear tests use those lists; do not put an enrichment table on the core DELETE list.
 5. Export only if needed (same decision as above; satellite-only tables often stay DB-queryable — document in `SATELLITE_DB_ONLY` when intentional).
 
 ### New CLI / config flag
 
-Update clap (`cli/`), `Config` + `Default`, file merge arms, and `SCAN_CONFIG_ARG_IDS` together — missing one step silently ignores the flag for file overlay.
+Update clap (`cli/`), `Config` + `Default`, file merge arms, [`FILE_CONFIG_OVERLAY_KEYS`](src/config/merge.rs), and `SCAN_CONFIG_ARG_IDS` together — missing one step silently ignores the flag for file overlay. A compile-time subset check in `src/cli.rs` fails the build when the lists drift.
 
 ## Testing Expectations
 

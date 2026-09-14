@@ -313,6 +313,22 @@ where
     Ok(())
 }
 
+/// Deletes child rows for `url_status_id` from compile-time table-name lists.
+pub(crate) async fn delete_child_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tables: &[&str],
+    url_status_id: i64,
+) -> Result<(), sqlx::Error> {
+    for table in tables {
+        let sql = format!("DELETE FROM {table} WHERE url_status_id = ?");
+        sqlx::query(&sql)
+            .bind(url_status_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

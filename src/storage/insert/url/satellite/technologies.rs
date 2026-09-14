@@ -12,9 +12,9 @@ pub(crate) async fn insert_technologies(
     tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     technologies: &[DetectedTechnology],
-) {
+) -> Result<(), sqlx::Error> {
     if technologies.is_empty() {
-        return;
+        return Ok(());
     }
 
     log::debug!(
@@ -23,8 +23,6 @@ pub(crate) async fn insert_technologies(
         url_status_id
     );
 
-    // Deduplicate by (name, version). Detection already filters protocol flags
-    // (HTTP/3, HSTS); do not re-encode version into the name (names may contain ':').
     let mut seen = std::collections::HashSet::new();
     let mut deduped: Vec<&DetectedTechnology> = Vec::new();
     for tech in technologies {
@@ -35,10 +33,9 @@ pub(crate) async fn insert_technologies(
     }
 
     if deduped.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // Batch INSERT all technologies in a single query
     let query_str = build_batch_insert_query(
         "url_technologies",
         &[
@@ -62,26 +59,16 @@ pub(crate) async fn insert_technologies(
             .bind(i64::from(tech.is_implied));
     }
 
-    match query.execute(&mut **tx).await {
-        Ok(result) => {
-            log::debug!(
-                "Batch inserted {} technologies for url_status_id {} ({} rows affected, {} unique from {} total)",
-                deduped.len(),
-                url_status_id,
-                result.rows_affected(),
-                deduped.len(),
-                technologies.len()
-            );
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to batch insert {} technologies for url_status_id {}: {}",
-                deduped.len(),
-                url_status_id,
-                e
-            );
-        }
-    }
+    let result = query.execute(&mut **tx).await?;
+    log::debug!(
+        "Batch inserted {} technologies for url_status_id {} ({} rows affected, {} unique from {} total)",
+        deduped.len(),
+        url_status_id,
+        result.rows_affected(),
+        deduped.len(),
+        technologies.len()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -112,7 +99,9 @@ mod tests {
             },
         ];
 
-        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        insert_technologies(&mut tx, url_status_id, &technologies)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify insertion
@@ -150,7 +139,9 @@ mod tests {
             },
         ];
 
-        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        insert_technologies(&mut tx, url_status_id, &technologies)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify only one entry (ON CONFLICT DO NOTHING)
@@ -191,7 +182,9 @@ mod tests {
             },
         ];
 
-        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        insert_technologies(&mut tx, url_status_id, &technologies)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         // Verify all three entries (WordPress without version, WordPress:6.9, PHP:8.1)
@@ -227,7 +220,9 @@ mod tests {
         let mut tx = pool.begin().await.expect("Failed to start transaction");
         let technologies = vec![];
 
-        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        insert_technologies(&mut tx, url_status_id, &technologies)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         let count: i64 =
@@ -261,7 +256,9 @@ mod tests {
             },
         ];
 
-        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        insert_technologies(&mut tx, url_status_id, &technologies)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         let rows = sqlx::query(
@@ -300,7 +297,9 @@ mod tests {
             },
         ];
 
-        insert_technologies(&mut tx, url_status_id, &technologies).await;
+        insert_technologies(&mut tx, url_status_id, &technologies)
+            .await
+            .expect("insert");
         tx.commit().await.expect("Failed to commit transaction");
 
         let rows = sqlx::query(

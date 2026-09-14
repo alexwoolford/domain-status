@@ -19,15 +19,33 @@ async fn test_insert_empty_collections() {
     let mut tx = pool.begin().await.expect("Failed to start transaction");
 
     // Test all empty cases
-    insert_technologies(&mut tx, url_status_id, &[]).await;
-    insert_nameservers(&mut tx, url_status_id, None).await;
-    insert_txt_records(&mut tx, url_status_id, None).await;
-    insert_mx_records(&mut tx, url_status_id, None).await;
-    insert_security_headers(&mut tx, url_status_id, &HashMap::new()).await;
-    insert_http_headers(&mut tx, url_status_id, &HashMap::new()).await;
-    insert_oids(&mut tx, url_status_id, &HashSet::new()).await;
-    insert_redirect_chain(&mut tx, url_status_id, &[] as &[(String, u16)]).await;
-    insert_certificate_sans(&mut tx, url_status_id, &[]).await;
+    insert_technologies(&mut tx, url_status_id, &[])
+        .await
+        .expect("insert");
+    insert_nameservers(&mut tx, url_status_id, None)
+        .await
+        .expect("insert");
+    insert_txt_records(&mut tx, url_status_id, None)
+        .await
+        .expect("insert");
+    insert_mx_records(&mut tx, url_status_id, None)
+        .await
+        .expect("insert");
+    insert_security_headers(&mut tx, url_status_id, &HashMap::new())
+        .await
+        .expect("insert");
+    insert_http_headers(&mut tx, url_status_id, &HashMap::new())
+        .await
+        .expect("insert");
+    insert_oids(&mut tx, url_status_id, &HashSet::new())
+        .await
+        .expect("insert");
+    insert_redirect_chain(&mut tx, url_status_id, &[] as &[(String, u16)])
+        .await
+        .expect("insert");
+    insert_certificate_sans(&mut tx, url_status_id, &[])
+        .await
+        .expect("insert");
 
     tx.commit().await.expect("Failed to commit transaction");
 

@@ -1,16 +1,13 @@
 //! Analytics IDs insertion.
 
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
 
 /// Inserts analytics/tracking IDs for a URL status record.
-///
-/// This function inserts analytics IDs (Google Analytics, Facebook Pixel, GTM, `AdSense`)
-/// into the `url_analytics_ids` table. These IDs enable graph analysis by linking
-/// domains that share the same tracking IDs (indicating common ownership or management).
+#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
 pub async fn insert_analytics_ids(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -21,26 +18,40 @@ pub async fn insert_analytics_ids(
     }
 
     with_sqlite_retry(|| async {
-        let query = build_batch_insert_query(
-            "url_analytics_ids",
-            &["url_status_id", "provider", "tracking_id"],
-            analytics_ids.len(),
-            Some("ON CONFLICT(url_status_id, provider, tracking_id) DO NOTHING"),
-        );
-        let mut query_builder = sqlx::query(&query);
-        for analytics_id in analytics_ids {
-            query_builder = query_builder
-                .bind(url_status_id)
-                .bind(analytics_id.provider.as_str())
-                .bind(&analytics_id.id);
-        }
-        query_builder
-            .execute(pool)
-            .await
-            .map_err(DatabaseError::SqlError)?;
+        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+        insert_analytics_ids_in_tx(&mut tx, url_status_id, analytics_ids).await?;
+        tx.commit().await.map_err(DatabaseError::SqlError)?;
         Ok(())
     })
     .await
+}
+
+pub(crate) async fn insert_analytics_ids_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    analytics_ids: &[crate::parse::AnalyticsId],
+) -> Result<(), DatabaseError> {
+    if analytics_ids.is_empty() {
+        return Ok(());
+    }
+    let query = build_batch_insert_query(
+        "url_analytics_ids",
+        &["url_status_id", "provider", "tracking_id"],
+        analytics_ids.len(),
+        Some("ON CONFLICT(url_status_id, provider, tracking_id) DO NOTHING"),
+    );
+    let mut query_builder = sqlx::query(&query);
+    for analytics_id in analytics_ids {
+        query_builder = query_builder
+            .bind(url_status_id)
+            .bind(analytics_id.provider.as_str())
+            .bind(&analytics_id.id);
+    }
+    query_builder
+        .execute(&mut **tx)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    Ok(())
 }
 
 #[cfg(test)]

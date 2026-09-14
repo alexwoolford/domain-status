@@ -15,15 +15,10 @@ mod record;
 pub mod retry;
 mod run;
 pub mod url;
-mod utils;
+pub(crate) mod utils;
 
-// Re-export public API
-pub use enrichment::{
-    insert_analytics_ids, insert_contact_links, insert_exposed_secrets, insert_favicon_data,
-    insert_geoip_data, insert_jwt_claims_batch, insert_social_media_links, insert_structured_data,
-    insert_whois_data,
-};
-pub use failure::{insert_url_failure, insert_url_partial_failure};
+pub use failure::insert_url_failure;
+pub(crate) use failure::insert_url_partial_failure_in_tx;
 pub use record::insert_persisted_url_record;
 pub(crate) use run::{count_run_fact_rows, saturating_i32_count};
 pub use run::{
@@ -31,4 +26,4 @@ pub use run::{
 };
 // Crate-internal re-export: `insert_url_record_with_outcome` is called from
 // `record.rs::insert_persisted_url_record` via `insert::insert_url_record_with_outcome`.
-pub(crate) use url::{insert_url_record_with_outcome, UrlUpsertOutcome};
+pub(crate) use url::{insert_url_record_with_outcome, SatelliteWriteFailure, UrlUpsertOutcome};

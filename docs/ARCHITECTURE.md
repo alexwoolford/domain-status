@@ -23,7 +23,7 @@ At a high level:
 | GeoIP | `src/geoip/` | MaxMind loading, caching, lookup | `docs/PRODUCTION_HARDENING.md` |
 | WHOIS/RDAP | `src/whois/` | best-effort WHOIS lookup and caching | [ADR 0002](adr/0002-enrichment-failure-policy.md) |
 | TLS capture; SSRF / HSTS / URL validation | `src/tls/`, `src/security/` | certificate capture (AcceptAll); SSRF-safe DNS/URL checks; HSTS parse | [ADR 0003](adr/0003-tls-capture-versus-validation.md) |
-| Storage | `src/storage/` | SQLite pool, migrations, inserts, query helpers | `DATABASE.md`, [ADR 0004](adr/0004-sqlite-first-analytical-storage.md), `docs/PRODUCTION_HARDENING.md` (concurrent writes) |
+| Storage | `src/storage/` | SQLite pool, migrations, inserts, query helpers | `DATABASE.md`, [ADR 0004](adr/0004-sqlite-first-analytical-storage.md), [ADR 0007](adr/0007-satellite-insert-failure-policy.md), `docs/PRODUCTION_HARDENING.md` (concurrent writes) |
 | Export | `src/export/` | CSV, JSONL, Parquet transforms | `README.md`, `DATABASE.md` |
 | Status server | `src/status_server/` | `/health`, `/status`, and `/metrics` | [ADR 0006](adr/0006-local-only-status-server.md), `docs/PRODUCTION_HARDENING.md` |
 | Tests and CI signal | `tests/`, `.github/workflows/ci.yml` | deterministic tests, ignored network tests, CI gates | `docs/TESTING.md`, `CONTRIBUTING.md` |
@@ -38,6 +38,7 @@ At a high level:
 | [ADR 0004](adr/0004-sqlite-first-analytical-storage.md) | SQLite as the primary runtime and export source of truth |
 | [ADR 0005](adr/0005-no-javascript-fingerprinting.md) | Static fingerprinting only; no browser execution |
 | [ADR 0006](adr/0006-local-only-status-server.md) | Status server binds locally and ships without auth |
+| [ADR 0007](adr/0007-satellite-insert-failure-policy.md) | Satellite SQL failures are partial; enrichment rewrite is a second writer txn |
 
 ## Operational Docs
 

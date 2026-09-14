@@ -1,6 +1,6 @@
 //! Contact link insertion.
 
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::ContactLink;
@@ -8,6 +8,7 @@ use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
 
 /// Inserts contact links (mailto/tel) into the database.
+#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
 pub async fn insert_contact_links(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -18,29 +19,43 @@ pub async fn insert_contact_links(
     }
 
     with_sqlite_retry(|| async {
-        let query = build_batch_insert_query(
-            "url_contact_links",
-            &["url_status_id", "contact_type", "contact_value", "raw_href"],
-            links.len(),
-            Some(
-                "ON CONFLICT(url_status_id, contact_type, contact_value) DO UPDATE SET raw_href=excluded.raw_href",
-            ),
-        );
-        let mut query_builder = sqlx::query(&query);
-        for link in links {
-            query_builder = query_builder
-                .bind(url_status_id)
-                .bind(link.contact_type.as_str())
-                .bind(&link.value)
-                .bind(&link.raw_href);
-        }
-        query_builder
-            .execute(pool)
-            .await
-            .map_err(DatabaseError::SqlError)?;
+        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+        insert_contact_links_in_tx(&mut tx, url_status_id, links).await?;
+        tx.commit().await.map_err(DatabaseError::SqlError)?;
         Ok(())
     })
     .await
+}
+
+pub(crate) async fn insert_contact_links_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    links: &[ContactLink],
+) -> Result<(), DatabaseError> {
+    if links.is_empty() {
+        return Ok(());
+    }
+    let query = build_batch_insert_query(
+        "url_contact_links",
+        &["url_status_id", "contact_type", "contact_value", "raw_href"],
+        links.len(),
+        Some(
+            "ON CONFLICT(url_status_id, contact_type, contact_value) DO UPDATE SET raw_href=excluded.raw_href",
+        ),
+    );
+    let mut query_builder = sqlx::query(&query);
+    for link in links {
+        query_builder = query_builder
+            .bind(url_status_id)
+            .bind(link.contact_type.as_str())
+            .bind(&link.value)
+            .bind(&link.raw_href);
+    }
+    query_builder
+        .execute(&mut **tx)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    Ok(())
 }
 
 #[cfg(test)]

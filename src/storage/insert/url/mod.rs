@@ -1,9 +1,10 @@
 //! Main URL record insertion.
 //!
 //! This module handles inserting URL status records and related satellite tables.
-//! In-transaction satellites and the UPSERT cleanup list live in
-//! `URL_STATUS_SATELLITE_TABLES`; enrichment satellites (`GeoIP`, WHOIS, secrets, etc.)
-//! are inserted after that transaction commits.
+//! In-transaction satellites live in `URL_STATUS_CORE_SATELLITE_TABLES`; enrichment
+//! satellites (`GeoIP`, WHOIS, secrets, etc.) live in
+//! `URL_STATUS_ENRICHMENT_SATELLITE_TABLES` and are replaced after that transaction
+//! commits, in a second writer transaction.
 
 mod satellite;
 
@@ -16,11 +17,20 @@ use super::retry::with_sqlite_retry;
 use super::utils::naive_datetime_to_millis;
 
 /// Result of upserting into `url_status` (unique on `(run_id, initial_domain)`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UrlUpsertOutcome {
     pub id: i64,
     /// `true` when this call created a new row; `false` when an existing row was updated.
     pub inserted: bool,
+    /// In-transaction satellite SQL failures (logged; main row still commits).
+    pub satellite_insert_failures: Vec<SatelliteWriteFailure>,
+}
+
+/// One failed in-transaction satellite insert (table name + driver message).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SatelliteWriteFailure {
+    pub table: &'static str,
+    pub message: String,
 }
 
 use satellite::{
@@ -299,12 +309,12 @@ fn bind_url_status_query<'q>(
     q
 }
 
-/// Satellite and enrichment tables hanging off `url_status.id`.
+/// Core satellites inserted inside the `url_status` transaction.
 ///
 /// Cleaned before re-insert on UPSERT so rescans do not leave stale child rows.
-/// Shared by production cleanup and upsert-clear tests — do not mirror this list.
-pub(crate) const URL_STATUS_SATELLITE_TABLES: &[&str] = &[
-    // Core satellites (inserted inside the url_status transaction)
+/// Enrichment tables are **not** listed here — they are replaced in the enrichment
+/// writer transaction so readers never see an empty gap after the fact row commits.
+pub(crate) const URL_STATUS_CORE_SATELLITE_TABLES: &[&str] = &[
     "url_technologies",
     "url_nameservers",
     "url_txt_records",
@@ -324,7 +334,12 @@ pub(crate) const URL_STATUS_SATELLITE_TABLES: &[&str] = &[
     "url_security_txt",
     "url_robots_txt",
     "url_robots_directives",
-    // Enrichment tables (inserted after that transaction, but cleaned here)
+];
+
+/// Enrichment satellites inserted after the `url_status` transaction commits.
+///
+/// DELETE + INSERT share one writer transaction in `insert_enrichment_data`.
+pub(crate) const URL_STATUS_ENRICHMENT_SATELLITE_TABLES: &[&str] = &[
     "url_analytics_ids",
     "url_structured_data",
     "url_social_media_links",
@@ -335,6 +350,59 @@ pub(crate) const URL_STATUS_SATELLITE_TABLES: &[&str] = &[
     "url_geoip",
     "url_whois",
 ];
+
+const fn satellite_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn satellite_slice_contains(haystack: &[&str], needle: &str) -> bool {
+    let mut i = 0;
+    while i < haystack.len() {
+        if satellite_bytes_eq(haystack[i].as_bytes(), needle.as_bytes()) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+const fn core_and_enrichment_overlap() -> bool {
+    let mut i = 0;
+    while i < URL_STATUS_CORE_SATELLITE_TABLES.len() {
+        if satellite_slice_contains(
+            URL_STATUS_ENRICHMENT_SATELLITE_TABLES,
+            URL_STATUS_CORE_SATELLITE_TABLES[i],
+        ) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+const _: () = assert!(
+    !core_and_enrichment_overlap(),
+    "core and enrichment satellite lists must not overlap"
+);
+
+/// Union of core + enrichment child tables (core first).
+#[cfg(test)]
+pub(crate) fn url_status_satellite_tables() -> impl Iterator<Item = &'static str> {
+    URL_STATUS_CORE_SATELLITE_TABLES
+        .iter()
+        .copied()
+        .chain(URL_STATUS_ENRICHMENT_SATELLITE_TABLES.iter().copied())
+}
 
 /// Parameters for inserting a URL record.
 ///
@@ -463,9 +531,9 @@ impl<'a> UrlRecordInsertParams<'a> {
 ///
 /// This function inserts data into:
 /// 1. The main `url_status` table (fact table)
-/// 2. In-transaction satellite tables listed under the core section of
-///    `URL_STATUS_SATELLITE_TABLES` (DNS, headers, TLS OIDs/SANs, redirects, CSP,
-///    cookies, resource hints, script hosts, etc.)
+/// 2. In-transaction satellite tables listed in `URL_STATUS_CORE_SATELLITE_TABLES`
+///    (DNS, headers, TLS OIDs/SANs, redirects, CSP, cookies, resource hints,
+///    script hosts, etc.)
 ///
 /// The main `url_status` row and those in-transaction satellites share one transaction;
 /// individual satellite insert failures are logged and do not roll back the main row.
@@ -556,13 +624,12 @@ async fn insert_url_record_impl(
         }
     };
 
-    // Insert into satellite tables (see URL_STATUS_SATELLITE_TABLES for the full set).
+    // Insert into core satellite tables (see URL_STATUS_CORE_SATELLITE_TABLES).
     //
-    // DESIGN DECISION: Satellite insert functions return () and handle errors internally.
-    // This design prioritizes partial success over atomicity:
-    // - If a satellite insert fails (e.g., technologies), the main URL record is still saved
-    // - Partial data is better than no data at all
-    // - Failures are logged for monitoring but don't block the main record insertion
+    // DESIGN DECISION: Core satellite SQL failures do not roll back `url_status`
+    // (see ADR 0007). Partial child data is better than losing the observation.
+    // Failures are collected and persisted as `url_partial_failures` in the
+    // enrichment writer transaction (`error_type` = Satellite insert error).
     //
     // This differs from failure record satellite inserts (insert_url_failure_impl) which
     // propagate errors because failure records require atomicity - either all related data
@@ -570,41 +637,127 @@ async fn insert_url_record_impl(
     //
     // If any satellite insert panics, the transaction will be rolled back by Drop.
     //
-    // Clean up stale satellite data before inserting fresh rows. This handles the UPSERT
-    // case where the same (run_id, initial_domain) is scanned twice: the main url_status row
-    // is updated, but old satellite rows (e.g., redirect hops from a previous scan) would
-    // remain orphaned without this cleanup.
-    for table in URL_STATUS_SATELLITE_TABLES {
-        let sql = format!("DELETE FROM {table} WHERE url_status_id = ?");
-        if let Err(e) = sqlx::query(&sql)
-            .bind(url_status_id)
-            .execute(&mut *tx)
+    // Clean up stale *core* satellite data before inserting fresh rows. Enrichment
+    // children are replaced in the enrichment writer transaction so a successful
+    // fact row never blanks GeoIP/WHOIS/secrets for concurrent readers.
+    let mut satellite_insert_failures = Vec::new();
+    if let Err(e) =
+        super::utils::delete_child_rows(&mut tx, URL_STATUS_CORE_SATELLITE_TABLES, url_status_id)
             .await
-        {
-            log::warn!(
-                "Failed to clean stale rows from {table} for url_status_id {url_status_id}: {e}"
-            );
-        }
+    {
+        log::warn!(
+            "Failed to clean stale core satellite rows for url_status_id {url_status_id}: {e}"
+        );
     }
 
-    insert_technologies(&mut tx, url_status_id, params.technologies).await;
-    insert_nameservers(&mut tx, url_status_id, params.record.nameservers.as_ref()).await;
-    insert_txt_records(&mut tx, url_status_id, params.record.txt_records.as_ref()).await;
-    insert_mx_records(&mut tx, url_status_id, params.record.mx_records.as_ref()).await;
-    insert_security_headers(&mut tx, url_status_id, params.security_headers).await;
-    insert_http_headers(&mut tx, url_status_id, params.http_headers).await;
-    insert_oids(&mut tx, url_status_id, params.oids).await;
-    insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await;
-    insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await;
-    insert_cname_records(&mut tx, url_status_id, params.cname_records).await;
-    insert_ipv6_addresses(&mut tx, url_status_id, params.aaaa_records).await;
-    insert_caa_records(&mut tx, url_status_id, params.caa_records).await;
-    insert_csp_domains(&mut tx, url_status_id, params.csp_domains).await;
-    insert_cookies(&mut tx, url_status_id, params.cookies).await;
-    insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await;
-    insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await;
-    insert_security_txt(&mut tx, url_status_id, params.security_txt).await;
-    insert_robots_txt(&mut tx, url_status_id, params.robots_txt).await;
+    record_satellite_write(
+        "url_technologies",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_technologies(&mut tx, url_status_id, params.technologies).await,
+    );
+    record_satellite_write(
+        "url_nameservers",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_nameservers(&mut tx, url_status_id, params.record.nameservers.as_ref()).await,
+    );
+    record_satellite_write(
+        "url_txt_records",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_txt_records(&mut tx, url_status_id, params.record.txt_records.as_ref()).await,
+    );
+    record_satellite_write(
+        "url_mx_records",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_mx_records(&mut tx, url_status_id, params.record.mx_records.as_ref()).await,
+    );
+    record_satellite_write(
+        "url_security_headers",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_security_headers(&mut tx, url_status_id, params.security_headers).await,
+    );
+    record_satellite_write(
+        "url_http_headers",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_http_headers(&mut tx, url_status_id, params.http_headers).await,
+    );
+    record_satellite_write(
+        "url_certificate_oids",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_oids(&mut tx, url_status_id, params.oids).await,
+    );
+    record_satellite_write(
+        "url_redirect_chain",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await,
+    );
+    record_satellite_write(
+        "url_certificate_sans",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await,
+    );
+    record_satellite_write(
+        "url_cname_records",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_cname_records(&mut tx, url_status_id, params.cname_records).await,
+    );
+    record_satellite_write(
+        "url_ipv6_addresses",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_ipv6_addresses(&mut tx, url_status_id, params.aaaa_records).await,
+    );
+    record_satellite_write(
+        "url_caa_records",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_caa_records(&mut tx, url_status_id, params.caa_records).await,
+    );
+    record_satellite_write(
+        "url_csp_domains",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_csp_domains(&mut tx, url_status_id, params.csp_domains).await,
+    );
+    record_satellite_write(
+        "url_cookies",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_cookies(&mut tx, url_status_id, params.cookies).await,
+    );
+    record_satellite_write(
+        "url_resource_hints",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await,
+    );
+    record_satellite_write(
+        "url_script_hosts",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await,
+    );
+    record_satellite_write(
+        "url_security_txt",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_security_txt(&mut tx, url_status_id, params.security_txt).await,
+    );
+    record_satellite_write(
+        "url_robots_txt",
+        url_status_id,
+        &mut satellite_insert_failures,
+        insert_robots_txt(&mut tx, url_status_id, params.robots_txt).await,
+    );
 
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.
@@ -622,7 +775,23 @@ async fn insert_url_record_impl(
     Ok(UrlUpsertOutcome {
         id: url_status_id,
         inserted,
+        satellite_insert_failures,
     })
+}
+
+fn record_satellite_write(
+    table: &'static str,
+    url_status_id: i64,
+    failures: &mut Vec<SatelliteWriteFailure>,
+    result: Result<(), sqlx::Error>,
+) {
+    if let Err(e) = result {
+        log::warn!("Failed to insert {table} for url_status_id {url_status_id}: {e}");
+        failures.push(SatelliteWriteFailure {
+            table,
+            message: e.to_string(),
+        });
+    }
 }
 
 /// Inserts CSP domains into `url_csp_domains` table.
@@ -630,9 +799,9 @@ async fn insert_csp_domains(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
     domains: &[(String, String, Option<String>)],
-) {
+) -> Result<(), sqlx::Error> {
     if domains.is_empty() {
-        return;
+        return Ok(());
     }
     let query = super::utils::build_batch_insert_query(
         "url_csp_domains",
@@ -648,9 +817,8 @@ async fn insert_csp_domains(
             .bind(fqdn)
             .bind(reg_domain);
     }
-    if let Err(e) = qb.execute(&mut **tx).await {
-        log::warn!("Failed to insert CSP domains for {url_status_id}: {e}");
-    }
+    qb.execute(&mut **tx).await?;
+    Ok(())
 }
 
 /// Inserts cookie security info into `url_cookies` table.
@@ -658,9 +826,9 @@ async fn insert_cookies(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
     cookies: &[crate::storage::CookieInfo],
-) {
+) -> Result<(), sqlx::Error> {
     if cookies.is_empty() {
-        return;
+        return Ok(());
     }
     let query = super::utils::build_batch_insert_query(
         "url_cookies",
@@ -687,9 +855,8 @@ async fn insert_cookies(
             .bind(&c.domain)
             .bind(&c.path);
     }
-    if let Err(e) = qb.execute(&mut **tx).await {
-        log::warn!("Failed to insert cookies for {url_status_id}: {e}");
-    }
+    qb.execute(&mut **tx).await?;
+    Ok(())
 }
 
 /// Inserts parsed `security.txt` into `url_security_txt`.
@@ -697,11 +864,11 @@ async fn insert_security_txt(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
     data: Option<&crate::fetch::well_known::SecurityTxtData>,
-) {
+) -> Result<(), sqlx::Error> {
     let Some(data) = data else {
-        return;
+        return Ok(());
     };
-    let result = sqlx::query(
+    sqlx::query(
         "INSERT INTO url_security_txt (
             url_status_id, source_url, http_status, contacts, expires, encryption,
             acknowledgments, preferred_languages, canonical, policy, hiring, raw_body
@@ -732,10 +899,8 @@ async fn insert_security_txt(
     .bind(data.hiring.join("\n"))
     .bind(&data.raw_body)
     .execute(&mut **tx)
-    .await;
-    if let Err(e) = result {
-        log::warn!("Failed to insert security.txt for {url_status_id}: {e}");
-    }
+    .await?;
+    Ok(())
 }
 
 /// Inserts parsed `robots.txt` parent row and directives.
@@ -743,11 +908,11 @@ async fn insert_robots_txt(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
     data: Option<&crate::fetch::well_known::RobotsTxtData>,
-) {
+) -> Result<(), sqlx::Error> {
     let Some(data) = data else {
-        return;
+        return Ok(());
     };
-    if let Err(e) = sqlx::query(
+    sqlx::query(
         "INSERT INTO url_robots_txt (url_status_id, http_status, raw_body)
          VALUES (?, ?, ?)
          ON CONFLICT(url_status_id) DO UPDATE SET
@@ -758,13 +923,9 @@ async fn insert_robots_txt(
     .bind(i64::from(data.http_status))
     .bind(&data.raw_body)
     .execute(&mut **tx)
-    .await
-    {
-        log::warn!("Failed to insert robots.txt for {url_status_id}: {e}");
-        return;
-    }
+    .await?;
     if data.directives.is_empty() {
-        return;
+        return Ok(());
     }
     let query = super::utils::build_batch_insert_query(
         "url_robots_directives",
@@ -776,9 +937,8 @@ async fn insert_robots_txt(
     for (directive, value) in &data.directives {
         qb = qb.bind(url_status_id).bind(directive).bind(value);
     }
-    if let Err(e) = qb.execute(&mut **tx).await {
-        log::warn!("Failed to insert robots directives for {url_status_id}: {e}");
-    }
+    qb.execute(&mut **tx).await?;
+    Ok(())
 }
 
 /// Inserts script `src` host inventory into `url_script_hosts`.
@@ -786,9 +946,9 @@ async fn insert_script_hosts(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
     hosts: &[crate::storage::ScriptHostInfo],
-) {
+) -> Result<(), sqlx::Error> {
     if hosts.is_empty() {
-        return;
+        return Ok(());
     }
     let query = super::utils::build_batch_insert_query(
         "url_script_hosts",
@@ -813,9 +973,8 @@ async fn insert_script_hosts(
             .bind(&h.registrable_domain)
             .bind(h.is_first_party);
     }
-    if let Err(e) = qb.execute(&mut **tx).await {
-        log::warn!("Failed to insert script hosts for {url_status_id}: {e}");
-    }
+    qb.execute(&mut **tx).await?;
+    Ok(())
 }
 
 /// Inserts resource hints into `url_resource_hints` table. `hint_type` may be
@@ -824,9 +983,9 @@ async fn insert_resource_hints(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     url_status_id: i64,
     hints: &[(String, String)],
-) {
+) -> Result<(), sqlx::Error> {
     if hints.is_empty() {
-        return;
+        return Ok(());
     }
     let query = super::utils::build_batch_insert_query(
         "url_resource_hints",
@@ -841,9 +1000,8 @@ async fn insert_resource_hints(
             .bind(hint_type.to_ascii_lowercase())
             .bind(href);
     }
-    if let Err(e) = qb.execute(&mut **tx).await {
-        log::warn!("Failed to insert resource hints for {url_status_id}: {e}");
-    }
+    qb.execute(&mut **tx).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1495,7 +1653,7 @@ mod tests {
     }
 
     /// Adversarial: UPSERT must DELETE stale satellite rows before re-inserting.
-    /// Without the `URL_STATUS_SATELLITE_TABLES` cleanup, rescans leave orphan techs/redirects.
+    /// Without core satellite DELETE on UPSERT, rescans leave orphan techs/redirects.
     #[tokio::test]
     async fn test_upsert_clears_stale_satellite_rows() {
         let pool = create_test_pool().await;
@@ -1887,9 +2045,7 @@ mod tests {
             .expect("seed url_whois");
     }
 
-    /// Inserts one minimal, schema-valid row into every table in [`URL_STATUS_SATELLITE_TABLES`]
-    /// for the given `url_status_id`, using the columns required by each table's schema
-    /// (see `migrations/`).
+    /// Inserts one minimal, schema-valid row into every core and enrichment satellite.
     async fn seed_one_row_per_satellite_table(pool: &SqlitePool, url_status_id: i64) {
         seed_dns_and_header_satellite_tables(pool, url_status_id).await;
         seed_redirect_and_record_satellite_tables(pool, url_status_id).await;
@@ -1897,45 +2053,44 @@ mod tests {
         seed_enrichment_satellite_tables(pool, url_status_id).await;
     }
 
-    /// Adversarial: UPSERT must clear stale rows from *every* satellite/enrichment table
-    /// that hangs off `url_status.id`, not just the ones this transaction re-inserts.
-    /// Without cleanup, a rescan with (e.g.) no more exposed secrets or `GeoIP` data would
-    /// leave a stale "detection" from a previous scan visible forever.
+    #[test]
+    fn core_and_enrichment_satellite_lists_partition_children() {
+        let mut seen = HashSet::new();
+        for table in url_status_satellite_tables() {
+            assert!(seen.insert(table), "duplicate satellite table {table}");
+        }
+        assert_eq!(
+            seen.len(),
+            URL_STATUS_CORE_SATELLITE_TABLES.len() + URL_STATUS_ENRICHMENT_SATELLITE_TABLES.len()
+        );
+    }
+
+    /// Core UPSERT clears in-transaction satellites and leaves enrichment in place
+    /// until the enrichment writer transaction replaces it.
     #[tokio::test]
-    async fn test_upsert_clears_all_satellite_tables() {
+    async fn test_upsert_clears_core_satellite_tables_only() {
         let pool = create_test_pool().await;
         create_test_run(&pool, "test-run-1").await;
-        // Use the bare default (not `create_test_url_record()`, whose nameservers/txt/mx
-        // JSON fields would themselves insert satellite rows) so the "first insert
-        // produces zero satellite rows" assumption below holds.
         let mut record = UrlRecord::test_default();
         record.run_id = Some("test-run-1".to_string());
 
-        let id1 = insert_url_record(UrlRecordInsertParams {
-            pool: &pool,
-            record: &record,
-            security_headers: &HashMap::new(),
-            http_headers: &HashMap::new(),
-            oids: &HashSet::new(),
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            script_hosts: &[],
-            security_txt: None,
-            robots_txt: None,
-        })
+        let empty_security = HashMap::new();
+        let empty_http = HashMap::new();
+        let empty_oids = HashSet::new();
+
+        let id1 = insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+            &pool,
+            &record,
+            &empty_security,
+            &empty_http,
+            &empty_oids,
+        ))
         .await
         .expect("first insert");
 
         seed_one_row_per_satellite_table(&pool, id1).await;
 
-        for table in URL_STATUS_SATELLITE_TABLES {
+        for table in url_status_satellite_tables() {
             let count: i64 = sqlx::query_scalar(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
@@ -1949,31 +2104,18 @@ mod tests {
             );
         }
 
-        // Second UPSERT with the same (run_id, initial_domain) and empty satellites/tech.
-        let id2 = insert_url_record(UrlRecordInsertParams {
-            pool: &pool,
-            record: &record,
-            security_headers: &HashMap::new(),
-            http_headers: &HashMap::new(),
-            oids: &HashSet::new(),
-            redirect_chain: &[],
-            technologies: &[],
-            subject_alternative_names: &[],
-            cname_records: None,
-            aaaa_records: None,
-            caa_records: None,
-            csp_domains: &[],
-            cookies: &[],
-            resource_hints: &[],
-            script_hosts: &[],
-            security_txt: None,
-            robots_txt: None,
-        })
+        let id2 = insert_url_record(UrlRecordInsertParams::with_empty_satellites(
+            &pool,
+            &record,
+            &empty_security,
+            &empty_http,
+            &empty_oids,
+        ))
         .await
         .expect("upsert");
         assert_eq!(id1, id2, "UPSERT must reuse the same url_status id");
 
-        for table in URL_STATUS_SATELLITE_TABLES {
+        for table in URL_STATUS_CORE_SATELLITE_TABLES {
             let count: i64 = sqlx::query_scalar(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
@@ -1983,7 +2125,20 @@ mod tests {
             .unwrap_or_else(|e| panic!("failed to count post-upsert rows in {table}: {e}"));
             assert_eq!(
                 count, 0,
-                "UPSERT with empty satellites must clear stale rows from {table}, found {count}"
+                "core UPSERT must clear stale rows from {table}, found {count}"
+            );
+        }
+        for table in URL_STATUS_ENRICHMENT_SATELLITE_TABLES {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
+            ))
+            .bind(id2)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("failed to count enrichment rows in {table}: {e}"));
+            assert_eq!(
+                count, 1,
+                "core UPSERT must leave enrichment table {table} in place until enrichment rewrite"
             );
         }
     }

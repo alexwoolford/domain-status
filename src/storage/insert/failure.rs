@@ -238,6 +238,7 @@ async fn insert_url_failure_impl(
 /// # Returns
 ///
 /// The ID of the inserted partial failure record, or a `DatabaseError` if insertion fails.
+#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
 pub async fn insert_url_partial_failure(
     pool: &SqlitePool,
     partial_failure: &UrlPartialFailureRecord,
@@ -246,6 +247,7 @@ pub async fn insert_url_partial_failure(
 }
 
 /// Internal implementation of `insert_url_partial_failure` (without retry logic).
+#[cfg_attr(not(test), allow(dead_code))]
 async fn insert_url_partial_failure_impl(
     pool: &SqlitePool,
     partial_failure: &UrlPartialFailureRecord,
@@ -262,6 +264,29 @@ async fn insert_url_partial_failure_impl(
     .bind(partial_failure.timestamp)
     .bind(partial_failure.run_id.as_ref())
     .fetch_one(pool)
+    .await
+    .map_err(DatabaseError::SqlError)?
+    .get::<i64, _>(0);
+
+    Ok(partial_failure_id)
+}
+
+pub(crate) async fn insert_url_partial_failure_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    partial_failure: &UrlPartialFailureRecord,
+) -> Result<i64, DatabaseError> {
+    let partial_failure_id = sqlx::query(
+        "INSERT INTO url_partial_failures (
+            url_status_id, error_type, error_message, observed_at_ms, run_id
+        ) VALUES (?, ?, ?, ?, ?)
+        RETURNING id",
+    )
+    .bind(partial_failure.url_status_id)
+    .bind(partial_failure.error_type.as_str())
+    .bind(&partial_failure.error_message)
+    .bind(partial_failure.timestamp)
+    .bind(partial_failure.run_id.as_ref())
+    .fetch_one(&mut **tx)
     .await
     .map_err(DatabaseError::SqlError)?
     .get::<i64, _>(0);
@@ -504,6 +529,32 @@ mod tests {
             row.get::<Option<String>, _>("run_id"),
             Some("test-run-789".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_insert_url_partial_failure_satellite_insert_error() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-sat", 1704067200000i64).await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let partial_failure = UrlPartialFailureRecord {
+            url_status_id,
+            error_type: ErrorType::SatelliteInsertError,
+            error_message: "url_cookies: database is locked".to_string(),
+            timestamp: 1704067200000,
+            run_id: Some("test-run-sat".to_string()),
+        };
+
+        let id = insert_url_partial_failure(&pool, &partial_failure)
+            .await
+            .expect("insert satellite insert error");
+        let error_type: String =
+            sqlx::query_scalar("SELECT error_type FROM url_partial_failures WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch");
+        assert_eq!(error_type, "Satellite insert error");
     }
 
     #[tokio::test]

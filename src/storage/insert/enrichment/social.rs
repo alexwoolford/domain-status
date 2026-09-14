@@ -1,6 +1,6 @@
 //! Social media links insertion.
 
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::SocialMediaLink;
@@ -8,6 +8,7 @@ use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
 
 /// Inserts social media links into the database.
+#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
 pub async fn insert_social_media_links(
     pool: &SqlitePool,
     url_status_id: i64,
@@ -18,29 +19,43 @@ pub async fn insert_social_media_links(
     }
 
     with_sqlite_retry(|| async {
-        let query = build_batch_insert_query(
-            "url_social_media_links",
-            &["url_status_id", "platform", "profile_url", "identifier"],
-            links.len(),
-            Some(
-                "ON CONFLICT(url_status_id, platform, profile_url) DO UPDATE SET identifier=excluded.identifier",
-            ),
-        );
-        let mut query_builder = sqlx::query(&query);
-        for link in links {
-            query_builder = query_builder
-                .bind(url_status_id)
-                .bind(link.platform.as_str())
-                .bind(&link.url)
-                .bind(&link.identifier);
-        }
-        query_builder
-            .execute(pool)
-            .await
-            .map_err(DatabaseError::SqlError)?;
+        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+        insert_social_media_links_in_tx(&mut tx, url_status_id, links).await?;
+        tx.commit().await.map_err(DatabaseError::SqlError)?;
         Ok(())
     })
     .await
+}
+
+pub(crate) async fn insert_social_media_links_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    links: &[SocialMediaLink],
+) -> Result<(), DatabaseError> {
+    if links.is_empty() {
+        return Ok(());
+    }
+    let query = build_batch_insert_query(
+        "url_social_media_links",
+        &["url_status_id", "platform", "profile_url", "identifier"],
+        links.len(),
+        Some(
+            "ON CONFLICT(url_status_id, platform, profile_url) DO UPDATE SET identifier=excluded.identifier",
+        ),
+    );
+    let mut query_builder = sqlx::query(&query);
+    for link in links {
+        query_builder = query_builder
+            .bind(url_status_id)
+            .bind(link.platform.as_str())
+            .bind(&link.url)
+            .bind(&link.identifier);
+    }
+    query_builder
+        .execute(&mut **tx)
+        .await
+        .map_err(DatabaseError::SqlError)?;
+    Ok(())
 }
 
 #[cfg(test)]

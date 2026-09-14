@@ -1,14 +1,13 @@
 //! Structured data insertion.
 
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
 
-/// Inserts rows into `url_structured_data` for a single `data_type`.
 async fn insert_structured_rows(
-    pool: &SqlitePool,
+    tx: &mut Transaction<'_, Sqlite>,
     url_status_id: i64,
     data_type: &str,
     rows: &[(String, String)],
@@ -37,56 +36,68 @@ async fn insert_structured_rows(
             .bind(property_value);
     }
     query_builder
-        .execute(pool)
+        .execute(&mut **tx)
         .await
         .map_err(DatabaseError::from)?;
     Ok(())
 }
 
 /// Inserts structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org) into the database.
+#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
 pub async fn insert_structured_data(
     pool: &SqlitePool,
     url_status_id: i64,
     structured_data: &crate::parse::StructuredData,
 ) -> Result<(), DatabaseError> {
     with_sqlite_retry(|| async {
-        let mut json_ld_rows = Vec::with_capacity(structured_data.json_ld.len());
-        for json_ld_value in &structured_data.json_ld {
-            let json_str = serde_json::to_string(json_ld_value).map_err(|e| {
-                DatabaseError::SqlError(sqlx::Error::Protocol(format!(
-                    "Failed to serialize JSON-LD: {e}"
-                )))
-            })?;
-            json_ld_rows.push((String::new(), json_str));
-        }
-        insert_structured_rows(pool, url_status_id, "json_ld", &json_ld_rows).await?;
-
-        let og_rows: Vec<(String, String)> = structured_data
-            .open_graph
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        insert_structured_rows(pool, url_status_id, "open_graph", &og_rows).await?;
-
-        let tw_rows: Vec<(String, String)> = structured_data
-            .twitter_cards
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        insert_structured_rows(pool, url_status_id, "twitter_card", &tw_rows).await?;
-
-        let schema_rows: Vec<(String, String)> = structured_data
-            .schema_types
-            .iter()
-            .map(|t| t.trim())
-            .filter(|t| !t.is_empty())
-            .map(|t| (t.to_string(), String::new()))
-            .collect();
-        insert_structured_rows(pool, url_status_id, "schema_type", &schema_rows).await?;
-
+        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
+        insert_structured_data_in_tx(&mut tx, url_status_id, structured_data).await?;
+        tx.commit().await.map_err(DatabaseError::SqlError)?;
         Ok(())
     })
     .await
+}
+
+pub(crate) async fn insert_structured_data_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    url_status_id: i64,
+    structured_data: &crate::parse::StructuredData,
+) -> Result<(), DatabaseError> {
+    let mut json_ld_rows = Vec::with_capacity(structured_data.json_ld.len());
+    for json_ld_value in &structured_data.json_ld {
+        let json_str = serde_json::to_string(json_ld_value).map_err(|e| {
+            DatabaseError::SqlError(sqlx::Error::Protocol(format!(
+                "Failed to serialize JSON-LD: {e}"
+            )))
+        })?;
+        json_ld_rows.push((String::new(), json_str));
+    }
+    insert_structured_rows(tx, url_status_id, "json_ld", &json_ld_rows).await?;
+
+    let og_rows: Vec<(String, String)> = structured_data
+        .open_graph
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    insert_structured_rows(tx, url_status_id, "open_graph", &og_rows).await?;
+
+    let tw_rows: Vec<(String, String)> = structured_data
+        .twitter_cards
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    insert_structured_rows(tx, url_status_id, "twitter_card", &tw_rows).await?;
+
+    let schema_rows: Vec<(String, String)> = structured_data
+        .schema_types
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(|t| (t.to_string(), String::new()))
+        .collect();
+    insert_structured_rows(tx, url_status_id, "schema_type", &schema_rows).await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
