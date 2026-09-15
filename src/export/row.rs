@@ -578,7 +578,7 @@ pub async fn build_export_row(
         "SELECT technology_name, technology_version, technology_category, is_implied
          FROM url_technologies WHERE url_status_id = ?{tech_filter} ORDER BY technology_name LIMIT ?"
     );
-    let technologies: Vec<TechnologyRecord> = sqlx::query(&tech_struct_sql)
+    let technologies: Vec<TechnologyRecord> = crate::sql::query(tech_struct_sql)
         .bind(url_status_id)
         .bind(EXPORT_LIMIT)
         .fetch_all(pool.as_ref())

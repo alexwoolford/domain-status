@@ -40,7 +40,7 @@ pub(crate) async fn insert_analytics_ids_in_tx(
         analytics_ids.len(),
         Some("ON CONFLICT(url_status_id, provider, tracking_id) DO NOTHING"),
     );
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for analytics_id in analytics_ids {
         query_builder = query_builder
             .bind(url_status_id)

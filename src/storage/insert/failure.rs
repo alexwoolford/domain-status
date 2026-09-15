@@ -62,7 +62,7 @@ async fn insert_failure_redirect_chain(
         redirect_chain.len(),
         Some("ON CONFLICT(url_failure_id, sequence_order) DO NOTHING"),
     );
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for (order, redirect_url) in redirect_chain.iter().enumerate() {
         #[allow(clippy::cast_possible_wrap)] // Redirect chains are short (< 20 hops), fits in i64
         let sequence_order = (order + 1) as i64; // 1-based sequence_order

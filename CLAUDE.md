@@ -66,7 +66,7 @@ Cargo workspace with a `cli/` member (`domain_status_cli`) for CLI argument defi
 
 ## Code Conventions
 
-- **MSRV**: Rust 1.85+ (Edition 2021)
+- **MSRV**: Rust 1.86+ (Edition 2021)
 - **No unsafe code** — `#![deny(unsafe_code)]` in `lib.rs`
 - **Prefer `Result`/`anyhow` in production code** — avoid `.unwrap()` outside tests
 - **Line length**: 100 chars (`rustfmt.toml`)

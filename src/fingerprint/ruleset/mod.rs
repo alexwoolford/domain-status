@@ -14,7 +14,6 @@ mod local;
 mod vendored;
 
 use anyhow::Result;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
@@ -22,6 +21,7 @@ use std::time::SystemTime;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::fingerprint::models::{FingerprintMetadata, FingerprintRuleset};
+use crate::utils::sha256_hex;
 
 use cache::{load_from_cache, save_to_cache};
 use categories::{fetch_categories_from_url, load_categories_from_path};
@@ -41,10 +41,10 @@ fn fingerprint_cache_key(sources: &[String]) -> String {
         format!("default-schema{CACHE_SCHEMA_VERSION}")
     } else if sources.len() == 1 {
         let material = format!("{CACHE_SCHEMA_VERSION}\n{}", sources[0]);
-        format!("{:x}", Sha256::digest(material.as_bytes()))
+        sha256_hex(material.as_bytes())
     } else {
         let combined = format!("{CACHE_SCHEMA_VERSION}\n{}", sources.join("\n"));
-        format!("{:x}", Sha256::digest(combined.as_bytes()))
+        sha256_hex(combined.as_bytes())
     }
 }
 

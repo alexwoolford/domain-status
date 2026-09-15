@@ -1333,7 +1333,7 @@ mod tests {
         seed_one_row_per_satellite_table(&pool, id1).await;
 
         for table in url_status_satellite_tables() {
-            let count: i64 = sqlx::query_scalar(&format!(
+            let count: i64 = crate::sql::query_scalar(format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
             .bind(id1)
@@ -1358,7 +1358,7 @@ mod tests {
         assert_eq!(id1, id2, "UPSERT must reuse the same url_status id");
 
         for table in URL_STATUS_CORE_SATELLITE_TABLES {
-            let count: i64 = sqlx::query_scalar(&format!(
+            let count: i64 = crate::sql::query_scalar(format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
             .bind(id2)
@@ -1371,7 +1371,7 @@ mod tests {
             );
         }
         for table in URL_STATUS_ENRICHMENT_SATELLITE_TABLES {
-            let count: i64 = sqlx::query_scalar(&format!(
+            let count: i64 = crate::sql::query_scalar(format!(
                 "SELECT COUNT(*) FROM {table} WHERE url_status_id = ?"
             ))
             .bind(id2)

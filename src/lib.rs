@@ -78,6 +78,7 @@ mod parse;
 mod run;
 mod runtime_metrics;
 mod security;
+mod sql;
 mod status_server;
 mod storage;
 pub mod summary;

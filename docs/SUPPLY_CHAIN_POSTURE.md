@@ -2,7 +2,7 @@
 
 This document summarizes dependency and CI practices for supply chain security.
 
-**Last reviewed:** 2026-09-14 (`whois-service` remains `[patch.crates-io]` / `vendor/whois-service` until crates.io disables reqwest default-tls).
+**Last reviewed:** 2026-09-15 (`whois-service` remains `[patch.crates-io]` / `vendor/whois-service` until crates.io disables reqwest default-tls).
 
 ---
 
@@ -13,8 +13,7 @@ This document summarizes dependency and CI practices for supply chain security.
 - **Workspace / path crates:** keep exact versions aligned with the package (`domain_status_cli = "0.1.x"`).
 - **Majors and breaking 0.x bumps:** Dependabot ignores `semver-major`. Land those in intentional PRs (with `just check` / audit / deny).
 - **Exceptions (documented in-manifest):**
-  - `murmur3 = "^0.1"` — Shodan-compatible favicon hashes; do not bump to 0.5 without golden-hash proof.
-  - `reqwest = "^0.12"` — 0.13 deferred (TLS / redirect / whois alignment surface).
+  - `reqwest = "^0.12"` — 0.13 deferred until `whois-service` (crates.io and `vendor/whois-service`) can move with it (TLS / redirect alignment). Do not mix that bump with SQLx.
 
 ---
 
@@ -29,7 +28,7 @@ This document summarizes dependency and CI practices for supply chain security.
 
 ## deny.toml policy
 
-- **Advisories:** `yanked = "deny"`. One advisory explicitly ignored: `RUSTSEC-2024-0436` (`paste`, still pulled by `parquet` 59) until upstream replaces it.
+- **Advisories:** `yanked = "deny"`. No crate-specific ignores in `deny.toml` today (`paste` / RUSTSEC-2024-0436 is gone from the lockfile as of parquet 59).
 - **Bans:** `multiple-versions = "warn"`, `wildcards = "deny"`, `highlight = "all"`.
 - **Sources:** Only `https://github.com/rust-lang/crates.io-index` allowed; unknown registries and unknown git sources denied.
 
@@ -37,9 +36,8 @@ This document summarizes dependency and CI practices for supply chain security.
 
 ## .cargo/audit.toml
 
-- **Ignores:** `RUSTSEC-2023-0071` (`rsa`) — present in `Cargo.lock` via `sqlx` → `sqlx-mysql` resolution even with sqlite-only features; not linked into the binary. No fixed rsa release yet.
-- `RUSTSEC-2024-0436` (`paste`) is handled in `deny.toml` (parquet transitive).
-- Revisit when upgrading `sqlx` or `parquet`; remove ignores when no longer applicable.
+- **Ignores:** none. SQLx 0.9 dropped the `rsa` crate from the resolved graph (`cargo tree -i rsa` is empty); `RUSTSEC-2023-0071` is no longer ignored.
+- Revisit when upgrading `sqlx` or `parquet`; remove ignores that no longer apply.
 
 ---
 
@@ -47,8 +45,12 @@ This document summarizes dependency and CI practices for supply chain security.
 
 - **TLS:** reqwest is used with `default-features = false` and `features = ["rustls-tls", ...]` — no native TLS. `whois-service` 0.3.0 from crates.io still enables reqwest `default-tls`; `[patch.crates-io]` overlays `vendor/whois-service` so RDAP uses rustls-only reqwest (`cargo tree -i native-tls` empty).
 - **WHOIS:** `whois-service` `^0.3` (`default-features = false`, no HTTP server). Patch is a one-line reqwest TLS change on 0.3.0; drop it when upstream disables reqwest defaults.
-- **Parquet/Arrow:** `arrow` / `parquet` `^59`. Parquet 59 drops the `thrift` crate dependency (the previous Dependabot thrift ignore is no longer needed). `paste` remains transitive until upstream removes it.
-- **Large/analytical crates:** arrow/parquet are used for export only; they add size and the `paste` advisory ignore. Acceptable for the feature; keep deny ignores documented and minimal.
+- **Parquet/Arrow:** `arrow` / `parquet` `^59`. Parquet 59 drops the `thrift` crate dependency. `paste` is no longer in `Cargo.lock`.
+- **Large/analytical crates:** arrow/parquet are used for export only; they add binary size. Acceptable for the feature.
+- **config / toml:** `config` `^0.15` (default-features off, `toml` only) matches vendored whois-service; `toml` `^1` preserves table key order (needed for gitleaks overlay association).
+- **murmur3:** `^0.5` for Shodan-compatible favicon hashes. Golden hashes in `src/fetch/favicon.rs` pin bit-identical output vs 0.1.
+- **Retry:** exponential backoff lives in `src/error_handling/categorization.rs` (no `tokio-retry`).
+- **SQLx:** `^0.9` with `default-features = false`, `sqlite-bundled`, `runtime-tokio`, `tls-rustls-aws-lc-rs`, `migrate`. Do not enable the `sqlite` meta-feature (it turns on `sqlite-load-extension`). Dynamic SQL uses `sqlx::AssertSqlSafe` via `src/sql.rs`. `sqlx-mysql` / `sqlx-postgres` may still appear in `Cargo.lock` as sqlx package metadata; they are not activated.
 
 ---
 
@@ -66,3 +68,4 @@ This document summarizes dependency and CI practices for supply chain security.
 3. **Do not** add wildcard dependencies or new registries without updating deny.toml and documenting the reason.
 4. **Upgrade** GitHub Actions tags deliberately (checkout, rust-toolchain, gitleaks-action, codecov); consider full-SHA pins only if threat model requires it.
 5. **Prefer** controlled cleanup PRs over stacking many Dependabot minors when changing version policy or dropping transitive crates (e.g. thrift).
+6. **Defer** reqwest 0.13 until the vendored `whois-service` reqwest pin can move in the same change.

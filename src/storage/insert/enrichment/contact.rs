@@ -43,7 +43,7 @@ pub(crate) async fn insert_contact_links_in_tx(
             "ON CONFLICT(url_status_id, contact_type, contact_value) DO UPDATE SET raw_href=excluded.raw_href",
         ),
     );
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for link in links {
         query_builder = query_builder
             .bind(url_status_id)

@@ -2,21 +2,20 @@
 
 use anyhow::{Error, Result};
 use log::debug;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use super::types::ResponseData;
 use crate::domain::extract_domain;
 use crate::fetch::request::{extract_http_headers, extract_security_headers};
 use crate::fetch::stream::{stream_bytes_with_limit, OnLimit, StreamedBytes};
+use crate::utils::sha256_hex;
 
 /// Computes SHA-256 hash of the body, returning hex-encoded string.
 fn compute_body_sha256(body: &str) -> Option<String> {
     if body.is_empty() {
         return None;
     }
-    let hash = Sha256::digest(body.as_bytes());
-    Some(format!("{hash:x}"))
+    Some(sha256_hex(body.as_bytes()))
 }
 
 /// Formats HTTP version from reqwest's Version enum.

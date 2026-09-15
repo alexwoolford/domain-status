@@ -27,7 +27,7 @@ async fn insert_structured_rows(
         rows.len(),
         Some("ON CONFLICT(url_status_id, data_type, property_name, property_value) DO NOTHING"),
     );
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for (property_name, property_value) in rows {
         query_builder = query_builder
             .bind(url_status_id)

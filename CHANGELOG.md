@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs match runtime: no per-domain concurrency cap; WHOIS on by default (ADR 0002); `url_technologies` is a core satellite and `url_favicons` is enrichment; storage is two writer transactions (ADR 0007). `/status` and `/metrics` expose `url_partial_failures` counts without changing exit policy.
 - Split `url_status` insert into `columns.rs` (fact-row registry), `core_satellites.rs` (CORE vs ENRICHMENT lists), and `upsert.rs` (in-txn writers) with no behavior change.
 - Scan-path contracts: mid-chain RFC1918 redirects stop at the last safe hop under `run_scan`; local TLS handshake fields persist to `url_status` / SAN / OID satellites; WHOIS on/off is pinned via cache seed vs empty `url_whois`.
+- Dependency hygiene: `config` 0.15, `toml` 1, `base64` 0.23, `sha2` 0.11, `rstest` 0.27, `murmur3` 0.5 with Shodan golden hashes; retry backoff is in-tree (dropped `tokio-retry`).
+- SQLx 0.9 (`sqlite-bundled`, rustls via `tls-rustls-aws-lc-rs`); MSRV is 1.86. `rsa` / RUSTSEC-2023-0071 is gone from the lockfile.
+- reqwest stays 0.12 until vendored `whois-service` can move to 0.13 in the same change.
 
 ### Fixed
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.

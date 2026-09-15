@@ -63,7 +63,7 @@ pub(crate) async fn fetch_string_list(
     query: &str,
     url_status_id: i64,
 ) -> Result<(String, usize)> {
-    let rows = sqlx::query(&with_export_limit(query))
+    let rows = crate::sql::query(with_export_limit(query))
         .bind(url_status_id)
         .fetch_all(pool.as_ref())
         .await?;
@@ -80,7 +80,7 @@ pub(crate) async fn fetch_count_query(
     query: &str,
     url_status_id: i64,
 ) -> Result<i64> {
-    sqlx::query_scalar::<_, i64>(query)
+    crate::sql::query_scalar::<i64>(query)
         .bind(url_status_id)
         .fetch_one(pool.as_ref())
         .await
@@ -96,7 +96,7 @@ pub(crate) async fn fetch_key_value_list(
     value_field: &str,
     url_status_id: i64,
 ) -> Result<(String, usize)> {
-    let rows = sqlx::query(&with_export_limit(query))
+    let rows = crate::sql::query(with_export_limit(query))
         .bind(url_status_id)
         .fetch_all(pool.as_ref())
         .await?;
@@ -154,7 +154,7 @@ pub(crate) async fn fetch_filtered_http_headers(
 
     // Build query with IN clause for allowed headers
     // Use QueryBuilder to safely construct the query
-    let mut query_builder = sqlx::QueryBuilder::new(&format!(
+    let mut query_builder = sqlx::QueryBuilder::new(format!(
         "SELECT header_name, header_value FROM {table} WHERE url_status_id = "
     ));
 
@@ -201,7 +201,7 @@ pub(crate) fn build_export_query<'a>(
     domain: Option<&'a str>,
     status: Option<u16>,
     since: Option<i64>,
-) -> QueryBuilder<'a, sqlx::Sqlite> {
+) -> QueryBuilder<sqlx::Sqlite> {
     let mut qb = QueryBuilder::new(
         "SELECT us.id, us.initial_domain, us.final_domain, us.initial_url, us.final_url, us.ip_address, us.reverse_dns_name,
                 us.http_status, us.http_status_text, us.response_time_seconds, us.title,
@@ -225,7 +225,7 @@ pub(crate) fn build_export_query<'a>(
 /// Builds WHERE clause for export queries based on filter parameters.
 /// Modifies the query builder in place.
 fn build_where_clause<'a>(
-    query_builder: &mut QueryBuilder<'a, sqlx::Sqlite>,
+    query_builder: &mut QueryBuilder<sqlx::Sqlite>,
     run_id: Option<&'a str>,
     domain: Option<&'a str>,
     status: Option<u16>,
@@ -552,6 +552,7 @@ mod tests {
         let mut qb = sqlx::QueryBuilder::new("SELECT * FROM url_status us");
         build_where_clause(&mut qb, None, None, None, None);
         let sql = qb.sql();
+        let sql = sql.as_str();
         assert!(
             !sql.contains("WHERE"),
             "No filters should produce no WHERE clause, got: {sql}"
@@ -569,6 +570,7 @@ mod tests {
             Some(1704067200000i64),
         );
         let sql = qb.sql();
+        let sql = sql.as_str();
         // Should have WHERE and three ANDs (4 clauses joined)
         assert!(sql.contains("WHERE"), "Should have WHERE clause");
         assert_eq!(

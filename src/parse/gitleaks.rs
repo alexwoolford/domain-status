@@ -231,7 +231,7 @@ fn compile_rule_allowlist(raw: &RuleAllowlistRaw) -> CompiledRuleAllowlist {
 
 /// Single pass over rules Table: collect rules and allowlists in key order (`preserve_order`);
 /// associate each allowlist block with the preceding [[rules]] (Gitleaks semantics).
-fn rules_from_table(t: &toml::map::Map<String, Value>) -> Vec<RuleRaw> {
+fn rules_from_table(t: &toml::Table) -> Vec<RuleRaw> {
     let mut out: Vec<RuleRaw> = Vec::new();
     let mut pending_allowlists: Vec<RuleAllowlistRaw> = Vec::new();
 
@@ -273,12 +273,12 @@ fn rules_from_table(t: &toml::map::Map<String, Value>) -> Vec<RuleRaw> {
     out
 }
 
-fn table_to_rule(t: &toml::map::Map<String, Value>) -> Option<RuleRaw> {
+fn table_to_rule(t: &toml::Table) -> Option<RuleRaw> {
     let s = toml::to_string(&Value::Table(t.clone())).ok()?;
     toml::from_str(&s).ok()
 }
 
-fn table_to_rule_allowlist(t: &toml::map::Map<String, Value>) -> Option<RuleAllowlistRaw> {
+fn table_to_rule_allowlist(t: &toml::Table) -> Option<RuleAllowlistRaw> {
     let s = toml::to_string(&Value::Table(t.clone())).ok()?;
     toml::from_str(&s).ok()
 }
@@ -606,24 +606,24 @@ pub fn gitleaks() -> &'static GitleaksCompiled {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use toml::map::Map;
+    use toml::Table;
 
     /// Rule/allowlist association: when rules are a Table, each [[rules.allowlists]] is associated with the preceding rule.
     /// We build the table in code so we control the structure (toml string [rules.0] + [rules.allowlists.0] may parse as array).
     #[test]
     fn test_rules_table_allowlist_association() {
-        let mut rule_t = Map::new();
+        let mut rule_t = Table::new();
         rule_t.insert("id".into(), Value::String("test-rule".into()));
         rule_t.insert("description".into(), Value::String("Test".into()));
         rule_t.insert("regex".into(), Value::String("[A-Z]+".into()));
 
-        let mut allow_t = Map::new();
+        let mut allow_t = Table::new();
         allow_t.insert(
             "regexes".into(),
             Value::Array(vec![Value::String(".+EXAMPLE$".into())]),
         );
 
-        let mut rules_t = Map::new();
+        let mut rules_t = Table::new();
         rules_t.insert("0".into(), Value::Table(rule_t));
         rules_t.insert(
             "allowlists".into(),

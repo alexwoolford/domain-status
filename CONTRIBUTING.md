@@ -23,7 +23,7 @@ For the full environment bootstrap, helper CLI list, cache/network behavior, and
 
 ## Required Tooling
 
-- Rust `1.85+`
+- Rust `1.86+`
 - `just`
 
 ## Commonly Expected Optional Tooling

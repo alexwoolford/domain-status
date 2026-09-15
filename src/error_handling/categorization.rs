@@ -3,10 +3,31 @@
 //! This module provides functions to categorize errors and configure retry strategies.
 
 use std::time::Duration;
-use tokio_retry::strategy::ExponentialBackoff;
 
 use super::stats::ProcessingStats;
 use super::types::ErrorType;
+
+/// Exponential backoff capped at `max_delay`, limited to `remaining` yields.
+struct ExponentialBackoff {
+    current_ms: u64,
+    factor: u64,
+    max_delay: Duration,
+    remaining: usize,
+}
+
+impl Iterator for ExponentialBackoff {
+    type Item = Duration;
+
+    fn next(&mut self) -> Option<Duration> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let delay = Duration::from_millis(self.current_ms).min(self.max_delay);
+        self.current_ms = self.current_ms.saturating_mul(self.factor);
+        Some(delay)
+    }
+}
 
 /// Creates an exponential backoff retry strategy.
 ///
@@ -16,16 +37,15 @@ use super::types::ErrorType;
 /// - Maximum delay: `RETRY_MAX_DELAY_SECS` seconds
 /// - Maximum attempts: `RETRY_MAX_ATTEMPTS` (prevents infinite retries)
 ///
-/// # Returns
-///
-/// A retry strategy iterator ready for use with `tokio_retry::Retry`.
-/// The iterator is limited to `RETRY_MAX_ATTEMPTS` attempts to prevent
-/// infinite retries and ensure we don't exceed `URL_PROCESSING_TIMEOUT`.
+/// The iterator is limited to `RETRY_MAX_ATTEMPTS` items to prevent
+/// infinite retries and keep the budget inside `URL_PROCESSING_TIMEOUT`.
 pub fn get_retry_strategy() -> impl Iterator<Item = Duration> {
-    ExponentialBackoff::from_millis(crate::config::RETRY_INITIAL_DELAY_MS)
-        .factor(crate::config::RETRY_FACTOR) // Double the delay with each retry
-        .max_delay(Duration::from_secs(crate::config::RETRY_MAX_DELAY_SECS)) // Maximum delay
-        .take(crate::config::RETRY_MAX_ATTEMPTS) // Limit total attempts (initial + retries)
+    ExponentialBackoff {
+        current_ms: crate::config::RETRY_INITIAL_DELAY_MS,
+        factor: crate::config::RETRY_FACTOR,
+        max_delay: Duration::from_secs(crate::config::RETRY_MAX_DELAY_SECS),
+        remaining: crate::config::RETRY_MAX_ATTEMPTS,
+    }
 }
 
 /// Categorizes a `reqwest::Error` into an `ErrorType`.
@@ -121,8 +141,7 @@ mod tests {
             .next()
             .expect("Retry strategy should always yield at least one delay");
 
-        // First delay should be at least RETRY_INITIAL_DELAY_MS
-        // (ExponentialBackoff may have a minimum delay)
+        // First delay should be RETRY_INITIAL_DELAY_MS (or capped at max).
         let expected_ms = u128::from(crate::config::RETRY_INITIAL_DELAY_MS);
         let actual_ms = first_delay.as_millis();
         assert!(
@@ -157,7 +176,7 @@ mod tests {
                 // - Precision loss for delays > 2^53 ms is acceptable (test would still work)
                 #[allow(clippy::cast_precision_loss)]
                 let ratio = curr as f64 / prev as f64;
-                // Allow wide tolerance - ExponentialBackoff behavior can vary
+                // Allow wide tolerance - backoff doubles each step until max_delay
                 assert!(
                     (1.0..=3.0).contains(&ratio),
                     "Backoff factor should be reasonable: {} / {} = {}",
