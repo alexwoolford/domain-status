@@ -77,7 +77,7 @@ Export filters (optional): `--domain` (substring match on final domain), `--stat
 
 ### Stdout / stderr
 
-- **Diagnostics** (logs, progress, scan/export banners) go to **stderr**, or to the scan `--log-file` when the progress bar is active. The logger uses `env_logger` with `Target::Stderr` on export/summary.
+- **Diagnostics:** `scan` always writes `log` records to `--log-file` (default `domain_status.log`); the TTY progress bar stays on stderr. `export` / `summary` log to stderr via `env_logger` (`Target::Stderr`). Scan/export banners also use stderr.
 - **Machine-readable export data** goes to **stdout** only when you pass `--output -` (CSV or JSONL). Otherwise export writes a file (`domain_status_export.{csv|jsonl|parquet}` by default).
 - Pipe-friendly example:
 

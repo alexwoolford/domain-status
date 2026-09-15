@@ -125,7 +125,7 @@ pub async fn prepare_record_for_insertion(
                         Some(whois_result)
                     }
                     Ok(None) => {
-                        log::info!(
+                        log::debug!(
                             "WHOIS lookup returned no data for {}",
                             params.resp_data.final_domain
                         );

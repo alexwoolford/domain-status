@@ -85,7 +85,7 @@ where
         return Ok(Some(result));
     }
 
-    log::info!("Starting WHOIS lookup for domain: {domain}");
+    log::debug!("Starting WHOIS lookup for domain: {domain}");
     if let Ok(response) = tokio::time::timeout(
         Duration::from_secs(crate::config::WHOIS_TIMEOUT_SECS),
         lookup(domain),

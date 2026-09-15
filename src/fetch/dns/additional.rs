@@ -51,7 +51,6 @@ pub(crate) async fn fetch_additional_dns_records(
         }
         Ok(_) => None,
         Err(e) => {
-            log::warn!("Failed to lookup NS records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsNsLookupError);
             // Sanitize and truncate error message to prevent database bloat
             let error_msg = format!("Failed to lookup NS records for {final_domain}: {e}");
@@ -81,7 +80,6 @@ pub(crate) async fn fetch_additional_dns_records(
         }
         Ok(_) => None,
         Err(e) => {
-            log::warn!("Failed to lookup TXT records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsTxtLookupError);
             // Sanitize and truncate error message to prevent database bloat
             let error_msg = format!("Failed to lookup TXT records for {final_domain}: {e}");
@@ -140,7 +138,6 @@ pub(crate) async fn fetch_additional_dns_records(
         }
         Ok(_) => None,
         Err(e) => {
-            log::warn!("Failed to lookup MX records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsMxLookupError);
             // Sanitize and truncate error message to prevent database bloat
             let error_msg = format!("Failed to lookup MX records for {final_domain}: {e}");
@@ -162,7 +159,6 @@ pub(crate) async fn fetch_additional_dns_records(
         }
         Ok(_) => None,
         Err(e) => {
-            log::warn!("Failed to lookup CNAME records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsCnameLookupError);
             let error_msg = format!("Failed to lookup CNAME records for {final_domain}: {e}");
             let truncated_msg =
@@ -183,7 +179,6 @@ pub(crate) async fn fetch_additional_dns_records(
         }
         Ok(_) => None,
         Err(e) => {
-            log::warn!("Failed to lookup AAAA records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsAaaaLookupError);
             let error_msg = format!("Failed to lookup AAAA records for {final_domain}: {e}");
             let truncated_msg =
@@ -214,7 +209,6 @@ pub(crate) async fn fetch_additional_dns_records(
         }
         Ok(_) => None,
         Err(e) => {
-            log::warn!("Failed to lookup CAA records for {final_domain}: {e}");
             error_stats.increment_error(crate::error_handling::ErrorType::DnsCaaLookupError);
             let error_msg = format!("Failed to lookup CAA records for {final_domain}: {e}");
             let truncated_msg =

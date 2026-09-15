@@ -156,7 +156,7 @@ pub(crate) async fn extract_response_data(
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
         let ct_lc = ct.to_str().unwrap_or("").to_lowercase();
         if !is_scannable_content_type(&ct_lc) {
-            log::info!("Skipping {final_domain} - non-scannable content-type: {ct_lc}");
+            log::debug!("Skipping {final_domain} - non-scannable content-type: {ct_lc}");
             return Ok(None);
         }
     } else {
@@ -188,7 +188,7 @@ pub(crate) async fn extract_response_data(
 
     if body.is_empty() {
         // Preserve metadata (status, headers, TLS, DNS) like the 2MB-exceeded path.
-        log::info!("Empty response body for {final_domain}, recording metadata only");
+        log::debug!("Empty response body for {final_domain}, recording metadata only");
         return Ok(Some(ResponseData {
             initial_url: original_url.to_string(),
             final_url,
@@ -215,7 +215,7 @@ pub(crate) async fn extract_response_data(
     if body.contains("<title") || body.contains("<TITLE") {
         log::debug!("Title tag found in raw HTML for {final_domain}");
     } else {
-        log::warn!("No title tag found in raw HTML for {final_domain}");
+        log::debug!("No title tag found in raw HTML for {final_domain}");
     }
 
     let body_sha256 = compute_body_sha256(&body);
