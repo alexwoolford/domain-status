@@ -1,6 +1,6 @@
 # CLI cheat sheet
 
-Full flag help: `domain_status --help`, `domain_status scan --help`, etc.
+Full flag help: `domain_status scan --help`. Everyday flags only: `domain_status scan -h`.
 
 ## Commands
 

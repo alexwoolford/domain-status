@@ -731,6 +731,19 @@ mod tests {
             }
             CliCommand::Export(_) | CliCommand::Summary(_) => panic!("expected scan"),
         }
+
+        let legacy =
+            parse_cli_command_from(["domain_status", "scan", "urls.txt", "--enable-whois"])
+                .unwrap();
+        match legacy {
+            CliCommand::Scan(cmd) => {
+                assert!(
+                    cmd.enable_whois,
+                    "legacy --enable-whois must still parse (hidden from help)"
+                );
+            }
+            CliCommand::Export(_) | CliCommand::Summary(_) => panic!("expected scan"),
+        }
     }
 
     #[test]

@@ -38,110 +38,209 @@ pub enum CliCommand {
 }
 
 /// Scan command arguments.
+///
+/// Everyday flags are on `-h`. All flags (except the legacy `--enable-whois` alias)
+/// are on `--help`.
 #[derive(Debug, Parser, Clone)]
+#[command(after_help = "Everyday flags: -h. All flags: --help. Docs: docs/CLI.md")]
 pub struct ScanCommand {
-    #[arg(long, value_parser, env = "DOMAIN_STATUS_CONFIG_FILE")]
-    pub config: Option<PathBuf>,
-
-    #[arg(value_parser)]
+    /// URL list (one URL per line). Use `-` for stdin.
+    #[arg(value_parser, help_heading = "Scan")]
     pub file: PathBuf,
-
-    /// Baseline log level; overridden by `-v` / `-q` (preferred for quick changes).
-    #[arg(long, value_enum, default_value_t = LogLevel::Info, env = "DOMAIN_STATUS_LOG_LEVEL")]
-    pub log_level: LogLevel,
-
-    #[command(flatten)]
-    pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
-
-    /// Format for the scan log file (`--log-file`). Use `-v`/`-q` for verbosity.
-    #[arg(long, value_enum, default_value_t = LogFormat::Plain, env = "DOMAIN_STATUS_LOG_FORMAT")]
-    pub log_format: LogFormat,
 
     #[arg(
         long,
         value_parser,
         default_value = "./domain_status.db",
-        env = "DOMAIN_STATUS_DB_PATH"
+        env = "DOMAIN_STATUS_DB_PATH",
+        help_heading = "Scan"
     )]
     pub db_path: PathBuf,
 
-    #[arg(long, default_value_t = 30, env = "DOMAIN_STATUS_MAX_CONCURRENCY")]
-    pub max_concurrency: usize,
-
-    #[arg(long, default_value_t = 10, env = "DOMAIN_STATUS_TIMEOUT_SECONDS")]
+    #[arg(
+        long,
+        default_value_t = 10,
+        env = "DOMAIN_STATUS_TIMEOUT_SECONDS",
+        help_heading = "Scan"
+    )]
     pub timeout_seconds: u64,
 
-    #[arg(long, default_value = DEFAULT_USER_AGENT, env = "DOMAIN_STATUS_USER_AGENT")]
-    pub user_agent: String,
+    #[arg(
+        long,
+        default_value_t = 30,
+        env = "DOMAIN_STATUS_MAX_CONCURRENCY",
+        help_heading = "Scan"
+    )]
+    pub max_concurrency: usize,
 
-    /// URL admission rate (tokens/sec). Not per-HTTP-request RPS; redirects, favicon,
-    /// TLS, and WHOIS share one token per input URL. `0` disables.
-    #[arg(long, default_value_t = 15, env = "DOMAIN_STATUS_RATE_LIMIT_RPS")]
+    /// URL admission rate (tokens per input URL per second). `0` disables.
+    ///
+    /// Not per-HTTP-request RPS: redirects, favicon, TLS, and WHOIS share one token
+    /// per input URL.
+    #[arg(
+        long,
+        default_value_t = 15,
+        env = "DOMAIN_STATUS_RATE_LIMIT_RPS",
+        help_heading = "Scan"
+    )]
     pub rate_limit_rps: u32,
 
-    #[arg(long, env = "DOMAIN_STATUS_FINGERPRINTS")]
-    pub fingerprints: Option<String>,
-
-    #[arg(long, env = "DOMAIN_STATUS_GEOIP")]
-    pub geoip: Option<String>,
-
-    #[arg(long, env = "DOMAIN_STATUS_STATUS_PORT")]
-    pub status_port: Option<u16>,
-
-    /// Enable WHOIS/RDAP (on by default). Prefer `--no-whois` to disable.
-    /// Kept for backward compatibility with scripts that pass `--enable-whois`.
-    #[arg(long, env = "DOMAIN_STATUS_ENABLE_WHOIS", default_value_t = true)]
-    pub enable_whois: bool,
-
-    /// Disable WHOIS/RDAP (overrides default-on and TOML/env `enable_whois = true`).
-    #[arg(long, conflicts_with = "enable_whois")]
+    /// Disable WHOIS/RDAP (on by default).
+    ///
+    /// Overrides TOML/env `enable_whois = true`.
+    #[arg(long, conflicts_with = "enable_whois", help_heading = "Enrichments")]
     pub no_whois: bool,
 
-    /// Hide the terminal progress bar (still logs progress to `--log-file`).
-    #[arg(long, env = "DOMAIN_STATUS_NO_PROGRESS")]
-    pub no_progress: bool,
+    /// GeoIP MMDB path or URL. Or set MAXMIND_LICENSE_KEY for GeoLite2 download.
+    #[arg(long, env = "DOMAIN_STATUS_GEOIP", help_heading = "Enrichments")]
+    pub geoip: Option<String>,
 
-    /// Shared cache root for fingerprints, GeoIP, WHOIS, and User-Agent data.
-    /// Defaults to `$DOMAIN_STATUS_CACHE_DIR` or the platform cache dir +
-    /// `domain_status/` (Linux `~/.cache/…`, macOS `~/Library/Caches/…`).
-    /// Database and log paths are separate.
-    #[arg(long, value_parser, env = "DOMAIN_STATUS_CACHE_DIR")]
-    pub cache_dir: Option<PathBuf>,
-
-    /// Fetch first-party external `<script src>` URLs for secret detection and
-    /// static technology fingerprints (`scripts` patterns). Off by default because
-    /// it expands the threat surface and adds per-URL latency. Only scripts on the
-    /// same registrable domain as the page are fetched (known third-party CDNs are
-    /// skipped). Fetches are capped at 10 scripts per page, size/timeout limited,
-    /// and SSRF-validated like the primary URL.
-    #[arg(long, env = "DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS")]
+    /// Fetch first-party external script bodies (secrets + static tech). Off by default.
+    ///
+    /// Only scripts on the same registrable domain as the page are fetched (known
+    /// third-party CDNs are skipped). Fetches are capped at 10 scripts per page,
+    /// size/timeout limited, and SSRF-validated like the primary URL. Off by default
+    /// because it expands the threat surface and adds per-URL latency.
+    #[arg(
+        long,
+        env = "DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS",
+        help_heading = "Enrichments"
+    )]
     pub scan_external_scripts: bool,
 
-    #[arg(long, value_enum, default_value_t = FailOn::Never, env = "DOMAIN_STATUS_FAIL_ON")]
+    /// CI exit policy when some URLs fail (`never`, `any-failure`, `pct>`).
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = FailOn::Never,
+        env = "DOMAIN_STATUS_FAIL_ON",
+        help_heading = "CI / logging"
+    )]
     pub fail_on: FailOn,
+
+    #[command(flatten, next_help_heading = "CI / logging")]
+    pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
+
+    /// Baseline log level; overridden by `-v` / `-q` (preferred for quick changes).
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = LogLevel::Info,
+        env = "DOMAIN_STATUS_LOG_LEVEL",
+        hide_short_help = true,
+        help_heading = "CI / logging"
+    )]
+    pub log_level: LogLevel,
+
+    /// Format for the scan log file (`--log-file`). Use `-v`/`-q` for verbosity.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = LogFormat::Plain,
+        env = "DOMAIN_STATUS_LOG_FORMAT",
+        hide_short_help = true,
+        help_heading = "CI / logging"
+    )]
+    pub log_format: LogFormat,
+
+    #[arg(
+        long,
+        default_value = "domain_status.log",
+        env = "DOMAIN_STATUS_LOG_FILE",
+        hide_short_help = true,
+        help_heading = "CI / logging"
+    )]
+    pub log_file: PathBuf,
+
+    /// Hide the terminal progress bar (still logs progress to `--log-file`).
+    #[arg(
+        long,
+        env = "DOMAIN_STATUS_NO_PROGRESS",
+        hide_short_help = true,
+        help_heading = "CI / logging"
+    )]
+    pub no_progress: bool,
 
     #[arg(
         long,
         default_value_t = 10,
         value_parser = clap::value_parser!(u8).range(0..=100),
         requires_if("pct>", "fail_on"),
-        env = "DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD"
+        env = "DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD",
+        hide_short_help = true,
+        help_heading = "CI / logging"
     )]
     pub fail_on_pct_threshold: u8,
 
     #[arg(
         long,
-        default_value = "domain_status.log",
-        env = "DOMAIN_STATUS_LOG_FILE"
+        value_parser,
+        env = "DOMAIN_STATUS_CONFIG_FILE",
+        hide_short_help = true,
+        help_heading = "Advanced"
     )]
-    pub log_file: PathBuf,
+    pub config: Option<PathBuf>,
+
+    #[arg(
+        long,
+        default_value = DEFAULT_USER_AGENT,
+        env = "DOMAIN_STATUS_USER_AGENT",
+        hide_short_help = true,
+        help_heading = "Advanced"
+    )]
+    pub user_agent: String,
+
+    #[arg(
+        long,
+        env = "DOMAIN_STATUS_FINGERPRINTS",
+        hide_short_help = true,
+        help_heading = "Advanced"
+    )]
+    pub fingerprints: Option<String>,
+
+    #[arg(
+        long,
+        env = "DOMAIN_STATUS_STATUS_PORT",
+        hide_short_help = true,
+        help_heading = "Advanced"
+    )]
+    pub status_port: Option<u16>,
+
+    /// Shared cache root for fingerprints, GeoIP, WHOIS, and User-Agent data.
+    /// Defaults to `$DOMAIN_STATUS_CACHE_DIR` or the platform cache dir +
+    /// `domain_status/` (Linux `~/.cache/…`, macOS `~/Library/Caches/…`).
+    /// Database and log paths are separate.
+    #[arg(
+        long,
+        value_parser,
+        env = "DOMAIN_STATUS_CACHE_DIR",
+        hide_short_help = true,
+        help_heading = "Advanced"
+    )]
+    pub cache_dir: Option<PathBuf>,
 
     /// Maximum time (seconds) to wait for in-flight tasks to finish after the
     /// input queue is exhausted. Tasks still running after this window are
     /// aborted and recorded in `url_failures` with the timeout reason.
     /// Raise this for WHOIS-heavy small batches if scans report drain timeouts.
-    #[arg(long, default_value_t = 10, env = "DOMAIN_STATUS_DRAIN_TIMEOUT_SECS")]
+    #[arg(
+        long,
+        default_value_t = 10,
+        env = "DOMAIN_STATUS_DRAIN_TIMEOUT_SECS",
+        hide_short_help = true,
+        help_heading = "Advanced"
+    )]
     pub drain_timeout_secs: u64,
+
+    /// Enable WHOIS/RDAP (on by default). Prefer `--no-whois` to disable.
+    /// Kept for backward compatibility with scripts that pass `--enable-whois`.
+    #[arg(
+        long,
+        env = "DOMAIN_STATUS_ENABLE_WHOIS",
+        default_value_t = true,
+        hide = true
+    )]
+    pub enable_whois: bool,
 }
 
 /// Export command arguments.

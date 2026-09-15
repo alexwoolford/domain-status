@@ -44,40 +44,9 @@ domain_status export --format jsonl --output - | jq '.final_domain, .technologie
 domain_status export --format parquet --output recon.parquet
 ```
 
-CSV: `domain_status export --format csv`.
+CSV: `domain_status export --format csv`. Everyday flags: `domain_status scan -h`. All flags: `--help`.
 
-### Fingerprint rules without GitHub
-
-Default scans try to refresh Wappalyzer-compatible rules from GitHub (set `GITHUB_TOKEN` to raise rate limits). When remotes fail, a **bundled minimal** ruleset is used. To skip GitHub entirely (CI, restricted egress, deterministic runs), pass a local rules path:
-
-```bash
-domain_status scan urls.txt --fingerprints /path/to/technologies
-```
-
-That only affects how fingerprint *rules* are loaded — scanning the URLs in your list still needs network access to those hosts.
-
-Caches (fingerprints, GeoIP, WHOIS, User-Agent) live under a shared root: `--cache-dir`, or `DOMAIN_STATUS_CACHE_DIR`, or the platform cache directory + `domain_status/` (Linux `~/.cache/…`, macOS `~/Library/Caches/…`). The SQLite DB and log file stay under `--db-path` / `--log-file` (cwd by default).
-
-### Optional enrichments
-
-| Feature | How to enable / disable |
-|---------|-------------------------|
-| GeoIP | Set `MAXMIND_LICENSE_KEY` for GeoLite2 auto-download (free MaxMind account + key; GeoLite2 *is* the free tier — there is no unlicensed download), **or** pass `--geoip /path/or/url` to an MMDB you already have |
-| WHOIS | **On by default**; disable with `--no-whois` (or `enable_whois = false` in TOML) |
-| External script scan | `--scan-external-scripts` (off by default; secrets + static tech on first-party bodies) |
-
-### Diligence profile (recommended for infosec / light PE review)
-
-WHOIS is on by default. For a fuller observational pass, add GeoIP and first-party script bodies:
-
-```bash
-# GeoIP: MAXMIND_LICENSE_KEY (free GeoLite2 download), or --geoip /path/to/GeoLite2-City.mmdb
-domain_status scan urls.txt \
-  --scan-external-scripts
-```
-
-This keeps WHOIS/RDAP, and adds GeoIP/ASN (when licensed or `--geoip <path|url>` is set) plus first-party external script bodies (secrets + static tech). Core HTTP/TLS/DNS/headers/`security.txt`/`robots.txt` capture runs regardless. Use `--no-whois` for cheap bulk crawls. Details: [docs/ADVANCED.md](docs/ADVANCED.md).
-
+WHOIS is on by default (`--no-whois` to disable). GeoIP needs `MAXMIND_LICENSE_KEY` or `--geoip`. First-party script bodies: `--scan-external-scripts`. Local fingerprint rules, caches, and GitHub-free ruleset loading: [docs/ADVANCED.md](docs/ADVANCED.md).
 
 ## Features (core)
 
@@ -99,7 +68,7 @@ This keeps WHOIS/RDAP, and adds GeoIP/ASN (when licensed or `--geoip <path|url>`
 
 ## Configuration (keep it simple)
 
-**Day-to-day:** CLI flags (`domain_status scan --help`). Prefer `-v` / `-q` for log verbosity.
+**Day-to-day:** CLI flags (`domain_status scan -h`; all flags: `scan --help`). Prefer `-v` / `-q` for log verbosity.
 
 **Repeatable jobs:** pick **one** of TOML (`--config ./domain_status.toml` or cwd `domain_status.toml`) **or** `DOMAIN_STATUS_*` env for the job profile; use CLI only to override. Mixing TOML and env for the same knobs works (env wins) but is harder to reason about. **`--config` wins** over `DOMAIN_STATUS_CONFIG_FILE`.
 
