@@ -91,23 +91,24 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn assert_asn_degrades_unloaded(result: Result<()>) {
+        result.expect("ASN init must degrade, not abort");
+        assert!(
+            crate::geoip::GEOIP_ASN_READER
+                .read()
+                .expect("ASN reader lock")
+                .is_none(),
+            "ASN reader must stay unloaded"
+        );
+    }
+
     #[tokio::test]
     async fn test_init_asn_database_no_license_key() {
         // Test when no license key is set
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let result = init_asn_database(temp_dir.path()).await;
-        assert!(
-            result.is_ok(),
-            "ASN init without a license must not abort the scan"
-        );
-        assert!(
-            crate::geoip::GEOIP_ASN_READER
-                .read()
-                .expect("ASN reader lock")
-                .is_none(),
-            "ASN reader must stay unloaded without MAXMIND_LICENSE_KEY"
-        );
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -116,17 +117,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let result = init_asn_database(temp_dir.path()).await;
-        assert!(
-            result.is_ok(),
-            "empty MAXMIND_LICENSE_KEY must degrade, not abort"
-        );
-        assert!(
-            crate::geoip::GEOIP_ASN_READER
-                .read()
-                .expect("ASN reader lock")
-                .is_none(),
-            "ASN reader must stay unloaded with an empty license key"
-        );
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -135,14 +126,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let first = init_asn_database(temp_dir.path()).await;
         let second = init_asn_database(temp_dir.path()).await;
-        assert!(first.is_ok() && second.is_ok());
-        assert!(
-            crate::geoip::GEOIP_ASN_READER
-                .read()
-                .expect("ASN reader lock")
-                .is_none(),
-            "without a license, repeated init must keep the ASN reader unloaded"
-        );
+        assert_asn_degrades_unloaded(first);
+        assert_asn_degrades_unloaded(second);
     }
 
     #[tokio::test]
@@ -154,17 +139,7 @@ mod tests {
 
         // This will attempt to download, which will fail, but should handle gracefully
         let result = init_asn_database(temp_dir.path()).await;
-        assert!(
-            result.is_ok(),
-            "failed ASN download must not abort the scan"
-        );
-        assert!(
-            crate::geoip::GEOIP_ASN_READER
-                .read()
-                .expect("ASN reader lock")
-                .is_none(),
-            "ASN reader must stay unloaded when MaxMind download fails"
-        );
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -187,7 +162,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download since cache file is missing
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -202,7 +177,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should handle invalid metadata gracefully (treat as missing)
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -256,7 +231,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok even if cache load fails
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -277,7 +252,7 @@ mod tests {
         // All should succeed (even if download fails)
         for handle in handles {
             let result = handle.await.expect("Task panicked");
-            assert!(result.is_ok());
+            assert_asn_degrades_unloaded(result);
         }
     }
 
@@ -295,7 +270,7 @@ mod tests {
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok (download fails but handled gracefully)
         // or Ok if somehow succeeds
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -334,7 +309,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download since cache is expired
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -372,7 +347,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should return Ok (cache load fails but handled gracefully)
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -402,7 +377,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should handle gracefully (cache file doesn't exist, so won't hit UTF-8 check)
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -431,7 +406,7 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download when elapsed() fails
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 
     #[tokio::test]
@@ -462,6 +437,6 @@ mod tests {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_asn_database(temp_dir.path()).await;
         // Should attempt download since cache file is missing
-        assert!(result.is_ok());
+        assert_asn_degrades_unloaded(result);
     }
 }

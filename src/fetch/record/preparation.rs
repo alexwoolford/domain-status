@@ -521,18 +521,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_record_for_insertion_whois_when_enabled() {
-        // Test that WHOIS lookup is performed when enable_whois is true
-        // This is critical - WHOIS is an expensive operation and should only run when enabled
+        let cache_dir = tempfile::TempDir::new().expect("whois cache");
+        crate::whois::seed_whois_cache(
+            cache_dir.path(),
+            "example.com",
+            &crate::whois::WhoisResult {
+                registrar: Some("Fixture Registrar".to_string()),
+                registrant_org: Some("Fixture Org".to_string()),
+                raw_text: Some("seeded".to_string()),
+                ..crate::whois::WhoisResult::default()
+            },
+        )
+        .await
+        .expect("seed whois cache");
+
         let mut ctx = create_test_context().await;
-        // Enable WHOIS for this test
         ctx.runtime.enable_whois = true;
+        ctx.runtime.whois_cache_dir = cache_dir.path().to_path_buf();
         let resp_data = create_minimal_resp_data();
         let html_data = create_minimal_html_data();
         let tls_dns_data = create_minimal_tls_dns_data();
         let additional_dns = create_minimal_additional_dns_data();
 
-        let start = std::time::Instant::now();
-        let (persisted_record, (geoip_ms, _whois_ms)) =
+        let (persisted_record, (_geoip_ms, _whois_ms)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -548,24 +559,12 @@ mod tests {
                 well_known: crate::fetch::well_known::WellKnownData::default(),
             })
             .await;
-        let elapsed = start.elapsed();
 
-        // WHOIS should be attempted (may succeed or fail, but should take time)
-        // WHOIS lookup time should be > 0 if enabled (even if it fails quickly)
-        // The key is that the code path was executed
         assert_eq!(persisted_record.url_record.final_domain, "example.com");
-        // WHOIS timing should be recorded (may be 0 if lookup fails immediately)
-        // But the elapsed time should account for WHOIS attempt
-        // elapsed.as_millis() is always >= 0 (u64), so we just verify it doesn't panic
-        let _ = elapsed.as_millis();
-        // Note: Using lenient threshold for CI environments
-        assert!(
-            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
-            "GeoIP lookup took {}ms, expected < {}ms",
-            geoip_ms,
-            GEOIP_TEST_TIMEOUT_MS
-        );
-        // _whois_ms may be 0 if lookup fails immediately, but the code path was executed
+        let whois = persisted_record
+            .whois
+            .expect("WHOIS cache hit must populate");
+        assert_eq!(whois.registrar.as_deref(), Some("Fixture Registrar"));
     }
 
     #[tokio::test]

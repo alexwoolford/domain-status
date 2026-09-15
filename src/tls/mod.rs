@@ -619,4 +619,198 @@ mod tests {
         .expect_err("invalid DER should fail");
         assert!(error.to_string().contains("Parsing Error"));
     }
+
+    fn fixture_server_identity() -> (Vec<u8>, Vec<u8>) {
+        let mut params = CertificateParams::new(vec![
+            "example.com".to_string(),
+            "www.example.com".to_string(),
+        ])
+        .expect("certificate params");
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, "example.com");
+        params.distinguished_name = distinguished_name;
+        params.is_ca = IsCa::ExplicitNoCa;
+        params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ServerAuth,
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+        let key_pair = KeyPair::generate().expect("key pair");
+        let cert = params.self_signed(&key_pair).expect("certificate");
+        (cert.der().to_vec(), key_pair.serialize_der())
+    }
+
+    async fn handshake_local_tls_fixture() -> crate::models::CertificateInfo {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use tokio::net::{TcpListener, TcpStream};
+        use tokio_rustls::TlsAcceptor;
+
+        init_crypto_for_test();
+        let (cert_der, key_der) = fixture_server_identity();
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert_der)],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+            )
+            .expect("server TLS config");
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local TLS listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.expect("accept TLS client");
+            let _session = acceptor.accept(tcp).await.expect("server handshake");
+            let _ = release_rx.await;
+        });
+
+        let client_config = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
+            .with_no_client_auth();
+        let sock = TcpStream::connect(addr).await.expect("connect to fixture");
+        let connector = TlsConnector::from(Arc::new(client_config));
+        let server_name = ServerName::try_from("example.com".to_string()).expect("SNI");
+        let tls_stream = connector
+            .connect(server_name, sock)
+            .await
+            .expect("client handshake");
+
+        use rustls::ProtocolVersion;
+        let tls_version = tls_stream.get_ref().1.protocol_version().map_or(
+            crate::models::TlsVersion::Unknown,
+            |v| match v {
+                ProtocolVersion::TLSv1_0 => crate::models::TlsVersion::Tls10,
+                ProtocolVersion::TLSv1_1 => crate::models::TlsVersion::Tls11,
+                ProtocolVersion::TLSv1_2 => crate::models::TlsVersion::Tls12,
+                ProtocolVersion::TLSv1_3 => crate::models::TlsVersion::Tls13,
+                ProtocolVersion::SSLv2 | ProtocolVersion::SSLv3 => crate::models::TlsVersion::Ssl30,
+                _ => crate::models::TlsVersion::Unknown,
+            },
+        );
+        let cipher_suite = tls_stream
+            .get_ref()
+            .1
+            .negotiated_cipher_suite()
+            .map(|cs| format!("{:?}", cs.suite()));
+        let cert = tls_stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .expect("peer certificate after handshake");
+        let parsed = parse_certificate_info_from_der(cert.as_ref(), tls_version, cipher_suite)
+            .expect("parse handshake certificate");
+        drop(tls_stream);
+        let _ = release_tx.send(());
+        parsed
+    }
+
+    #[tokio::test]
+    async fn test_local_tls_handshake_fields_persist_to_sqlite() {
+        use crate::storage::insert::url::{insert_url_record, UrlRecordInsertParams};
+        use crate::storage::models::UrlRecord;
+        use crate::storage::test_helpers::{create_test_pool, create_test_run};
+        use sqlx::Row;
+        use std::collections::HashMap;
+
+        let parsed = handshake_local_tls_fixture().await;
+        assert!(
+            parsed
+                .subject
+                .as_deref()
+                .is_some_and(|s| s.contains("example.com")),
+            "handshake subject should include fixture CN"
+        );
+        assert_eq!(
+            parsed.subject_alternative_names,
+            Some(vec![
+                "example.com".to_string(),
+                "www.example.com".to_string()
+            ])
+        );
+
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "tls-fixture-run", 1_704_067_200_000).await;
+
+        let mut record = UrlRecord::test_default();
+        record.run_id = Some("tls-fixture-run".to_string());
+        record.tls_version = parsed.tls_version;
+        record.ssl_cert_subject = parsed.subject.clone();
+        record.ssl_cert_issuer = parsed.issuer.clone();
+        record.ssl_cert_valid_from = parsed.valid_from;
+        record.ssl_cert_valid_to = parsed.valid_to;
+        record.cipher_suite = parsed.cipher_suite.clone();
+        record.key_algorithm = parsed.key_algorithm.clone();
+        record.cert_fingerprint_sha256 = parsed.fingerprint_sha256.clone();
+        record.cert_serial_number = parsed.serial_number.clone();
+        record.cert_is_self_signed = parsed.is_self_signed;
+        record.cert_is_wildcard = parsed.is_wildcard;
+
+        let empty_headers = HashMap::new();
+        let oids = parsed.oids.clone().unwrap_or_default();
+        let sans = parsed.subject_alternative_names.clone().unwrap_or_default();
+        let id = insert_url_record(UrlRecordInsertParams {
+            pool: &pool,
+            record: &record,
+            security_headers: &empty_headers,
+            http_headers: &empty_headers,
+            oids: &oids,
+            redirect_chain: &[],
+            technologies: &[],
+            subject_alternative_names: &sans,
+            cname_records: None,
+            aaaa_records: None,
+            caa_records: None,
+            csp_domains: &[],
+            cookies: &[],
+            resource_hints: &[],
+            script_hosts: &[],
+            security_txt: None,
+            robots_txt: None,
+        })
+        .await
+        .expect("insert handshake certificate");
+
+        let row = sqlx::query(
+            "SELECT ssl_cert_subject, cert_fingerprint_sha256, cert_is_self_signed \
+             FROM url_status WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("url_status cert columns");
+        assert_eq!(
+            row.get::<Option<String>, _>("ssl_cert_subject"),
+            parsed.subject
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("cert_fingerprint_sha256"),
+            parsed.fingerprint_sha256
+        );
+        assert_eq!(row.get::<Option<i64>, _>("cert_is_self_signed"), Some(1));
+
+        let db_sans: Vec<String> = sqlx::query_scalar(
+            "SELECT san_value FROM url_certificate_sans WHERE url_status_id = ? ORDER BY san_value",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .expect("sans");
+        let mut expected_sans = sans;
+        expected_sans.sort();
+        assert_eq!(db_sans, expected_sans);
+
+        let oid_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_certificate_oids WHERE url_status_id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("oid count");
+        assert!(
+            oid_count > 0,
+            "handshake OIDs must persist to url_certificate_oids"
+        );
+    }
 }
