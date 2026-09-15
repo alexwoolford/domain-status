@@ -115,6 +115,20 @@ where
     }
 }
 
+/// Persist a WHOIS cache entry so tests can exercise `enable_whois` without the network.
+///
+/// `cache_dir` is the WHOIS cache directory (the `whois/` subdirectory of the scan cache root).
+///
+/// # Errors
+///
+/// Returns an error if the cache directory cannot be created or the entry cannot be written.
+#[cfg(any(test, feature = "test-utils"))]
+pub async fn seed_whois_cache(cache_dir: &Path, domain: &str, result: &WhoisResult) -> Result<()> {
+    WhoisCacheStore::default()
+        .save(cache_dir, domain, result)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

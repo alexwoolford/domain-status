@@ -114,6 +114,8 @@ pub use summary::{format_scan_summary, query_scan_summary, ScanSummary, SummaryO
 // `just ci`, and the CI workflow's `--all-features` invocation).
 #[cfg(feature = "test-utils")]
 pub use storage::insert::url::{insert_url_record, UrlRecordInsertParams};
+#[cfg(feature = "test-utils")]
+pub use whois::seed_whois_cache;
 
 pub use utils::print_io_error_hint_if_applicable;
 pub use whois::{lookup_whois, WhoisResult};

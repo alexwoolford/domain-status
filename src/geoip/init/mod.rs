@@ -192,25 +192,32 @@ mod tests {
         // Ensure environment variable is cleared (previous tests might have set it)
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
 
-        let result = init_geoip(None, None).await;
-        assert!(result.is_ok());
-        // Should return None if GeoIP is disabled (no path, no license)
-        // But if already loaded from previous test, might return Some
-        // The important thing is it doesn't panic
-        let metadata = result.unwrap();
-        // If None, GeoIP is disabled (expected)
-        // If Some, GeoIP was already loaded (also valid, just means previous test initialized it)
-        let _ = metadata;
+        let metadata = init_geoip(None, None)
+            .await
+            .expect("disabled GeoIP must not abort init");
+        if crate::geoip::GEOIP_CITY_READER
+            .read()
+            .expect("city reader lock")
+            .is_none()
+        {
+            assert!(
+                metadata.is_none(),
+                "no path and no license must leave GeoIP unloaded"
+            );
+        }
     }
 
     #[tokio::test]
     async fn test_init_geoip_empty_license_key() {
         // Test with empty license key
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
-        let result = init_geoip(None, None).await;
-        assert!(result.is_ok());
-        // Should return None (GeoIP disabled)
-        assert!(result.unwrap().is_none());
+        let metadata = init_geoip(None, None)
+            .await
+            .expect("empty license key must not abort init");
+        assert!(
+            metadata.is_none(),
+            "empty MAXMIND_LICENSE_KEY must leave GeoIP disabled"
+        );
     }
 
     #[tokio::test]

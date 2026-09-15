@@ -528,12 +528,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_http_request_http_to_https_redirect() {
+    async fn test_handle_http_request_same_scheme_does_not_count_https_redirect() {
         let server = Server::run();
         let url = server.url("/secure").to_string();
 
-        // Note: httptest doesn't support scheme changes, so we'll test the logic path
-        // by checking that the redirect chain is tracked correctly
         server.expect(
             Expectation::matching(request::method_path("GET", "/secure"))
                 .respond_with(status_code(200).body("<html><title>Secure</title></html>")),
@@ -542,8 +540,7 @@ mod tests {
         let ctx = create_test_context(&server).await;
         let start_time = std::time::Instant::now();
 
-        // httptest cannot change scheme, so HttpsRedirect stays 0; insert still fails
-        // without migrations after a same-scheme 200.
+        // httptest cannot change scheme; a same-scheme 200 must not increment HttpsRedirect.
         assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
         assert_eq!(
             ctx.runtime

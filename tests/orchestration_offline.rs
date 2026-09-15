@@ -3,7 +3,10 @@
 //! These challenge rescan/orchestration accounting without relying on soft-skips
 //! or ignored stress tests. Fingerprints load from a local JSON fixture.
 
-use domain_status::{evaluate_exit_code, run_scan, Config, FailOn, LogFormat, LogLevel};
+use domain_status::{
+    evaluate_exit_code, run_scan, seed_whois_cache, Config, FailOn, LogFormat, LogLevel,
+    WhoisResult,
+};
 use sqlx::Row;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -585,5 +588,201 @@ async fn test_duplicate_registrable_domain_accounting() {
         usize::try_from(status_count).expect("non-neg"),
         report.successful,
         "url_status rows must match successful counter"
+    );
+}
+
+/// Mid-chain redirect to RFC1918 must stop the chain (not become an outbound fetch).
+/// Unlike an initial-URL SSRF skip, the last safe hop is still a successful observation.
+#[tokio::test]
+async fn test_mid_chain_rfc1918_redirect_is_not_followed() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("Location", "http://10.0.0.1/")
+                .set_body_string("redirect"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let start = format!("{}/start", mock.uri());
+    let urls = write_urls(&[&start]);
+    let db = NamedTempFile::new().expect("db");
+
+    let report = run_scan(base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    ))
+    .await
+    .expect("scan must complete when a redirect target is SSRF-unsafe");
+
+    assert_eq!(report.total_urls, 1);
+    assert_eq!(
+        report.failed, 0,
+        "blocked redirect must not count as failed"
+    );
+    assert_eq!(
+        report.successful, 1,
+        "last safe hop is a successful observation, not a skip"
+    );
+    assert_eq!(report.skipped, 0);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+    let failure_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM url_failures WHERE run_id = ?")
+            .bind(&report.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("failure count");
+    assert_eq!(failure_count, 0, "url_failures must stay empty");
+
+    let row = sqlx::query("SELECT final_url, http_status FROM url_status WHERE run_id = ?")
+        .bind(&report.run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("url_status row");
+    let final_url: String = row.get("final_url");
+    let http_status: i64 = row.get("http_status");
+    assert_eq!(
+        http_status, 302,
+        "last fetched hop is the 302 that pointed at RFC1918, not a follow"
+    );
+    assert!(
+        !final_url.contains("10.0.0.1"),
+        "final_url must stay on the last safe hop, got {final_url}"
+    );
+    assert!(
+        final_url.contains("/start"),
+        "final_url should be the mock start hop, got {final_url}"
+    );
+
+    for req in mock.received_requests().await.unwrap_or_default() {
+        let url = req.url.to_string();
+        assert!(
+            !url.contains("10.0.0.1"),
+            "mock must not be asked to fetch the private target: {url}"
+        );
+    }
+}
+
+/// `--no-whois` / `enable_whois: false` must not write `url_whois` for a successful URL.
+#[tokio::test]
+async fn test_whois_disabled_leaves_url_whois_empty() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string("<html><title>NoWhois</title></html>"),
+        )
+        .mount(&mock)
+        .await;
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let urls = write_urls(&[&format!("{}/", mock.uri())]);
+    let db = NamedTempFile::new().expect("db");
+
+    let report = run_scan(base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    ))
+    .await
+    .expect("scan with WHOIS disabled");
+
+    assert_eq!(report.successful, 1);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+    let whois_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM url_whois w \
+         JOIN url_status u ON u.id = w.url_status_id WHERE u.run_id = ?",
+    )
+    .bind(&report.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("whois count");
+    assert_eq!(
+        whois_count, 0,
+        "enable_whois=false must not insert url_whois rows"
+    );
+}
+
+/// Cache-seeded WHOIS must persist under `run_scan` when WHOIS is enabled (no live lookup).
+#[tokio::test]
+async fn test_whois_enabled_writes_seeded_cache_row() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string("<html><title>Whois</title></html>"),
+        )
+        .mount(&mock)
+        .await;
+
+    let parsed = mock.address().ip().to_string();
+
+    let cache_root = TempDir::new().expect("cache root");
+    let whois_dir = cache_root.path().join("whois");
+    std::fs::create_dir_all(&whois_dir).expect("whois dir");
+    seed_whois_cache(
+        &whois_dir,
+        &parsed,
+        &WhoisResult {
+            registrar: Some("Fixture Registrar".to_string()),
+            registrant_country: Some("US".to_string()),
+            registrant_org: Some("Fixture Org".to_string()),
+            raw_text: Some("seeded whois cache".to_string()),
+            ..WhoisResult::default()
+        },
+    )
+    .await
+    .expect("seed whois cache");
+
+    let fp_dir = TempDir::new().expect("fp dir");
+    let fingerprints = write_fingerprint_fixture(&fp_dir);
+    let urls = write_urls(&[&format!("{}/", mock.uri())]);
+    let db = NamedTempFile::new().expect("db");
+
+    let mut config = base_config(
+        urls.path().to_path_buf(),
+        db.path().to_path_buf(),
+        &fingerprints,
+    );
+    config.enable_whois = true;
+    config.cache_dir = Some(cache_root.path().to_path_buf());
+
+    let report = run_scan(config)
+        .await
+        .expect("scan with seeded WHOIS cache");
+
+    assert_eq!(report.successful, 1);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", report.db_path.display()))
+        .await
+        .expect("connect db");
+    let registrar: Option<String> = sqlx::query_scalar(
+        "SELECT w.registrar FROM url_whois w \
+         JOIN url_status u ON u.id = w.url_status_id WHERE u.run_id = ?",
+    )
+    .bind(&report.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("whois registrar");
+    assert_eq!(
+        registrar.as_deref(),
+        Some("Fixture Registrar"),
+        "seeded WHOIS cache must land in url_whois"
     );
 }

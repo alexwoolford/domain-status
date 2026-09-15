@@ -334,10 +334,11 @@ mod tests {
         let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
         let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
 
-        let result = try_load_from_cache(&cache_file, &metadata_file).await;
-        assert!(result.is_ok());
+        let result = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("missing metadata is a cache miss, not an error");
         assert!(
-            result.unwrap().is_none(),
+            result.is_none(),
             "Should return None when metadata doesn't exist"
         );
     }
@@ -364,12 +365,10 @@ mod tests {
             .await
             .expect("Failed to save expired metadata");
 
-        let result = try_load_from_cache(&cache_file, &metadata_file).await;
-        assert!(result.is_ok());
-        assert!(
-            result.unwrap().is_none(),
-            "Should return None when cache is expired"
-        );
+        let result = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("expired cache is a miss, not an error");
+        assert!(result.is_none(), "Should return None when cache is expired");
     }
 
     #[tokio::test]
@@ -393,10 +392,11 @@ mod tests {
             .await
             .expect("Failed to save metadata");
 
-        let result = try_load_from_cache(&cache_file, &metadata_file).await;
-        assert!(result.is_ok());
+        let result = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("missing cache file is a miss, not an error");
         assert!(
-            result.unwrap().is_none(),
+            result.is_none(),
             "Should return None when cache file doesn't exist"
         );
     }
@@ -431,28 +431,13 @@ mod tests {
             .await
             .expect("Failed to save metadata");
 
-        let result = try_load_from_cache(&cache_file, &metadata_file).await;
-        assert!(result.is_ok());
+        let result = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("corrupt cache is a miss, not an error");
         assert!(
-            result.unwrap().is_none(),
+            result.is_none(),
             "Should return None when cache file is corrupted"
         );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_fresh() {
-        // This would require creating a valid mmdb file and metadata
-        // Integration test needed
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        assert!(temp_dir.path().exists());
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_expired() {
-        // This would require creating expired cache metadata
-        // Integration test needed
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        assert!(temp_dir.path().exists());
     }
 
     #[tokio::test]

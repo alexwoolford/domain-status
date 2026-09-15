@@ -63,6 +63,9 @@ cargo test --doc
   - Cooperative cancel persists a `url_failures` row; CORE/ENRICHMENT satellite lists match insert call sites
   - Offline `implies` / exclude detection (fixture rulesets, no network)
   - Offline `run_scan` with local fingerprints + wiremock (status, counters, satellites, versions/`is_implied`)
+  - Mid-chain RFC1918 redirect under `run_scan` is not followed (last safe hop is successful, not skipped/failed)
+  - WHOIS disabled leaves `url_whois` empty; cache-seeded WHOIS writes `registrar` under `run_scan`
+  - Local TLS handshake certificate fields persist through `insert_url_record` (subject, fingerprint, SANs, OIDs)
   - Config merge (`fail_on`, `--no-whois`, bool synonyms); file overlay TOML sentinels land on `Config`
   - `url_status` column defs match INSERT/UPDATE order and migrated `PRAGMA table_info`
   - Partial failure + drain exclusivity + `evaluate_exit_code`
