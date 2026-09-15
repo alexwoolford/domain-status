@@ -159,4 +159,62 @@ fn cli_help_includes_must_have_flags() {
             "expected `{needle}` in `scan --help` output, got:\n{scan_help}"
         );
     }
+    assert!(
+        !scan_help.contains("--enable-whois"),
+        "legacy --enable-whois must stay off --help"
+    );
+    assert!(
+        scan_help.contains("Everyday flags: -h. All flags: --help. Docs: docs/CLI.md"),
+        "expected after-help pointer in `scan --help`, got:\n{scan_help}"
+    );
+    for heading in ["Scan:", "Enrichments:", "CI / logging:", "Advanced:"] {
+        assert!(
+            scan_help.contains(heading),
+            "expected heading `{heading}` in `scan --help`, got:\n{scan_help}"
+        );
+    }
+
+    let mut short_cmd =
+        assert_cmd::Command::cargo_bin("domain_status").expect("cargo_bin domain_status");
+    short_cmd.arg("scan").arg("-h");
+    let short_output = short_cmd.output().expect("run domain_status scan -h");
+    assert!(short_output.status.success(), "scan -h should succeed");
+    let short_help = String::from_utf8_lossy(&short_output.stdout);
+    for needle in [
+        "--db-path",
+        "--timeout-seconds",
+        "--max-concurrency",
+        "--rate-limit-rps",
+        "--no-whois",
+        "--geoip",
+        "--scan-external-scripts",
+        "--fail-on",
+        "-v",
+        "-q",
+        "Everyday flags: -h. All flags: --help. Docs: docs/CLI.md",
+    ] {
+        assert!(
+            short_help.contains(needle),
+            "expected `{needle}` in `scan -h` output, got:\n{short_help}"
+        );
+    }
+    for needle in [
+        "--config",
+        "--user-agent",
+        "--fingerprints",
+        "--status-port",
+        "--cache-dir",
+        "--drain-timeout-secs",
+        "--log-level",
+        "--log-format",
+        "--log-file",
+        "--no-progress",
+        "--fail-on-pct-threshold",
+        "--enable-whois",
+    ] {
+        assert!(
+            !short_help.contains(needle),
+            "did not expect `{needle}` in `scan -h` output, got:\n{short_help}"
+        );
+    }
 }

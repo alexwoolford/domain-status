@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency hygiene: `config` 0.15, `toml` 1, `base64` 0.23, `sha2` 0.11, `rstest` 0.27, `murmur3` 0.5 with Shodan golden hashes; retry backoff is in-tree (dropped `tokio-retry`).
 - SQLx 0.9 (`sqlite-bundled`, rustls via `tls-rustls-aws-lc-rs`); MSRV is 1.86. `rsa` / RUSTSEC-2023-0071 is gone from the lockfile.
 - reqwest stays 0.12 until vendored `whois-service` can move to 0.13 in the same change.
+- Scan `-h` shows everyday flags; `scan --help` lists the rest (legacy `--enable-whois` stays accepted but is omitted from help).
 
 ### Fixed
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.
