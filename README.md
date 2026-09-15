@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/domain_status)](https://docs.rs/domain_status)
 [![Downloads](https://img.shields.io/crates/d/domain_status)](https://crates.io/crates/domain_status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.85+-orange.svg)](https://www.rust-lang.org/)
+[![MSRV](https://img.shields.io/badge/MSRV-1.86+-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
 

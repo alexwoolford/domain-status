@@ -207,7 +207,7 @@ pub async fn query_run_history(
             .to_string()
     };
 
-    let rows = sqlx::query(&query)
+    let rows = crate::sql::query(query)
         .fetch_all(pool)
         .await
         .map_err(DatabaseError::SqlError)?;

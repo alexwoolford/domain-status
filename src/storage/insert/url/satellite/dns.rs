@@ -168,7 +168,7 @@ pub(crate) async fn insert_caa_records(
         Some("ON CONFLICT(url_status_id, tag, value) DO UPDATE SET flag=excluded.flag"),
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for record in &parsed {
         let flag = record["flag"].as_u64().unwrap_or(0);
         let tag = record["tag"].as_str().unwrap_or("");

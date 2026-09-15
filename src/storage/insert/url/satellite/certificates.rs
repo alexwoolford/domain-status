@@ -24,7 +24,7 @@ pub(crate) async fn insert_oids(
         Some("ON CONFLICT(url_status_id, oid) DO NOTHING"),
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for oid in &oids_vec {
         query_builder = query_builder.bind(url_status_id).bind(*oid);
     }
@@ -50,7 +50,7 @@ pub(crate) async fn insert_certificate_sans(
         Some("ON CONFLICT(url_status_id, san_value) DO NOTHING"),
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for san in subject_alternative_names {
         query_builder = query_builder.bind(url_status_id).bind(san);
     }

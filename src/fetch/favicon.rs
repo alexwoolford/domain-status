@@ -42,12 +42,18 @@ pub(crate) fn compute_shodan_favicon_hash(raw_bytes: &[u8]) -> i32 {
     }
 
     // MurmurHash3 32-bit with seed 0, cast to i32 for Shodan compatibility
-    let hash = murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0);
+    let hash = murmur3_32_bytes(formatted.as_bytes());
 
     // Reinterpret u32 bits as i32 for Shodan compatibility (Shodan stores favicon hash as signed)
     #[allow(clippy::cast_possible_wrap)]
-    let result = hash as i32;
-    result
+    let signed = hash as i32;
+    signed
+}
+
+/// In-memory `murmur3_32` (seed 0). `Read` cannot fail on `Cursor<&[u8]>`.
+fn murmur3_32_bytes(bytes: &[u8]) -> u32 {
+    murmur3::murmur3_32(&mut std::io::Cursor::new(bytes), 0)
+        .expect("in-memory Cursor read cannot fail")
 }
 
 /// Max redirect hops for favicon (SSRF-validated per hop).
@@ -237,21 +243,24 @@ mod tests {
         let bytes = b"\x00\x00\x01\x00";
         let base64_str = base64::engine::general_purpose::STANDARD.encode(bytes);
         let formatted = shodan_format(&base64_str);
-        let expected_hash =
-            murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0) as i32;
+        #[allow(clippy::cast_possible_wrap)]
+        let expected_hash = murmur3_32_bytes(formatted.as_bytes()) as i32;
         assert_eq!(compute_shodan_favicon_hash(bytes), expected_hash);
     }
 
     #[test]
     fn test_compute_shodan_favicon_hash_known_value() {
-        // Verify against a known Shodan hash for a trivial favicon
-        // Python equivalent:
-        //   import mmh3, base64
-        //   mmh3.hash(base64.encodebytes(b"\x00\x00\x01\x00"))
+        // Golden values from murmur3 0.1 (Shodan `http.favicon.hash` / mmh3 seed 0
+        // of Python `base64.encodebytes` output, matching our newline formatting).
         let bytes = b"\x00\x00\x01\x00";
-        let hash = compute_shodan_favicon_hash(bytes);
-        // The hash should be a non-zero i32
-        assert_ne!(hash, 0);
+        assert_eq!(compute_shodan_favicon_hash(bytes), -216_455_174);
+        assert_eq!(compute_shodan_favicon_hash(b""), -1_840_324_437);
+        assert_eq!(
+            compute_shodan_favicon_hash(b"test favicon content"),
+            549_458_447
+        );
+        let boundary_57: Vec<u8> = (0u8..57).collect();
+        assert_eq!(compute_shodan_favicon_hash(&boundary_57), 459_585_070);
     }
 
     #[test]
@@ -268,16 +277,15 @@ mod tests {
         let formatted = shodan_format(&base64_str);
         assert!(formatted.ends_with('\n'));
         assert_eq!(formatted.matches('\n').count(), 1); // one newline at 76 (no double trailing)
-        let expected_hash =
-            murmur3::murmur3_32(&mut std::io::Cursor::new(formatted.as_bytes()), 0) as i32;
+        #[allow(clippy::cast_possible_wrap)]
+        let expected_hash = murmur3_32_bytes(formatted.as_bytes()) as i32;
         assert_eq!(compute_shodan_favicon_hash(&bytes), expected_hash);
     }
 
     #[test]
     fn test_compute_shodan_favicon_hash_empty() {
-        let hash = compute_shodan_favicon_hash(b"");
-        // Even empty bytes produce a hash (of the trailing newline in the formatted base64)
-        assert_ne!(hash, 0);
+        // Empty raw bytes still hash the trailing newline of the formatted base64.
+        assert_eq!(compute_shodan_favicon_hash(b""), -1_840_324_437);
     }
 
     #[test]

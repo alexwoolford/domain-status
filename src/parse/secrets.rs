@@ -787,12 +787,11 @@ mod tests {
 
     /// Returns a stable redacted representation that preserves dedupe utility without retaining the raw secret.
     fn redact_exposed_secret_value(value: &str) -> String {
-        use sha2::{Digest, Sha256};
         if value.starts_with("redacted(") {
             return value.to_string();
         }
 
-        let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+        let digest = crate::utils::sha256_hex(value.as_bytes());
         if value.chars().count() <= 8 {
             format!(
                 "redacted(len={},sha256={})",

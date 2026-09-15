@@ -5,7 +5,7 @@ members = ["cli"]
 name = "domain_status"
 version = "0.1.29"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 authors = ["Alex Woolford <alex@woolford.io>"]
 description = "Concurrent URL status checker that captures comprehensive metadata in SQLite."
 license = "MIT"
@@ -113,7 +113,6 @@ tokio = { version = "^1", features = [
     "time",
 ] }
 tokio-util = "^0.7"
-tokio-retry = "^0.3"
 futures = "^0.3"
 rustls = "^0.23"
 x509-parser = "^0.18"
@@ -121,7 +120,7 @@ tokio-rustls = "^0.26"
 hickory-resolver = "^0.26"
 
 # Database related
-sqlx = { version = "^0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "migrate"] }
+sqlx = { version = "^0.9", default-features = false, features = ["sqlite-bundled", "runtime-tokio", "tls-rustls-aws-lc-rs", "migrate"] }
 
 # Scraping and URL handling
 scraper = "^0.27"
@@ -144,7 +143,8 @@ colored = "^3.0"
 indicatif = "^0.18"
 
 # Other
-toml = { version = "^0.8", features = ["preserve_order"] }
+# 1.x tables preserve key order (the old `preserve_order` feature).
+toml = "^1"
 chrono = "^0.4"
 strum = "^0.27"
 strum_macros = "^0.27"
@@ -168,7 +168,7 @@ maxminddb = "^0.30"
 flate2 = "^1.1"
 tar = "^0.4"
 dotenvy = "^0.15"
-config = { version = "^0.14", default-features = false, features = ["toml"] }
+config = { version = "^0.15", default-features = false, features = ["toml"] }
 # 0.3.0 on crates.io uses reqwest 0.12 with default-tls (native-tls). Keep
 # default-features off (no HTTP server) and patch reqwest to rustls-only.
 whois-service = { version = "^0.3", default-features = false }
@@ -177,11 +177,11 @@ include_dir = "^0.7"
 # Public Suffix List for domain extraction - more popular and actively maintained than tldextract
 # No idna dependency, better performance, auto-updates daily
 psl = "^2.1"
-sha2 = "^0.10"
-base64 = "^0.22"
-# Keep ^0.1 for Shodan-compatible favicon murmur3_32 hashes (do not bump to 0.5
-# without a golden-hash test proving bit-identical output).
-murmur3 = "^0.1"
+sha2 = "^0.11"
+base64 = "^0.23"
+# 0.5 keeps the 0.1 murmur3_32 algorithm; golden hashes in favicon tests
+# pin Shodan `http.favicon.hash` compatibility.
+murmur3 = "^0.5"
 # Parquet export (columnar format for analytics). 59+ drops the thrift crate dep.
 arrow = { version = "^59", default-features = false }
 parquet = { version = "^59", default-features = false, features = ["arrow", "snap"] }
@@ -200,7 +200,7 @@ proptest = "^1.11"          # Property-based testing
 insta = "^1.38"             # Snapshot/golden testing (text snaps)
 pretty_assertions = "^1.4"  # Better test output
 assert_cmd = "^2.2"         # CLI testing
-rstest = "^0.26"             # Parameterized tests and fixtures
+rstest = "^0.27"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
 tower = "^0.5"
 rcgen = "^0.14"

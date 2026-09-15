@@ -17,7 +17,6 @@ use chrono::NaiveDateTime;
 use hickory_resolver::TokioResolver;
 use log::error;
 use rustls::pki_types::{CertificateDer, ServerName};
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -166,10 +165,7 @@ fn parse_certificate_info_from_der(
     cipher_suite: Option<String>,
 ) -> Result<CertificateInfo> {
     // Compute SHA-256 fingerprint of the raw DER certificate
-    let fingerprint_sha256 = {
-        let hash = Sha256::digest(cert_der);
-        Some(format!("{hash:x}"))
-    };
+    let fingerprint_sha256 = Some(crate::utils::sha256_hex(cert_der));
 
     let (_, cert) = x509_parser::parse_x509_certificate(cert_der)?;
     let tbs_cert = &cert.tbs_certificate;

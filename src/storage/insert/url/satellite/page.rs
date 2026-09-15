@@ -17,7 +17,7 @@ pub(crate) async fn insert_csp_domains(
         domains.len(),
         Some("ON CONFLICT(url_status_id, directive, fqdn) DO NOTHING"),
     );
-    let mut qb = sqlx::query(&query);
+    let mut qb = crate::sql::query(query);
     for (directive, fqdn, reg_domain) in domains {
         qb = qb
             .bind(url_status_id)
@@ -60,7 +60,7 @@ pub(crate) async fn insert_cookies(
              same_site=excluded.same_site, domain=excluded.domain, path=excluded.path",
         ),
     );
-    let mut qb = sqlx::query(&query);
+    let mut qb = crate::sql::query(query);
     for c in cookies {
         qb = qb
             .bind(url_status_id)
@@ -149,7 +149,7 @@ pub(crate) async fn insert_robots_txt(
         data.directives.len(),
         Some("ON CONFLICT(url_status_id, directive, value) DO NOTHING"),
     );
-    let mut qb = sqlx::query(&query);
+    let mut qb = crate::sql::query(query);
     for (directive, value) in &data.directives {
         qb = qb.bind(url_status_id).bind(directive).bind(value);
     }
@@ -181,7 +181,7 @@ pub(crate) async fn insert_script_hosts(
              is_first_party=excluded.is_first_party",
         ),
     );
-    let mut qb = sqlx::query(&query);
+    let mut qb = crate::sql::query(query);
     for h in hosts {
         qb = qb
             .bind(url_status_id)
@@ -209,7 +209,7 @@ pub(crate) async fn insert_resource_hints(
         hints.len(),
         Some("ON CONFLICT(url_status_id, hint_type, href) DO NOTHING"),
     );
-    let mut qb = sqlx::query(&query);
+    let mut qb = crate::sql::query(query);
     for (hint_type, href) in hints {
         qb = qb
             .bind(url_status_id)

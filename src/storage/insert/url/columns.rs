@@ -234,12 +234,12 @@ pub(crate) fn url_status_column_names() -> impl Iterator<Item = &'static str> {
 }
 
 fn bind_url_status_column<'q>(
-    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>>,
+    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments>,
     col: &UrlStatusColumn,
     record: &'q UrlRecord,
     valid_from_millis: Option<i64>,
     valid_to_millis: Option<i64>,
-) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments> {
     match (col.extract)(record, valid_from_millis, valid_to_millis) {
         UrlStatusBind::Text(v) => query.bind(v),
         UrlStatusBind::OptText(v) => query.bind(v),
@@ -283,11 +283,11 @@ pub(crate) fn url_status_update_sql() -> String {
 }
 
 fn bind_url_status_query<'q>(
-    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>>,
+    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments>,
     record: &'q UrlRecord,
     valid_from_millis: Option<i64>,
     valid_to_millis: Option<i64>,
-) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments> {
     let mut q = query;
     for col in URL_STATUS_COLUMN_DEFS {
         q = bind_url_status_column(q, col, record, valid_from_millis, valid_to_millis);
@@ -296,11 +296,11 @@ fn bind_url_status_query<'q>(
 }
 
 fn bind_url_status_update_query<'q>(
-    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>>,
+    query: sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments>,
     record: &'q UrlRecord,
     valid_from_millis: Option<i64>,
     valid_to_millis: Option<i64>,
-) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments> {
     let mut q = query;
     for col in URL_STATUS_COLUMN_DEFS {
         if col.name == "initial_domain" {
@@ -324,7 +324,7 @@ pub(crate) async fn upsert_url_status_row(
 ) -> Result<(i64, bool), DatabaseError> {
     let insert_sql = url_status_insert_sql();
     let inserted_id = bind_url_status_query(
-        sqlx::query_scalar::<_, i64>(&insert_sql),
+        crate::sql::query_scalar::<i64>(insert_sql),
         record,
         valid_from_millis,
         valid_to_millis,
@@ -349,7 +349,7 @@ pub(crate) async fn upsert_url_status_row(
 
     let update_sql = url_status_update_sql();
     let id = bind_url_status_update_query(
-        sqlx::query_scalar::<_, i64>(&update_sql),
+        crate::sql::query_scalar::<i64>(update_sql),
         record,
         valid_from_millis,
         valid_to_millis,

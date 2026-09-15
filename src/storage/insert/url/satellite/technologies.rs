@@ -49,7 +49,7 @@ pub(crate) async fn insert_technologies(
         Some("ON CONFLICT DO NOTHING"),
     );
 
-    let mut query = sqlx::query(&query_str);
+    let mut query = crate::sql::query(query_str);
     for tech in &deduped {
         query = query
             .bind(url_status_id)

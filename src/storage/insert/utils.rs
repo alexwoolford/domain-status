@@ -245,7 +245,7 @@ where
     );
 
     // Bind parameters
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for (key, value) in data {
         query_builder = query_builder
             .bind(parent_id)
@@ -302,7 +302,7 @@ where
     );
 
     // Bind parameters
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for value in data {
         query_builder = query_builder.bind(parent_id).bind(value.clone());
     }
@@ -321,7 +321,7 @@ pub(crate) async fn delete_child_rows(
 ) -> Result<(), sqlx::Error> {
     for table in tables {
         let sql = format!("DELETE FROM {table} WHERE url_status_id = ?");
-        sqlx::query(&sql)
+        crate::sql::query(sql)
             .bind(url_status_id)
             .execute(&mut **tx)
             .await?;

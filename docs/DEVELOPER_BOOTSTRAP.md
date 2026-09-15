@@ -6,7 +6,7 @@ This is the single source of truth for setting up a contributor environment for 
 
 Install these first:
 
-- Rust `1.85+`
+- Rust `1.86+`
 - `just`
 
 Recommended installs:

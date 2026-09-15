@@ -9,6 +9,7 @@
 //! - Timing metrics for performance analysis
 
 pub(crate) mod cache;
+pub(crate) mod digest;
 mod io_context;
 mod process;
 pub(crate) mod retry;
@@ -16,6 +17,7 @@ pub mod sanitize;
 mod selector;
 mod timing;
 
+pub(crate) use digest::sha256_hex;
 #[allow(unused_imports)]
 pub use io_context::{
     ensure_parent_dir_secure, print_io_error_hint_if_applicable, warn_if_world_readable,

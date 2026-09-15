@@ -69,7 +69,10 @@ async fn cookbook_sql_fences_execute_on_migrated_empty_db() {
                 continue;
             }
             executed += 1;
-            if let Err(e) = sqlx::query(&sql).fetch_all(&pool).await {
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .fetch_all(&pool)
+                .await
+            {
                 failures.push(format!(
                     "{rel} fence #{idx}: {e}\n--- SQL ---\n{sql}\n-----------"
                 ));

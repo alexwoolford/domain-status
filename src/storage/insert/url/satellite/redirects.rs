@@ -22,7 +22,7 @@ pub(crate) async fn insert_redirect_chain(
         Some("ON CONFLICT(url_status_id, sequence_order) DO UPDATE SET redirect_url=excluded.redirect_url, http_status=excluded.http_status"),
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = crate::sql::query(query);
     for (index, (url, status)) in redirect_chain.iter().enumerate() {
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let sequence_order = (index + 1) as i32;
