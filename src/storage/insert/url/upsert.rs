@@ -237,127 +237,141 @@ async fn insert_url_record_impl(
     // Clean up stale *core* satellite data before inserting fresh rows. Enrichment
     // children are replaced in the enrichment writer transaction so a successful
     // fact row never blanks GeoIP/WHOIS/secrets for concurrent readers.
+    //
+    // If that DELETE fails, skip remaining core satellite writes so we do not mix
+    // stale and new child rows. Record one partial failure and still commit
+    // `url_status`. The enrichment transaction still runs.
     let mut satellite_insert_failures = Vec::new();
-    if let Err(e) = crate::storage::insert::utils::delete_child_rows(
+    let core_cleanup_ok = match crate::storage::insert::utils::delete_child_rows(
         &mut tx,
         URL_STATUS_CORE_SATELLITE_TABLES,
         url_status_id,
     )
     .await
     {
-        log::warn!(
-            "Failed to clean stale core satellite rows for url_status_id {url_status_id}: {e}"
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!(
+                "Failed to clean stale core satellite rows for url_status_id {url_status_id}: {e}"
+            );
+            satellite_insert_failures.push(SatelliteWriteFailure {
+                table: "core_satellites",
+                message: format!("Failed to clean stale core satellite rows: {e}"),
+            });
+            false
+        }
+    };
+
+    if core_cleanup_ok {
+        record_satellite_write(
+            "url_technologies",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_technologies(&mut tx, url_status_id, params.technologies).await,
+        );
+        record_satellite_write(
+            "url_nameservers",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_nameservers(&mut tx, url_status_id, params.record.nameservers.as_ref()).await,
+        );
+        record_satellite_write(
+            "url_txt_records",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_txt_records(&mut tx, url_status_id, params.record.txt_records.as_ref()).await,
+        );
+        record_satellite_write(
+            "url_mx_records",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_mx_records(&mut tx, url_status_id, params.record.mx_records.as_ref()).await,
+        );
+        record_satellite_write(
+            "url_security_headers",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_security_headers(&mut tx, url_status_id, params.security_headers).await,
+        );
+        record_satellite_write(
+            "url_http_headers",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_http_headers(&mut tx, url_status_id, params.http_headers).await,
+        );
+        record_satellite_write(
+            "url_certificate_oids",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_oids(&mut tx, url_status_id, params.oids).await,
+        );
+        record_satellite_write(
+            "url_redirect_chain",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await,
+        );
+        record_satellite_write(
+            "url_certificate_sans",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await,
+        );
+        record_satellite_write(
+            "url_cname_records",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_cname_records(&mut tx, url_status_id, params.cname_records).await,
+        );
+        record_satellite_write(
+            "url_ipv6_addresses",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_ipv6_addresses(&mut tx, url_status_id, params.aaaa_records).await,
+        );
+        record_satellite_write(
+            "url_caa_records",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_caa_records(&mut tx, url_status_id, params.caa_records).await,
+        );
+        record_satellite_write(
+            "url_csp_domains",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_csp_domains(&mut tx, url_status_id, params.csp_domains).await,
+        );
+        record_satellite_write(
+            "url_cookies",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_cookies(&mut tx, url_status_id, params.cookies).await,
+        );
+        record_satellite_write(
+            "url_resource_hints",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await,
+        );
+        record_satellite_write(
+            "url_script_hosts",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await,
+        );
+        record_satellite_write(
+            "url_security_txt",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_security_txt(&mut tx, url_status_id, params.security_txt).await,
+        );
+        record_satellite_write(
+            "url_robots_txt",
+            url_status_id,
+            &mut satellite_insert_failures,
+            insert_robots_txt(&mut tx, url_status_id, params.robots_txt).await,
         );
     }
-
-    record_satellite_write(
-        "url_technologies",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_technologies(&mut tx, url_status_id, params.technologies).await,
-    );
-    record_satellite_write(
-        "url_nameservers",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_nameservers(&mut tx, url_status_id, params.record.nameservers.as_ref()).await,
-    );
-    record_satellite_write(
-        "url_txt_records",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_txt_records(&mut tx, url_status_id, params.record.txt_records.as_ref()).await,
-    );
-    record_satellite_write(
-        "url_mx_records",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_mx_records(&mut tx, url_status_id, params.record.mx_records.as_ref()).await,
-    );
-    record_satellite_write(
-        "url_security_headers",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_security_headers(&mut tx, url_status_id, params.security_headers).await,
-    );
-    record_satellite_write(
-        "url_http_headers",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_http_headers(&mut tx, url_status_id, params.http_headers).await,
-    );
-    record_satellite_write(
-        "url_certificate_oids",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_oids(&mut tx, url_status_id, params.oids).await,
-    );
-    record_satellite_write(
-        "url_redirect_chain",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_redirect_chain(&mut tx, url_status_id, params.redirect_chain).await,
-    );
-    record_satellite_write(
-        "url_certificate_sans",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_certificate_sans(&mut tx, url_status_id, params.subject_alternative_names).await,
-    );
-    record_satellite_write(
-        "url_cname_records",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_cname_records(&mut tx, url_status_id, params.cname_records).await,
-    );
-    record_satellite_write(
-        "url_ipv6_addresses",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_ipv6_addresses(&mut tx, url_status_id, params.aaaa_records).await,
-    );
-    record_satellite_write(
-        "url_caa_records",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_caa_records(&mut tx, url_status_id, params.caa_records).await,
-    );
-    record_satellite_write(
-        "url_csp_domains",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_csp_domains(&mut tx, url_status_id, params.csp_domains).await,
-    );
-    record_satellite_write(
-        "url_cookies",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_cookies(&mut tx, url_status_id, params.cookies).await,
-    );
-    record_satellite_write(
-        "url_resource_hints",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_resource_hints(&mut tx, url_status_id, params.resource_hints).await,
-    );
-    record_satellite_write(
-        "url_script_hosts",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_script_hosts(&mut tx, url_status_id, params.script_hosts).await,
-    );
-    record_satellite_write(
-        "url_security_txt",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_security_txt(&mut tx, url_status_id, params.security_txt).await,
-    );
-    record_satellite_write(
-        "url_robots_txt",
-        url_status_id,
-        &mut satellite_insert_failures,
-        insert_robots_txt(&mut tx, url_status_id, params.robots_txt).await,
-    );
 
     // Commit transaction - all inserts succeeded
     // If any satellite insert had failed internally, it would have been logged but not propagated.

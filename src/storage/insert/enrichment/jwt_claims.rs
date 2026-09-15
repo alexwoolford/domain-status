@@ -1,29 +1,9 @@
 //! JWT claims insertion.
 
-use sqlx::{Acquire, Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::jwt::DecodedJwt;
-use crate::storage::insert::retry::with_sqlite_retry;
-
-/// Inserts a batch of decoded JWT claims in a single transaction.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_jwt_claims_batch(
-    pool: &SqlitePool,
-    items: &[(i64, &DecodedJwt)],
-) -> Result<(), DatabaseError> {
-    if items.is_empty() {
-        return Ok(());
-    }
-    with_sqlite_retry(|| async {
-        let mut conn = pool.acquire().await.map_err(DatabaseError::SqlError)?;
-        let mut tx = conn.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_jwt_claims_batch_in_tx(&mut tx, items).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_jwt_claims_batch_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -72,7 +52,7 @@ pub(crate) async fn insert_jwt_claims_batch_in_tx(
 mod tests {
     use super::*;
     use crate::parse::{ExposedSecret, SecretSeverity};
-    use crate::storage::insert::enrichment::insert_exposed_secrets;
+    use crate::storage::insert::enrichment::{commit_in_tx, insert_exposed_secrets_in_tx};
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     #[tokio::test]
@@ -100,12 +80,14 @@ mod tests {
             location: std::borrow::Cow::Borrowed("inline_script"),
             decoded_jwt: Some(jwt.clone()),
         }];
-        let ids = insert_exposed_secrets(&pool, url_status_id, &secrets)
-            .await
-            .expect("insert secret");
-        insert_jwt_claims_batch(&pool, &[(ids[0], &jwt)])
-            .await
-            .expect("insert jwt claims");
+        let ids = commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &secrets).await
+        })
+        .expect("insert secret");
+        commit_in_tx!(&pool, |tx| {
+            insert_jwt_claims_batch_in_tx(&mut tx, &[(ids[0], &jwt)]).await
+        })
+        .expect("insert jwt claims");
 
         let algorithm: Option<String> =
             sqlx::query_scalar("SELECT algorithm FROM url_jwt_claims WHERE exposed_secret_id = ?")

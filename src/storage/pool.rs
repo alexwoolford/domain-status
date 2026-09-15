@@ -22,13 +22,29 @@ use crate::utils::{ensure_parent_dir_secure, IoErrorContext};
 /// Used throughout the codebase for consistency.
 pub type DbPool = Arc<Pool<Sqlite>>;
 
+/// Ceiling for scan-time pool connections. `SQLite` has one writer; WAL only
+/// helps readers. `--max-concurrency` can be `10_000` and must not open that many
+/// connections.
+pub(crate) const SQLITE_POOL_CONNECTION_CAP: u32 = 32;
+
+/// Floor so a scan with concurrency 1 still has a writer plus a reader slot.
+pub(crate) const SQLITE_POOL_CONNECTION_FLOOR: u32 = 2;
+
+/// Map scan `--max-concurrency` to `SqlitePoolOptions::max_connections`.
+#[must_use]
+pub(crate) fn sqlite_pool_size(max_concurrency: usize) -> u32 {
+    u32::try_from(max_concurrency)
+        .unwrap_or(SQLITE_POOL_CONNECTION_CAP)
+        .clamp(SQLITE_POOL_CONNECTION_FLOOR, SQLITE_POOL_CONNECTION_CAP)
+}
+
 /// Initializes and returns a database connection pool with an explicit path.
 ///
 /// Creates the database file if it doesn't exist and enables WAL mode
 /// for better concurrent access.
 ///
-/// The pool is sized to match the given `max_connections` parameter (typically
-/// derived from `--max-concurrency`) so workers don't starve waiting for connections.
+/// Scan callers pass a capped `max_connections` (`sqlite_pool_size`), not 1:1
+/// with `--max-concurrency`.
 ///
 /// # Examples
 ///
@@ -231,5 +247,14 @@ mod tests {
             .expect("Failed to query busy_timeout");
 
         assert_eq!(result, 5000, "busy_timeout should be 5000 ms");
+    }
+
+    #[test]
+    fn sqlite_pool_size_caps_and_floors_concurrency() {
+        assert_eq!(sqlite_pool_size(1), SQLITE_POOL_CONNECTION_FLOOR);
+        assert_eq!(sqlite_pool_size(2), 2);
+        assert_eq!(sqlite_pool_size(30), 30);
+        assert_eq!(sqlite_pool_size(32), SQLITE_POOL_CONNECTION_CAP);
+        assert_eq!(sqlite_pool_size(10_000), SQLITE_POOL_CONNECTION_CAP);
     }
 }

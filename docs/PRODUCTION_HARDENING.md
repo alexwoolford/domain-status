@@ -58,7 +58,7 @@ These settings are part of the operational contract and should be preserved unle
 
 ### Concurrent writes and the async runtime
 
-SQLite allows concurrent readers in WAL mode but still serializes writers at the database file. Scan tasks insert through a shared `SqlitePool` sized to `--max-concurrency`, so many connections may contend for that single writer lock. Mitigations:
+SQLite allows concurrent readers in WAL mode but still serializes writers at the database file. Scan tasks insert through a shared `SqlitePool` (capped; see pool sizing below), so writers still contend for that single writer lock. Mitigations:
 
 - WAL + `synchronous=NORMAL` for typical scan write patterns
 - `busy_timeout` so SQLite waits briefly before returning BUSY
@@ -69,9 +69,9 @@ Tasks waiting on the pool or lock **park** on async futures; they do not busy-sp
 
 ### Pool sizing
 
-During scans, the SQLite pool is sized to match `--max-concurrency`:
+During scans, the SQLite pool is capped for one writer plus WAL readers (not 1:1 with `--max-concurrency`):
 
-- scan pool size = `max(1, max_concurrency as u32)`
+- scan pool size = `clamp(max_concurrency, 2, 32)`
 
 Exports use a smaller fixed pool:
 

@@ -1,31 +1,10 @@
 //! Contact link insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::ContactLink;
-use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
-
-/// Inserts contact links (mailto/tel) into the database.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_contact_links(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    links: &[ContactLink],
-) -> Result<(), DatabaseError> {
-    if links.is_empty() {
-        return Ok(());
-    }
-
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_contact_links_in_tx(&mut tx, url_status_id, links).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_contact_links_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -64,6 +43,7 @@ mod tests {
     use crate::parse::{ContactLink, ContactType};
     use sqlx::Row;
 
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     #[tokio::test]
@@ -84,7 +64,9 @@ mod tests {
             },
         ];
 
-        let result = insert_contact_links(&pool, url_status_id, &links).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_contact_links_in_tx(&mut tx, url_status_id, &links).await
+        });
         assert!(result.is_ok());
 
         let rows = sqlx::query(
@@ -109,7 +91,9 @@ mod tests {
         let pool = create_test_pool().await;
         let url_status_id = create_test_url_status_default(&pool).await;
 
-        let result = insert_contact_links(&pool, url_status_id, &[]).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_contact_links_in_tx(&mut tx, url_status_id, &[]).await
+        });
         assert!(result.is_ok());
 
         let count: i64 =
@@ -133,9 +117,10 @@ mod tests {
             raw_href: "mailto:info@example.com".to_string(),
         };
 
-        insert_contact_links(&pool, url_status_id, &[link])
-            .await
-            .unwrap();
+        commit_in_tx!(&pool, |tx| {
+            insert_contact_links_in_tx(&mut tx, url_status_id, &[link]).await
+        })
+        .unwrap();
 
         // Insert again with different raw_href (should upsert)
         let link2 = ContactLink {
@@ -144,9 +129,10 @@ mod tests {
             raw_href: "mailto:info@example.com?subject=Hello".to_string(),
         };
 
-        insert_contact_links(&pool, url_status_id, &[link2])
-            .await
-            .unwrap();
+        commit_in_tx!(&pool, |tx| {
+            insert_contact_links_in_tx(&mut tx, url_status_id, &[link2]).await
+        })
+        .unwrap();
 
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM url_contact_links WHERE url_status_id = ?")

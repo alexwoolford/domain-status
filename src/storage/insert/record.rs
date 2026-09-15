@@ -685,6 +685,109 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_core_cleanup_error_skips_satellite_inserts_keeps_fact_row() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        let mut first = empty_persisted(create_test_url_record());
+        first.technologies = vec![crate::fingerprint::DetectedTechnology {
+            name: "WordPress".to_string(),
+            version: None,
+            category: None,
+            is_implied: false,
+        }];
+        first.geoip = Some((
+            "1.2.3.4".to_string(),
+            GeoIpResult {
+                country_code: Some("US".to_string()),
+                country_name: Some("United States".to_string()),
+                ..GeoIpResult::default()
+            },
+        ));
+        insert_persisted_url_record(&pool, first)
+            .await
+            .expect("first insert");
+
+        sqlx::query(
+            "CREATE TRIGGER core_cleanup_forced_delete_failure
+             BEFORE DELETE ON url_technologies
+             BEGIN
+               SELECT RAISE(ABORT, 'forced core cleanup failure');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install delete-failure trigger");
+
+        let mut second = empty_persisted(create_test_url_record());
+        second.url_record.title = "Updated title".to_string();
+        second.technologies = vec![crate::fingerprint::DetectedTechnology {
+            name: "PHP".to_string(),
+            version: None,
+            category: None,
+            is_implied: false,
+        }];
+        second.geoip = Some((
+            "1.2.3.4".to_string(),
+            GeoIpResult {
+                country_code: Some("DE".to_string()),
+                country_name: Some("Germany".to_string()),
+                ..GeoIpResult::default()
+            },
+        ));
+
+        let upsert = insert_persisted_url_record(&pool, second)
+            .await
+            .expect("url_status must still commit when core cleanup fails");
+
+        let title: String = sqlx::query_scalar("SELECT title FROM url_status WHERE id = ?")
+            .bind(upsert.id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch title");
+        assert_eq!(title, "Updated title");
+
+        let tech_names: Vec<String> = sqlx::query_scalar(
+            "SELECT technology_name FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+        )
+        .bind(upsert.id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch tech");
+        assert_eq!(
+            tech_names,
+            vec!["WordPress".to_string()],
+            "failed cleanup must skip core inserts (no mixed WordPress+PHP)"
+        );
+
+        let country: Option<String> =
+            sqlx::query_scalar("SELECT country_code FROM url_geoip WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch geoip");
+        assert_eq!(
+            country.as_deref(),
+            Some("DE"),
+            "enrichment txn must still replace GeoIP after a core cleanup failure"
+        );
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ?",
+        )
+        .bind(upsert.id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch partial failures");
+        assert!(
+            rows.iter().any(|(error_type, message)| {
+                error_type == "Satellite insert error" && message.starts_with("core_satellites:")
+            }),
+            "core cleanup SQL Err must land in url_partial_failures, got {rows:?}"
+        );
+    }
+
     #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn test_insert_persisted_url_record_with_enrichment() {

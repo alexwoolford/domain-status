@@ -12,6 +12,7 @@ Enrichment children were also deleted inside the `url_status` transaction and re
 ## Decision
 
 - In-transaction (core) satellite SQL failures do **not** roll back `url_status`. Partial child data is better than losing the observation.
+- If CORE child DELETE fails, record one `Satellite insert error` (`core_satellites`), skip remaining core satellite inserts, and still commit `url_status`. That avoids mixing stale and new child rows. The enrichment transaction still runs.
 - Those failures are persisted as `url_partial_failures` rows with `error_type` `Satellite insert error` and a message that names the child table.
 - Enrichment satellites are replaced in a **second writer transaction** (DELETE + INSERT). Core UPSERT does not delete enrichment tables, so concurrent readers keep the previous enrichment until the new enrichment transaction commits.
 - Scan-time partials and satellite/enrichment insert failures are written in that enrichment transaction after the DELETE, so they are not wiped by cleanup.

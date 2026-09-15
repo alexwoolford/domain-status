@@ -1,30 +1,9 @@
 //! Analytics IDs insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
-use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
-
-/// Inserts analytics/tracking IDs for a URL status record.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_analytics_ids(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    analytics_ids: &[crate::parse::AnalyticsId],
-) -> Result<(), DatabaseError> {
-    if analytics_ids.is_empty() {
-        return Ok(());
-    }
-
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_analytics_ids_in_tx(&mut tx, url_status_id, analytics_ids).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_analytics_ids_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -60,6 +39,7 @@ mod tests {
     use crate::parse::{AnalyticsId, AnalyticsProvider};
     use sqlx::Row;
 
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     #[tokio::test]
@@ -78,7 +58,9 @@ mod tests {
             },
         ];
 
-        let result = insert_analytics_ids(&pool, url_status_id, &analytics_ids).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_analytics_ids_in_tx(&mut tx, url_status_id, &analytics_ids).await
+        });
         assert!(result.is_ok());
 
         // Verify insertion
@@ -104,7 +86,9 @@ mod tests {
 
         let analytics_ids = vec![];
 
-        let result = insert_analytics_ids(&pool, url_status_id, &analytics_ids).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_analytics_ids_in_tx(&mut tx, url_status_id, &analytics_ids).await
+        });
         assert!(result.is_ok());
 
         // Verify no rows inserted
@@ -129,11 +113,15 @@ mod tests {
         }];
 
         // Insert first time
-        let result1 = insert_analytics_ids(&pool, url_status_id, &analytics_ids).await;
+        let result1 = commit_in_tx!(&pool, |tx| {
+            insert_analytics_ids_in_tx(&mut tx, url_status_id, &analytics_ids).await
+        });
         assert!(result1.is_ok());
 
         // Insert again (should not create duplicate due to ON CONFLICT DO NOTHING)
-        let result2 = insert_analytics_ids(&pool, url_status_id, &analytics_ids).await;
+        let result2 = commit_in_tx!(&pool, |tx| {
+            insert_analytics_ids_in_tx(&mut tx, url_status_id, &analytics_ids).await
+        });
         assert!(result2.is_ok());
 
         // Verify only one row exists
@@ -167,7 +155,9 @@ mod tests {
             },
         ];
 
-        let result = insert_analytics_ids(&pool, url_status_id, &analytics_ids).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_analytics_ids_in_tx(&mut tx, url_status_id, &analytics_ids).await
+        });
         assert!(result.is_ok());
 
         // Verify all inserted
