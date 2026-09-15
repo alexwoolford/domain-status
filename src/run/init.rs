@@ -124,10 +124,9 @@ pub async fn init_scan_resources(
             None => (None, None),
         };
 
-    // Initialize database -- size the pool to match concurrency so workers don't starve
-    // max_concurrency is validated to be <= 10_000, fits in u32
-    #[allow(clippy::cast_possible_truncation)]
-    let pool_size = (config.max_concurrency as u32).max(1);
+    // SQLite has one writer; WAL only helps readers. `--max-concurrency` can be
+    // 10_000, so cap the pool instead of opening one connection per worker.
+    let pool_size = crate::storage::pool::sqlite_pool_size(config.max_concurrency);
     let pool = init_db_pool_with_path(&config.db_path, pool_size)
         .await
         .context("Failed to initialize database pool")?;

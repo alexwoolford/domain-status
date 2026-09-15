@@ -1,25 +1,8 @@
 //! WHOIS data insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
-use crate::storage::insert::retry::with_sqlite_retry;
-
-/// Inserts WHOIS data into the database.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_whois_data(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    whois: &crate::whois::WhoisResult,
-) -> Result<(), DatabaseError> {
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_whois_data_in_tx(&mut tx, url_status_id, whois).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_whois_data_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -82,6 +65,7 @@ pub(crate) async fn insert_whois_data_in_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
     use crate::whois::WhoisResult;
     use sqlx::Row;
@@ -98,9 +82,10 @@ mod tests {
             ..WhoisResult::default()
         };
 
-        insert_whois_data(&pool, url_status_id, &whois)
-            .await
-            .expect("insert whois");
+        commit_in_tx!(&pool, |tx| {
+            insert_whois_data_in_tx(&mut tx, url_status_id, &whois).await
+        })
+        .expect("insert whois");
 
         let row = sqlx::query(
             "SELECT registrar, registrant_country, registrant_org, raw_response

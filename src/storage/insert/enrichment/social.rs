@@ -1,31 +1,10 @@
 //! Social media links insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::SocialMediaLink;
-use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
-
-/// Inserts social media links into the database.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_social_media_links(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    links: &[SocialMediaLink],
-) -> Result<(), DatabaseError> {
-    if links.is_empty() {
-        return Ok(());
-    }
-
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_social_media_links_in_tx(&mut tx, url_status_id, links).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_social_media_links_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -65,6 +44,7 @@ mod tests {
     use crate::parse::SocialPlatform;
     use sqlx::Row;
 
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     #[tokio::test]
@@ -85,7 +65,9 @@ mod tests {
             },
         ];
 
-        let result = insert_social_media_links(&pool, url_status_id, &links).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_social_media_links_in_tx(&mut tx, url_status_id, &links).await
+        });
         assert!(result.is_ok());
 
         // Verify insertion
@@ -117,7 +99,9 @@ mod tests {
 
         let links = vec![];
 
-        let result = insert_social_media_links(&pool, url_status_id, &links).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_social_media_links_in_tx(&mut tx, url_status_id, &links).await
+        });
         assert!(result.is_ok());
 
         let count: i64 = sqlx::query_scalar(
@@ -143,12 +127,16 @@ mod tests {
         };
 
         // Insert first time
-        let result1 = insert_social_media_links(&pool, url_status_id, &[link.clone()]).await;
+        let result1 = commit_in_tx!(&pool, |tx| {
+            insert_social_media_links_in_tx(&mut tx, url_status_id, &[link.clone()]).await
+        });
         assert!(result1.is_ok());
 
         // Update identifier and insert again (should upsert)
         link.identifier = Some("updated_example".to_string());
-        let result2 = insert_social_media_links(&pool, url_status_id, &[link.clone()]).await;
+        let result2 = commit_in_tx!(&pool, |tx| {
+            insert_social_media_links_in_tx(&mut tx, url_status_id, &[link.clone()]).await
+        });
         assert!(result2.is_ok());
 
         // Verify only one row exists and it was updated
@@ -186,7 +174,9 @@ mod tests {
             identifier: None,
         }];
 
-        let result = insert_social_media_links(&pool, url_status_id, &links).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_social_media_links_in_tx(&mut tx, url_status_id, &links).await
+        });
         assert!(result.is_ok());
 
         let row =

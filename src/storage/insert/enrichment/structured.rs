@@ -1,9 +1,8 @@
 //! Structured data insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
-use crate::storage::insert::retry::with_sqlite_retry;
 use crate::storage::insert::utils::build_batch_insert_query;
 
 async fn insert_structured_rows(
@@ -40,22 +39,6 @@ async fn insert_structured_rows(
         .await
         .map_err(DatabaseError::from)?;
     Ok(())
-}
-
-/// Inserts structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org) into the database.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_structured_data(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    structured_data: &crate::parse::StructuredData,
-) -> Result<(), DatabaseError> {
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_structured_data_in_tx(&mut tx, url_status_id, structured_data).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
 }
 
 pub(crate) async fn insert_structured_data_in_tx(
@@ -104,6 +87,7 @@ pub(crate) async fn insert_structured_data_in_tx(
 mod tests {
     use super::*;
     use crate::parse::StructuredData;
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
     use sqlx::Row;
 
@@ -116,9 +100,10 @@ mod tests {
             ..StructuredData::default()
         };
 
-        insert_structured_data(&pool, url_status_id, &structured_data)
-            .await
-            .expect("insert structured data");
+        commit_in_tx!(&pool, |tx| {
+            insert_structured_data_in_tx(&mut tx, url_status_id, &structured_data).await
+        })
+        .expect("insert structured data");
 
         let rows = sqlx::query(
             "SELECT property_name FROM url_structured_data
@@ -143,9 +128,10 @@ mod tests {
             ..StructuredData::default()
         };
 
-        insert_structured_data(&pool, url_status_id, &structured_data)
-            .await
-            .expect("insert structured data");
+        commit_in_tx!(&pool, |tx| {
+            insert_structured_data_in_tx(&mut tx, url_status_id, &structured_data).await
+        })
+        .expect("insert structured data");
 
         let row = sqlx::query(
             "SELECT property_name, property_value FROM url_structured_data

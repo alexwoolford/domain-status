@@ -1,26 +1,9 @@
 //! Favicon data insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::fetch::favicon::FaviconData;
-use crate::storage::insert::retry::with_sqlite_retry;
-
-/// Inserts favicon data for a URL status record.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_favicon_data(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    favicon: &FaviconData,
-) -> Result<(), DatabaseError> {
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_favicon_data_in_tx(&mut tx, url_status_id, favicon).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_favicon_data_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -48,6 +31,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     fn create_test_favicon() -> FaviconData {
@@ -63,7 +47,9 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
         let favicon = create_test_favicon();
 
-        let result = insert_favicon_data(&pool, url_status_id, &favicon).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_favicon_data_in_tx(&mut tx, url_status_id, &favicon).await
+        });
         assert!(result.is_ok());
 
         let row = sqlx::query("SELECT favicon_url, hash FROM url_favicons WHERE url_status_id = ?")
@@ -85,12 +71,16 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
         let mut favicon = create_test_favicon();
 
-        let result1 = insert_favicon_data(&pool, url_status_id, &favicon).await;
+        let result1 = commit_in_tx!(&pool, |tx| {
+            insert_favicon_data_in_tx(&mut tx, url_status_id, &favicon).await
+        });
         assert!(result1.is_ok());
 
         favicon.hash = 999;
         favicon.favicon_url = "https://example.com/new-icon.png".to_string();
-        let result2 = insert_favicon_data(&pool, url_status_id, &favicon).await;
+        let result2 = commit_in_tx!(&pool, |tx| {
+            insert_favicon_data_in_tx(&mut tx, url_status_id, &favicon).await
+        });
         assert!(result2.is_ok());
 
         let count: i64 =

@@ -1,30 +1,9 @@
 //! Exposed secret insertion.
 
-use sqlx::{Acquire, Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
 use crate::parse::ExposedSecret;
-use crate::storage::insert::retry::with_sqlite_retry;
-
-/// Inserts detected exposed secrets and returns their database row IDs.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_exposed_secrets(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    secrets: &[ExposedSecret],
-) -> Result<Vec<i64>, DatabaseError> {
-    if secrets.is_empty() {
-        return Ok(Vec::new());
-    }
-    with_sqlite_retry(|| async {
-        let mut conn = pool.acquire().await.map_err(DatabaseError::SqlError)?;
-        let mut tx = conn.begin().await.map_err(DatabaseError::SqlError)?;
-        let ids = insert_exposed_secrets_in_tx(&mut tx, url_status_id, secrets).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(ids)
-    })
-    .await
-}
 
 pub(crate) async fn insert_exposed_secrets_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -63,6 +42,7 @@ mod tests {
     use crate::parse::{ExposedSecret, SecretSeverity};
     use sqlx::Row;
 
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     #[tokio::test]
@@ -79,7 +59,9 @@ mod tests {
             decoded_jwt: None,
         }];
 
-        let result = insert_exposed_secrets(&pool, url_status_id, &secrets).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &secrets).await
+        });
         assert!(result.is_ok());
 
         let rows = sqlx::query(
@@ -109,7 +91,9 @@ mod tests {
         let pool = create_test_pool().await;
         let url_status_id = create_test_url_status_default(&pool).await;
 
-        let result = insert_exposed_secrets(&pool, url_status_id, &[]).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &[]).await
+        });
         assert!(result.is_ok());
     }
 
@@ -137,9 +121,10 @@ mod tests {
             },
         ];
 
-        insert_exposed_secrets(&pool, url_status_id, &secrets)
-            .await
-            .unwrap();
+        commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &secrets).await
+        })
+        .unwrap();
 
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM url_exposed_secrets WHERE url_status_id = ?")
@@ -165,9 +150,10 @@ mod tests {
             decoded_jwt: None,
         };
 
-        insert_exposed_secrets(&pool, url_status_id, &[secret])
-            .await
-            .unwrap();
+        commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &[secret]).await
+        })
+        .unwrap();
 
         // Upsert with updated context
         let secret2 = ExposedSecret {
@@ -179,9 +165,10 @@ mod tests {
             decoded_jwt: None,
         };
 
-        insert_exposed_secrets(&pool, url_status_id, &[secret2])
-            .await
-            .unwrap();
+        commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &[secret2]).await
+        })
+        .unwrap();
 
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM url_exposed_secrets WHERE url_status_id = ?")
@@ -232,9 +219,10 @@ mod tests {
             location: std::borrow::Cow::Borrowed("html_body"),
             decoded_jwt: None,
         }];
-        insert_exposed_secrets(&pool, good_url_status_id, &pre_insert)
-            .await
-            .expect("pre-insert succeeds");
+        commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, good_url_status_id, &pre_insert).await
+        })
+        .expect("pre-insert succeeds");
 
         // Now run a FAILING batch: 3 secrets, all targeting a non-existent
         // url_status_id. The first will succeed at the per-row level inside
@@ -267,7 +255,9 @@ mod tests {
                 decoded_jwt: None,
             },
         ];
-        let result = insert_exposed_secrets(&pool, nonexistent_id, &failing_batch).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, nonexistent_id, &failing_batch).await
+        });
         assert!(
             result.is_err(),
             "FK violation must surface as Err, got {result:?}"
@@ -355,9 +345,10 @@ mod tests {
             },
         ];
 
-        insert_exposed_secrets(&pool, url_status_id, &secrets)
-            .await
-            .expect("insert");
+        commit_in_tx!(&pool, |tx| {
+            insert_exposed_secrets_in_tx(&mut tx, url_status_id, &secrets).await
+        })
+        .expect("insert");
 
         let rows = sqlx::query(
             "SELECT matched_value, location FROM url_exposed_secrets WHERE url_status_id = ? ORDER BY matched_value",

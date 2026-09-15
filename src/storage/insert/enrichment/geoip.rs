@@ -1,25 +1,8 @@
 //! `GeoIP` data insertion.
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 
 use crate::error_handling::DatabaseError;
-use crate::storage::insert::retry::with_sqlite_retry;
-
-/// Inserts `GeoIP` data for a URL status record.
-#[cfg_attr(not(test), allow(dead_code))] // Unit tests use the pool wrapper; production uses `_in_tx`.
-pub async fn insert_geoip_data(
-    pool: &SqlitePool,
-    url_status_id: i64,
-    geoip: &crate::geoip::GeoIpResult,
-) -> Result<(), DatabaseError> {
-    with_sqlite_retry(|| async {
-        let mut tx = pool.begin().await.map_err(DatabaseError::SqlError)?;
-        insert_geoip_data_in_tx(&mut tx, url_status_id, geoip).await?;
-        tx.commit().await.map_err(DatabaseError::SqlError)?;
-        Ok(())
-    })
-    .await
-}
 
 pub(crate) async fn insert_geoip_data_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -66,6 +49,7 @@ mod tests {
     use crate::geoip::GeoIpResult;
     use sqlx::Row;
 
+    use crate::storage::insert::enrichment::commit_in_tx;
     use crate::storage::test_helpers::{create_test_pool, create_test_url_status_default};
 
     fn create_test_geoip_result() -> GeoIpResult {
@@ -89,7 +73,9 @@ mod tests {
         let url_status_id = create_test_url_status_default(&pool).await;
         let geoip = create_test_geoip_result();
 
-        let result = insert_geoip_data(&pool, url_status_id, &geoip).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_geoip_data_in_tx(&mut tx, url_status_id, &geoip).await
+        });
         assert!(result.is_ok());
 
         // Verify insertion
@@ -134,13 +120,17 @@ mod tests {
         let mut geoip = create_test_geoip_result();
 
         // Insert first time
-        let result1 = insert_geoip_data(&pool, url_status_id, &geoip).await;
+        let result1 = commit_in_tx!(&pool, |tx| {
+            insert_geoip_data_in_tx(&mut tx, url_status_id, &geoip).await
+        });
         assert!(result1.is_ok());
 
         // Update and insert again (should upsert)
         geoip.city = Some("Los Angeles".to_string());
         geoip.region = Some("California".to_string());
-        let result2 = insert_geoip_data(&pool, url_status_id, &geoip).await;
+        let result2 = commit_in_tx!(&pool, |tx| {
+            insert_geoip_data_in_tx(&mut tx, url_status_id, &geoip).await
+        });
         assert!(result2.is_ok());
 
         // Verify only one row exists and it was updated
@@ -184,7 +174,9 @@ mod tests {
             asn_org: None,
         };
 
-        let result = insert_geoip_data(&pool, url_status_id, &geoip).await;
+        let result = commit_in_tx!(&pool, |tx| {
+            insert_geoip_data_in_tx(&mut tx, url_status_id, &geoip).await
+        });
         assert!(result.is_ok());
 
         // Verify partial data was inserted

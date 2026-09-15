@@ -27,4 +27,4 @@ pub use models::UrlRecord;
 pub use pool::{init_db_pool_with_path, DbPool};
 pub use record::{CookieInfo, PersistedUrlRecord, ScriptHostInfo};
 
-// Note: insert_geoip_data is used internally by fetch module, not exported here
+// Enrichment inserts go through `*_in_tx` in the enrichment writer transaction.

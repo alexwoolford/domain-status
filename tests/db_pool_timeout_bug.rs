@@ -1,6 +1,6 @@
 //! Regression: production pool `acquire_timeout` is 5s (not sqlx’s 30s default).
 //!
-//! `init_db_pool_with_path` sizes the pool to `--max-concurrency` and fails
+//! `init_db_pool_with_path` takes an explicit `max_connections` and fails
 //! acquire fast so workers do not park for half a minute when connections are
 //! exhausted. This test uses that production constructor.
 
