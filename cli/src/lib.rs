@@ -132,7 +132,9 @@ pub struct ScanCommand {
     )]
     pub log_level: LogLevel,
 
-    /// Format for the scan log file (`--log-file`). Use `-v`/`-q` for verbosity.
+    /// Format for scan `--log-file` and for export/summary stderr.
+    ///
+    /// `plain` in the scan file is uncolored; export/summary stderr `plain` uses colors.
     #[arg(
         long,
         value_enum,
@@ -337,7 +339,7 @@ pub enum LogLevel {
 #[derive(Copy, Clone, Debug, Default, clap::ValueEnum, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LogFormat {
-    /// Human-readable format with colors (default).
+    /// Human-readable. Scan `--log-file` is uncolored; export/summary stderr is colored.
     #[default]
     Plain,
     /// Structured JSON format for machine parsing.

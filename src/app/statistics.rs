@@ -116,11 +116,12 @@ mod tests {
         print_error_statistics(error_stats);
 
         info!(
-            "Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+            "Processed {} URL{} ({} succeeded, {} failed, {} skipped) in {:.1}s",
             total_urls,
             if total_urls == 1 { "" } else { "s" },
             successful_urls,
             failed_urls_count,
+            skipped_urls_count,
             elapsed_seconds
         );
 

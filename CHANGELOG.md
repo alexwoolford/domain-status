@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - reqwest stays 0.12 until vendored `whois-service` can move to 0.13 in the same change.
 - Scan `-h` shows everyday flags; `scan --help` lists the rest (legacy `--enable-whois` stays accepted but is omitted from help).
 - Default scan logs stay quieter: WHOIS start/empty, missing titles, empty bodies, and non-scannable content-types are `debug`; DNS lookup failures are logged once.
+- Scan stderr reports skipped URLs, drops the post-scan tip/emoji banners, and uses a spinner when the input length is unknown (stdin).
 
 ### Fixed
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.

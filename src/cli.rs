@@ -12,6 +12,7 @@ use clap_mangen::Man;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -245,7 +246,7 @@ fn init_scan_logging(
 ) -> Result<()> {
     let level = log_level_override.unwrap_or_else(|| log_level_filter(log_level));
     init_logger_to_file(level, log_format, log_file).context("Failed to initialize file logger")?;
-    eprintln!("📝 Logs: {}", log_file.display());
+    eprintln!("Logs: {}", log_file.display());
     log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
     Ok(())
 }
@@ -255,6 +256,9 @@ fn init_scan_logging(
 /// large `pos`/`len` and ASCII ok/fail/skip on a typical 80-col terminal.
 const PROGRESS_BAR_TEMPLATE: &str =
     "{spinner:.green} [{elapsed_precise}] {bar:30.cyan/blue} {pos}/{len} ({percent}%) {msg}";
+
+/// Stdin (and any unknown-length input) has no `len`; a determinate `pos/0` bar is nonsense.
+const PROGRESS_SPINNER_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] {pos} {msg}";
 
 #[cfg(test)]
 const PROGRESS_BAR_WIDTH: usize = 30;
@@ -309,13 +313,28 @@ fn create_progress_bar() -> Result<Arc<ProgressBar>> {
     Ok(pb)
 }
 
+fn apply_unknown_length_progress_style(pb: &ProgressBar) {
+    if let Ok(style) = ProgressStyle::default_spinner().template(PROGRESS_SPINNER_TEMPLATE) {
+        pb.set_style(style);
+    }
+}
+
 fn create_progress_callback(
     pb: Arc<ProgressBar>,
 ) -> Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync> {
+    let unknown_length = AtomicBool::new(false);
     Arc::new(move |completed, failed, skipped, total| {
         // completed == successful persisted inserts; skips are counted only in skipped.
-        pb.set_length(total as u64);
-        pb.set_position((completed + failed + skipped) as u64);
+        let finished = (completed + failed + skipped) as u64;
+        if total == 0 {
+            if !unknown_length.swap(true, Ordering::Relaxed) {
+                apply_unknown_length_progress_style(&pb);
+            }
+            pb.set_position(finished);
+        } else {
+            pb.set_length(total as u64);
+            pb.set_position(finished);
+        }
         pb.set_message(progress_status_message(completed, failed, skipped));
     })
 }
@@ -355,17 +374,15 @@ async fn execute_scan_with_reporting(mut config: Config, no_progress: bool) -> R
     }
 
     eprintln!(
-        "Processed {} URL{} ({} succeeded, {} failed) in {:.1}s - see database for details",
+        "Processed {} URL{} ({} succeeded, {} failed, {} skipped) in {:.1}s",
         report.total_urls,
         if report.total_urls == 1 { "" } else { "s" },
         report.successful,
         report.failed,
+        report.skipped,
         report.elapsed_seconds
     );
     eprintln!("Results saved in {}", report.db_path.display());
-    eprintln!(
-        "Tip: Use `domain_status summary` for a quick report, `domain_status export --format csv` to export, or query the database directly."
-    );
 
     Ok(evaluate_exit_code(
         &config.fail_on,
@@ -433,9 +450,9 @@ async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
     };
 
     if let Some(ref path) = output_path {
-        eprintln!("✅ Exported {} records to {}", count, path.display());
+        eprintln!("Exported {} records to {}", count, path.display());
     } else {
-        eprintln!("✅ Exported {count} records to {format_name}");
+        eprintln!("Exported {count} records to {format_name}");
     }
 
     Ok(0)
@@ -650,6 +667,23 @@ mod tests {
         assert!(
             late_80 <= 110,
             "late multi-day chrome should stay reasonably bounded (got {late_80})"
+        );
+    }
+
+    #[test]
+    fn unknown_length_progress_template_parses_and_fits_80_cols() {
+        ProgressStyle::default_spinner()
+            .template(PROGRESS_SPINNER_TEMPLATE)
+            .expect("stdin spinner template must parse");
+        let msg = progress_status_message(12, 1, 3);
+        // spinner + space + [elapsed] + space + pos + space + msg
+        let elapsed = "00:01:23";
+        let pos = 16u64;
+        let cols =
+            1 + 1 + 1 + elapsed.len() + 1 + 1 + pos.to_string().len() + 1 + msg.chars().count();
+        assert!(
+            cols <= 80,
+            "unknown-length progress chrome should fit 80 cols (got {cols})"
         );
     }
 
