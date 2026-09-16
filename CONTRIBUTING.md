@@ -6,7 +6,7 @@
 
 ```bash
 git clone https://github.com/alexwoolford/domain-status.git
-cd domain_status
+cd domain-status
 cargo install just
 just --list
 just check

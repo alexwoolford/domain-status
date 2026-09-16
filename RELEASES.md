@@ -93,7 +93,7 @@ Currently, macOS binaries are unsigned, which triggers Gatekeeper warnings. To e
 1. **Requires Apple Developer Account** ($99/year)
 2. **Code Sign the Binary**:
    ```bash
-   codesign --force --deep --sign "Developer ID Application: Your Name" domain_status
+   codesign --force --deep --sign "Developer ID Application: Your Name" domain-status
    ```
 3. **Notarize with Apple**:
    ```bash
@@ -101,30 +101,29 @@ Currently, macOS binaries are unsigned, which triggers Gatekeeper warnings. To e
    ```
 4. **Staple the Ticket**:
    ```bash
-   xcrun stapler staple domain_status
+   xcrun stapler staple domain-status
    ```
 
 **Current Workaround**: Users can bypass Gatekeeper by:
 - Right-clicking → Open (first time only)
-- Or running: `xattr -d com.apple.quarantine domain_status`
+- Or running: `xattr -d com.apple.quarantine domain-status`
 
 **Note**: For open-source projects, code signing is optional but improves user experience. Many projects skip it due to the cost and complexity.
 
 ## Publishing to crates.io
 
-The main crate depends on `domain_status_cli` (path dependency). When publishing, Cargo expects that dependency on the registry, so publish the CLI crate first, then the main crate.
+The main crate depends on `domain-status-cli` (path dependency, rustc name `domain_status_cli`). When publishing, Cargo expects that dependency on the registry, so publish the CLI crate first, then the main crate.
 
 1. Log in (once per machine): `cargo login` and paste your crates.io API token.
 
 2. Publish the CLI crate first:
    ```bash
-   cargo publish -p domain_status_cli --allow-dirty
+   cargo publish -p domain-status-cli --locked
    ```
 
 3. Publish the main crate:
    ```bash
-   cargo publish --allow-dirty
+   cargo publish -p domain-status --locked
    ```
-   Use `--allow-dirty` only if you have uncommitted files that are not part of the package (e.g. validation exports). Otherwise omit it.
 
-4. Optional dry run: `cargo publish -p domain_status_cli --dry-run` and `cargo publish --dry-run` before step 2–3.
+4. Optional dry run: `cargo publish -p domain-status-cli --locked --dry-run` and `cargo publish -p domain-status --locked --dry-run` before step 2–3.

@@ -46,7 +46,7 @@ On some systems you may prefer package-manager installs for `sqlite3`, `jq`, `cu
 
 ```bash
 git clone https://github.com/alexwoolford/domain-status.git
-cd domain_status
+cd domain-status
 just --list
 just check
 ```

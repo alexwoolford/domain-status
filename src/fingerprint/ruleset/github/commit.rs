@@ -53,7 +53,7 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::USER_AGENT,
-        reqwest::header::HeaderValue::from_static("domain_status/0.1.0"),
+        reqwest::header::HeaderValue::from_static(super::GITHUB_API_USER_AGENT),
     );
     // Use GITHUB_TOKEN when set (increases rate limit from 60 to 5000 requests/hour)
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
