@@ -28,14 +28,13 @@ pub async fn handle_http_request(
 ) -> Result<UrlProcessOutcome, Error> {
     debug!("Resolving redirects for {url}");
 
-    let (final_url_string, redirect_chain, alt_svc_header, reused_response) =
-        resolve_redirect_chain(
-            url,
-            MAX_REDIRECT_HOPS,
-            &ctx.network.redirect_client,
-            ctx.runtime.allow_localhost_for_tests,
-        )
-        .await?;
+    let (final_url_string, redirect_chain, reused_response) = resolve_redirect_chain(
+        url,
+        MAX_REDIRECT_HOPS,
+        &ctx.network.redirect_client,
+        ctx.runtime.allow_localhost_for_tests,
+    )
+    .await?;
 
     // Track redirect info metrics
     // redirect_chain includes the original URL, so:
@@ -86,25 +85,7 @@ pub async fn handle_http_request(
     };
 
     match res {
-        Ok(mut response) => {
-            // For HTTP/3 detection: match wappalyzergo behavior exactly
-            // Parity with wappalyzergo: HTTP/3 detection uses alt-svc. Go's http.Client exposes alt-svc
-            // on the final response after redirects; reqwest does not. We copy alt-svc from the redirect
-            // chain into the final response so fingerprinting sees it. See README/DATABASE.md for limitations.
-            // If alt-svc header is missing from final response but was captured during redirects,
-            // add it to the final response for HTTP/3 detection (matches wappalyzergo behavior)
-            if !response.headers().contains_key("alt-svc") {
-                if let Some(ref alt_svc_str) = alt_svc_header {
-                    if let (Ok(header_name), Ok(header_value)) = (
-                        reqwest::header::HeaderName::from_bytes(b"alt-svc"),
-                        reqwest::header::HeaderValue::from_str(alt_svc_str),
-                    ) {
-                        response.headers_mut().insert(header_name, header_value);
-                        log::trace!("Added alt-svc header from redirect chain: {alt_svc_str}");
-                    }
-                }
-            }
-
+        Ok(response) => {
             // Extract headers BEFORE calling error_for_status() (which consumes response)
             // This allows us to capture headers even for error responses (4xx/5xx)
             // Limit header count to prevent memory exhaustion from header bomb attacks
@@ -743,14 +724,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_http_request_alt_svc_header_preserved() {
-        // Test that alt-svc header from redirect chain is preserved in final response
-        // This is critical for HTTP/3 detection (matches wappalyzergo behavior)
+    async fn test_handle_http_request_hop_alt_svc_is_not_stored() {
         let server = Server::run();
         let final_url = server.url("/final").to_string();
         let start_url = server.url("/redirect").to_string();
 
-        // Setup redirect with alt-svc header
         server.expect(
             Expectation::matching(request::method_path("GET", "/redirect")).respond_with(
                 status_code(302)
@@ -761,36 +739,74 @@ mod tests {
         );
         server.expect(
             Expectation::matching(request::method_path("GET", "/final"))
-                // Response reused from redirect resolution (single fetch)
                 .respond_with(status_code(200).body("<html><title>Final</title></html>")),
         );
 
         let ctx = create_test_context(&server).await;
+        crate::storage::run_migrations(&ctx.pool)
+            .await
+            .expect("migrate");
         let start_time = std::time::Instant::now();
-        assert_db_insert_failed(handle_http_request(&ctx, &start_url, start_time).await);
+        handle_http_request(&ctx, &start_url, start_time)
+            .await
+            .expect("scan should persist");
 
-        // The alt-svc header handling path ran before the insert failed.
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status")
+            .fetch_one(ctx.pool.as_ref())
+            .await
+            .expect("count url_status");
+        assert_eq!(rows, 1, "final response should persist");
+
+        let alt_svc: Vec<String> = sqlx::query_scalar(
+            "SELECT header_value FROM url_http_headers WHERE lower(header_name) = 'alt-svc'",
+        )
+        .fetch_all(ctx.pool.as_ref())
+        .await
+        .expect("query");
+        assert!(
+            alt_svc.is_empty(),
+            "hop Alt-Svc must not be copied onto the final observation, got {alt_svc:?}"
+        );
     }
 
     #[tokio::test]
-    async fn test_handle_http_request_alt_svc_header_already_present() {
-        // Test that alt-svc header is not duplicated if already present in final response
+    async fn test_handle_http_request_final_alt_svc_is_stored() {
         let server = Server::run();
         let url = server.url("/test").to_string();
 
-        // Return response with alt-svc header already present
         server.expect(
-            Expectation::matching(request::method_path("GET", "/test"))
-                // Response reused from redirect resolution (single fetch)
-                .respond_with(
-                    status_code(200)
-                        .insert_header("Alt-Svc", "h3=\":443\"; ma=86400")
-                        .body("<html><title>Test</title></html>"),
-                ),
+            Expectation::matching(request::method_path("GET", "/test")).respond_with(
+                status_code(200)
+                    .insert_header("Alt-Svc", "h3=\":443\"; ma=86400")
+                    .body("<html><title>Test</title></html>"),
+            ),
         );
 
         let ctx = create_test_context(&server).await;
+        crate::storage::run_migrations(&ctx.pool)
+            .await
+            .expect("migrate");
         let start_time = std::time::Instant::now();
-        assert_db_insert_failed(handle_http_request(&ctx, &url, start_time).await);
+        handle_http_request(&ctx, &url, start_time)
+            .await
+            .expect("scan should persist");
+
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM url_status")
+            .fetch_one(ctx.pool.as_ref())
+            .await
+            .expect("count url_status");
+        assert_eq!(rows, 1, "final response should persist");
+
+        let alt_svc: Vec<String> = sqlx::query_scalar(
+            "SELECT header_value FROM url_http_headers WHERE lower(header_name) = 'alt-svc'",
+        )
+        .fetch_all(ctx.pool.as_ref())
+        .await
+        .expect("query");
+        assert_eq!(
+            alt_svc,
+            vec!["h3=\":443\"; ma=86400".to_string()],
+            "native final Alt-Svc should still be stored"
+        );
     }
 }

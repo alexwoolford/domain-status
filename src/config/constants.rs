@@ -52,8 +52,10 @@ pub const WHOIS_TIMEOUT_SECS: u64 = 5;
 pub use domain_status_cli::DEFAULT_USER_AGENT;
 
 // Response and body size limits
-/// Maximum response body size in bytes (2MB)
-/// Responses larger than this are skipped to prevent memory exhaustion
+/// Maximum response body size in bytes (2MB).
+/// Bodies larger than this are truncated; the prefix is still scanned and
+/// `body_truncated` is set. Favicon oversize aborts instead (a truncated hash
+/// would be the wrong murmur3).
 pub(crate) const MAX_RESPONSE_BODY_SIZE: usize = 2 * 1024 * 1024;
 
 // Favicon fetch limits

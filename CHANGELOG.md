@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite scan pool is capped at 32 connections (one writer + WAL readers) instead of matching `--max-concurrency`. Enrichment inserts keep a single `*_in_tx` path. Core satellite DELETE failures skip remaining child inserts and record one `Satellite insert error` without rolling back `url_status`.
 
 ### Fixed
+- `url_http_headers` records the final response only: hop `Alt-Svc` is no longer copied onto the observation.
 - Test helper awaits SQLite rollback on the error path so coverage runs do not flake on `SQLITE_LOCKED_SHAREDCACHE`.
 - Fingerprint inventory is the HTTP serving stack: DNS TXT/MX org-proofs and CSP allowlists no longer become `url_technologies`. `github.com` is not labeled GitHub Pages.
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.

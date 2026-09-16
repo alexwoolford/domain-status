@@ -349,7 +349,7 @@ pub async fn handle_response(
 
     let Some(extracted) = extract_and_parse(response, original_url, final_url_str, ctx).await?
     else {
-        debug!("Skipping URL {final_url_str} (non-HTML content-type or empty body)");
+        debug!("Skipping URL {final_url_str} (non-scannable content-type)");
         return Ok(UrlProcessOutcome::Skipped);
     };
     metrics.html_parsing_us = extracted.html_parsing_us;

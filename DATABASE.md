@@ -75,7 +75,7 @@ One row per scan invocation.
 | `total_urls` | `INTEGER DEFAULT 0` | Total URLs attempted |
 | `successful_urls` | `INTEGER DEFAULT 0` | Successful URL observations |
 | `failed_urls` | `INTEGER DEFAULT 0` | Failed URL attempts |
-| `skipped_urls` | `INTEGER DEFAULT 0` | URLs that did not insert a new `url_status` row: invalid/SSRF skips, duplicate input lines, and UPSERT `Updated` (same `run_id` + `initial_domain`) |
+| `skipped_urls` | `INTEGER DEFAULT 0` | URLs that did not insert a new `url_status` row: invalid/SSRF skips, non-scannable Content-Type, duplicate input lines, and UPSERT `Updated` (same `run_id` + `initial_domain`) |
 
 ### `url_status`
 
@@ -87,6 +87,12 @@ Important characteristics:
 - keeps `ip_address` as `TEXT NOT NULL`
 - uses `observed_at_ms` for run-time uniqueness
 - links back to `runs.run_id`
+
+**Observation gates** (what becomes a row):
+
+- **Persist** (`url_status`): HTTP 2xx, 3xx that stop following, and 4xx (a 403 WAF page is still an observation).
+- **Fail** (`url_failures`): HTTP 429 and 5xx, connect/TLS/timeout errors, scan cancel. Invalid-cert HTTPS fails the strict page client and does **not** get AcceptAll cert columns (ADR 0003).
+- **Skip** (no `url_status`): non-scannable `Content-Type` (`image/*`, `application/pdf`, …). Missing Content-Type still proceeds. Duplicate input / UPSERT `Updated` also increment `skipped_urls`.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -194,7 +200,7 @@ These tables are in-transaction with `url_status`.
 
 | Table | Purpose | Key columns |
 |------|---------|-------------|
-| `url_redirect_chain` | Ordered redirect history | `sequence_order`, `redirect_url`, `http_status` |
+| `url_redirect_chain` | Ordered hop history (URL + status only; hop headers and bodies are not stored) | `sequence_order`, `redirect_url`, `http_status` |
 | `url_nameservers` | Expanded nameserver rows | `nameserver` |
 | `url_txt_records` | Expanded **apex** TXT record rows | `record_type`, `record_value` |
 | `url_mx_records` | Expanded MX rows | `priority`, `mail_exchange` |
@@ -221,7 +227,7 @@ These tables are in-transaction with `url_status`.
 
 | Table | Purpose | Key columns |
 |------|---------|-------------|
-| `url_http_headers` | Captured HTTP response headers | `header_name`, `header_value` |
+| `url_http_headers` | Curated allowlist from the **final** HTTP response (not a full dump; not hop-injected). `Alt-Svc` is stored only when that final response sent it. | `header_name`, `header_value` |
 | `url_security_headers` | Security-focused header subset | `header_name`, `header_value` |
 | `url_certificate_oids` | Certificate OIDs | `oid` |
 | `url_certificate_sans` | Certificate SANs | `san_value` |

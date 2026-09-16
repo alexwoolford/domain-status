@@ -12,7 +12,7 @@ pub enum UrlProcessOutcome {
     Inserted,
     /// Existing row updated (duplicate domain key within the same run).
     Updated,
-    /// Fetch/parse path chose not to persist (e.g. non-HTML).
+    /// Fetch/parse path chose not to persist (e.g. non-scannable content-type).
     Skipped,
 }
 
