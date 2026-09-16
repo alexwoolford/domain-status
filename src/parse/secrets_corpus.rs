@@ -210,7 +210,7 @@ fn fp_corpus_aws_example_key() {
 }
 
 // ---------------------------------------------------------------------------
-// FP corpus additions from live scan.db triage (2026-07).
+// FP corpus additions from web false-positive triage.
 // ---------------------------------------------------------------------------
 
 #[test]

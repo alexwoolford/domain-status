@@ -890,14 +890,14 @@ mod tests {
             "github.io hosts should still match GitHub Pages, got {io:?}"
         );
 
-        let rust_lang = detect_named(
+        let other_host = detect_named(
             &ruleset,
             &server_header("GitHub.com"),
-            "https://www.rust-lang.org/",
+            "https://pages.example.org/",
         );
         assert!(
-            rust_lang.iter().any(|t| t.name == "GitHub Pages"),
-            "non-github.com Server: GitHub.com should still match Pages, got {rust_lang:?}"
+            other_host.iter().any(|t| t.name == "GitHub Pages"),
+            "non-github.com Server: GitHub.com should still match Pages, got {other_host:?}"
         );
     }
 
