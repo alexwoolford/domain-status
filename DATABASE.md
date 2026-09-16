@@ -357,6 +357,7 @@ Scans produced with older binaries may still contain (until migrated):
 - `location` stores where it was found (`inline_script`, `json_ld`, `html_comment`, `data_attribute`, `url_parameter`, `meta_tag`, `html_body`, `response_header`, `set_cookie`, or `external_script:<url>`)
 - Join `url_status.body_truncated` / `external_scripts_*` when assessing whether a miss is possible due to size caps or script limits
 - `context` stores nearby source text for analyst review
+- `generic-api-key` is the catch-all for **opaque non-UUID** tokens after web plausibility filters (entropy, charset, no camelCase). Hyphenated 8-4-4-4-12 hex identifiers (MediaWiki `"key":"<uuid>"`, CMS document ids) are **not** that rule. Vendor UUID rules such as `hubspot-api-key` still match when that is the product format. `gcp-api-key` and `jwt` stay Low-severity inventory.
 
 Uniqueness is enforced by:
 

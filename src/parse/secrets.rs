@@ -134,6 +134,24 @@ fn looks_like_camel_case_identifier(s: &str) -> bool {
     false
 }
 
+/// Hyphenated 8-4-4-4-12 hex (UUID-shaped).
+///
+/// CMS and `MediaWiki` IDs use this layout without a valid RFC 4122 version
+/// nibble, so this does not require v1–v8. Vendor rules (e.g. `HubSpot`) still
+/// match UUIDs when that is the product format.
+fn looks_like_hyphenated_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    if b[8] != b'-' || b[13] != b'-' || b[18] != b'-' || b[23] != b'-' {
+        return false;
+    }
+    b.iter()
+        .enumerate()
+        .all(|(i, c)| matches!(i, 8 | 13 | 18 | 23) || c.is_ascii_hexdigit())
+}
+
 /// Web-specific plausibility filter for the catch-all `generic-api-key` rule.
 ///
 /// Upstream's regex captures `[\w.=-]{10,150}`, which matches JS expressions
@@ -141,6 +159,11 @@ fn looks_like_camel_case_identifier(s: &str) -> bool {
 /// document keys. This filter keeps only secret-shaped opaque tokens.
 fn generic_api_key_is_plausible(value: &str) -> bool {
     if value.len() < GENERIC_API_KEY_MIN_LEN {
+        return false;
+    }
+    // JSON `"key":"<uuid>"` (MediaWiki, React, CMS document ids) is an
+    // identifier, not a catch-all API key. Vendor UUID rules are unchanged.
+    if looks_like_hyphenated_uuid(value) {
         return false;
     }
     // Assignment / member-expression noise from minified JS.
@@ -1562,6 +1585,13 @@ mod tests {
             secrets
         );
         assert_eq!(hubspot.unwrap().matched_value, uuid);
+        assert!(
+            secrets
+                .iter()
+                .all(|s| s.secret_type != "generic-api-key" || s.matched_value != uuid),
+            "UUID-shaped values are not generic-api-key; HubSpot keeps its own rule; got {:?}",
+            secrets
+        );
     }
 
     /// Response-header correlation IDs must not be reported as `HubSpot` API keys.
@@ -2033,6 +2063,39 @@ mod tests {
             "apiKey assignment should still match generic-api-key; got {:?}",
             secrets_api
         );
+
+        // CMS JSON `"key":"<uuid>"` is a document id, not a catch-all credential.
+        let doc_uuid = "01234567-89ab-cdef-0123-456789abcdef";
+        let body_cms = format!(r#"{{"id":"doc","key":"{doc_uuid}"}}"#);
+        let secrets_cms = detect_exposed_secrets(&body_cms);
+        assert!(
+            secrets_cms
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == doc_uuid)),
+            "CMS JSON key UUID must not be generic-api-key; got {secrets_cms:?}"
+        );
+        let body_api_uuid = format!(r#"const apiKey = "{doc_uuid}";"#);
+        let secrets_api_uuid = detect_exposed_secrets(&body_api_uuid);
+        assert!(
+            secrets_api_uuid
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == doc_uuid)),
+            "UUID-shaped values are not generic-api-key even on apiKey=; got {secrets_api_uuid:?}"
+        );
+    }
+
+    #[test]
+    fn test_looks_like_hyphenated_uuid() {
+        assert!(looks_like_hyphenated_uuid(
+            "01234567-89ab-cdef-0123-456789abcdef"
+        ));
+        assert!(looks_like_hyphenated_uuid(
+            "AC4D982E-062E-4795-B5E5-718351F44BB9"
+        ));
+        assert!(!looks_like_hyphenated_uuid(
+            "a7f3c9e2b81d4056f9e4a1c8b7d60352e1f90a4b"
+        ));
+        assert!(!looks_like_hyphenated_uuid("not-a-uuid"));
     }
 
     /// Discord client secret requires discord*client*secret assignment, not URL/CSS noise.
