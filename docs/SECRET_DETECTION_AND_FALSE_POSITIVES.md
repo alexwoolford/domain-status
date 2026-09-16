@@ -67,32 +67,29 @@ Prefer maintainable fixes over growing per-site exception lists:
 
 When `--scan-external-scripts` is enabled, only **first-party** `<script src>` bundles are fetched (same registrable domain as the page). Known third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped because they dominate false positives.
 
-## Leftover `generic-api-key` (catch-all sample)
+## Leftover `generic-api-key`
 
-A production scan (`many` successful URLs, old detector) had `81701` secret
-rows. After excluding hyphenated 8-4-4-4-12 hex (the UUID subtract already
-shipped), **21459** `generic-api-key` rows remain. Hand-label of **100** of
-those leftovers (stable sample `(id * 7919) % 21459`, values redacted):
+Hand-label of leftover catch-all matches (values redacted) after excluding
+hyphenated 8-4-4-4-12 hex (the UUID subtract already shipped):
 
-| Class | n / 100 | What it was |
-|-------|---------|-------------|
-| Public SaaS / widget client | 54 | Weglot `api_key` that is **not** `wg_…`, CCM19/Cookiebot, Elementor a11y, Altcha/Sentinel, Bugsnag, Mixpanel, Datadog, Dynatrace, Unbxd, Yext, Shopify storefront, reCAPTCHA, … |
-| CDN / theme hash | 12 | ImageBoss `bossToken=` (hex64) and Shopify `keys_signature` |
-| i18n JSON `"key"` | 9 | One translations bundle (thousands of leftover rows on a single URL) |
-| Embed URL `key=` | 8 | YouTube / Vimeo oEmbed |
-| CMS / document id | 6 | `_key`, `vueKey`, store `key`, experiment `key` |
-| Cookie / CSRF | 4 | CleanTalk, AntiXsrf, cache key, page `xsrfToken` |
-| Likely credential | 7 | Named `*Secret` / `*Token` / access token in first-party JS (not a public SDK id) |
+| Class | Share of sample | What it was |
+|-------|-----------------|-------------|
+| Public SaaS / widget client | majority | Weglot `api_key` that is **not** `wg_…`, CCM19/Cookiebot, Elementor a11y, Altcha/Sentinel, Bugsnag, Mixpanel, Datadog, Dynatrace, Unbxd, Yext, Shopify storefront, reCAPTCHA, … |
+| CDN / theme hash | common | ImageBoss `bossToken=` (hex64) and Shopify `keys_signature` |
+| i18n JSON `"key"` | common | Translations bundles with thousands of leftover rows on a single URL |
+| Embed URL `key=` | common | YouTube / Vimeo oEmbed |
+| CMS / document id | occasional | `_key`, `vueKey`, store `key`, experiment `key` |
+| Cookie / CSRF | occasional | CleanTalk, AntiXsrf, cache key, page `xsrfToken` |
+| Likely credential | rare | Named `*Secret` / `*Token` / access token in first-party JS (not a public SDK id) |
 
 **Do not** drop `generic-api-key`, hex32, cookies, or `external_script` JSON from
 that table. Hex32 in the sample mixed embed keys, CMS ids, and a few real
-tokens. Cookies were 4/100. Skipping catch-all on external JSON would also drop
-bundle leaks. The UUID cut remains the last low-regret Type I. Next subtract
-would need its own product-format evidence (for example Weglot keys that are
-not `wg_…` still fire; `wg_` is already allowlisted).
+tokens. Skipping catch-all on external JSON would also drop bundle leaks. The
+UUID cut remains the last low-regret Type I. Next subtract would need its own
+product-format evidence (for example Weglot keys that are not `wg_…` still fire;
+`wg_` is already allowlisted).
 
-Re-measure UUID disappearance only after a scan with the current binary; this
-SQLite file still contains the old detector’s UUID rows.
+Re-measure UUID disappearance only after a scan with the current binary.
 
 ## Audit queries
 

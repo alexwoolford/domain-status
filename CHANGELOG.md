@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Secret triage docs record a 100-row leftover `generic-api-key` sample (mixed public SDK / CMS / CDN noise) and the leak-hunting query that skips `generic-api-key` / `gcp-api-key` / `jwt`. The catch-all is unchanged.
+- Tests and docs use RFC example hosts (`example.co`, `example.org`, `parked.example.com`) in domain, parking, and GitHub Pages fixtures; README scan sample is `example.com` / `example.org`.
+- Secret triage docs keep generic leftover `generic-api-key` classes (public SDK / CMS / CDN noise) and the leak-hunting query that skips `generic-api-key` / `gcp-api-key` / `jwt`. The catch-all is unchanged.
 - Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.
 - File-local polish: shared const `bytes_eq` helpers; enrichment insert outcomes are a write enum; JSON-LD rows use `property_name` `@document`.
 - Docs match runtime: no per-domain concurrency cap; WHOIS on by default (ADR 0002); `url_technologies` is a core satellite and `url_favicons` is enrichment; storage is two writer transactions (ADR 0007). `/status` and `/metrics` expose `url_partial_failures` counts without changing exit policy.
@@ -221,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Export data trapped**: Tier 3 satellite counts (CSP, cookies, hints, body domains) now fetched from DB instead of hardcoded 0.
 
 ### Removed
-- `url-list.txt` and `url-list.txt` removed from git tracking (user-specific data).
+- Local URL-list fixtures removed from git tracking.
 
 ## [0.1.18] - 2026-03-11
 

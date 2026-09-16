@@ -113,9 +113,10 @@ rust-reference-projects
 reference-repos/
 rust-cache/
 
-# Sample data files (user-specific)
-url-list.txt
-url-list.txt
+# Local URL lists (never commit)
+*_companies.txt
+sample_*.txt
+urls.txt
 
 # Local E2E validation scratch (DBs, caches, reports — never commit)
 validation_e2e/

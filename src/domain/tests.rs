@@ -137,7 +137,7 @@ fn test_extract_domain_co_jp() {
 }
 
 #[test]
-fn test_extract_domain_stone_co() {
+fn test_extract_domain_example_co() {
     // .co domains (Colombia) - should return the full domain
     let result = extract_domain("https://example.co");
     assert!(result.is_ok());
@@ -147,7 +147,7 @@ fn test_extract_domain_stone_co() {
 }
 
 #[test]
-fn test_extract_domain_stone_co_with_subdomain() {
+fn test_extract_domain_example_co_with_subdomain() {
     // .co domains with subdomain
     let result = extract_domain("https://www.example.co");
     assert!(result.is_ok());
@@ -157,22 +157,19 @@ fn test_extract_domain_stone_co_with_subdomain() {
 }
 
 #[test]
-fn test_extract_domain_arrow_com() {
-    // Test example.org - a simple, standard domain
+fn test_extract_domain_example_org() {
+    // Simple, standard domain (RFC 2606)
     let result = extract_domain("https://example.org");
     assert!(result.is_ok());
     let domain = result.unwrap();
-    // Should return "example.org" (the registrable domain)
     assert_eq!(domain, "example.org");
 }
 
 #[test]
-fn test_extract_domain_arrow_com_with_www() {
-    // Test www.example.org - with subdomain
+fn test_extract_domain_example_org_with_www() {
     let result = extract_domain("https://www.example.org");
     assert!(result.is_ok());
     let domain = result.unwrap();
-    // Should return "example.org" (the registrable domain), not "www.example.org"
     assert_eq!(domain, "example.org");
 }
 
