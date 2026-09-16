@@ -9,11 +9,13 @@ use std::sync::Arc;
 use crate::config::{RETRY_MAX_ATTEMPTS, URL_PROCESSING_TIMEOUT};
 use crate::error_handling::ErrorType;
 use crate::fetch::UrlProcessOutcome;
+use crate::initialization::{HostRateLimiter, RateLimiter};
 use crate::storage::failure::record_url_failure;
 use crate::utils::ProcessUrlResult;
 
 use super::invoke_progress_callback;
 use super::resources::{ProgressCallback, UrlTaskParams};
+use tokio_util::sync::CancellationToken;
 
 /// Bundles progress counters and callback for task handlers (avoids `too_many_arguments`).
 struct TaskProgress<'a> {
@@ -41,6 +43,7 @@ pub async fn process_url_task(params: UrlTaskParams) {
         cancel,
         permit: _permit, // Hold permit until task completes
         request_limiter,
+        host_limiter,
         successful_urls,
         skipped_urls,
         failed_urls,
@@ -61,15 +64,16 @@ pub async fn process_url_task(params: UrlTaskParams) {
         return;
     }
 
-    // Apply rate limiting if configured
-    if let Some(ref limiter) = request_limiter {
-        tokio::select! {
-            () = limiter.acquire() => {}
-            () = cancel.cancelled() => {
-                handle_cancelled(&url, &ctx, &progress).await;
-                return;
-            }
-        }
+    if !wait_for_rate_limits(
+        url.as_ref(),
+        request_limiter.as_ref(),
+        host_limiter.as_ref(),
+        &cancel,
+    )
+    .await
+    {
+        handle_cancelled(&url, &ctx, &progress).await;
+        return;
     }
 
     if cancel.is_cancelled() {
@@ -115,6 +119,28 @@ pub async fn process_url_task(params: UrlTaskParams) {
         }
         Err(_) => handle_timeout(&url_for_logging, process_start, &ctx, &progress).await,
     }
+}
+
+/// Global then per-host admission. Returns `false` if cancelled while waiting.
+async fn wait_for_rate_limits(
+    url: &str,
+    request_limiter: Option<&Arc<RateLimiter>>,
+    host_limiter: Option<&Arc<HostRateLimiter>>,
+    cancel: &CancellationToken,
+) -> bool {
+    if let Some(limiter) = request_limiter {
+        tokio::select! {
+            () = limiter.acquire() => {}
+            () = cancel.cancelled() => return false,
+        }
+    }
+    if let Some(limiter) = host_limiter {
+        tokio::select! {
+            () = limiter.acquire(url) => {}
+            () = cancel.cancelled() => return false,
+        }
+    }
+    true
 }
 
 /// Persist a `url_failures` row, then count the URL as failed.
@@ -551,6 +577,7 @@ mod tests {
             cancel,
             permit,
             request_limiter: None,
+            host_limiter: None,
             successful_urls,
             skipped_urls,
             failed_urls: Arc::clone(&failed_urls),

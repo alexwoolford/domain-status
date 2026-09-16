@@ -1,6 +1,6 @@
 # Licensing overview
 
-This page explains how licensing works in `domain_status`. There are three
+This page explains how licensing works in `domain-status`. There are three
 separate layers: the project license, Rust crate dependencies, and optional
 runtime or bundled data. They are checked differently and should not be
 confused.
@@ -11,7 +11,7 @@ terms separately from the MIT project license.
 
 ## This project
 
-The `domain_status` Rust codebase (including `domain_status_cli`) is licensed
+The `domain-status` Rust codebase (including `domain_status_cli`) is licensed
 under the **MIT License**. See [LICENSE](../LICENSE).
 
 The license is declared in [`Cargo.toml`](../Cargo.toml) and

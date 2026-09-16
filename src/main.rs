@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
         Ok(code) => code,
         Err(e) => {
             use domain_status::ErrorExt;
-            eprintln!("domain_status: {}", e.display_chain());
+            eprintln!("domain-status: {}", e.display_chain());
             domain_status::log_error_chain(&e);
             domain_status::print_io_error_hint_if_applicable(&e);
             domain_status::exit_codes::EXIT_RUNTIME_ERROR

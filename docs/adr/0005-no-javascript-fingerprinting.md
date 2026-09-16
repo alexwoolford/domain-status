@@ -16,7 +16,7 @@ The current detection model is intentionally static and text-based.
 
 ## Decision
 
-`domain_status` will not execute JavaScript as part of fingerprinting.
+`domain-status` will not execute JavaScript as part of fingerprinting.
 
 Technology detection is based on static evidence such as:
 

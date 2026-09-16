@@ -1,11 +1,11 @@
-# Contributing to `domain_status`
+# Contributing to `domain-status`
 
 `just` is the canonical developer interface for this repository. Start there unless you are debugging a specific raw Cargo invocation.
 
 ## Quick Bootstrap
 
 ```bash
-git clone https://github.com/alexwoolford/domain_status.git
+git clone https://github.com/alexwoolford/domain-status.git
 cd domain_status
 cargo install just
 just --list

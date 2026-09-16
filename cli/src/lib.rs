@@ -13,11 +13,15 @@ use clap::Parser;
 /// The main crate may auto-refresh Chrome's version at startup when this default is still in use.
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+/// Shown on `--help` so the default scan path stays authorized-use only.
+pub const ACCEPTABLE_USE_HELP: &str = "Scan only hosts you are authorized to scan.";
+
 /// Root CLI command (subcommand required).
 #[derive(Debug, Parser, Clone)]
 #[command(
-    name = "domain_status",
-    about = "Domain intelligence scanner - scan URLs and export results.",
+    name = "domain-status",
+    about = "Concurrent URL scanner; results in SQLite.",
+    after_help = ACCEPTABLE_USE_HELP,
     version = "0.0.0", // placeholder — overridden by clap_command() with DOMAIN_STATUS_VERSION
     long_version = "0.0.0", // placeholder — overridden by clap_command() with DOMAIN_STATUS_VERSION
     subcommand_required = true,
@@ -42,7 +46,10 @@ pub enum CliCommand {
 /// Everyday flags are on `-h`. All flags (except the legacy `--enable-whois` alias)
 /// are on `--help`.
 #[derive(Debug, Parser, Clone)]
-#[command(after_help = "Everyday flags: -h. All flags: --help. Docs: docs/CLI.md")]
+#[command(after_help = concat!(
+    "Everyday flags: -h. All flags: --help. Docs: docs/CLI.md\n\n",
+    "Scan only hosts you are authorized to scan."
+))]
 pub struct ScanCommand {
     /// URL list (one URL per line). Use `-` for stdin.
     #[arg(value_parser, help_heading = "Scan")]
@@ -73,10 +80,11 @@ pub struct ScanCommand {
     )]
     pub max_concurrency: usize,
 
-    /// URL admission rate (tokens per input URL per second). `0` disables.
+    /// URL admission rate (tokens per input URL per second). `0` disables
+    /// both the global cap and the 2/sec per-host cap.
     ///
     /// Not per-HTTP-request RPS: redirects, favicon, TLS, and WHOIS share one token
-    /// per input URL.
+    /// per input URL. When enabled, each host is also limited to 2 URL tokens/sec.
     #[arg(
         long,
         default_value_t = 15,

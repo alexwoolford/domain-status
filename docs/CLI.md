@@ -1,13 +1,13 @@
 # CLI cheat sheet
 
-Full flag help: `domain_status scan --help`. Everyday flags only: `domain_status scan -h`.
+Full flag help: `domain-status scan --help`. Everyday flags only: `domain-status scan -h`.
 
 ## Commands
 
 ```bash
-domain_status scan <urls.txt|->     # Scan → SQLite
-domain_status summary               # Last (or --run-id) run digest
-domain_status export                # Optional flatten (csv|jsonl|parquet)
+domain-status scan <urls.txt|->     # Scan → SQLite
+domain-status summary               # Last (or --run-id) run digest
+domain-status export                # Optional flatten (csv|jsonl|parquet)
 ```
 
 ## How to configure
@@ -43,7 +43,7 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 | `--max-concurrency` | `DOMAIN_STATUS_MAX_CONCURRENCY` | `max_concurrency` | `30` |
 | `--timeout-seconds` | `DOMAIN_STATUS_TIMEOUT_SECONDS` | `timeout_seconds` | `10` |
 | `--user-agent` | `DOMAIN_STATUS_USER_AGENT` | `user_agent` | Chrome UA (auto-refresh if default) |
-| `--rate-limit-rps` | `DOMAIN_STATUS_RATE_LIMIT_RPS` | `rate_limit_rps` | `15` (`0` disables) |
+| `--rate-limit-rps` | `DOMAIN_STATUS_RATE_LIMIT_RPS` | `rate_limit_rps` | `15` (`0` disables global and per-host) |
 | `--fingerprints` | `DOMAIN_STATUS_FINGERPRINTS` | `fingerprints` | GitHub defaults |
 | `--geoip` | `DOMAIN_STATUS_GEOIP` | `geoip` | off (or MaxMind auto via license) |
 | `--status-port` | `DOMAIN_STATUS_STATUS_PORT` | `status_port` | off |
@@ -56,7 +56,7 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 | `--fail-on-pct-threshold` | `DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD` | `fail_on_pct_threshold` | `10` |
 | `--drain-timeout-secs` | `DOMAIN_STATUS_DRAIN_TIMEOUT_SECS` | `drain_timeout_secs` | `10` |
 
-`--rate-limit-rps` is **URL admission** (one token per input URL), not per-HTTP-request RPS. Redirects, favicon, external scripts, TLS probe, and WHOIS share that token.
+`--rate-limit-rps` is **URL admission** (one token per input URL), not per-HTTP-request RPS. Redirects, favicon, external scripts, TLS probe, and WHOIS share that token. When it is enabled, each host is also limited to 2 URL tokens/sec. `0` disables both caps.
 
 TOML/`DOMAIN_STATUS_FAIL_ON` also accept `any_failure` / `anyfailure` as aliases of `any-failure`.
 
@@ -65,12 +65,12 @@ TOML/`DOMAIN_STATUS_FAIL_ON` also accept `any_failure` / `anyfailure` as aliases
 Mostly CLI-only (plus shared `--db-path` / `DOMAIN_STATUS_DB_PATH`):
 
 ```bash
-domain_status summary                  # digest for latest run; --top N (default 15)
-domain_status summary --top 20         # list more top technologies
-domain_status export --format csv --output results.csv
-domain_status export --format jsonl --run-id run_…
-domain_status export --domain example.com --status 200 --since 1700000000000
-domain_status export --include-implied-tech   # include is_implied=1 fingerprint rows (off by default)
+domain-status summary                  # digest for latest run; --top N (default 15)
+domain-status summary --top 20         # list more top technologies
+domain-status export --format csv --output results.csv
+domain-status export --format jsonl --run-id run_…
+domain-status export --domain example.com --status 200 --since 1700000000000
+domain-status export --include-implied-tech   # include is_implied=1 fingerprint rows (off by default)
 ```
 
 Export filters (optional): `--domain` (substring match on final domain), `--status` (HTTP status code), `--since` (epoch ms lower bound on `observed_at_ms`), `--run-id`.
@@ -82,7 +82,7 @@ Export filters (optional): `--domain` (substring match on final domain), `--stat
 - Pipe-friendly example:
 
 ```bash
-domain_status export --format jsonl --output - | jq .
+domain-status export --format jsonl --output - | jq .
 ```
 
 Stderr still shows version INFO and “Exported N records”; silence with `2>/dev/null` if needed. Log lines are not mixed into the JSONL/CSV stream.

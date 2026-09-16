@@ -9,6 +9,7 @@
 //! All initialization functions return proper error types for error handling.
 
 mod client;
+mod host_rate_limiter;
 mod log_filters;
 mod logger;
 mod rate_limiter;
@@ -22,6 +23,7 @@ use tokio::sync::Semaphore;
 // Re-export public API
 pub(crate) use client::build_download_client;
 pub use client::{init_client, init_redirect_client};
+pub use host_rate_limiter::{init_host_rate_limiter, HostRateLimiter};
 pub use logger::{init_logger_to_file, init_logger_with};
 pub use rate_limiter::{init_rate_limiter, RateLimiter};
 pub use resolver::init_resolver;

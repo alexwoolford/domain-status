@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Per-host URL admission of 2 tokens/sec whenever `--rate-limit-rps` is enabled (`0` still disables all admission caps).
+- README / `--help` note: scan only hosts you are authorized to scan.
+
 ### Changed
-- Tests and docs use RFC example hosts (`example.co`, `example.org`, `parked.example.com`) in domain, parking, and GitHub Pages fixtures; README scan sample is `example.com` / `example.org`.
+- Install and command name is `domain-status` (Rust library crate remains `domain_status`). README audience no longer calls out PE/portfolio intelligence.
 - Secret triage docs keep generic leftover `generic-api-key` classes (public SDK / CMS / CDN noise) and the leak-hunting query that skips `generic-api-key` / `gcp-api-key` / `jwt`. The catch-all is unchanged.
 - Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.
 - File-local polish: shared const `bytes_eq` helpers; enrichment insert outcomes are a write enum; JSON-LD rows use `property_name` `@document`.
-- Docs match runtime: no per-domain concurrency cap; WHOIS on by default (ADR 0002); `url_technologies` is a core satellite and `url_favicons` is enrichment; storage is two writer transactions (ADR 0007). `/status` and `/metrics` expose `url_partial_failures` counts without changing exit policy.
+- Docs match runtime: per-host URL admission is 2/sec when `--rate-limit-rps` is on (`0` disables both); WHOIS on by default (ADR 0002); `url_technologies` is a core satellite and `url_favicons` is enrichment; storage is two writer transactions (ADR 0007). `/status` and `/metrics` expose `url_partial_failures` counts without changing exit policy.
 - Split `url_status` insert into `columns.rs` (fact-row registry), `core_satellites.rs` (CORE vs ENRICHMENT lists), and `upsert.rs` (in-txn writers) with no behavior change.
 - Scan-path contracts: mid-chain RFC1918 redirects stop at the last safe hop under `run_scan`; local TLS handshake fields persist to `url_status` / SAN / OID satellites; WHOIS on/off is pinned via cache seed vs empty `url_whois`.
 - Dependency hygiene: `config` 0.15, `toml` 1, `base64` 0.23, `sha2` 0.11, `rstest` 0.27, `murmur3` 0.5 with Shodan golden hashes; retry backoff is in-tree (dropped `tokio-retry`).
@@ -274,7 +278,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **80-character context window** for analyst triage
   - Full matched values stored (no redaction — these are on the public web)
 - New `url_exposed_secrets` table with severity and location columns
-- **Homebrew tap**: `brew tap alexwoolford/domain-status && brew install domain_status`
+- **Homebrew tap**: `brew tap alexwoolford/domain-status && brew install domain-status`
 - Per-domain rate limiting (`--max-per-domain`) to prevent overwhelming individual servers
 - Parquet export format with Apache Arrow typed columns
 - Complete export data: all satellite table data now included in CSV/JSONL/Parquet exports
@@ -337,7 +341,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.6] - 2025-01-09
 
 ### Added
-- **Subcommand-based CLI**: Switched to subcommand-style interface (`domain_status scan` and `domain_status export`)
+- **Subcommand-based CLI**: Switched to subcommand-style interface (`domain-status scan` and `domain-status export`)
 - **CSV Export**: New `export` subcommand to export scan results to CSV format with comprehensive filtering options
 - **Exit Code Policies**: New `--fail-on` option to control application exit codes based on scan results (`never`, `any-failure`, `pct>`)
 - **Stdin Input Support**: Can now read URLs from standard input using `-` as filename
@@ -394,17 +398,17 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain_status/compare/v0.1.29...HEAD
-[0.1.29]: https://github.com/alexwoolford/domain_status/compare/v0.1.28...v0.1.29
-[0.1.28]: https://github.com/alexwoolford/domain_status/compare/v0.1.27...v0.1.28
-[0.1.27]: https://github.com/alexwoolford/domain_status/compare/v0.1.26...v0.1.27
-[0.1.26]: https://github.com/alexwoolford/domain_status/compare/v0.1.25...v0.1.26
-[0.1.25]: https://github.com/alexwoolford/domain_status/compare/v0.1.24...v0.1.25
-[0.1.24]: https://github.com/alexwoolford/domain_status/compare/v0.1.23...v0.1.24
-[0.1.23]: https://github.com/alexwoolford/domain_status/compare/v0.1.22...v0.1.23
-[0.1.22]: https://github.com/alexwoolford/domain_status/compare/v0.1.21...v0.1.22
-[0.1.11]: https://github.com/alexwoolford/domain_status/compare/v0.1.10...v0.1.11
-[0.1.10]: https://github.com/alexwoolford/domain_status/compare/v0.1.6...v0.1.10
-[0.1.6]: https://github.com/alexwoolford/domain_status/compare/v0.1.5...v0.1.6
-[0.1.5]: https://github.com/alexwoolford/domain_status/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/alexwoolford/domain_status/releases/tag/v0.1.4
+[Unreleased]: https://github.com/alexwoolford/domain-status/compare/v0.1.29...HEAD
+[0.1.29]: https://github.com/alexwoolford/domain-status/compare/v0.1.28...v0.1.29
+[0.1.28]: https://github.com/alexwoolford/domain-status/compare/v0.1.27...v0.1.28
+[0.1.27]: https://github.com/alexwoolford/domain-status/compare/v0.1.26...v0.1.27
+[0.1.26]: https://github.com/alexwoolford/domain-status/compare/v0.1.25...v0.1.26
+[0.1.25]: https://github.com/alexwoolford/domain-status/compare/v0.1.24...v0.1.25
+[0.1.24]: https://github.com/alexwoolford/domain-status/compare/v0.1.23...v0.1.24
+[0.1.23]: https://github.com/alexwoolford/domain-status/compare/v0.1.22...v0.1.23
+[0.1.22]: https://github.com/alexwoolford/domain-status/compare/v0.1.21...v0.1.22
+[0.1.11]: https://github.com/alexwoolford/domain-status/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/alexwoolford/domain-status/compare/v0.1.6...v0.1.10
+[0.1.6]: https://github.com/alexwoolford/domain-status/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/alexwoolford/domain-status/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/alexwoolford/domain-status/releases/tag/v0.1.4

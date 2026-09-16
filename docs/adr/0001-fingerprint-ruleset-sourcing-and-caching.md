@@ -6,7 +6,7 @@
 
 ## Context
 
-`domain_status` reuses community-maintained technology fingerprints instead of inventing a private ruleset format from scratch. The scanner needs a default source that is:
+`domain-status` reuses community-maintained technology fingerprints instead of inventing a private ruleset format from scratch. The scanner needs a default source that is:
 
 - good enough for day-to-day scanning
 - locally cacheable

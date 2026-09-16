@@ -338,6 +338,7 @@ mod tests {
             shared_ctx,
             semaphore: Arc::new(Semaphore::new(1)),
             request_limiter: None,
+            host_limiter: None,
             rate_limiter_shutdown: None,
             in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             successful_urls: Arc::new(AtomicUsize::new(atomic_success)),

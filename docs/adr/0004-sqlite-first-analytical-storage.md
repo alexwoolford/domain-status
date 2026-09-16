@@ -13,7 +13,7 @@ The scanner needs a durable local store that can:
 - remain queryable without a separately managed service
 - feed multiple export formats
 
-`domain_status` is a CLI/batch tool first, so operating a server-side database by default would add significant deployment complexity.
+`domain-status` is a CLI/batch tool first, so operating a server-side database by default would add significant deployment complexity.
 
 ## Decision
 

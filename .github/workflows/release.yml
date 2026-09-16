@@ -18,16 +18,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset_name: domain_status-linux-x86_64
+            asset_name: domain-status-linux-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
-            asset_name: domain_status-macos-x86_64
+            asset_name: domain-status-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            asset_name: domain_status-macos-aarch64
+            asset_name: domain-status-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset_name: domain_status-windows-x86_64.exe
+            asset_name: domain-status-windows-x86_64.exe
 
     steps:
       - uses: actions/checkout@v6
@@ -53,14 +53,14 @@ jobs:
 
       - name: Strip binary (Unix)
         if: matrix.os != 'windows-latest'
-        run: strip target/${{ matrix.target }}/release/domain_status
+        run: strip target/${{ matrix.target }}/release/domain-status
         continue-on-error: true  # strip might not be available on all systems
 
       - name: Create release archive (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ${{ github.workspace }}/${{ matrix.asset_name }}.tar.gz domain_status
+          tar czf ${{ github.workspace }}/${{ matrix.asset_name }}.tar.gz domain-status
           cd ${{ github.workspace }}
 
       - name: Create release archive (Windows)
@@ -68,7 +68,7 @@ jobs:
         shell: powershell
         run: |
           $workspace = "${{ github.workspace }}"
-          Compress-Archive -Path target/${{ matrix.target }}/release/domain_status.exe -DestinationPath "$workspace/${{ matrix.asset_name }}.zip" -Force
+          Compress-Archive -Path target/${{ matrix.target }}/release/domain-status.exe -DestinationPath "$workspace/${{ matrix.asset_name }}.zip" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -134,16 +134,16 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Publish domain_status_cli to crates.io
-        run: cargo publish -p domain_status_cli --locked
+      - name: Publish domain-status-cli to crates.io
+        run: cargo publish -p domain-status-cli --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Wait for crates.io index update
         run: sleep 30
 
-      - name: Publish domain_status to crates.io
-        run: cargo publish -p domain_status --locked
+      - name: Publish domain-status to crates.io
+        run: cargo publish -p domain-status --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -163,11 +163,11 @@ jobs:
         id: sha
         run: |
           VERSION="${{ steps.tag.outputs.VERSION }}"
-          BASE="https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}"
+          BASE="https://github.com/alexwoolford/domain-status/releases/download/v${VERSION}"
 
-          curl -sL "${BASE}/domain_status-macos-aarch64.tar.gz" -o macos-aarch64.tar.gz
-          curl -sL "${BASE}/domain_status-macos-x86_64.tar.gz" -o macos-x86_64.tar.gz
-          curl -sL "${BASE}/domain_status-linux-x86_64.tar.gz" -o linux-x86_64.tar.gz
+          curl -sL "${BASE}/domain-status-macos-aarch64.tar.gz" -o macos-aarch64.tar.gz
+          curl -sL "${BASE}/domain-status-macos-x86_64.tar.gz" -o macos-x86_64.tar.gz
+          curl -sL "${BASE}/domain-status-linux-x86_64.tar.gz" -o linux-x86_64.tar.gz
 
           echo "SHA_MACOS_ARM=$(sha256sum macos-aarch64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           echo "SHA_MACOS_X86=$(sha256sum macos-x86_64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
@@ -183,43 +183,48 @@ jobs:
       - name: Update formula
         run: |
           VERSION="${{ steps.tag.outputs.VERSION }}"
-          cat > homebrew-tap/Formula/domain_status.rb << FORMULA
+          cat > homebrew-tap/Formula/domain-status.rb << FORMULA
           class DomainStatus < Formula
             desc "Concurrent URL status checker that captures comprehensive metadata in SQLite"
-            homepage "https://github.com/alexwoolford/domain_status"
+            homepage "https://github.com/alexwoolford/domain-status"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}/domain_status-macos-aarch64.tar.gz"
+                url "https://github.com/alexwoolford/domain-status/releases/download/v${VERSION}/domain-status-macos-aarch64.tar.gz"
                 sha256 "${{ steps.sha.outputs.SHA_MACOS_ARM }}"
               else
-                url "https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}/domain_status-macos-x86_64.tar.gz"
+                url "https://github.com/alexwoolford/domain-status/releases/download/v${VERSION}/domain-status-macos-x86_64.tar.gz"
                 sha256 "${{ steps.sha.outputs.SHA_MACOS_X86 }}"
               end
             end
 
             on_linux do
-              url "https://github.com/alexwoolford/domain_status/releases/download/v${VERSION}/domain_status-linux-x86_64.tar.gz"
+              url "https://github.com/alexwoolford/domain-status/releases/download/v${VERSION}/domain-status-linux-x86_64.tar.gz"
               sha256 "${{ steps.sha.outputs.SHA_LINUX_X86 }}"
             end
 
             def install
-              bin.install "domain_status"
+              bin.install "domain-status"
+              bin.install_symlink "domain-status" => "domain_status"
             end
 
             test do
-              assert_match "domain_status", shell_output("\#{bin}/domain_status --version")
+              assert_match "domain-status", shell_output("\#{bin}/domain-status --version")
             end
           end
           FORMULA
+          mkdir -p homebrew-tap/Aliases
+          echo "domain-status" > homebrew-tap/Aliases/domain_status
+          rm -f homebrew-tap/Formula/domain_status.rb
 
       - name: Commit and push formula update
         run: |
           cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/domain_status.rb
-          git commit -m "Update domain_status to v${{ steps.tag.outputs.VERSION }}"
+          git add Formula/domain-status.rb Aliases/domain_status
+          git add -u Formula/domain_status.rb || true
+          git commit -m "Update domain-status to v${{ steps.tag.outputs.VERSION }}"
           git push

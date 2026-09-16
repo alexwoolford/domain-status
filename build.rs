@@ -59,12 +59,12 @@ fn build_completion_manpage() -> Result<(), Box<dyn std::error::Error>> {
         .into();
 
     for shell in Shell::value_variants() {
-        clap_complete::generate_to(*shell, &mut cmd.clone(), "domain_status", &gen_dir)?;
+        clap_complete::generate_to(*shell, &mut cmd.clone(), "domain-status", &gen_dir)?;
     }
 
     patch_bash_completion_for_paths(&gen_dir)?;
 
-    let man_path = gen_dir.join("domain_status.1");
+    let man_path = gen_dir.join("domain-status.1");
     let mut man_out = File::create(&man_path)?;
     let man = Man::new(cmd);
     man.render(&mut man_out)?;
@@ -77,14 +77,14 @@ fn build_completion_manpage() -> Result<(), Box<dyn std::error::Error>> {
 fn patch_bash_completion_for_paths(
     gen_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bash_path = gen_dir.join("domain_status.bash");
+    let bash_path = gen_dir.join("domain-status.bash");
     if !bash_path.exists() {
         return Ok(());
     }
     let mut contents = String::new();
     let mut bash_file = OpenOptions::new().read(true).write(true).open(&bash_path)?;
     bash_file.read_to_string(&mut contents)?;
-    let patched = contents.replace("default domain_status", "default -o plusdirs domain_status");
+    let patched = contents.replace("default domain-status", "default -o plusdirs domain-status");
     if patched != contents {
         bash_file.rewind()?;
         bash_file.write_all(patched.as_bytes())?;

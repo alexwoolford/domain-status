@@ -5,7 +5,7 @@
 # `--config` wins over DOMAIN_STATUS_CONFIG_FILE.
 #
 # Copy to domain_status.toml in the cwd, or:
-#   domain_status scan --config ./domain_status.toml urls.txt
+#   domain-status scan --config ./domain_status.toml urls.txt
 #
 # Prefer CLI day-to-day; for repeatable jobs pick TOML *or* env (not both for the
 # same knobs unless you intentionally override). Secrets stay in env / .env.
@@ -20,7 +20,7 @@
 # timeout_seconds = 10
 # drain_timeout_secs = 10
 # user_agent    = "domain_status/0.1"
-# rate_limit_rps = 15
+# rate_limit_rps = 15                 # 0 disables global and per-host (2/sec) caps
 # log_level     = "info"               # or use CLI -v / -q
 # log_format    = "plain"              # plain | json (scan log file)
 # log_file      = "domain_status.log"

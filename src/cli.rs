@@ -525,7 +525,7 @@ where
         if let Some(shell_arg) = args.get(pos + 1).and_then(|s| s.to_str()) {
             if let Ok(shell) = shell_arg.parse::<Shell>() {
                 let mut cmd = domain_status_cli::clap_command(env!("DOMAIN_STATUS_VERSION"));
-                clap_complete::generate(shell, &mut cmd, "domain_status", &mut io::stdout());
+                clap_complete::generate(shell, &mut cmd, "domain-status", &mut io::stdout());
                 return Ok(0);
             }
         }
@@ -746,7 +746,7 @@ mod tests {
 
     #[test]
     fn scan_defaults_enable_whois_and_no_whois_disables() {
-        let on = parse_cli_command_from(["domain_status", "scan", "urls.txt"]).unwrap();
+        let on = parse_cli_command_from(["domain-status", "scan", "urls.txt"]).unwrap();
         match on {
             CliCommand::Scan(cmd) => {
                 assert!(cmd.enable_whois, "WHOIS should be on by default");
@@ -757,7 +757,7 @@ mod tests {
         }
 
         let off =
-            parse_cli_command_from(["domain_status", "scan", "urls.txt", "--no-whois"]).unwrap();
+            parse_cli_command_from(["domain-status", "scan", "urls.txt", "--no-whois"]).unwrap();
         match off {
             CliCommand::Scan(cmd) => {
                 let config = config_from_scan_command(cmd);
@@ -767,7 +767,7 @@ mod tests {
         }
 
         let legacy =
-            parse_cli_command_from(["domain_status", "scan", "urls.txt", "--enable-whois"])
+            parse_cli_command_from(["domain-status", "scan", "urls.txt", "--enable-whois"])
                 .unwrap();
         match legacy {
             CliCommand::Scan(cmd) => {
@@ -784,7 +784,7 @@ mod tests {
     fn test_parse_real_scan_command_defaults() {
         use domain_status_cli::FailOn as CliFailOn;
 
-        let cli = parse_cli_command_from(["domain_status", "scan", "test.txt"]).unwrap();
+        let cli = parse_cli_command_from(["domain-status", "scan", "test.txt"]).unwrap();
 
         match cli {
             CliCommand::Scan(cmd) => {
@@ -802,7 +802,7 @@ mod tests {
         use domain_status_cli::ExportFormat as CliExportFormat;
 
         let cli = parse_cli_command_from([
-            "domain_status",
+            "domain-status",
             "export",
             "--format",
             "jsonl",
@@ -831,7 +831,7 @@ mod tests {
 
     #[test]
     fn test_parse_summary_command_defaults() {
-        let cli = parse_cli_command_from(["domain_status", "summary"]).unwrap();
+        let cli = parse_cli_command_from(["domain-status", "summary"]).unwrap();
         match cli {
             CliCommand::Summary(cmd) => {
                 assert_eq!(cmd.db_path, PathBuf::from("./domain_status.db"));

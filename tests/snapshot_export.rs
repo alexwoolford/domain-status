@@ -99,33 +99,36 @@ async fn snapshot_jsonl_export_minimal() {
     insta::assert_snapshot!(normalized);
 }
 
+fn domain_status_bin() -> assert_cmd::Command {
+    #[allow(deprecated)] // cargo_bin_cmd! requires cargo dev-dependency
+    assert_cmd::Command::cargo_bin("domain-status").expect("cargo_bin domain-status")
+}
+
+fn assert_contains(haystack: &str, needle: &str, context: &str) {
+    assert!(
+        haystack.contains(needle),
+        "expected `{needle}` in {context}, got:\n{haystack}"
+    );
+}
+
+fn assert_not_contains(haystack: &str, needle: &str, context: &str) {
+    assert!(
+        !haystack.contains(needle),
+        "did not expect `{needle}` in {context}, got:\n{haystack}"
+    );
+}
+
 #[test]
-#[allow(deprecated)] // cargo_bin_cmd! requires cargo dev-dependency; migrate when upgrading
-fn cli_help_includes_must_have_flags() {
-    // Replaces a previous full-text snapshot of `--help`. That snapshot would
-    // churn whenever any clap-generated description, hint, or subcommand line
-    // changed, even though every test still passed. What we actually want to
-    // guard is "the user-facing flags that downstream tooling relies on are
-    // still discoverable", which is far better expressed as a handful of
-    // substring asserts than as a frozen 200-line blob.
-    let mut cmd = assert_cmd::Command::cargo_bin("domain_status").expect("cargo_bin domain_status");
+fn cli_top_level_help_includes_must_have_flags() {
+    let mut cmd = domain_status_bin();
     cmd.arg("--help");
-    let output = cmd.output().expect("run domain_status --help");
+    let output = cmd.output().expect("run domain-status --help");
     assert!(output.status.success(), "help should succeed");
-    let help = String::from_utf8_lossy(&output.stdout);
-
-    // Normalize executable name so the assertions are platform-agnostic
-    // (Windows would otherwise add the `.exe` suffix).
-    let help = help.replace("domain_status.exe", "domain_status");
-
-    // Must-have entries on the top-level `--help`. If any of these vanish,
-    // downstream documentation, scripts, and CI invocations will silently lose
-    // their contract — that is what this test exists to catch. Subcommand
-    // flags (`--config`, `--db-path`, etc.) are checked under `scan --help`
-    // because clap renders them per-subcommand.
+    let help =
+        String::from_utf8_lossy(&output.stdout).replace("domain-status.exe", "domain-status");
     for needle in [
         "Usage:",
-        "domain_status",
+        "domain-status",
         "Commands:",
         "scan",
         "export",
@@ -133,19 +136,18 @@ fn cli_help_includes_must_have_flags() {
         "Options:",
         "--help",
         "--version",
+        "Scan only hosts you are authorized to scan.",
+        "Concurrent URL scanner",
     ] {
-        assert!(
-            help.contains(needle),
-            "expected `{needle}` in `--help` output, got:\n{help}"
-        );
+        assert_contains(&help, needle, "`--help` output");
     }
+}
 
-    // Sanity-check `scan --help` so the subcommand flags downstream tooling
-    // depends on are still surfaced.
-    let mut scan_cmd =
-        assert_cmd::Command::cargo_bin("domain_status").expect("cargo_bin domain_status");
+#[test]
+fn cli_scan_long_help_includes_flags_and_authorized_use() {
+    let mut scan_cmd = domain_status_bin();
     scan_cmd.arg("scan").arg("--help");
-    let scan_output = scan_cmd.output().expect("run domain_status scan --help");
+    let scan_output = scan_cmd.output().expect("run domain-status scan --help");
     assert!(scan_output.status.success(), "scan --help should succeed");
     let scan_help = String::from_utf8_lossy(&scan_output.stdout);
     for needle in [
@@ -153,31 +155,23 @@ fn cli_help_includes_must_have_flags() {
         "--db-path",
         "--max-concurrency",
         "--rate-limit-rps",
+        "Everyday flags: -h. All flags: --help. Docs: docs/CLI.md",
+        "Scan only hosts you are authorized to scan.",
+        "Scan:",
+        "Enrichments:",
+        "CI / logging:",
+        "Advanced:",
     ] {
-        assert!(
-            scan_help.contains(needle),
-            "expected `{needle}` in `scan --help` output, got:\n{scan_help}"
-        );
+        assert_contains(&scan_help, needle, "`scan --help` output");
     }
-    assert!(
-        !scan_help.contains("--enable-whois"),
-        "legacy --enable-whois must stay off --help"
-    );
-    assert!(
-        scan_help.contains("Everyday flags: -h. All flags: --help. Docs: docs/CLI.md"),
-        "expected after-help pointer in `scan --help`, got:\n{scan_help}"
-    );
-    for heading in ["Scan:", "Enrichments:", "CI / logging:", "Advanced:"] {
-        assert!(
-            scan_help.contains(heading),
-            "expected heading `{heading}` in `scan --help`, got:\n{scan_help}"
-        );
-    }
+    assert_not_contains(&scan_help, "--enable-whois", "`scan --help` output");
+}
 
-    let mut short_cmd =
-        assert_cmd::Command::cargo_bin("domain_status").expect("cargo_bin domain_status");
+#[test]
+fn cli_scan_short_help_hides_advanced_flags() {
+    let mut short_cmd = domain_status_bin();
     short_cmd.arg("scan").arg("-h");
-    let short_output = short_cmd.output().expect("run domain_status scan -h");
+    let short_output = short_cmd.output().expect("run domain-status scan -h");
     assert!(short_output.status.success(), "scan -h should succeed");
     let short_help = String::from_utf8_lossy(&short_output.stdout);
     for needle in [
@@ -193,10 +187,7 @@ fn cli_help_includes_must_have_flags() {
         "-q",
         "Everyday flags: -h. All flags: --help. Docs: docs/CLI.md",
     ] {
-        assert!(
-            short_help.contains(needle),
-            "expected `{needle}` in `scan -h` output, got:\n{short_help}"
-        );
+        assert_contains(&short_help, needle, "`scan -h` output");
     }
     for needle in [
         "--config",
@@ -212,9 +203,6 @@ fn cli_help_includes_must_have_flags() {
         "--fail-on-pct-threshold",
         "--enable-whois",
     ] {
-        assert!(
-            !short_help.contains(needle),
-            "did not expect `{needle}` in `scan -h` output, got:\n{short_help}"
-        );
+        assert_not_contains(&short_help, needle, "`scan -h` output");
     }
 }

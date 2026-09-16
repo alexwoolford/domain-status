@@ -15,7 +15,8 @@ use crate::config::{Config, DEFAULT_USER_AGENT};
 use crate::error_handling::ProcessingStats;
 use crate::fetch::{NetworkContext, ProcessingContext, RuntimeContext};
 use crate::initialization::{
-    init_client, init_rate_limiter, init_redirect_client, init_resolver, init_semaphore,
+    init_client, init_host_rate_limiter, init_rate_limiter, init_redirect_client, init_resolver,
+    init_semaphore,
 };
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::storage::{init_db_pool_with_path, insert_run_metadata, RunMetadata};
@@ -123,6 +124,7 @@ pub async fn init_scan_resources(
             Some((limiter, shutdown)) => (Some(limiter), Some(shutdown)),
             None => (None, None),
         };
+    let host_limiter = init_host_rate_limiter(config.rate_limit_rps);
 
     // SQLite has one writer; WAL only helps readers. `--max-concurrency` can be
     // 10_000, so cap the pool instead of opening one connection per worker.
@@ -251,6 +253,7 @@ pub async fn init_scan_resources(
         shared_ctx,
         semaphore,
         request_limiter,
+        host_limiter,
         rate_limiter_shutdown,
         in_flight_urls: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         successful_urls,

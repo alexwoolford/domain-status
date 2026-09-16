@@ -1,6 +1,6 @@
 # Database Schema
 
-`domain_status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
+`domain-status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
 The schema is created by migrations (`migrations/0001_initial_schema.sql` through
 `migrations/0015_observation_enrichments.sql`) and follows a simple pattern:

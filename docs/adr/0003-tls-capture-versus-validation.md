@@ -6,7 +6,7 @@
 
 ## Context
 
-`domain_status` is an observational scanner. Certificate facts should be collected without turning the main HTTP client into an insecure browser substitute. Invalid TLS on the page GET is a failed observation (`url_failures`), not a reason to disable trust on that client.
+`domain-status` is an observational scanner. Certificate facts should be collected without turning the main HTTP client into an insecure browser substitute. Invalid TLS on the page GET is a failed observation (`url_failures`), not a reason to disable trust on that client.
 
 Page-fetch clients live in `src/initialization/client.rs`. Dedicated TLS observation lives in `src/tls/`.
 
