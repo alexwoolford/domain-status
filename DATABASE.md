@@ -357,7 +357,7 @@ Scans produced with older binaries may still contain (until migrated):
 - `location` stores where it was found (`inline_script`, `json_ld`, `html_comment`, `data_attribute`, `url_parameter`, `meta_tag`, `html_body`, `response_header`, `set_cookie`, or `external_script:<url>`)
 - Join `url_status.body_truncated` / `external_scripts_*` when assessing whether a miss is possible due to size caps or script limits
 - `context` stores nearby source text for analyst review
-- `generic-api-key` is the catch-all for **opaque non-UUID** tokens after web plausibility filters (entropy, charset, no camelCase). Hyphenated 8-4-4-4-12 hex identifiers (MediaWiki `"key":"<uuid>"`, CMS document ids) are **not** that rule. Vendor UUID rules such as `hubspot-api-key` still match when that is the product format. `gcp-api-key` and `jwt` stay Low-severity inventory.
+- `generic-api-key` is the catch-all for **opaque non-UUID** tokens after web plausibility filters (entropy, charset, no camelCase). Hyphenated 8-4-4-4-12 hex identifiers (MediaWiki `"key":"<uuid>"`, CMS document ids) are **not** that rule. Vendor UUID rules such as `hubspot-api-key` still match when that is the product format. `gcp-api-key` and `jwt` stay Low-severity inventory. Leftover generic after the UUID cut is still mixed public-SDK / CMS / CDN noise; for leak hunting see the query below and [docs/SECRET_DETECTION_AND_FALSE_POSITIVES.md](docs/SECRET_DETECTION_AND_FALSE_POSITIVES.md).
 
 Uniqueness is enforced by:
 
@@ -401,6 +401,24 @@ SELECT secret_type, severity, COUNT(*) AS findings
 FROM url_exposed_secrets
 GROUP BY secret_type, severity
 ORDER BY findings DESC, secret_type;
+```
+
+Leak hunting (skip catch-all generic, Maps/Firebase client keys, and JWTs):
+
+```sql
+SELECT us.initial_domain, es.secret_type, es.severity, es.location
+FROM url_exposed_secrets es
+JOIN url_status us ON es.url_status_id = us.id
+WHERE es.secret_type NOT IN ('generic-api-key', 'gcp-api-key', 'jwt')
+ORDER BY
+    CASE es.severity
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END,
+    us.initial_domain
+LIMIT 500;
 ```
 
 Decoded JWT claims for exposed tokens:

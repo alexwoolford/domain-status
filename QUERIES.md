@@ -485,6 +485,31 @@ ORDER BY
     count DESC;
 ```
 
+### 32a. Leak hunting (exclude high-volume inventory types)
+
+`generic-api-key`, `gcp-api-key`, and `jwt` dominate row counts and are mostly
+public client inventory. Prefixed vendor rules are the leak-hunting set.
+
+```sql
+SELECT
+    us.initial_domain,
+    es.secret_type,
+    es.severity,
+    es.location
+FROM url_exposed_secrets es
+JOIN url_status us ON es.url_status_id = us.id
+WHERE es.secret_type NOT IN ('generic-api-key', 'gcp-api-key', 'jwt')
+ORDER BY
+    CASE es.severity
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END,
+    us.initial_domain
+LIMIT 500;
+```
+
 ## Contact Information
 
 ### 33. Find all email contacts
