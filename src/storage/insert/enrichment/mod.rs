@@ -27,10 +27,12 @@ pub(crate) use social::insert_social_media_links_in_tx;
 pub(crate) use structured::insert_structured_data_in_tx;
 pub(crate) use whois::insert_whois_data_in_tx;
 
-/// Begin a writer transaction, run `$body`, commit on `Ok` (rollback on `Err`).
+/// Begin a writer transaction, run `$body`, commit on `Ok`.
 ///
-/// Unit tests call `*_in_tx` through this helper so they match production
-/// (`insert_enrichment_data`) instead of a second pool-level wrapper.
+/// On `Err`, await `rollback()` so the writer connection releases the
+/// shared-cache lock before the next pool query (sqlx `Drop` only queues
+/// rollback). That matches production `insert_enrichment_data` commit/abort
+/// and avoids `SQLITE_LOCKED_SHAREDCACHE` under tarpaulin.
 #[cfg(test)]
 macro_rules! commit_in_tx {
     ($pool:expr, |$tx:ident| $body:expr) => {{
@@ -38,6 +40,8 @@ macro_rules! commit_in_tx {
         let __result = $body;
         if __result.is_ok() {
             $tx.commit().await.expect("commit writer tx");
+        } else {
+            $tx.rollback().await.expect("rollback writer tx");
         }
         __result
     }};
