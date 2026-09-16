@@ -49,7 +49,8 @@ pub struct Technology {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_string_or_array")]
     pub url: Vec<String>,
-    /// DNS record patterns: record type (TXT/MX/NS/…) -> pattern(s)
+    /// DNS record patterns: record type (TXT/MX/NS/…) -> pattern(s).
+    /// Matching uses NS and CNAME only; TXT/MX stay in satellite tables.
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_meta_map")]
     pub dns: HashMap<String, Vec<String>>,

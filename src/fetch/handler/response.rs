@@ -183,11 +183,7 @@ async fn supplement_technologies_after_enrichment(
     // main fingerprint pass.
     let dns_haystack = crate::fingerprint::dns_records_haystack(
         additional_dns.nameservers.as_deref(),
-        additional_dns.txt_records.as_deref(),
-        additional_dns.mx_records.as_deref(),
         additional_dns.cname_chain.as_deref(),
-        additional_dns.spf_record.as_deref(),
-        additional_dns.dmarc_record.as_deref(),
     );
     let ruleset = Arc::clone(&ctx.ruleset);
     let cert_issuer = tls_dns_data.issuer.clone();

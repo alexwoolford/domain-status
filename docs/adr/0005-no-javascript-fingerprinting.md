@@ -24,11 +24,13 @@ Technology detection is based on static evidence such as:
 - cookies
 - HTML
 - script URLs (`scriptSrc`) and inline `<script>` text (`scripts`)
-- DNS records and TLS certificate issuer (matched after DNS/TLS enrichment)
+- NS/CNAME DNS records and TLS certificate issuer (matched after DNS/TLS enrichment)
 - first-party external script **bodies** when `--scan-external-scripts` is enabled (same fetch as secret scanning; static `scripts` pattern matching only)
 - other response-derived patterns
 
 `--scan-external-scripts` is opt-in because it multiplies GETs. When enabled, fetched first-party bodies improve both secret coverage and technology detection. Third-party CDN scripts remain denylisted. Bodies are matched as text only — never executed.
+
+`url_technologies` is the HTTP serving stack, not an org-vendor inventory. DNS matching uses NS and CNAME only (plus cert issuer). TXT/MX/SPF/DMARC remain in satellite tables. `Content-Security-Policy` / `Content-Security-Policy-Report-Only` header values are not fingerprint evidence (allowlisted hosts stay in `url_csp_domains`). GitHub Pages is dropped when the URL host is `github.com` / `www.github.com`, so the product site is not labeled as Pages.
 
 This keeps the scanner aligned with a lightweight, batch-oriented architecture rather than turning it into a browser automation system.
 

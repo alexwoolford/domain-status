@@ -12,8 +12,9 @@ pub type DnsCertMatchResult = SignalMatch;
 
 /// Matches technologies against DNS record haystacks and optional cert issuer.
 ///
-/// `dns_records` keys are uppercase record types (`TXT`, `MX`, `NS`, `CNAME`, …)
-/// mapped to lowercase concatenated record content.
+/// Only **NS** and **CNAME** haystacks are consulted. TXT/MX/SPF/DMARC prove
+/// that an org uses a vendor, not that this HTTP response is served by that
+/// vendor — those records stay in satellite tables.
 pub(crate) fn check_dns_and_cert_with_ruleset(
     ruleset: &FingerprintRuleset,
     dns_records: &HashMap<String, String>,
@@ -31,6 +32,9 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
         let mut version: Option<String> = None;
 
         for (record_type, patterns) in &tech.dns {
+            if !is_serving_stack_dns_type(record_type) {
+                continue;
+            }
             let Some(haystack) = dns_records.get(&record_type.to_uppercase()) else {
                 continue;
             };
@@ -77,6 +81,10 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
     results
 }
 
+fn is_serving_stack_dns_type(record_type: &str) -> bool {
+    record_type.eq_ignore_ascii_case("NS") || record_type.eq_ignore_ascii_case("CNAME")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,16 +104,65 @@ mod tests {
     }
 
     #[test]
-    fn test_dns_txt_match() {
+    fn test_dns_txt_org_proofs_are_not_technologies() {
+        let mut docusign = Technology::default();
+        docusign.dns.insert("TXT".into(), vec!["docusign".into()]);
+        let mut miro = Technology::default();
+        miro.dns
+            .insert("TXT".into(), vec!["miro-verification=".into()]);
+        let ruleset = ruleset_with(HashMap::from([
+            ("DocuSign".into(), docusign),
+            ("Miro".into(), miro),
+        ]));
+
+        let dns = HashMap::from([(
+            "TXT".into(),
+            "docusign=087098e3 miro-verification=abc v=spf1 include:docusign.net".to_string(),
+        )]);
+        let results = check_dns_and_cert_with_ruleset(&ruleset, &dns, None);
+        assert!(
+            results.is_empty(),
+            "TXT/SPF vendor proofs must not become url_technologies, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_dns_cname_still_matches() {
         let mut tech = Technology::default();
         tech.dns
-            .insert("TXT".into(), vec!["google-site-verification".into()]);
-        let ruleset = ruleset_with(HashMap::from([("Google Workspace".into(), tech)]));
+            .insert("CNAME".into(), vec!["cloudfront\\.net".into()]);
+        let ruleset = ruleset_with(HashMap::from([("Amazon CloudFront".into(), tech)]));
 
-        let dns = HashMap::from([("TXT".into(), "google-site-verification=abc123".to_string())]);
+        let dns = HashMap::from([("CNAME".into(), "d111111abcdef8.cloudfront.net.".to_string())]);
         let results = check_dns_and_cert_with_ruleset(&ruleset, &dns, None);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].tech_name, "Google Workspace");
+        assert_eq!(results[0].tech_name, "Amazon CloudFront");
+    }
+
+    #[test]
+    fn test_dns_ns_matches_route_53() {
+        let mut tech = Technology::default();
+        tech.dns.insert("NS".into(), vec![r"\.awsdns-\d+\.".into()]);
+        let ruleset = ruleset_with(HashMap::from([("Amazon Route 53".into(), tech)]));
+
+        let dns = HashMap::from([("NS".into(), "ns-520.awsdns-01.net.".to_string())]);
+        let results = check_dns_and_cert_with_ruleset(&ruleset, &dns, None);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tech_name, "Amazon Route 53");
+    }
+
+    #[test]
+    fn test_dns_mx_org_proofs_are_not_technologies() {
+        let mut tech = Technology::default();
+        tech.dns.insert("MX".into(), vec!["google\\.com".into()]);
+        let ruleset = ruleset_with(HashMap::from([("Google Workspace".into(), tech)]));
+
+        let dns = HashMap::from([("MX".into(), "10 aspmx.l.google.com.".to_string())]);
+        let results = check_dns_and_cert_with_ruleset(&ruleset, &dns, None);
+        assert!(
+            results.is_empty(),
+            "MX proves mail routing, not the HTTP serving stack, got {results:?}"
+        );
     }
 
     #[test]
