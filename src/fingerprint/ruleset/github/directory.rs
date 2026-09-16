@@ -55,7 +55,7 @@ pub(crate) async fn fetch_from_github_directory(
     let mut request = client
         .get(&api_url_with_ref)
         .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", "domain_status/0.1.0");
+        .header("User-Agent", super::GITHUB_API_USER_AGENT);
 
     // Add GitHub token if available (increases rate limit from 60 to 5000 requests/hour)
     // Token can be set via environment variable or .env file (loaded at startup)

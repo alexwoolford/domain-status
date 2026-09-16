@@ -10,7 +10,7 @@ This document summarizes dependency and CI practices for supply chain security.
 
 - **Manifest reqs (`Cargo.toml` / `cli/Cargo.toml`):** use caret minor precision — `^X.Y` — not patch pins (`1.2.3` / `0.18.4`). Cargo’s `"1.2"` and `"^1.2"` are equivalent; prefer the explicit `^` form for consistency.
 - **`Cargo.lock`:** commit exact resolved versions. That is the reproducibility source of truth.
-- **Workspace / path crates:** keep exact versions aligned with the package (`domain_status_cli = "0.1.x"`).
+- **Workspace / path crates:** keep exact versions aligned with the package (`domain-status-cli` / `0.2.0`).
 - **Majors and breaking 0.x bumps:** Dependabot ignores `semver-major`. Land those in intentional PRs (with `just check` / audit / deny).
 - **Exceptions (documented in-manifest):**
   - `reqwest = "^0.12"` — 0.13 deferred until `whois-service` (crates.io and `vendor/whois-service`) can move with it (TLS / redirect alignment). Do not mix that bump with SQLx.
