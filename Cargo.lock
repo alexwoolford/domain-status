@@ -1261,8 +1261,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "domain_status"
-version = "0.1.29"
+name = "domain-status"
+version = "0.2.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -1279,7 +1279,7 @@ dependencies = [
  "config",
  "csv",
  "dirs",
- "domain_status_cli",
+ "domain-status-cli",
  "dotenvy",
  "encoding_rs",
  "enum-map",
@@ -1326,8 +1326,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "domain_status_cli"
-version = "0.1.29"
+name = "domain-status-cli"
+version = "0.2.0"
 dependencies = [
  "clap",
  "clap-verbosity-flag",

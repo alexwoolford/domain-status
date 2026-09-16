@@ -39,7 +39,7 @@ impl std::fmt::Debug for RateLimiter {
     }
 }
 
-fn compute_refill_permits(
+pub(crate) fn compute_refill_permits(
     current_rps: u32,
     elapsed: std::time::Duration,
     available: usize,

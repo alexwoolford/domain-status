@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-`domain_status` is a concurrent URL/domain scanner CLI tool written in Rust. It captures HTTP status, TLS certificates, DNS records, WHOIS data, GeoIP, technology fingerprints, and exposed secrets in a single pass, storing results in SQLite. Static analysis only (no JS execution).
+`domain-status` is a concurrent URL/domain scanner CLI tool written in Rust. It captures HTTP status, TLS certificates, DNS records, WHOIS data, GeoIP, technology fingerprints, and exposed secrets in a single pass, storing results in SQLite. Static analysis only (no JS execution).
 
 ## Build & Development Commands
 
@@ -54,7 +54,8 @@ Caches (fingerprints/GeoIP/WHOIS/UA) default under the platform cache dir + `dom
 - **`src/config/`** — Config struct with file + env + CLI merging
 - **`src/parse/`** — JWT claims parsing, exposed secret detection
 - **`src/status_server/`** — Live monitoring HTTP endpoints
-- **`src/initialization/rate_limiter.rs`** — Token bucket rate limiting
+- **`src/initialization/rate_limiter.rs`** — Global token-bucket URL admission
+- **`src/initialization/host_rate_limiter.rs`** — Per-host 2 rps cap (off when global RPS is 0)
 
 ### Database
 

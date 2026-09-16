@@ -1,6 +1,6 @@
 //! Post-scan summary over an existing `SQLite` database.
 //!
-//! Pure SQL over the current schema — no new tables. Used by `domain_status summary`
+//! Pure SQL over the current schema — no new tables. Used by `domain-status summary`
 //! so users can inspect the last (or a selected) run without opening sqlite3.
 
 use anyhow::{bail, Context, Result};
@@ -147,7 +147,7 @@ async fn resolve_run(pool: &SqlitePool, run_id: Option<&str>) -> Result<RunSumma
         .await
         .context("Failed to query run history")?;
     history.pop().context(
-        "No completed runs found in the database. Run `domain_status scan` first, \
+        "No completed runs found in the database. Run `domain-status scan` first, \
          or pass --run-id for an in-progress run.",
     )
 }

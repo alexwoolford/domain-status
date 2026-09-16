@@ -1,6 +1,6 @@
 # Exit Code Reference
 
-`domain_status` produces two kinds of non-zero exits:
+`domain-status` produces two kinds of non-zero exits:
 
 - command/runtime failures, which return `1`
 - policy failures from `evaluate_exit_code()`, which return `2` or `3`
@@ -30,13 +30,13 @@ Examples:
 
 ```bash
 # Always exit 0 after a successful scan command, even if some URLs failed
-domain_status scan urls.txt --fail-on never
+domain-status scan urls.txt --fail-on never
 
 # Exit 2 if any URL failed
-domain_status scan urls.txt --fail-on any-failure
+domain-status scan urls.txt --fail-on any-failure
 
 # Exit 2 if failures are greater than 10%
-domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
+domain-status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
 ```
 
 ## Decision Rules
@@ -64,15 +64,15 @@ The comparison is strictly greater-than, not greater-than-or-equal.
 
 ```bash
 # One failed URL is enough to fail the scan
-domain_status scan urls.txt --fail-on any-failure
+domain-status scan urls.txt --fail-on any-failure
 echo $?  # 0 or 2
 
 # Allow up to 10% failures
-domain_status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
+domain-status scan urls.txt --fail-on pct> --fail-on-pct-threshold 10
 echo $?  # 0, 2, or 3
 
 # Invalid input file or another command-level error
-domain_status scan missing.txt
+domain-status scan missing.txt
 echo $?  # 1
 ```
 

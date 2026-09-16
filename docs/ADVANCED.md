@@ -30,7 +30,7 @@ Subdirectories:
 Keep regenerable caches under the platform cache root (or `--cache-dir`). Point durable scan outputs somewhere deliberate, for example:
 
 ```bash
-domain_status scan urls.txt \
+domain-status scan urls.txt \
   --db-path /var/lib/domain_status/scan.db \
   --log-file /var/log/domain_status/scan.log \
   --cache-dir /var/cache/domain_status
@@ -85,11 +85,11 @@ pass the SSRF `is_public_ip` check are attempted.
 
 - `--timeout-seconds` is per HTTP request; overall per-URL processing budget is a separate hardcoded cap (~35s).
 - `--drain-timeout-secs` aborts in-flight work after the input queue empties — raise for WHOIS-heavy small batches.
-- Rate limiting: `--rate-limit-rps` is URL **admission** (one token per input URL), not per-HTTP RPS. Lower it if you see 429s.
+- Rate limiting: `--rate-limit-rps` is URL **admission** (one token per input URL), not per-HTTP RPS. When that cap is enabled, each host is also limited to 2 URL tokens/sec. `--rate-limit-rps 0` disables both. Lower the global cap if you see 429s.
 
 ## Library embeds
 
-See [docs.rs/domain_status](https://docs.rs/domain_status). Prefer `Config` + `run_scan` + export/summary; advanced modules may narrow in 0.x.
+See [docs.rs/domain-status](https://docs.rs/domain-status). Prefer `Config` + `run_scan` + export/summary; advanced modules may narrow in 0.x.
 
 
 ## Diligence profile

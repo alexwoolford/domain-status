@@ -1,6 +1,6 @@
 # Developer Bootstrap
 
-This is the single source of truth for setting up a contributor environment for `domain_status`.
+This is the single source of truth for setting up a contributor environment for `domain-status`.
 
 ## 1. Required Tools
 
@@ -45,7 +45,7 @@ On some systems you may prefer package-manager installs for `sqlite3`, `jq`, `cu
 ## 3. First Commands After Clone
 
 ```bash
-git clone https://github.com/alexwoolford/domain_status.git
+git clone https://github.com/alexwoolford/domain-status.git
 cd domain_status
 just --list
 just check
@@ -149,16 +149,16 @@ Common local inspection tools:
 ```bash
 sqlite3 domain_status.db ".tables"
 sqlite3 domain_status.db "SELECT run_id, total_urls, successful_urls, failed_urls FROM runs ORDER BY start_time_ms DESC LIMIT 5;"
-domain_status export --format jsonl --output - 2>/dev/null | jq '.final_domain'
+domain-status export --format jsonl --output - 2>/dev/null | jq '.final_domain'
 ```
 
 Sample validation flow:
 
 ```bash
 # domains.txt: one URL or domain per line
-./target/release/domain_status scan domains.txt --db-path validation_scan.db
+./target/release/domain-status scan domains.txt --db-path validation_scan.db
 sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status;"
-./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
+./target/release/domain-status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
 ```
 
 ## 9. Docs and Rustdoc Validation

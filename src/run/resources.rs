@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 use crate::fetch::ProcessingContext;
 use crate::geoip::GeoIpMetadata;
-use crate::initialization::RateLimiter;
+use crate::initialization::{HostRateLimiter, RateLimiter};
 
 /// All resources initialized for a scan operation.
 ///
@@ -33,6 +33,8 @@ pub struct ScanResources {
     pub semaphore: Arc<tokio::sync::Semaphore>,
     /// Optional rate limiter for requests per second
     pub request_limiter: Option<Arc<RateLimiter>>,
+    /// Optional per-host admission limiter (2 rps). `None` when global RPS is 0.
+    pub host_limiter: Option<Arc<HostRateLimiter>>,
     /// Shutdown handle for the rate limiter background task
     pub rate_limiter_shutdown: Option<CancellationToken>,
 
@@ -127,8 +129,10 @@ pub struct UrlTaskParams {
     pub cancel: CancellationToken,
     /// Semaphore permit (dropped when task completes)
     pub permit: OwnedSemaphorePermit,
-    /// Optional rate limiter
+    /// Optional global rate limiter
     pub request_limiter: Option<Arc<RateLimiter>>,
+    /// Optional per-host rate limiter
+    pub host_limiter: Option<Arc<HostRateLimiter>>,
     /// Persisted-success counter
     pub successful_urls: Arc<AtomicUsize>,
     /// Skipped-without-insert counter

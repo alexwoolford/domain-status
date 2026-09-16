@@ -521,6 +521,7 @@ pub async fn run_scan(
                     cancel: cancel.clone(),
                     permit,
                     request_limiter: resources.request_limiter.as_ref().map(Arc::clone),
+                    host_limiter: resources.host_limiter.as_ref().map(Arc::clone),
                     successful_urls: Arc::clone(&resources.successful_urls),
                     skipped_urls: Arc::clone(&resources.skipped_urls),
                     failed_urls: Arc::clone(&resources.failed_urls),

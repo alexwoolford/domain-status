@@ -1,6 +1,6 @@
 # SQLite Query Examples
 
-This document provides common SQL queries for analyzing `domain_status` scan results.
+This document provides common SQL queries for analyzing `domain-status` scan results.
 
 ## Basic Queries
 
@@ -729,5 +729,5 @@ EOF
 Or use the built-in export command:
 
 ```bash
-domain_status export --db-path domain_status.db --format csv --status 200 --output successful.csv
+domain-status export --db-path domain_status.db --format csv --status 200 --output successful.csv
 ```

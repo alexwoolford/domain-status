@@ -1,4 +1,4 @@
-# Developer task runner for domain_status
+# Developer task runner for domain-status
 # Install: cargo install just
 # Run: just <command>
 

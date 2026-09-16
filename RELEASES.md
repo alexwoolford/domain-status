@@ -1,6 +1,6 @@
 # Release Process
 
-This document describes the release process for `domain_status`.
+This document describes the release process for `domain-status`.
 
 ## Versioning
 
@@ -51,7 +51,7 @@ git push origin v0.1.0
 
 ### 4. Verify Release
 
-- Check [GitHub Releases](https://github.com/alexwoolford/domain_status/releases)
+- Check [GitHub Releases](https://github.com/alexwoolford/domain-status/releases)
 - Verify all platform binaries are present
 - Test downloading and running a binary
 
@@ -59,7 +59,7 @@ git push origin v0.1.0
 
 If the automated workflow fails, you can create a release manually:
 
-1. Go to [GitHub Releases](https://github.com/alexwoolford/domain_status/releases)
+1. Go to [GitHub Releases](https://github.com/alexwoolford/domain-status/releases)
 2. Click "Draft a new release"
 3. Choose the tag (or create a new one)
 4. Fill in release title and description (copy from CHANGELOG.md)
@@ -97,7 +97,7 @@ Currently, macOS binaries are unsigned, which triggers Gatekeeper warnings. To e
    ```
 3. **Notarize with Apple**:
    ```bash
-   xcrun notarytool submit domain_status --keychain-profile "AC_PASSWORD" --wait
+   xcrun notarytool submit domain-status --keychain-profile "AC_PASSWORD" --wait
    ```
 4. **Staple the Ticket**:
    ```bash

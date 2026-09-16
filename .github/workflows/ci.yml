@@ -157,7 +157,7 @@ jobs:
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: alexwoolford/domain_status
+          slug: alexwoolford/domain-status
           files: coverage/cobertura.xml
           fail_ci_if_error: false
           verbose: true

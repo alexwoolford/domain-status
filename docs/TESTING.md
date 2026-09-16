@@ -102,9 +102,9 @@ Prefer offline fixtures, exact expected sets, and asserting `Err` when init must
 Local scratch DBs/exports belong under a gitignored dir (e.g. `validation_e2e/`) or names already listed in `.gitignore`.
 
 ```bash
-./target/release/domain_status scan domains.txt --db-path validation_scan.db
+./target/release/domain-status scan domains.txt --db-path validation_scan.db
 sqlite3 validation_scan.db "SELECT COUNT(*) FROM url_status;"
-./target/release/domain_status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
+./target/release/domain-status export --db-path validation_scan.db --format csv --output /tmp/validation_export.csv
 ```
 
 Schema reference: [DATABASE.md](../DATABASE.md) and `migrations/` (`0001`–`0015`).

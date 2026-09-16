@@ -1,4 +1,4 @@
-//! Named exit codes for the `domain_status` binary.
+//! Named exit codes for the `domain-status` binary.
 //!
 //! These constants are the single source of truth for process exit codes.
 //! See [`docs/EXIT_CODES.md`](../../docs/EXIT_CODES.md) for full semantics.

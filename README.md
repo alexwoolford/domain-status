@@ -1,30 +1,32 @@
-# domain_status
+# domain-status
 
-[![Crates.io](https://img.shields.io/crates/v/domain_status)](https://crates.io/crates/domain_status)
-[![docs.rs](https://img.shields.io/docsrs/domain_status)](https://docs.rs/domain_status)
-[![Downloads](https://img.shields.io/crates/d/domain_status)](https://crates.io/crates/domain_status)
+[![Crates.io](https://img.shields.io/crates/v/domain-status)](https://crates.io/crates/domain-status)
+[![docs.rs](https://img.shields.io/docsrs/domain-status)](https://docs.rs/domain-status)
+[![Downloads](https://img.shields.io/crates/d/domain-status)](https://crates.io/crates/domain-status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.86+-orange.svg)](https://www.rust-lang.org/)
-[![CI](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain_status/actions/workflows/ci.yml)
-[![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain_status?label=latest%20release)](https://github.com/alexwoolford/domain_status/releases/latest)
+[![CI](https://github.com/alexwoolford/domain-status/actions/workflows/ci.yml/badge.svg)](https://github.com/alexwoolford/domain-status/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/alexwoolford/domain-status?label=latest%20release)](https://github.com/alexwoolford/domain-status/releases/latest)
 
-**domain_status** is a concurrent URL/domain scanner. Give it a list of URLs; it captures HTTP status, TLS certificates, DNS, technology fingerprints, and related signals in one pass, and stores results in **SQLite** for relational analysis (1:many satellites for technologies, secrets, redirects, DNS rows, and more). Export the same run to Parquet or JSONL when you want DuckDB / data-lake workflows or shell pipelines—SQLite remains the source of truth.
+**domain-status** is a concurrent URL/domain scanner. Give it a list of URLs; it captures HTTP status, TLS certificates, DNS, technology fingerprints, and related signals in one pass, and stores results in **SQLite** for relational analysis (1:many satellites for technologies, secrets, redirects, DNS rows, and more). Export the same run to Parquet or JSONL when you want DuckDB / data-lake workflows or shell pipelines—SQLite remains the source of truth.
 
-**Who it's for:** DevOps/SRE, security analysts, threat-intel / OSINT researchers, light-touch tech diligence / portfolio intelligence (e.g. PE ops), and anyone managing large URL/domain portfolios who wants one tool instead of stitching curl, whois, and Wappalyzer together.
+**Who it's for:** DevOps/SRE, security analysts, threat-intel / OSINT researchers, and anyone managing large URL/domain lists who wants one tool instead of stitching curl, whois, and Wappalyzer together.
+
+Scan only hosts you are authorized to scan.
 
 ## Quick Start
 
 ```bash
 # Install (macOS/Linux)
-brew tap alexwoolford/domain-status && brew install domain_status
-# or: cargo install domain_status
+brew tap alexwoolford/domain-status && brew install domain-status
+# or: cargo install domain-status
 # or: download a binary from Releases
 
 echo -e "https://example.com\nhttps://example.org" > urls.txt
-domain_status scan urls.txt
+domain-status scan urls.txt
 
 # Convenience digest (same DB)
-domain_status summary
+domain-status summary
 
 # SQLite is the primary result store (1:many joins are intentional)
 sqlite3 domain_status.db "SELECT initial_domain, http_status, title FROM url_status;"
@@ -38,13 +40,13 @@ More SQL: [QUERIES.md](QUERIES.md) and [DATABASE.md](DATABASE.md).
 
 ```bash
 # Shell tooling (payload on stdout; logs/banners on stderr — see docs/CLI.md)
-domain_status export --format jsonl --output - | jq '.final_domain, .technologies'
+domain-status export --format jsonl --output - | jq '.final_domain, .technologies'
 
 # Columnar analytics (e.g. DuckDB: SELECT * FROM 'recon.parquet')
-domain_status export --format parquet --output recon.parquet
+domain-status export --format parquet --output recon.parquet
 ```
 
-CSV: `domain_status export --format csv`. Everyday flags: `domain_status scan -h`. All flags: `--help`.
+CSV: `domain-status export --format csv`. Everyday flags: `domain-status scan -h`. All flags: `--help`.
 
 WHOIS is on by default (`--no-whois` to disable). GeoIP needs `MAXMIND_LICENSE_KEY` or `--geoip`. First-party script bodies: `--scan-external-scripts`. Local fingerprint rules, caches, and GitHub-free ruleset loading: [docs/ADVANCED.md](docs/ADVANCED.md).
 
@@ -68,7 +70,7 @@ WHOIS is on by default (`--no-whois` to disable). GeoIP needs `MAXMIND_LICENSE_K
 
 ## Configuration (keep it simple)
 
-**Day-to-day:** CLI flags (`domain_status scan -h`; all flags: `scan --help`). Prefer `-v` / `-q` for log verbosity.
+**Day-to-day:** CLI flags (`domain-status scan -h`; all flags: `scan --help`). Prefer `-v` / `-q` for log verbosity.
 
 **Repeatable jobs:** pick **one** of TOML (`--config ./domain_status.toml` or cwd `domain_status.toml`) **or** `DOMAIN_STATUS_*` env for the job profile; use CLI only to override. Mixing TOML and env for the same knobs works (env wins) but is harder to reason about. **`--config` wins** over `DOMAIN_STATUS_CONFIG_FILE`.
 
@@ -87,7 +89,7 @@ Example TOML: [`config_examples/domain_status.example.toml`](config_examples/dom
 | [DATABASE.md](DATABASE.md) | Full schema |
 | [QUERIES.md](QUERIES.md) | SQL cookbook |
 | [docs/EXIT_CODES.md](docs/EXIT_CODES.md) | CI exit policies |
-| [docs.rs/domain_status](https://docs.rs/domain_status) | Library / embed API |
+| [docs.rs/domain-status](https://docs.rs/domain-status) | Library / embed API |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [docs/DEVELOPER_BOOTSTRAP.md](docs/DEVELOPER_BOOTSTRAP.md) | Development |
 
 ## License

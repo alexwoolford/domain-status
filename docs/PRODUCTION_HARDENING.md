@@ -4,7 +4,7 @@ This guide documents the runtime behavior that matters in production today. It i
 
 ## Runtime Profile
 
-`domain_status` is a concurrent, network-heavy batch scanner with SQLite-backed persistence.
+`domain-status` is a concurrent, network-heavy batch scanner with SQLite-backed persistence.
 
 During a scan it may:
 
@@ -20,8 +20,9 @@ During a scan it may:
 | Setting | Default | Notes |
 |---------|---------|-------|
 | Database path | `./domain_status.db` | Scans and exports both default here |
-| Max concurrency | `30` | Global worker limit (no per-domain cap) |
+| Max concurrency | `30` | Global worker limit |
 | Initial rate limit | `15` URL-admission tokens/sec | One token per input URL, not per HTTP request |
+| Per-host rate limit | `2` URL tokens/sec | On whenever the global rate limit is on; `--rate-limit-rps 0` disables both |
 | HTTP timeout | `10s` | Request timeout |
 | Overall per-URL timeout | `35s` | Guardrail around the full processing pipeline |
 | DNS timeout | `3s` | Resolver attempts once and fails fast |
