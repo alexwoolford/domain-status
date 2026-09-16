@@ -177,6 +177,11 @@ fn fp_corpus_plain_uuid() {
         "bare UUID identifier",
         r#"<div data-id="550e8400-e29b-41d4-a716-446655440000"></div>"#,
     );
+    // CMS JSON `"key":"<uuid>"` is a document id, not a catch-all credential.
+    assert_no_secrets(
+        "CMS JSON key UUID",
+        r#"{"id":"doc","key":"01234567-89ab-cdef-0123-456789abcdef"}"#,
+    );
 }
 
 #[test]
