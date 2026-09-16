@@ -48,7 +48,16 @@ Prefer maintainable fixes over growing per-site exception lists:
 
 ## How to triage
 
-- Use **`location`** and **`context`**: `inline_script`, `json_ld`, `url_parameter`, `set_cookie`, and `external_script:…` are more likely to be real secrets; `data_attribute` and `html_body` often contain public IDs or CDN content.
+- **Leak hunting** starts with vendor-shaped rules, not the catch-all. Query
+  `secret_type NOT IN ('generic-api-key', 'gcp-api-key', 'jwt')`. Those three
+  buckets are inventory (public Maps/Firebase keys, session/CDN JWTs, opaque
+  `key`/`token` text). Hyphenated UUID rejection does **not** make
+  `generic-api-key` trustworthy.
+- Use **`location`** and **`context`**. For **prefixed** rules, `inline_script`,
+  `url_parameter`, `set_cookie`, and `external_script:…` are stronger signals.
+  For leftover **`generic-api-key`**, the same locations are often YouTube/Vimeo
+  embed `key=`, cookie-consent widgets, i18n JSON, or CDN `bossToken=` hashes —
+  always read `context` before escalating.
 - Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`, `sk-…T3BlbkFJ…` OpenAI, `sk-ant-api03-` / `sk-ant-admin01-` Anthropic). Treat `gcp-api-key` (including Gemini/AI Studio `AIza…` keys), `jwt`, and Amz-Credential AWS IDs as **Low** inventory, not urgent leaks.
 - When assessing possible misses, join `url_status.body_truncated` and `external_scripts_eligible` / `external_scripts_scanned` (incomplete scan when truncated or eligible > scanned).
 - Inspect **`context`**: Look for `data-*-form`, `id="..."`, `email-protection#`, or other HTML patterns that indicate a public identifier or obfuscation.
@@ -58,7 +67,52 @@ Prefer maintainable fixes over growing per-site exception lists:
 
 When `--scan-external-scripts` is enabled, only **first-party** `<script src>` bundles are fetched (same registrable domain as the page). Known third-party CDNs (Stripe.js, Cookiebot, Google Analytics, etc.) are skipped because they dominate false positives.
 
+## Leftover `generic-api-key` (catch-all sample)
+
+A production scan (`many` successful URLs, old detector) had `81701` secret
+rows. After excluding hyphenated 8-4-4-4-12 hex (the UUID subtract already
+shipped), **21459** `generic-api-key` rows remain. Hand-label of **100** of
+those leftovers (stable sample `(id * 7919) % 21459`, values redacted):
+
+| Class | n / 100 | What it was |
+|-------|---------|-------------|
+| Public SaaS / widget client | 54 | Weglot `api_key` that is **not** `wg_…`, CCM19/Cookiebot, Elementor a11y, Altcha/Sentinel, Bugsnag, Mixpanel, Datadog, Dynatrace, Unbxd, Yext, Shopify storefront, reCAPTCHA, … |
+| CDN / theme hash | 12 | ImageBoss `bossToken=` (hex64) and Shopify `keys_signature` |
+| i18n JSON `"key"` | 9 | One translations bundle (thousands of leftover rows on a single URL) |
+| Embed URL `key=` | 8 | YouTube / Vimeo oEmbed |
+| CMS / document id | 6 | `_key`, `vueKey`, store `key`, experiment `key` |
+| Cookie / CSRF | 4 | CleanTalk, AntiXsrf, cache key, page `xsrfToken` |
+| Likely credential | 7 | Named `*Secret` / `*Token` / access token in first-party JS (not a public SDK id) |
+
+**Do not** drop `generic-api-key`, hex32, cookies, or `external_script` JSON from
+that table. Hex32 in the sample mixed embed keys, CMS ids, and a few real
+tokens. Cookies were 4/100. Skipping catch-all on external JSON would also drop
+bundle leaks. The UUID cut remains the last low-regret Type I. Next subtract
+would need its own product-format evidence (for example Weglot keys that are
+not `wg_…` still fire; `wg_` is already allowlisted).
+
+Re-measure UUID disappearance only after a scan with the current binary; this
+SQLite file still contains the old detector’s UUID rows.
+
 ## Audit queries
+
+Leak hunting (skip high-volume inventory types):
+
+```sql
+SELECT us.initial_domain, es.secret_type, es.severity, es.location
+FROM url_exposed_secrets es
+JOIN url_status us ON es.url_status_id = us.id
+WHERE es.secret_type NOT IN ('generic-api-key', 'gcp-api-key', 'jwt')
+ORDER BY
+    CASE es.severity
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END,
+    us.initial_domain
+LIMIT 500;
+```
 
 Summary by rule and location:
 
