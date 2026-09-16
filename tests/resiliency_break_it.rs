@@ -14,17 +14,26 @@ use std::time::Duration;
 
 use domain_status::{insert_url_record, run_migrations, UrlRecord, UrlRecordInsertParams};
 use sqlx::SqlitePool;
+use tempfile::NamedTempFile;
 use tokio::time::{sleep, timeout};
 
 //-----------------------------------------------------------------------------
 // Test Helpers
 //-----------------------------------------------------------------------------
 
-async fn create_test_pool_with_limits(max_connections: u32) -> SqlitePool {
+/// File-backed pool (caller must keep `NamedTempFile` alive).
+///
+/// `:memory:` uses a shared cache; cancelled `insert_url_record` futures `Drop`
+/// the writer tx without awaiting rollback, so a following `SELECT` can hit
+/// `SQLITE_LOCKED_SHAREDCACHE` (262, `database table is locked`). Same pattern
+/// as `resiliency_cancellation.rs`.
+async fn create_test_pool_with_limits(max_connections: u32) -> (SqlitePool, NamedTempFile) {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
 
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+    let tmp = NamedTempFile::new().expect("Failed to create temp file");
+    let db_path = tmp.path().to_str().expect("non-UTF-8 temp path");
+    let options = SqliteConnectOptions::from_str(&format!("sqlite:{db_path}"))
         .expect("Failed to create options")
         .create_if_missing(true);
 
@@ -38,7 +47,7 @@ async fn create_test_pool_with_limits(max_connections: u32) -> SqlitePool {
         .await
         .expect("Failed to run migrations");
 
-    pool
+    (pool, tmp)
 }
 
 fn create_test_record(domain: &str) -> UrlRecord {
@@ -72,7 +81,7 @@ async fn create_test_run(pool: &SqlitePool, run_id: &str) {
 #[ignore] // Remove ignore to run this test
 async fn test_connection_pool_exhaustion_during_cancellation() {
     // Create pool with VERY limited connections (same as max workers)
-    let pool = create_test_pool_with_limits(5).await;
+    let (pool, _tmp) = create_test_pool_with_limits(5).await;
     create_test_run(&pool, "test-run-1").await;
 
     // Spawn MORE tasks than available connections
@@ -131,7 +140,7 @@ async fn test_connection_pool_exhaustion_during_cancellation() {
 #[tokio::test]
 #[ignore] // Remove ignore to run this test
 async fn test_checkpoint_during_active_transactions() {
-    let pool = create_test_pool_with_limits(10).await;
+    let (pool, _tmp) = create_test_pool_with_limits(10).await;
     create_test_run(&pool, "test-run-1").await;
 
     let checkpoint_pool = pool.clone();
@@ -204,7 +213,7 @@ async fn test_checkpoint_during_active_transactions() {
 #[tokio::test]
 #[ignore] // Remove ignore to run this test
 async fn test_cascade_cancellation_timing_attack() {
-    let pool = create_test_pool_with_limits(10).await;
+    let (pool, _tmp) = create_test_pool_with_limits(10).await;
     create_test_run(&pool, "test-run-1").await;
 
     let success_count = Arc::new(AtomicU64::new(0));
@@ -297,7 +306,7 @@ async fn test_cascade_cancellation_timing_attack() {
 #[tokio::test]
 #[ignore] // Remove ignore to run this test
 async fn test_connection_leak_from_cancellations() {
-    let pool = create_test_pool_with_limits(3).await; // Very small pool
+    let (pool, _tmp) = create_test_pool_with_limits(3).await; // Very small pool
     create_test_run(&pool, "test-run-1").await;
 
     // Cancel 100 tasks - if connections leak, pool will be exhausted
@@ -360,7 +369,7 @@ async fn test_connection_leak_from_cancellations() {
 #[tokio::test]
 #[ignore] // Remove ignore to run this test
 async fn test_read_consistency_during_rollback() {
-    let pool = create_test_pool_with_limits(10).await;
+    let (pool, _tmp) = create_test_pool_with_limits(10).await;
     create_test_run(&pool, "test-run-1").await;
 
     let inconsistencies = Arc::new(AtomicU64::new(0));
