@@ -42,9 +42,10 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 /// - HTML text patterns
 /// - URL patterns
 ///
-/// Late signals (DNS / cert issuer / fetched script bodies) are merged after
+/// Late signals (NS/CNAME / cert issuer / fetched script bodies) are merged after
 /// `parallel_enrich` via [`supplement_technologies_with_dns_cert`] and
-/// [`supplement_technologies_with_script_text`].
+/// [`supplement_technologies_with_script_text`]. TXT/MX/SPF/DMARC and CSP
+/// allowlists are not treated as serving-stack technologies.
 ///
 /// Technologies with only runtime `js` object patterns (and no other signals) are not detected.
 ///
@@ -255,7 +256,8 @@ pub(crate) fn detect_technologies_blocking(
     expand_implies(&mut detected, ruleset);
 
     let before_exclusions = detected.len();
-    let final_detected = finalize_detections(detected, ruleset);
+    let mut final_detected = finalize_detections(detected, ruleset);
+    drop_github_pages_on_github_dot_com(&mut final_detected, url);
 
     log::debug!(
         "Technology detection (blocking) summary for {}: {} detected ({} after exclusions)",
@@ -265,6 +267,25 @@ pub(crate) fn detect_technologies_blocking(
     );
 
     Ok(final_detected)
+}
+
+/// Upstream GitHub Pages matches `Server: GitHub.com`, which is also the product
+/// site's header. Keep Pages on `*.github.io` and third-party Pages hosts.
+fn drop_github_pages_on_github_dot_com(techs: &mut Vec<DetectedTechnology>, url: &str) {
+    if !is_github_dot_com_host(url) {
+        return;
+    }
+    techs.retain(|tech| tech.name != "GitHub Pages");
+}
+
+fn is_github_dot_com_host(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    parsed.host_str().is_some_and(|host| {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        host == "github.com" || host == "www.github.com"
+    })
 }
 
 /// Merges DNS / cert-issuer matches into an existing detection set and re-runs
@@ -320,15 +341,15 @@ pub(crate) fn supplement_technologies_with_script_text(
     finalize_detections(detected, ruleset)
 }
 
-/// Builds lowercase DNS haystacks from stored additional DNS fields for pattern matching.
+/// Builds lowercase DNS haystacks used for technology matching.
+///
+/// Only NS and CNAME are serving-stack evidence. TXT/MX/SPF/DMARC stay in
+/// satellite tables (`url_txt_records`, `url_mx_records`) and are not copied
+/// into `url_technologies`.
 #[must_use]
 pub(crate) fn dns_records_haystack(
     nameservers: Option<&str>,
-    txt_records: Option<&str>,
-    mx_records: Option<&str>,
     cname_chain: Option<&str>,
-    spf_record: Option<&str>,
-    dmarc_record: Option<&str>,
 ) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let push = |map: &mut HashMap<String, String>, key: &str, value: Option<&str>| {
@@ -339,29 +360,7 @@ pub(crate) fn dns_records_haystack(
         }
     };
     push(&mut map, "NS", nameservers);
-    push(&mut map, "MX", mx_records);
     push(&mut map, "CNAME", cname_chain);
-
-    // TXT haystack includes SPF/DMARC text when present (common verification patterns).
-    let mut txt_parts = Vec::new();
-    if let Some(t) = txt_records {
-        if !t.is_empty() {
-            txt_parts.push(t);
-        }
-    }
-    if let Some(t) = spf_record {
-        if !t.is_empty() {
-            txt_parts.push(t);
-        }
-    }
-    if let Some(t) = dmarc_record {
-        if !t.is_empty() {
-            txt_parts.push(t);
-        }
-    }
-    if !txt_parts.is_empty() {
-        map.insert("TXT".to_string(), txt_parts.join(" ").to_lowercase());
-    }
     map
 }
 
@@ -765,11 +764,11 @@ mod tests {
     #[test]
     fn test_supplement_dns_cert_merges_and_implies() {
         let mut technologies = HashMap::new();
-        let mut mx_tech = empty_tech();
-        mx_tech.dns.insert("MX".into(), vec!["google\\.com".into()]);
-        mx_tech.implies.push("Gmail\\;confidence:50".to_string());
-        technologies.insert("Google Workspace".to_string(), mx_tech);
-        technologies.insert("Gmail".to_string(), empty_tech());
+        let mut ns_tech = empty_tech();
+        ns_tech.dns.insert("NS".into(), vec![r"awsdns-\d+".into()]);
+        ns_tech.implies.push("Amazon Web Services".to_string());
+        technologies.insert("Amazon Route 53".to_string(), ns_tech);
+        technologies.insert("Amazon Web Services".to_string(), empty_tech());
 
         let ruleset = FingerprintRuleset {
             technologies,
@@ -781,11 +780,208 @@ mod tests {
             },
         };
 
-        let dns = HashMap::from([("MX".into(), "10 aspmx.l.google.com.".to_string())]);
+        let dns = HashMap::from([("NS".into(), "ns-520.awsdns-01.net.".to_string())]);
         let result = supplement_technologies_with_dns_cert(&ruleset, Vec::new(), &dns, None);
         let names: HashSet<_> = result.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains("Google Workspace"));
-        assert!(names.contains("Gmail"));
+        assert!(names.contains("Amazon Route 53"));
+        assert!(names.contains("Amazon Web Services"));
+    }
+
+    #[test]
+    fn test_supplement_txt_mx_org_proofs_are_not_technologies() {
+        let mut technologies = HashMap::new();
+        let mut docusign = empty_tech();
+        docusign.dns.insert("TXT".into(), vec!["docusign=".into()]);
+        let mut miro = empty_tech();
+        miro.dns
+            .insert("TXT".into(), vec!["miro-verification=".into()]);
+        let mut gmail = empty_tech();
+        gmail.dns.insert("MX".into(), vec!["google\\.com".into()]);
+        technologies.insert("DocuSign".into(), docusign);
+        technologies.insert("Miro".into(), miro);
+        technologies.insert("Gmail".into(), gmail);
+
+        let ruleset = FingerprintRuleset {
+            technologies,
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+
+        let dns = HashMap::from([
+            (
+                "TXT".into(),
+                "docusign=087098e3 miro-verification=abc v=spf1 include:docusign.net".to_string(),
+            ),
+            ("MX".into(), "10 aspmx.l.google.com.".to_string()),
+        ]);
+        let result = supplement_technologies_with_dns_cert(&ruleset, Vec::new(), &dns, None);
+        assert!(
+            result.is_empty(),
+            "TXT/MX vendor proofs must not become url_technologies, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_supplement_cert_issuer_lets_encrypt() {
+        let mut tech = empty_tech();
+        tech.cert_issuer.push("Let's Encrypt".into());
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::from([("Let's Encrypt".into(), tech)]),
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+
+        let result = supplement_technologies_with_dns_cert(
+            &ruleset,
+            Vec::new(),
+            &HashMap::new(),
+            Some("C = US, O = Let's Encrypt, CN = R3"),
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "Let's Encrypt");
+    }
+
+    #[test]
+    fn dns_records_haystack_is_ns_and_cname_only() {
+        let map = dns_records_haystack(Some("ns-520.awsdns-01.net"), Some("cdn.example.net"));
+        assert_eq!(
+            map.get("NS").map(String::as_str),
+            Some("ns-520.awsdns-01.net")
+        );
+        assert_eq!(
+            map.get("CNAME").map(String::as_str),
+            Some("cdn.example.net")
+        );
+        assert!(!map.contains_key("TXT"));
+        assert!(!map.contains_key("MX"));
+    }
+
+    #[test]
+    fn github_com_server_header_is_not_github_pages() {
+        let ruleset = github_pages_ruleset();
+        let headers = server_header("github.com");
+        let result = detect_named(&ruleset, &headers, "https://github.com/");
+        assert!(
+            result.iter().all(|t| t.name != "GitHub Pages"),
+            "github.com product site must not be labeled GitHub Pages, got {result:?}"
+        );
+
+        let www = detect_named(&ruleset, &headers, "https://www.github.com/login");
+        assert!(
+            www.iter().all(|t| t.name != "GitHub Pages"),
+            "www.github.com must not be labeled GitHub Pages, got {www:?}"
+        );
+    }
+
+    #[test]
+    fn github_pages_still_matches_github_io_and_third_party_hosts() {
+        let ruleset = github_pages_ruleset();
+        let io = detect_named(&ruleset, &HeaderMap::new(), "https://example.github.io/");
+        assert!(
+            io.iter().any(|t| t.name == "GitHub Pages"),
+            "github.io hosts should still match GitHub Pages, got {io:?}"
+        );
+
+        let rust_lang = detect_named(
+            &ruleset,
+            &server_header("GitHub.com"),
+            "https://www.rust-lang.org/",
+        );
+        assert!(
+            rust_lang.iter().any(|t| t.name == "GitHub Pages"),
+            "non-github.com Server: GitHub.com should still match Pages, got {rust_lang:?}"
+        );
+    }
+
+    #[test]
+    fn csp_allowlist_does_not_detect_amazon_s3_on_full_pass() {
+        let mut s3 = empty_tech();
+        s3.headers.insert(
+            "content-security-policy".into(),
+            r"s3[^ ]*\.amazonaws\.com".into(),
+        );
+        s3.headers.insert("server".into(), "AmazonS3".into());
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies: HashMap::from([("Amazon S3".into(), s3)]),
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+
+        let mut csp = HeaderMap::new();
+        csp.insert(
+            reqwest::header::HeaderName::from_static("content-security-policy"),
+            "img-src https://inaturalist-open-data.s3.amazonaws.com"
+                .parse()
+                .unwrap(),
+        );
+        let wikipedia = detect_named(&ruleset, &csp, "https://www.wikipedia.org/");
+        assert!(
+            wikipedia.iter().all(|t| t.name != "Amazon S3"),
+            "CSP allowlists must not insert Amazon S3, got {wikipedia:?}"
+        );
+
+        let hosted = detect_named(
+            &ruleset,
+            &server_header("AmazonS3"),
+            "https://bucket.s3.amazonaws.com/",
+        );
+        assert!(
+            hosted.iter().any(|t| t.name == "Amazon S3"),
+            "Server: AmazonS3 should still fingerprint S3 hosting, got {hosted:?}"
+        );
+    }
+
+    fn github_pages_ruleset() -> Arc<FingerprintRuleset> {
+        let mut pages = empty_tech();
+        pages
+            .headers
+            .insert("server".into(), r"^GitHub\.com$".into());
+        pages.url.push(r"\.github\.io".into());
+        Arc::new(FingerprintRuleset {
+            technologies: HashMap::from([("GitHub Pages".into(), pages)]),
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        })
+    }
+
+    fn server_header(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(reqwest::header::SERVER, value.parse().unwrap());
+        headers
+    }
+
+    fn detect_named(
+        ruleset: &Arc<FingerprintRuleset>,
+        headers: &HeaderMap,
+        url: &str,
+    ) -> Vec<DetectedTechnology> {
+        detect_technologies_blocking(
+            ruleset,
+            headers,
+            &HashMap::new(),
+            &[],
+            "",
+            url,
+            &HashSet::new(),
+            "",
+        )
+        .expect("detect")
     }
 
     #[test]

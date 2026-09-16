@@ -69,7 +69,7 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 - **Secret detection** (findings tagged `external_script:<url>`)
 - **Technology fingerprints** via static Wappalyzer `scripts` patterns (no JS execution)
 
-Without the flag, fingerprints still use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/DNS/cert issuer.
+Without the flag, fingerprints still use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/NS/CNAME/cert issuer.
 
 ## TLS certificate capture
 

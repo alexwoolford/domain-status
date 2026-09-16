@@ -15,10 +15,12 @@ pub(crate) struct SignalMatch {
 /// Match technologies whose `select` map keys exist in `values`.
 ///
 /// Empty pattern strings mean "key presence is enough" (Wappalyzer semantics).
+/// `skip_key` drops keys that are not serving-stack evidence (CSP allowlists).
 pub(crate) fn match_string_map_signal(
     ruleset: &FingerprintRuleset,
     values: &HashMap<String, String>,
     select: impl Fn(&Technology) -> &HashMap<String, String>,
+    skip_key: impl Fn(&str) -> bool,
 ) -> Vec<SignalMatch> {
     let mut results = Vec::new();
     for (tech_name, tech) in &ruleset.technologies {
@@ -29,6 +31,9 @@ pub(crate) fn match_string_map_signal(
         let mut matched = false;
         let mut version: Option<String> = None;
         for (key, pattern) in patterns {
+            if skip_key(key) {
+                continue;
+            }
             let Some(value) = values.get(key) else {
                 continue;
             };

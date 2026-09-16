@@ -16,7 +16,7 @@
 //! - HTML text content
 //! - URL patterns
 //! - Script tag IDs (e.g., `__NEXT_DATA__` for Next.js)
-//! - DNS records and TLS certificate issuer (after DNS/TLS enrichment)
+//! - NS/CNAME records and TLS certificate issuer (after DNS/TLS enrichment)
 //! - First-party external script bodies when `--scan-external-scripts` is on
 //!   (same fetch as secret scanning; static `scripts` patterns only)
 //!
