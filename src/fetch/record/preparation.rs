@@ -185,8 +185,9 @@ mod tests {
     use crate::utils::TimingStats;
     use std::sync::Arc;
 
-    /// Max `GeoIP` lookup time (ms) allowed in tests. Lenient for CI (network/cold cache).
-    const GEOIP_TEST_TIMEOUT_MS: u64 = 8000;
+    /// Max `GeoIP` lookup time (µs) allowed in tests. 8s, lenient for CI.
+    /// `prepare_record_for_insertion` returns microseconds via `duration_to_us`.
+    const GEOIP_TEST_TIMEOUT_US: u64 = 8_000_000;
 
     async fn create_test_context() -> ProcessingContext {
         let client = Arc::new(
@@ -318,7 +319,7 @@ mod tests {
         let tls_dns_data = create_minimal_tls_dns_data();
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (persisted_record, (geoip_ms, whois_ms)) =
+        let (persisted_record, (geoip_us, whois_us)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -339,14 +340,11 @@ mod tests {
         assert_eq!(persisted_record.url_record.final_domain, "example.com");
         // Timing metrics should be reasonable
         // Note: GeoIP lookup can be slower in CI environments due to network latency and cold cache
-        // Using a more lenient threshold (5 seconds) to account for CI variability
         assert!(
-            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
-            "GeoIP lookup took {}ms, expected < {}ms",
-            geoip_ms,
-            GEOIP_TEST_TIMEOUT_MS
+            geoip_us < GEOIP_TEST_TIMEOUT_US,
+            "GeoIP lookup took {geoip_us}us, expected < {GEOIP_TEST_TIMEOUT_US}us"
         );
-        assert_eq!(whois_ms, 0); // WHOIS disabled in test context
+        assert_eq!(whois_us, 0); // WHOIS disabled in test context
     }
 
     #[tokio::test]
@@ -361,7 +359,7 @@ mod tests {
         tls_dns_data.ip_address = Some("invalid.ip.address".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (persisted_record, (geoip_ms, _whois_ms)) =
+        let (persisted_record, (geoip_us, _whois_us)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -383,10 +381,8 @@ mod tests {
         // GeoIP lookup should complete quickly (returns None for invalid IP)
         // Note: Using lenient threshold for CI environments
         assert!(
-            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
-            "GeoIP lookup took {}ms, expected < {}ms",
-            geoip_ms,
-            GEOIP_TEST_TIMEOUT_MS
+            geoip_us < GEOIP_TEST_TIMEOUT_US,
+            "GeoIP lookup took {geoip_us}us, expected < {GEOIP_TEST_TIMEOUT_US}us"
         );
     }
 
@@ -401,7 +397,7 @@ mod tests {
         let additional_dns = create_minimal_additional_dns_data();
 
         let start = std::time::Instant::now();
-        let (persisted_record, (geoip_ms, whois_ms)) =
+        let (persisted_record, (geoip_us, whois_us)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -429,12 +425,10 @@ mod tests {
             elapsed.as_millis()
         ); // Should complete reasonably quickly
         assert!(
-            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
-            "GeoIP lookup took {}ms, expected < {}ms",
-            geoip_ms,
-            GEOIP_TEST_TIMEOUT_MS
+            geoip_us < GEOIP_TEST_TIMEOUT_US,
+            "GeoIP lookup took {geoip_us}us, expected < {GEOIP_TEST_TIMEOUT_US}us"
         );
-        assert_eq!(whois_ms, 0); // WHOIS disabled
+        assert_eq!(whois_us, 0); // WHOIS disabled
     }
 
     #[tokio::test]
@@ -546,7 +540,7 @@ mod tests {
         let tls_dns_data = create_minimal_tls_dns_data();
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (persisted_record, (_geoip_ms, _whois_ms)) =
+        let (persisted_record, (_geoip_us, _whois_us)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -582,7 +576,7 @@ mod tests {
         tls_dns_data.ip_address = Some("999.999.999.999".to_string());
         let additional_dns = create_minimal_additional_dns_data();
 
-        let (persisted_record, (geoip_ms, whois_ms)) =
+        let (persisted_record, (geoip_us, whois_us)) =
             prepare_record_for_insertion(RecordPreparationParams {
                 resp_data,
                 html_data,
@@ -604,12 +598,10 @@ mod tests {
         // GeoIP lookup should complete quickly (returns None for invalid IP)
         // Note: Using lenient threshold for CI environments
         assert!(
-            geoip_ms < GEOIP_TEST_TIMEOUT_MS,
-            "GeoIP lookup took {}ms, expected < {}ms",
-            geoip_ms,
-            GEOIP_TEST_TIMEOUT_MS
+            geoip_us < GEOIP_TEST_TIMEOUT_US,
+            "GeoIP lookup took {geoip_us}us, expected < {GEOIP_TEST_TIMEOUT_US}us"
         );
-        assert_eq!(whois_ms, 0); // WHOIS disabled
+        assert_eq!(whois_us, 0); // WHOIS disabled
                                  // GeoIP data should be None (invalid IP)
         assert!(persisted_record.geoip.is_none());
     }
