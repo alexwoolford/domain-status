@@ -42,24 +42,9 @@ pub(crate) async fn fetch_tls_and_dns(
         async {
             let tls_start = Instant::now();
             let result = if final_url.starts_with("https://") {
-                get_ssl_certificate_info(host.to_string(), resolver).await
+                get_ssl_certificate_info(host, resolver).await
             } else {
-                use crate::models::CertificateInfo;
-                Ok(CertificateInfo {
-                    tls_version: None,
-                    subject: None,
-                    issuer: None,
-                    valid_from: None,
-                    valid_to: None,
-                    oids: None,
-                    cipher_suite: None,
-                    key_algorithm: None,
-                    subject_alternative_names: None,
-                    fingerprint_sha256: None,
-                    serial_number: None,
-                    is_self_signed: None,
-                    is_wildcard: None,
-                })
+                Ok(crate::models::CertificateInfo::default())
             };
             (result, duration_to_us(tls_start.elapsed()))
         },
