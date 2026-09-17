@@ -11,15 +11,17 @@
 //! Uses `tokio-rustls` for async TLS connections and `x509-parser` for certificate parsing.
 
 mod extract;
+#[cfg(test)]
+mod test_certs;
 
 use anyhow::Result;
 use chrono::NaiveDateTime;
 use hickory_resolver::TokioResolver;
-use log::error;
+use log::{debug, error};
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::collections::HashSet;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, OnceLock};
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::TlsConnector;
@@ -28,9 +30,8 @@ use crate::models::CertificateInfo;
 
 use extract::{extract_certificate_oids, extract_certificate_sans};
 
-/// A certificate verifier that always accepts certificates.
-/// This allows us to extract certificate information even from invalid certificates,
-/// and we'll record certificate issues as security warnings.
+/// Accepts every presented certificate so capture can record facts from
+/// misconfigured endpoints. This is not a trust decision (ADR 0003).
 #[derive(Debug)]
 struct AcceptAllVerifier;
 
@@ -43,7 +44,6 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
         _ocsp: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // Always accept - we'll validate and record issues ourselves
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
@@ -66,21 +66,57 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        // Return all supported schemes
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-        ]
+        rustls::crypto::CryptoProvider::get_default()
+            .map(|provider| {
+                provider
+                    .signature_verification_algorithms
+                    .supported_schemes()
+            })
+            .unwrap_or_else(|| {
+                rustls::crypto::ring::default_provider()
+                    .signature_verification_algorithms
+                    .supported_schemes()
+            })
     }
+}
+
+fn capture_client_config() -> Arc<ClientConfig> {
+    static CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
+    Arc::clone(CONFIG.get_or_init(|| {
+        Arc::new(
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
+                .with_no_client_auth(),
+        )
+    }))
+}
+
+fn parse_tls_server_name(domain: &str) -> Result<ServerName<'static>> {
+    ServerName::try_from(domain.to_owned()).map_err(|e| {
+        error!("Invalid domain name: {e}");
+        anyhow::anyhow!("Invalid domain name: {e}")
+    })
+}
+
+fn tls_version_from_protocol(
+    version: Option<rustls::ProtocolVersion>,
+) -> crate::models::TlsVersion {
+    use rustls::ProtocolVersion;
+    match version {
+        Some(ProtocolVersion::TLSv1_0) => crate::models::TlsVersion::Tls10,
+        Some(ProtocolVersion::TLSv1_1) => crate::models::TlsVersion::Tls11,
+        Some(ProtocolVersion::TLSv1_2) => crate::models::TlsVersion::Tls12,
+        Some(ProtocolVersion::TLSv1_3) => crate::models::TlsVersion::Tls13,
+        Some(ProtocolVersion::SSLv2 | ProtocolVersion::SSLv3) => crate::models::TlsVersion::Ssl30,
+        Some(_) | None => crate::models::TlsVersion::Unknown,
+    }
+}
+
+fn naive_utc_from_unix_timestamp(secs: i64, field: &str) -> Result<NaiveDateTime> {
+    chrono::DateTime::from_timestamp(secs, 0)
+        .map(|dt| dt.naive_utc())
+        .ok_or_else(|| anyhow::anyhow!("Certificate {field} timestamp out of range: {secs}"))
 }
 
 /// Resolves all public (non-private, non-loopback, non-link-local) IP addresses for
@@ -100,9 +136,16 @@ async fn resolve_public_tls_addrs(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to resolve {domain}: {e}"))?;
 
+    public_tls_socket_addrs(domain, response.iter())
+}
+
+/// Filters to public IPs, IPv4-first, and binds them to port 443.
+fn public_tls_socket_addrs(
+    domain: &str,
+    ips: impl IntoIterator<Item = IpAddr>,
+) -> Result<Vec<SocketAddr>> {
     let addrs = order_public_addrs_ipv4_first(
-        response
-            .iter()
+        ips.into_iter()
             .filter(|ip| crate::security::safe_resolver::is_public_ip(*ip)),
     );
 
@@ -120,10 +163,8 @@ async fn resolve_public_tls_addrs(
 
 /// Orders an iterator of IP addresses with all IPv4 addresses before IPv6 addresses,
 /// preserving relative order within each family (the resolver's original preference).
-fn order_public_addrs_ipv4_first(
-    ips: impl Iterator<Item = std::net::IpAddr>,
-) -> Vec<std::net::IpAddr> {
-    let (mut v4, v6): (Vec<_>, Vec<_>) = ips.partition(std::net::IpAddr::is_ipv4);
+fn order_public_addrs_ipv4_first(ips: impl Iterator<Item = IpAddr>) -> Vec<IpAddr> {
+    let (mut v4, v6): (Vec<_>, Vec<_>) = ips.partition(IpAddr::is_ipv4);
     v4.extend(v6);
     v4
 }
@@ -143,11 +184,11 @@ async fn connect_tls_tcp(domain: &str, addrs: &[SocketAddr]) -> Result<(TcpStrea
         {
             Ok(Ok(sock)) => return Ok((sock, socket_addr)),
             Ok(Err(e)) => {
-                error!("Failed to connect to {domain} ({socket_addr}) - {e}");
+                debug!("Failed to connect to {domain} ({socket_addr}) - {e}");
                 last_errors.push(format!("{socket_addr} ({e})"));
             }
             Err(_) => {
-                error!("TCP connection timeout for {domain} via {socket_addr}");
+                debug!("TCP connection timeout for {domain} via {socket_addr}");
                 last_errors.push(format!("{socket_addr} (timeout)"));
             }
         }
@@ -164,7 +205,6 @@ fn parse_certificate_info_from_der(
     tls_version: crate::models::TlsVersion,
     cipher_suite: Option<String>,
 ) -> Result<CertificateInfo> {
-    // Compute SHA-256 fingerprint of the raw DER certificate
     let fingerprint_sha256 = Some(crate::utils::sha256_hex(cert_der));
 
     let (_, cert) = x509_parser::parse_x509_certificate(cert_der)?;
@@ -178,26 +218,15 @@ fn parse_certificate_info_from_der(
     let unique_oids: HashSet<String> = extract_certificate_oids(&cert).into_iter().collect();
     let sans = extract_certificate_sans(&cert);
 
-    // Cert intelligence: serial, self-signed, wildcard
     let serial_number = Some(tbs_cert.raw_serial_as_string());
+    // Heuristic: identical subject and issuer DNs. Not a cryptographic verify.
     let is_self_signed = Some(subject == issuer);
     let is_wildcard = Some(sans.iter().any(|san| san.starts_with("*.")));
 
-    let valid_from_str = tbs_cert
-        .validity
-        .not_before
-        .to_rfc2822()
-        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_before: {e}"))?;
-    let valid_from = NaiveDateTime::parse_from_str(&valid_from_str, "%a, %d %b %Y %H:%M:%S %z")
-        .map_err(|_| anyhow::anyhow!("Failed to parse not_before"))?;
-
-    let valid_to_str = tbs_cert
-        .validity
-        .not_after
-        .to_rfc2822()
-        .map_err(|e| anyhow::anyhow!("RFC2822 conversion error for not_after: {e}"))?;
-    let valid_to = NaiveDateTime::parse_from_str(&valid_to_str, "%a, %d %b %Y %H:%M:%S %z")
-        .map_err(|_| anyhow::anyhow!("Failed to parse not_after"))?;
+    let valid_from =
+        naive_utc_from_unix_timestamp(tbs_cert.validity.not_before.timestamp(), "not_before")?;
+    let valid_to =
+        naive_utc_from_unix_timestamp(tbs_cert.validity.not_after.timestamp(), "not_after")?;
 
     Ok(CertificateInfo {
         tls_version: Some(tls_version),
@@ -214,6 +243,49 @@ fn parse_certificate_info_from_der(
         is_self_signed,
         is_wildcard,
     })
+}
+
+async fn handshake_and_parse(domain: &str, sock: TcpStream) -> Result<CertificateInfo> {
+    let server_name = parse_tls_server_name(domain)?;
+    let connector = TlsConnector::from(capture_client_config());
+    let tls_stream = match tokio::time::timeout(
+        std::time::Duration::from_secs(crate::config::TLS_HANDSHAKE_TIMEOUT_SECS),
+        connector.connect(server_name, sock),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            error!("TLS connection failed for {domain}: {e}");
+            return Err(anyhow::anyhow!("TLS connection failed for {domain}: {e}"));
+        }
+        Err(_) => {
+            error!("TLS handshake timeout for {domain}");
+            return Err(anyhow::anyhow!(
+                "TLS handshake timeout for {} ({}s)",
+                domain,
+                crate::config::TLS_HANDSHAKE_TIMEOUT_SECS
+            ));
+        }
+    };
+
+    debug!("Extracting TLS version for domain: {domain}");
+    let conn = tls_stream.get_ref().1;
+    let tls_version = tls_version_from_protocol(conn.protocol_version());
+    let cipher_suite = conn
+        .negotiated_cipher_suite()
+        .map(|cs| format!("{:?}", cs.suite()));
+
+    // Certificates are available immediately after handshake; no HTTP request needed.
+    if let Some(cert) = conn.peer_certificates().and_then(|certs| certs.first()) {
+        let parsed = parse_certificate_info_from_der(cert.as_ref(), tls_version, cipher_suite)?;
+        debug!("SSL certificate info extracted for domain: {domain}");
+        return Ok(parsed);
+    }
+
+    Err(anyhow::anyhow!(
+        "Failed to retrieve certificate information for {domain}"
+    ))
 }
 
 /// Retrieves SSL/TLS certificate information for a domain.
@@ -245,95 +317,17 @@ fn parse_certificate_info_from_der(
 /// - TCP connection fails
 /// - TLS handshake fails
 /// - Certificate parsing fails
-#[allow(clippy::too_many_lines)] // Sequential TLS handshake + certificate field extraction; splitting would obscure the flow
 pub async fn get_ssl_certificate_info(
-    domain: String,
+    domain: &str,
     resolver: &TokioResolver,
 ) -> Result<CertificateInfo> {
-    log::debug!("Attempting to get SSL info for domain: {domain}");
-
-    // Diagnostic certificate capture still accepts invalid certificates so we can
-    // inspect misconfigured endpoints separately from the main HTTP transport.
-    let config = ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
-        .with_no_client_auth();
-
-    log::debug!("Attempting to resolve server name for domain: {domain}");
-    // Note: ServerName::try_from requires 'static lifetime, so we must clone or pass String
-    // The clone is necessary because we need domain for error messages later
-    let server_name = match ServerName::try_from(domain.clone()) {
-        Ok(name) => name,
-        Err(e) => {
-            error!("Invalid domain name: {e}");
-            return Err(anyhow::anyhow!("Invalid domain name: {e}"));
-        }
-    };
-
-    log::debug!("Attempting to connect to domain: {domain}");
-    let socket_addrs = resolve_public_tls_addrs(&domain, resolver).await?;
-    let (sock, socket_addr) = connect_tls_tcp(&domain, &socket_addrs).await?;
-    log::debug!("Connected to {domain} via {socket_addr}");
-
-    let connector = TlsConnector::from(Arc::new(config));
-    let tls_stream = match tokio::time::timeout(
-        std::time::Duration::from_secs(crate::config::TLS_HANDSHAKE_TIMEOUT_SECS),
-        connector.connect(server_name, sock),
-    )
-    .await
-    {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(e)) => {
-            error!("TLS connection failed for {domain}: {e}");
-            return Err(anyhow::anyhow!("TLS connection failed for {domain}"));
-        }
-        Err(_) => {
-            error!("TLS handshake timeout for {domain}");
-            return Err(anyhow::anyhow!(
-                "TLS handshake timeout for {} ({}s)",
-                domain,
-                crate::config::TLS_HANDSHAKE_TIMEOUT_SECS
-            ));
-        }
-    };
-
-    log::debug!("Extracting TLS version for domain: {domain}");
-    let tls_version = {
-        use rustls::ProtocolVersion;
-        tls_stream
-            .get_ref()
-            .1
-            .protocol_version()
-            .map_or(crate::models::TlsVersion::Unknown, |v| match v {
-                ProtocolVersion::TLSv1_0 => crate::models::TlsVersion::Tls10,
-                ProtocolVersion::TLSv1_1 => crate::models::TlsVersion::Tls11,
-                ProtocolVersion::TLSv1_2 => crate::models::TlsVersion::Tls12,
-                ProtocolVersion::TLSv1_3 => crate::models::TlsVersion::Tls13,
-                ProtocolVersion::SSLv2 | ProtocolVersion::SSLv3 => crate::models::TlsVersion::Ssl30,
-                _ => crate::models::TlsVersion::Unknown,
-            })
-    };
-
-    // Extract negotiated cipher suite
-    let cipher_suite = tls_stream
-        .get_ref()
-        .1
-        .negotiated_cipher_suite()
-        .map(|cs| format!("{:?}", cs.suite()));
-
-    // Certificates are available immediately after handshake; no HTTP request needed.
-    // (Removing the GET request also eliminates unbounded TCP write hang risk.)
-    if let Some(certs) = tls_stream.get_ref().1.peer_certificates() {
-        if let Some(cert) = certs.first() {
-            let parsed = parse_certificate_info_from_der(cert.as_ref(), tls_version, cipher_suite)?;
-            log::debug!("SSL certificate info extracted for domain: {domain}");
-            return Ok(parsed);
-        }
-    }
-
-    Err(anyhow::anyhow!(
-        "Failed to retrieve certificate information for {domain}"
-    ))
+    debug!("Attempting to get SSL info for domain: {domain}");
+    parse_tls_server_name(domain)?;
+    debug!("Attempting to connect to domain: {domain}");
+    let socket_addrs = resolve_public_tls_addrs(domain, resolver).await?;
+    let (sock, socket_addr) = connect_tls_tcp(domain, &socket_addrs).await?;
+    debug!("Connected to {domain} via {socket_addr}");
+    handshake_and_parse(domain, sock).await
 }
 
 #[cfg(test)]
@@ -341,12 +335,8 @@ mod tests {
     use super::*;
     use crate::initialization::test_resolver;
     use pretty_assertions::assert_eq;
-    use rcgen::{
-        CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    };
 
     fn init_crypto_for_test() {
-        // Initialize crypto provider for TLS tests
         crate::initialization::init_crypto_provider();
     }
 
@@ -355,176 +345,65 @@ mod tests {
     async fn test_get_ssl_certificate_info_valid_domain() {
         init_crypto_for_test();
         let resolver = test_resolver();
-        // Test with a well-known domain that should have a valid certificate
-        let result = get_ssl_certificate_info("example.com".to_string(), resolver.as_ref()).await;
-        let cert_info = result.unwrap_or_else(|e| {
-            panic!("ignored live TLS test must handshake example.com, got {e}")
-        });
+        let cert_info = get_ssl_certificate_info("example.com", resolver.as_ref())
+            .await
+            .unwrap_or_else(|e| {
+                panic!("ignored live TLS test must handshake example.com, got {e}")
+            });
         assert!(
-            cert_info.subject.is_some() || cert_info.issuer.is_some(),
-            "certificate should include subject or issuer"
+            cert_info.subject.is_some(),
+            "certificate should include subject"
+        );
+        assert!(
+            cert_info.issuer.is_some(),
+            "certificate should include issuer"
+        );
+        assert!(
+            matches!(
+                cert_info.tls_version,
+                Some(crate::models::TlsVersion::Tls12 | crate::models::TlsVersion::Tls13)
+            ),
+            "example.com should negotiate TLS 1.2 or 1.3, got {:?}",
+            cert_info.tls_version
+        );
+        assert_eq!(
+            cert_info.fingerprint_sha256.as_ref().map(String::len),
+            Some(64)
         );
     }
 
-    #[tokio::test]
-    async fn test_get_ssl_certificate_info_invalid_domain() {
-        init_crypto_for_test();
-        let resolver = test_resolver();
-        // Test with an invalid domain name
-        let result = get_ssl_certificate_info("".to_string(), resolver.as_ref()).await;
-        match result {
-            Ok(_) => panic!("Expected error for invalid domain"),
-            Err(e) => {
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("Invalid domain name") || error_msg.contains("invalid"),
-                    "Expected invalid domain error, got: {}",
-                    error_msg
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get_ssl_certificate_info_invalid_domain_format() {
-        init_crypto_for_test();
-        // Test with various invalid domain formats
-        let invalid_domains = vec![
-            "..",               // Invalid format
-            "domain..com",      // Double dots
-            "domain@invalid",   // Invalid character
-            "domain space.com", // Space in domain
-        ];
-
-        let resolver = test_resolver();
-        for domain in invalid_domains {
-            let result = get_ssl_certificate_info(domain.to_string(), resolver.as_ref()).await;
-            // Should fail at domain validation or connection
+    #[test]
+    fn parse_tls_server_name_rejects_invalid() {
+        for domain in ["", "..", "domain@invalid", "domain space.com"] {
+            let err =
+                parse_tls_server_name(domain).expect_err("invalid SNI should fail before DNS");
             assert!(
-                result.is_err(),
-                "Expected error for invalid domain: {}",
-                domain
+                err.to_string().contains("Invalid domain name"),
+                "{domain}: {err}"
             );
         }
     }
 
-    #[tokio::test]
-    async fn test_get_ssl_certificate_info_connection_refused() {
-        init_crypto_for_test();
-        let resolver = test_resolver();
-        // Use a port that's guaranteed to be closed (connection refused)
-        // Port 1 is typically reserved and closed
-        let result = get_ssl_certificate_info("127.0.0.1".to_string(), resolver.as_ref()).await;
-        // Should fail with connection error or timeout
-        match result {
-            Ok(_) => panic!("Expected error for connection refused"),
-            Err(e) => {
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("Failed to connect")
-                        || error_msg.contains("connection")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("refused")
-                        || error_msg.contains("Unsafe URL")
-                        || error_msg.contains("private"),
-                    "Expected connection or safety error, got: {}",
-                    error_msg
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get_ssl_certificate_info_nonexistent_domain_dns() {
-        init_crypto_for_test();
-        let resolver = test_resolver();
-        // Test with a domain that definitely doesn't exist (DNS failure)
-        let result = get_ssl_certificate_info(
-            "this-domain-definitely-does-not-exist-12345.invalid".to_string(),
-            resolver.as_ref(),
-        )
-        .await;
-        // Should fail with DNS or connection error
-        match result {
-            Ok(_) => panic!("Expected error for nonexistent domain"),
-            Err(e) => {
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("Failed to connect")
-                        || error_msg.contains("Failed to resolve")
-                        || error_msg.contains("connection")
-                        || error_msg.contains("timeout")
-                        || error_msg.contains("Invalid domain name")
-                        || error_msg.contains("lookup"),
-                    "Expected DNS/connection error, got: {}",
-                    error_msg
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get_ssl_certificate_info_tcp_timeout() {
-        init_crypto_for_test();
-        let resolver = test_resolver();
-        // 192.0.2.0/24 is documentation (TEST-NET-1). We block it for SSRF before any connection,
-        // so we get "Unsafe URL: private IPv4 address" rather than a TCP timeout.
-        let result = get_ssl_certificate_info("192.0.2.1".to_string(), resolver.as_ref()).await;
-        match result {
-            Ok(_) => panic!("Expected error for 192.0.2.1 (blocked or timeout)"),
-            Err(e) => {
-                let error_msg = e.to_string();
-                assert!(
-                    error_msg.contains("timeout")
-                        || error_msg.contains("Failed to connect")
-                        || error_msg.contains("connection")
-                        || error_msg.contains("private IPv4 address")
-                        || error_msg.contains("not allowed"),
-                    "Expected SSRF rejection or timeout/connection error, got: {}",
-                    error_msg
-                );
-            }
-        }
-    }
-
-    fn test_certificate_der() -> Vec<u8> {
-        let mut params = CertificateParams::new(vec![
+    fn expected_dns_sans() -> Vec<String> {
+        vec![
             "example.com".to_string(),
             "www.example.com".to_string(),
-        ])
-        .expect("certificate params");
-        let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, "example.com");
-        params.distinguished_name = distinguished_name;
-        params.is_ca = IsCa::ExplicitNoCa;
-        params.extended_key_usages = vec![
-            ExtendedKeyUsagePurpose::ServerAuth,
-            ExtendedKeyUsagePurpose::ClientAuth,
-        ];
-        params
-            .self_signed(&KeyPair::generate().expect("key pair"))
-            .expect("certificate")
-            .der()
-            .to_vec()
+            "*.example.com".to_string(),
+        ]
     }
 
     #[test]
     fn test_parse_certificate_info_from_der_extracts_contract() {
+        let cert = test_certs::generate(test_certs::TestCertOptions::default());
         let parsed = parse_certificate_info_from_der(
-            &test_certificate_der(),
+            &cert.der,
             crate::models::TlsVersion::Tls13,
             Some("TLS13_AES_256_GCM_SHA384".to_string()),
         )
         .expect("parse certificate");
 
         assert_eq!(parsed.tls_version, Some(crate::models::TlsVersion::Tls13));
-        assert_eq!(
-            parsed.subject_alternative_names,
-            Some(vec![
-                "example.com".to_string(),
-                "www.example.com".to_string()
-            ])
-        );
+        assert_eq!(parsed.subject_alternative_names, Some(expected_dns_sans()));
         assert_eq!(
             parsed.cipher_suite.as_deref(),
             Some("TLS13_AES_256_GCM_SHA384")
@@ -537,12 +416,42 @@ mod tests {
             .issuer
             .as_deref()
             .is_some_and(|issuer| issuer.contains("example.com")));
-        assert!(parsed.valid_from.is_some());
-        assert!(parsed.valid_to.is_some());
+        assert_eq!(parsed.is_self_signed, Some(true));
+        assert_eq!(parsed.is_wildcard, Some(true));
         assert!(parsed
-            .oids
+            .serial_number
             .as_ref()
-            .is_some_and(|oids| oids.contains("2.5.29.17")));
+            .is_some_and(|serial| !serial.is_empty()));
+        let expected_fp = crate::utils::sha256_hex(&cert.der);
+        assert_eq!(
+            parsed.fingerprint_sha256.as_deref(),
+            Some(expected_fp.as_str())
+        );
+        assert_eq!(
+            parsed.fingerprint_sha256.as_ref().map(String::len),
+            Some(64)
+        );
+        assert_eq!(
+            parsed.valid_from,
+            Some(
+                chrono::DateTime::from_timestamp(test_certs::DAY1_NOT_BEFORE_UNIX, 0)
+                    .expect("day-1 from")
+                    .naive_utc()
+            )
+        );
+        assert_eq!(
+            parsed.valid_to,
+            Some(
+                chrono::DateTime::from_timestamp(test_certs::DAY9_NOT_AFTER_UNIX, 0)
+                    .expect("day-9 to")
+                    .naive_utc()
+            )
+        );
+        assert!(parsed.valid_from < parsed.valid_to);
+        let oids = parsed.oids.expect("oids");
+        assert!(oids.contains("2.5.29.17"));
+        assert!(oids.contains(test_certs::DV_POLICY_OID));
+        assert!(oids.contains(test_certs::CUSTOM_EKU_OID));
         assert!(matches!(
             parsed.key_algorithm,
             Some(crate::models::KeyAlgorithm::ECDSA | crate::models::KeyAlgorithm::Ed25519)
@@ -553,21 +462,21 @@ mod tests {
     fn test_order_public_addrs_ipv4_first_prefers_ipv4() {
         use std::net::{Ipv4Addr, Ipv6Addr};
         let ips = vec![
-            std::net::IpAddr::V6(Ipv6Addr::LOCALHOST),
-            std::net::IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
-            std::net::IpAddr::V6(Ipv6Addr::new(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+            IpAddr::V6(Ipv6Addr::new(
                 0x2606, 0x2800, 0x220, 1, 0x248, 0x1893, 0x25c8, 0x1946,
             )),
-            std::net::IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
         ];
         let ordered = order_public_addrs_ipv4_first(ips.into_iter());
         assert_eq!(
             ordered,
             vec![
-                std::net::IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
-                std::net::IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
-                std::net::IpAddr::V6(Ipv6Addr::LOCALHOST),
-                std::net::IpAddr::V6(Ipv6Addr::new(
+                IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+                IpAddr::V6(Ipv6Addr::LOCALHOST),
+                IpAddr::V6(Ipv6Addr::new(
                     0x2606, 0x2800, 0x220, 1, 0x248, 0x1893, 0x25c8, 0x1946,
                 )),
             ]
@@ -578,6 +487,52 @@ mod tests {
     fn test_order_public_addrs_ipv4_first_empty() {
         let ordered = order_public_addrs_ipv4_first(std::iter::empty());
         assert!(ordered.is_empty());
+    }
+
+    #[test]
+    fn public_tls_socket_addrs_skips_private_and_uses_port_443() {
+        let addrs = public_tls_socket_addrs(
+            "example.test",
+            [
+                IpAddr::from([127, 0, 0, 1]),
+                IpAddr::from([1, 1, 1, 1]),
+                IpAddr::from([10, 0, 0, 1]),
+            ],
+        )
+        .expect("public ip");
+        assert_eq!(addrs, vec![SocketAddr::from(([1, 1, 1, 1], 443))]);
+    }
+
+    #[test]
+    fn public_tls_socket_addrs_errors_when_none_public() {
+        let err = public_tls_socket_addrs("example.test", [IpAddr::from([127, 0, 0, 1])])
+            .expect_err("loopback only");
+        assert!(
+            err.to_string()
+                .contains("No public IP addresses resolved for example.test"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tls_version_from_protocol_maps_known_versions() {
+        use rustls::ProtocolVersion;
+        assert_eq!(
+            tls_version_from_protocol(Some(ProtocolVersion::TLSv1_2)),
+            crate::models::TlsVersion::Tls12
+        );
+        assert_eq!(
+            tls_version_from_protocol(Some(ProtocolVersion::TLSv1_3)),
+            crate::models::TlsVersion::Tls13
+        );
+        assert_eq!(
+            tls_version_from_protocol(Some(ProtocolVersion::SSLv3)),
+            crate::models::TlsVersion::Ssl30
+        );
+        assert_eq!(
+            tls_version_from_protocol(None),
+            crate::models::TlsVersion::Unknown
+        );
     }
 
     #[tokio::test]
@@ -602,7 +557,9 @@ mod tests {
         let err = connect_tls_tcp("example.test", &[])
             .await
             .expect_err("no addresses should fail");
-        assert!(err.to_string().contains("any of"));
+        let msg = err.to_string();
+        assert!(msg.contains("example.test"), "message: {msg}");
+        assert!(msg.contains("via any of: "), "message: {msg}");
     }
 
     #[test]
@@ -616,37 +573,18 @@ mod tests {
         assert!(error.to_string().contains("Parsing Error"));
     }
 
-    fn fixture_server_identity() -> (Vec<u8>, Vec<u8>) {
-        let mut params = CertificateParams::new(vec![
-            "example.com".to_string(),
-            "www.example.com".to_string(),
-        ])
-        .expect("certificate params");
-        let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, "example.com");
-        params.distinguished_name = distinguished_name;
-        params.is_ca = IsCa::ExplicitNoCa;
-        params.extended_key_usages = vec![
-            ExtendedKeyUsagePurpose::ServerAuth,
-            ExtendedKeyUsagePurpose::ClientAuth,
-        ];
-        let key_pair = KeyPair::generate().expect("key pair");
-        let cert = params.self_signed(&key_pair).expect("certificate");
-        (cert.der().to_vec(), key_pair.serialize_der())
-    }
-
     async fn handshake_local_tls_fixture() -> crate::models::CertificateInfo {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
         use tokio::net::{TcpListener, TcpStream};
         use tokio_rustls::TlsAcceptor;
 
         init_crypto_for_test();
-        let (cert_der, key_der) = fixture_server_identity();
+        let cert = test_certs::generate(test_certs::TestCertOptions::default());
         let server_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(
-                vec![CertificateDer::from(cert_der)],
-                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+                vec![CertificateDer::from(cert.der)],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_der)),
             )
             .expect("server TLS config");
         let acceptor = TlsAcceptor::from(Arc::new(server_config));
@@ -661,44 +599,10 @@ mod tests {
             let _ = release_rx.await;
         });
 
-        let client_config = ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAllVerifier))
-            .with_no_client_auth();
         let sock = TcpStream::connect(addr).await.expect("connect to fixture");
-        let connector = TlsConnector::from(Arc::new(client_config));
-        let server_name = ServerName::try_from("example.com".to_string()).expect("SNI");
-        let tls_stream = connector
-            .connect(server_name, sock)
+        let parsed = handshake_and_parse("example.com", sock)
             .await
             .expect("client handshake");
-
-        use rustls::ProtocolVersion;
-        let tls_version = tls_stream.get_ref().1.protocol_version().map_or(
-            crate::models::TlsVersion::Unknown,
-            |v| match v {
-                ProtocolVersion::TLSv1_0 => crate::models::TlsVersion::Tls10,
-                ProtocolVersion::TLSv1_1 => crate::models::TlsVersion::Tls11,
-                ProtocolVersion::TLSv1_2 => crate::models::TlsVersion::Tls12,
-                ProtocolVersion::TLSv1_3 => crate::models::TlsVersion::Tls13,
-                ProtocolVersion::SSLv2 | ProtocolVersion::SSLv3 => crate::models::TlsVersion::Ssl30,
-                _ => crate::models::TlsVersion::Unknown,
-            },
-        );
-        let cipher_suite = tls_stream
-            .get_ref()
-            .1
-            .negotiated_cipher_suite()
-            .map(|cs| format!("{:?}", cs.suite()));
-        let cert = tls_stream
-            .get_ref()
-            .1
-            .peer_certificates()
-            .and_then(|certs| certs.first())
-            .expect("peer certificate after handshake");
-        let parsed = parse_certificate_info_from_der(cert.as_ref(), tls_version, cipher_suite)
-            .expect("parse handshake certificate");
-        drop(tls_stream);
         let _ = release_tx.send(());
         parsed
     }
@@ -719,12 +623,14 @@ mod tests {
                 .is_some_and(|s| s.contains("example.com")),
             "handshake subject should include fixture CN"
         );
-        assert_eq!(
-            parsed.subject_alternative_names,
-            Some(vec![
-                "example.com".to_string(),
-                "www.example.com".to_string()
-            ])
+        assert_eq!(parsed.subject_alternative_names, Some(expected_dns_sans()));
+        assert!(
+            matches!(
+                parsed.tls_version,
+                Some(crate::models::TlsVersion::Tls12 | crate::models::TlsVersion::Tls13)
+            ),
+            "local fixture should negotiate TLS 1.2 or 1.3, got {:?}",
+            parsed.tls_version
         );
 
         let pool = create_test_pool().await;

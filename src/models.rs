@@ -140,7 +140,7 @@ impl fmt::Display for TlsVersion {
 /// * `key_algorithm` - Public key algorithm
 /// * `subject_alternative_names` - DNS names from the Subject Alternative Name extension (for linking domains sharing certificates)
 /// * `fingerprint_sha256` - SHA-256 hash of the leaf certificate DER (for infrastructure correlation)
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CertificateInfo {
     pub tls_version: Option<TlsVersion>,
     pub subject: Option<String>,
