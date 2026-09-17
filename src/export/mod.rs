@@ -1,7 +1,8 @@
-//! Export functionality for `domain_status` data.
+//! Export `url_status` rows (plus satellites) to CSV, JSONL, or Parquet.
 //!
-//! This module provides functions to export data from the `SQLite` database
-//! into various formats (CSV, JSONL, Parquet) for different use cases.
+//! Optional filters: `run_id`, `domain` (exact `initial_domain` or `final_domain`),
+//! `status`, `since`. Implied fingerprint technologies are omitted unless
+//! [`ExportOptions::include_implied_tech`] is set.
 
 mod bootstrap;
 mod csv;

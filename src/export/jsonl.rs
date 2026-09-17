@@ -752,6 +752,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_export_jsonl_include_implied_tech_on_off() {
+        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
+        let db_path = temp_db.path();
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("Failed to create database pool");
+        run_migrations(&pool)
+            .await
+            .expect("Failed to run migrations");
+        let url_id = create_test_url_status(&pool, "implied.com", 200).await;
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, is_implied)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("nginx")
+        .bind(0i64)
+        .execute(&pool)
+        .await
+        .expect("insert observed tech");
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, is_implied)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("PHP")
+        .bind(1i64)
+        .execute(&pool)
+        .await
+        .expect("insert implied tech");
+        drop(pool);
+
+        let off_file = NamedTempFile::new().expect("Failed to create temp file");
+        export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(off_file.path().to_path_buf()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect("export off");
+        let off: serde_json::Value = serde_json::from_str(
+            std::fs::read_to_string(off_file.path())
+                .expect("read")
+                .trim(),
+        )
+        .expect("json");
+        let off_tech = off["technologies"].as_array().expect("array");
+        assert_eq!(off["technology_count"], 1);
+        assert_eq!(off_tech.len(), 1);
+        assert_eq!(off_tech[0]["name"], "nginx");
+        assert_eq!(off_tech[0]["is_implied"], false);
+
+        let on_file = NamedTempFile::new().expect("Failed to create temp file");
+        export_jsonl(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(on_file.path().to_path_buf()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: true,
+        })
+        .await
+        .expect("export on");
+        let on: serde_json::Value = serde_json::from_str(
+            std::fs::read_to_string(on_file.path())
+                .expect("read")
+                .trim(),
+        )
+        .expect("json");
+        let on_tech = on["technologies"].as_array().expect("array");
+        assert_eq!(on["technology_count"], 2);
+        assert_eq!(on_tech.len(), 2);
+        let php = on_tech.iter().find(|t| t["name"] == "PHP").expect("PHP");
+        assert_eq!(php["is_implied"], true);
+        let nginx = on_tech
+            .iter()
+            .find(|t| t["name"] == "nginx")
+            .expect("nginx");
+        assert_eq!(nginx["is_implied"], false);
+    }
+
+    #[tokio::test]
     async fn test_export_jsonl_empty_database() {
         let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
         let db_path = temp_db.path();
@@ -781,38 +870,6 @@ mod tests {
         .expect("Should export successfully even with empty database");
 
         assert_eq!(count, 0, "Should export 0 records from empty database");
-    }
-
-    #[tokio::test]
-    async fn test_export_jsonl_stdout() {
-        let temp_db = NamedTempFile::new().expect("Failed to create temp DB");
-        let db_path = temp_db.path();
-
-        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
-            .await
-            .expect("Failed to create database pool");
-        run_migrations(&pool)
-            .await
-            .expect("Failed to run migrations");
-
-        create_test_url_status(&pool, "example.com", 200).await;
-        drop(pool);
-
-        // Export to stdout (None output path)
-        let count = export_jsonl(&ExportOptions {
-            db_path: db_path.to_path_buf(),
-            output: None, // stdout
-            format: ExportFormat::Jsonl,
-            run_id: None,
-            domain: None,
-            status: None,
-            since: None,
-            include_implied_tech: false,
-        })
-        .await
-        .expect("Should export to stdout successfully");
-
-        assert_eq!(count, 1, "Should export 1 record");
     }
 
     #[tokio::test]
@@ -1001,6 +1058,16 @@ mod tests {
             .as_array()
             .expect("Should be array");
         assert_eq!(technologies.len(), 2);
+        let wordpress = technologies
+            .iter()
+            .find(|t| t["name"] == "WordPress")
+            .expect("WordPress");
+        assert!(wordpress["version"].is_null());
+        let colon = technologies
+            .iter()
+            .find(|t| t["name"] == "Tech:Name")
+            .expect("colon in technology name must round-trip");
+        assert_eq!(colon["version"], "1.0");
     }
 
     #[tokio::test]
@@ -1234,19 +1301,15 @@ mod tests {
 
         assert_eq!(count, 1);
 
-        // Verify the export succeeded and JSON is valid
-        let mut file = std::fs::File::open(&output_path).expect("Failed to open output file");
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .expect("Failed to read output file");
-
+        let contents = std::fs::read_to_string(&output_path).expect("Failed to read output file");
         let json_obj: serde_json::Value =
             serde_json::from_str(contents.trim()).expect("Should be valid JSON");
         let technologies = json_obj["technologies"]
             .as_array()
             .expect("Should be array");
-        // Should handle colon in name correctly (may be split incorrectly, but shouldn't panic)
-        assert!(!technologies.is_empty());
+        assert_eq!(technologies.len(), 1);
+        assert_eq!(technologies[0]["name"], "Tech:Name");
+        assert_eq!(technologies[0]["version"], "1.0");
     }
 
     async fn insert_dns_data(pool: &SqlitePool, url_id: i64) {

@@ -967,10 +967,10 @@ mod tests {
     use super::super::types::{ExportFormat, ExportOptions};
     use super::{build_schema, export_parquet};
     use crate::storage::migrations::run_migrations;
-    use arrow::array::Array;
+    use arrow::array::{Array, BooleanArray, ListArray, StringArray, StructArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use sqlx::{Row, SqlitePool};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::NamedTempFile;
 
     async fn create_test_run(pool: &SqlitePool, run_id: &str) {
@@ -1253,5 +1253,108 @@ mod tests {
         .expect("Should export with filter");
 
         assert_eq!(count, 1, "Filter should select only 1 record");
+    }
+
+    fn parquet_tech_flags(path: &Path) -> Vec<(String, bool)> {
+        let file = std::fs::File::open(path).expect("open");
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).expect("parse Parquet");
+        let mut reader = builder.build().expect("build reader");
+        let batch = reader.next().expect("batch").expect("batch ok");
+        let col = batch
+            .column_by_name("technologies")
+            .expect("technologies column");
+        let list = col
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .expect("technologies should be ListArray");
+        let values = list.value(0);
+        if values.is_empty() {
+            return Vec::new();
+        }
+        let st = values
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("list values should be StructArray");
+        let names = st
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("name");
+        let implied = st
+            .column(3)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .expect("is_implied");
+        (0..st.len())
+            .map(|i| (names.value(i).to_string(), implied.value(i)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_parquet_include_implied_tech_on_off() {
+        let temp_db = NamedTempFile::new().expect("temp DB");
+        let db_path = temp_db.path();
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .unwrap();
+        run_migrations(&pool).await.unwrap();
+        let url_id = create_test_url_status(&pool, "implied.com").await;
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, is_implied) VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("nginx")
+        .bind(0i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, is_implied) VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("PHP")
+        .bind(1i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        drop(pool);
+
+        let off_file = NamedTempFile::new().expect("temp output");
+        let off_path = off_file.path().to_path_buf();
+        export_parquet(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(off_path.clone()),
+            format: ExportFormat::Parquet,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect("export off");
+        let off = parquet_tech_flags(&off_path);
+        assert_eq!(off, vec![("nginx".to_string(), false)]);
+
+        let on_file = NamedTempFile::new().expect("temp output");
+        let on_path = on_file.path().to_path_buf();
+        export_parquet(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(on_path.clone()),
+            format: ExportFormat::Parquet,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: true,
+        })
+        .await
+        .expect("export on");
+        let mut on = parquet_tech_flags(&on_path);
+        on.sort_unstable();
+        assert_eq!(
+            on,
+            vec![("PHP".to_string(), true), ("nginx".to_string(), false)]
+        );
     }
 }

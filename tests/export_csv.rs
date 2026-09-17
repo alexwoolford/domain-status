@@ -8,6 +8,56 @@ mod helpers;
 
 use helpers::{create_test_run, create_test_url_status, setup_export_fixture};
 
+fn csv_headers_and_rows(csv_content: &str) -> (csv::StringRecord, Vec<csv::StringRecord>) {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(csv_content.as_bytes());
+    let headers = reader.headers().expect("Should read CSV headers").clone();
+    let rows = reader
+        .records()
+        .map(|r| r.expect("Should parse CSV row"))
+        .collect();
+    (headers, rows)
+}
+
+fn csv_named_field(headers: &csv::StringRecord, row: &csv::StringRecord, column: &str) -> String {
+    let idx = headers
+        .iter()
+        .position(|h| h == column)
+        .unwrap_or_else(|| panic!("missing CSV column {column}"));
+    row.get(idx).unwrap_or("").to_string()
+}
+
+fn csv_only_row_field(csv_content: &str, column: &str) -> String {
+    let (headers, rows) = csv_headers_and_rows(csv_content);
+    assert_eq!(rows.len(), 1, "expected one data row");
+    csv_named_field(&headers, &rows[0], column)
+}
+
+async fn insert_http_header(pool: &SqlitePool, url_id: i64, name: &str, value: &str) {
+    sqlx::query(
+        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind(name)
+    .bind(value)
+    .execute(pool)
+    .await
+    .expect("insert http header");
+}
+
+async fn insert_security_header(pool: &SqlitePool, url_id: i64, name: &str, value: &str) {
+    sqlx::query(
+        "INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind(name)
+    .bind(value)
+    .execute(pool)
+    .await
+    .expect("insert security header");
+}
+
 /// Creates test data: URL with technologies, `GeoIP`, WHOIS, etc.
 async fn create_test_url_with_enrichment(
     pool: &SqlitePool,
@@ -236,25 +286,42 @@ async fn test_export_csv_filter_by_run_id() {
 #[tokio::test]
 async fn test_export_csv_filter_by_domain() {
     let (temp_dir, db_path, pool) = setup_export_fixture().await;
-    let output_path = temp_dir.path().join("output.csv");
 
+    // Exact match on initial_domain or final_domain — not a substring.
     create_test_url_status(
         &pool,
         "example.com",
-        "example.com",
+        "cdn.other.net",
         200,
         None,
         1704067200000,
     )
     .await;
-    create_test_url_status(&pool, "test.com", "test.com", 200, None, 1704067200000).await;
+    create_test_url_status(
+        &pool,
+        "start.other.net",
+        "example.com",
+        200,
+        None,
+        1704067200001,
+    )
+    .await;
+    create_test_url_status(
+        &pool,
+        "example.org",
+        "example.org",
+        200,
+        None,
+        1704067200002,
+    )
+    .await;
 
     drop(pool);
 
-    // Filter by domain
-    let count = export_csv(&ExportOptions {
+    let exact_path = temp_dir.path().join("exact.csv");
+    let exact_count = export_csv(&ExportOptions {
         db_path: db_path.clone(),
-        output: Some(output_path.clone()),
+        output: Some(exact_path.clone()),
         format: ExportFormat::Csv,
         run_id: None,
         domain: Some("example.com".to_string()),
@@ -264,17 +331,47 @@ async fn test_export_csv_filter_by_domain() {
     })
     .await
     .expect("Export should succeed");
-
-    assert_eq!(count, 1, "Should export only 1 record for example.com");
-
-    let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
-    assert!(
-        csv_content.contains("example.com"),
-        "CSV should contain example.com"
+    assert_eq!(
+        exact_count, 2,
+        "exact --domain must match initial_domain or final_domain"
     );
+
+    let csv_content = std::fs::read_to_string(&exact_path).expect("Should read CSV file");
+    let (headers, rows) = csv_headers_and_rows(&csv_content);
+    let pairs: Vec<(String, String)> = rows
+        .iter()
+        .map(|row| {
+            (
+                csv_named_field(&headers, row, "initial_domain"),
+                csv_named_field(&headers, row, "final_domain"),
+            )
+        })
+        .collect();
+    assert!(pairs.contains(&("example.com".into(), "cdn.other.net".into())));
+    assert!(pairs.contains(&("start.other.net".into(), "example.com".into())));
     assert!(
-        !csv_content.contains("test.com"),
-        "CSV should not contain test.com"
+        !pairs
+            .iter()
+            .any(|(i, f)| i == "example.org" || f == "example.org"),
+        "example.org must not match example.com"
+    );
+
+    let substr_path = temp_dir.path().join("substr.csv");
+    let substr_count = export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(substr_path),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: Some("example".to_string()),
+        status: None,
+        since: None,
+        include_implied_tech: false,
+    })
+    .await
+    .expect("Export should succeed");
+    assert_eq!(
+        substr_count, 0,
+        "--domain is exact equality, not a substring match"
     );
 }
 
@@ -401,27 +498,21 @@ async fn test_export_csv_all_enrichment_data() {
     assert_eq!(count, 1, "Should export 1 record");
 
     let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
-
-    // Verify all enrichment data is present
-    assert!(
-        csv_content.contains("nginx") || csv_content.contains("PHP"),
-        "CSV should contain technologies"
+    let tech = csv_only_row_field(&csv_content, "technologies");
+    assert!(tech.contains("nginx"), "technologies column: {tech}");
+    assert!(tech.contains("PHP"), "technologies column: {tech}");
+    assert_eq!(csv_only_row_field(&csv_content, "geoip_country_code"), "US");
+    assert_eq!(
+        csv_only_row_field(&csv_content, "whois_registrar"),
+        "Test Registrar"
+    );
+    assert_eq!(
+        csv_only_row_field(&csv_content, "analytics_ids"),
+        "Google Analytics:UA-123456-1"
     );
     assert!(
-        csv_content.contains("United States") || csv_content.contains("US"),
-        "CSV should contain GeoIP data"
-    );
-    assert!(
-        csv_content.contains("Test Registrar"),
-        "CSV should contain WHOIS data"
-    );
-    assert!(
-        csv_content.contains("Google Analytics") || csv_content.contains("UA-123456-1"),
-        "CSV should contain analytics IDs"
-    );
-    assert!(
-        csv_content.contains("LinkedIn"),
-        "CSV should contain social media links"
+        csv_only_row_field(&csv_content, "social_media_links").contains("LinkedIn:"),
+        "social_media_links should include LinkedIn"
     );
 }
 
@@ -691,30 +782,25 @@ async fn test_export_csv_comma_separated_lists() {
     assert_eq!(count, 1, "Should export 1 record");
 
     let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
-
-    // Verify comma-separated lists are formatted correctly
-    // Technologies should be comma-separated
-    let tech_line = csv_content
-        .lines()
-        .find(|line| line.contains("list.com"))
-        .expect("Should find data row");
-
-    // Should contain technologies (order may vary)
+    let tech = csv_only_row_field(&csv_content, "technologies");
+    for name in ["nginx", "PHP", "WordPress", "MySQL"] {
+        assert!(
+            tech.contains(name),
+            "technologies should contain {name}: {tech}"
+        );
+    }
+    assert_eq!(csv_only_row_field(&csv_content, "technology_count"), "4");
+    let analytics = csv_only_row_field(&csv_content, "analytics_ids");
     assert!(
-        tech_line.contains("nginx") || tech_line.contains("PHP"),
-        "CSV should contain technologies"
+        analytics.contains("Google Analytics:UA-111-1"),
+        "analytics_ids: {analytics}"
     );
-
-    // Should contain analytics IDs
     assert!(
-        tech_line.contains("Google Analytics") || tech_line.contains("UA-111-1"),
-        "CSV should contain analytics IDs"
+        analytics.contains("Google Tag Manager:GTM-XXXXX"),
+        "analytics_ids: {analytics}"
     );
 }
 
-// Large test function handling comprehensive CSV export validation with all column presence checks.
-// Consider refactoring into smaller focused test functions in Phase 4.
-#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_export_csv_all_columns_present() {
     let (temp_dir, db_path, pool) = setup_export_fixture().await;
@@ -738,103 +824,14 @@ async fn test_export_csv_all_columns_present() {
     assert_eq!(count, 1, "Should export 1 record");
 
     let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
-    let lines: Vec<&str> = csv_content.lines().collect();
-    assert!(lines.len() >= 2, "Should have header + at least 1 data row");
-
-    // Verify expected columns are present in header
-    let header = lines[0];
-    let expected_columns = [
-        "url",
-        "initial_domain",
-        "final_domain",
-        "ip_address",
-        "reverse_dns",
-        "status",
-        "status_description",
-        "response_time_ms",
-        "title",
-        "description",
-        "body_truncated",
-        "redirect_count",
-        "final_redirect_url",
-        "technologies",
-        "technology_count",
-        "tls_version",
-        "ssl_cert_subject",
-        "ssl_cert_issuer",
-        "ssl_cert_valid_to",
-        "cipher_suite",
-        "key_algorithm",
-        "certificate_sans",
-        "certificate_san_count",
-        "oids",
-        "oid_count",
-        "nameserver_count",
-        "txt_record_count",
-        "mx_record_count",
-        "spf_record",
-        "dmarc_record",
-        "analytics_ids",
-        "analytics_count",
-        "social_media_links",
-        "social_media_count",
-        "structured_data_types",
-        "structured_data_count",
-        "http_headers",
-        "http_header_count",
-        "security_headers",
-        "security_header_count",
-        "geoip_country_code",
-        "geoip_country_name",
-        "geoip_region",
-        "geoip_city",
-        "geoip_latitude",
-        "geoip_longitude",
-        "geoip_asn",
-        "geoip_asn_org",
-        "whois_registrar",
-        "whois_creation_date",
-        "whois_expiration_date",
-        "whois_registrant_country",
-        "timestamp",
-        "run_id",
-    ];
-
-    for column in &expected_columns {
-        assert!(
-            header.contains(column),
-            "Header should contain column: {}",
-            column
-        );
-    }
-
-    // Verify data row has correct number of fields (should match header)
-    // Use CSV parser to properly handle quoted fields with commas
-    use csv::ReaderBuilder;
-    let mut header_reader = ReaderBuilder::new()
-        .has_headers(false)
-        .from_reader(header.as_bytes());
-    let header_record = header_reader
-        .records()
-        .next()
-        .expect("Should read header")
-        .expect("Should parse header");
-    let header_field_count = header_record.len();
-
-    let mut data_reader = ReaderBuilder::new()
-        .has_headers(false)
-        .from_reader(lines[1].as_bytes());
-    let data_record = data_reader
-        .records()
-        .next()
-        .expect("Should read data row")
-        .expect("Should parse data row");
-    let data_field_count = data_record.len();
-
+    let (headers, rows) = csv_headers_and_rows(&csv_content);
+    assert_eq!(rows.len(), 1, "Should have header + 1 data row");
     assert_eq!(
-        header_field_count, data_field_count,
+        headers.len(),
+        rows[0].len(),
         "Data row should have same number of fields as header ({} vs {})",
-        header_field_count, data_field_count
+        headers.len(),
+        rows[0].len()
     );
 }
 
@@ -1166,61 +1163,20 @@ async fn test_export_csv_header_filtering() {
     )
     .await;
 
-    // Insert both filtered and unfiltered HTTP headers
-    sqlx::query(
-        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
-    )
-    .bind(url_id)
-    .bind("Content-Type")
-    .bind("text/html; charset=utf-8")
-    .execute(&pool)
-    .await
-    .expect("Failed to insert header");
-
-    sqlx::query(
-        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
-    )
-    .bind(url_id)
-    .bind("Server")
-    .bind("nginx/1.18.0")
-    .execute(&pool)
-    .await
-    .expect("Failed to insert header");
-
-    sqlx::query(
-        "INSERT INTO url_http_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)",
-    )
-    .bind(url_id)
-    .bind("X-Custom-Header")
-    .bind("should-not-appear")
-    .execute(&pool)
-    .await
-    .expect("Failed to insert header");
-
-    // Insert security headers
-    sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
-        .bind(url_id)
-        .bind("Content-Security-Policy")
-        .bind("default-src 'self'")
-        .execute(&pool)
-        .await
-        .expect("Failed to insert security header");
-
-    sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
-        .bind(url_id)
-        .bind("X-Frame-Options")
-        .bind("DENY")
-        .execute(&pool)
-        .await
-        .expect("Failed to insert security header");
-
-    sqlx::query("INSERT INTO url_security_headers (url_status_id, header_name, header_value) VALUES (?, ?, ?)")
-        .bind(url_id)
-        .bind("X-Other-Header")
-        .bind("should-not-appear")
-        .execute(&pool)
-        .await
-        .expect("Failed to insert security header");
+    for (name, value) in [
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Server", "nginx/1.18.0"),
+        ("X-Custom-Header", "should-not-appear"),
+    ] {
+        insert_http_header(&pool, url_id, name, value).await;
+    }
+    for (name, value) in [
+        ("Content-Security-Policy", "default-src 'self'"),
+        ("X-Frame-Options", "DENY"),
+        ("X-Other-Header", "should-not-appear"),
+    ] {
+        insert_security_header(&pool, url_id, name, value).await;
+    }
 
     drop(pool);
 
@@ -1240,28 +1196,34 @@ async fn test_export_csv_header_filtering() {
     assert_eq!(count, 1, "Should export 1 record");
 
     let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
-    let data_line = csv_content.lines().nth(1).expect("Should have data row");
-
-    // Should contain filtered headers
+    let http = csv_only_row_field(&csv_content, "http_headers");
     assert!(
-        data_line.contains("Content-Type") || data_line.contains("text/html"),
-        "CSV should contain filtered HTTP header"
+        http.contains("Content-Type:text/html; charset=utf-8"),
+        "http_headers: {http}"
+    );
+    assert!(http.contains("Server:nginx/1.18.0"), "http_headers: {http}");
+    assert!(
+        !http.contains("X-Custom-Header"),
+        "unfiltered header must not appear in http_headers: {http}"
+    );
+    let security = csv_only_row_field(&csv_content, "security_headers");
+    assert!(
+        security.contains("Content-Security-Policy:default-src 'self'"),
+        "security_headers: {security}"
     );
     assert!(
-        data_line.contains("Server") || data_line.contains("nginx"),
-        "CSV should contain filtered HTTP header"
+        security.contains("X-Frame-Options:DENY"),
+        "security_headers: {security}"
     );
     assert!(
-        data_line.contains("Content-Security-Policy") || data_line.contains("default-src"),
-        "CSV should contain filtered security header"
+        !security.contains("X-Other-Header"),
+        "unfiltered header must not appear in security_headers: {security}"
     );
-    assert!(
-        data_line.contains("X-Frame-Options") || data_line.contains("DENY"),
-        "CSV should contain filtered security header"
+    assert_eq!(csv_only_row_field(&csv_content, "http_header_count"), "3");
+    assert_eq!(
+        csv_only_row_field(&csv_content, "security_header_count"),
+        "3"
     );
-
-    // Should NOT contain unfiltered headers (but this is hard to verify without parsing CSV properly)
-    // The header_count should reflect total count, not filtered count
 }
 
 #[tokio::test]
@@ -1311,12 +1273,93 @@ async fn test_export_csv_unicode_and_special_chars() {
     assert_eq!(count, 1, "Should export 1 record");
 
     let csv_content = std::fs::read_to_string(&output_path).expect("Should read CSV file");
-
-    // CSV library should properly escape special characters
-    assert!(
-        csv_content.contains("unicode.com"),
-        "CSV should contain domain"
+    assert_eq!(
+        csv_only_row_field(&csv_content, "title"),
+        "Test Title with émojis 🚀 and \"quotes\""
     );
-    // Note: CSV library handles escaping, so we just verify it doesn't crash
-    // The exact format depends on csv crate's escaping rules
+    assert!(
+        csv_only_row_field(&csv_content, "technologies").contains("Tech with, commas & \"quotes\""),
+        "quoted commas in technology names must round-trip"
+    );
+}
+
+/// Default export omits `is_implied = 1` fingerprint rows; `--include-implied-tech` includes them.
+#[tokio::test]
+async fn test_export_csv_include_implied_tech_on_off() {
+    let (temp_dir, db_path, pool) = setup_export_fixture().await;
+    let url_id = create_test_url_status(
+        &pool,
+        "implied.com",
+        "implied.com",
+        200,
+        None,
+        1704067200000,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO url_technologies (url_status_id, technology_name, is_implied) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind("nginx")
+    .bind(0i64)
+    .execute(&pool)
+    .await
+    .expect("insert observed tech");
+    sqlx::query(
+        "INSERT INTO url_technologies (url_status_id, technology_name, is_implied) VALUES (?, ?, ?)",
+    )
+    .bind(url_id)
+    .bind("PHP")
+    .bind(1i64)
+    .execute(&pool)
+    .await
+    .expect("insert implied tech");
+    drop(pool);
+
+    let off_path = temp_dir.path().join("off.csv");
+    export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(off_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+        include_implied_tech: false,
+    })
+    .await
+    .expect("export off");
+    let off = std::fs::read_to_string(&off_path).expect("read off");
+    let tech_off = csv_only_row_field(&off, "technologies");
+    assert!(
+        tech_off.contains("nginx"),
+        "observed tech must export: {tech_off}"
+    );
+    assert!(
+        !tech_off.contains("PHP"),
+        "implied tech must be omitted by default: {tech_off}"
+    );
+    assert_eq!(csv_only_row_field(&off, "technology_count"), "1");
+
+    let on_path = temp_dir.path().join("on.csv");
+    export_csv(&ExportOptions {
+        db_path: db_path.clone(),
+        output: Some(on_path.clone()),
+        format: ExportFormat::Csv,
+        run_id: None,
+        domain: None,
+        status: None,
+        since: None,
+        include_implied_tech: true,
+    })
+    .await
+    .expect("export on");
+    let on = std::fs::read_to_string(&on_path).expect("read on");
+    let tech_on = csv_only_row_field(&on, "technologies");
+    assert!(tech_on.contains("nginx"), "observed tech: {tech_on}");
+    assert!(
+        tech_on.contains("PHP"),
+        "implied tech with flag on: {tech_on}"
+    );
+    assert_eq!(csv_only_row_field(&on, "technology_count"), "2");
 }

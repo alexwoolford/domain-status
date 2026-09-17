@@ -19,6 +19,7 @@ pub mod record;
 pub(crate) mod test_helpers;
 
 // Re-export commonly used items
+pub(crate) use insert::query_run_by_id;
 pub use insert::{
     insert_run_metadata, query_run_history, update_run_stats, RunMetadata, RunStats, RunSummary,
 };

@@ -73,6 +73,7 @@ cargo test --doc
   - Fast concurrency smoke (`max_concurrency` ceiling)
   - `query_scan_summary` against a seeded DB
   - Export named-field intent (`redirect_count`, `body_truncated`)
+  - Export `include_implied_tech` on/off and `--domain` exact match (not substring)
   - SSRF list URLs counted as **skipped** (not failed) for exit policy
   - GeoIP path soft-fail through `run_scan`
   - Wappalyzer-parity leaf tests (headers/cookies/body detection) use offline `FingerprintRuleset`/`Technology` fixtures; `#[ignore]` + full corpus is not an acceptable long-term stand-in

@@ -8,10 +8,7 @@ use sqlx::Row;
 
 use crate::storage::DbPool;
 
-use super::queries::{
-    fetch_count_query, fetch_filtered_http_headers, fetch_key_value_list, fetch_string_list,
-    HttpHeadersTable,
-};
+use super::queries::{fetch_filtered_http_headers, fetch_string_list, HttpHeadersTable};
 
 const EXPORT_LIMIT: i64 = crate::config::MAX_EXPORT_RELATED_RECORDS;
 
@@ -524,6 +521,18 @@ async fn fetch_social_and_structured(
     Ok((social_media_links, structured_data_entries))
 }
 
+/// CSV `key:value` flattening used by `fetch_key_value_list` (empty value → trailing colon).
+fn join_colon_pairs<'a, I>(pairs: I) -> String
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    pairs
+        .into_iter()
+        .map(|(k, v)| format!("{k}:{v}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[allow(clippy::too_many_lines)] // Sequentially fetches ~15 related tables to build a single export row
 #[allow(clippy::cognitive_complexity)] // Inherent in assembling data from many DB tables into one struct
 pub async fn build_export_row(
@@ -558,23 +567,12 @@ pub async fn build_export_row(
         .map(|r| r.redirect_url.clone())
         .unwrap_or_default();
 
-    // Fetch technologies (both string format for CSV backward compat and structured for JSONL)
+    // One SELECT; CSV joined strings are derived from the same rows as JSONL/Parquet.
     let tech_filter = if include_implied_tech {
         ""
     } else {
         " AND COALESCE(is_implied, 0) = 0"
     };
-    let tech_kv_sql = format!(
-        "SELECT technology_name, technology_version FROM url_technologies WHERE url_status_id = ?{tech_filter} ORDER BY technology_name"
-    );
-    let (technologies_str, technology_count) = fetch_key_value_list(
-        pool,
-        &tech_kv_sql,
-        "technology_name",
-        "technology_version",
-        url_status_id,
-    )
-    .await?;
     let tech_struct_sql = format!(
         "SELECT technology_name, technology_version, technology_category, is_implied, detection_source
          FROM url_technologies WHERE url_status_id = ?{tech_filter} ORDER BY technology_name LIMIT ?"
@@ -593,6 +591,12 @@ pub async fn build_export_row(
             detection_source: r.get("detection_source"),
         })
         .collect();
+    let technologies_str = join_colon_pairs(
+        technologies
+            .iter()
+            .map(|t| (t.name.as_str(), t.version.as_deref().unwrap_or(""))),
+    );
+    let technology_count = technologies.len();
     let technology_categories_str = technologies
         .iter()
         .filter_map(|t| t.category.as_deref())
@@ -668,15 +672,25 @@ pub async fn build_export_row(
     .collect();
     let caa_count = caa_records.len();
 
-    // Fetch analytics IDs
-    let (analytics_ids_str, analytics_count) = fetch_key_value_list(
-        pool,
-        "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id",
-        "provider",
-        "tracking_id",
-        url_status_id,
+    let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
+        "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id LIMIT ?",
     )
-    .await?;
+    .bind(url_status_id)
+    .bind(EXPORT_LIMIT)
+    .fetch_all(pool.as_ref())
+    .await?
+    .iter()
+    .map(|r| AnalyticsIdRecord {
+        provider: r.get("provider"),
+        tracking_id: r.get("tracking_id"),
+    })
+    .collect();
+    let analytics_ids_str = join_colon_pairs(
+        analytics_ids
+            .iter()
+            .map(|a| (a.provider.as_str(), a.tracking_id.as_str())),
+    );
+    let analytics_count = analytics_ids.len();
 
     let script_hosts: Vec<ScriptHostRecord> = sqlx::query(
         "SELECT host, registrable_domain, is_first_party FROM url_script_hosts WHERE url_status_id = ? ORDER BY host LIMIT ?",
@@ -704,48 +718,23 @@ pub async fn build_export_row(
         .collect::<Vec<_>>()
         .join("; ");
 
-    let analytics_ids: Vec<AnalyticsIdRecord> = sqlx::query(
-        "SELECT provider, tracking_id FROM url_analytics_ids WHERE url_status_id = ? ORDER BY provider, tracking_id LIMIT ?",
-    )
-    .bind(url_status_id)
-    .bind(EXPORT_LIMIT)
-    .fetch_all(pool.as_ref())
-    .await?
-    .iter()
-    .map(|r| AnalyticsIdRecord {
-        provider: r.get("provider"),
-        tracking_id: r.get("tracking_id"),
-    })
-    .collect();
-
-    // Fetch social media links (string format for backward compat)
-    let (social_media_links_str, social_media_count) = fetch_key_value_list(
-        pool,
-        "SELECT platform, profile_url FROM url_social_media_links WHERE url_status_id = ? ORDER BY platform, profile_url",
-        "platform",
-        "profile_url",
-        url_status_id,
-    )
-    .await?;
-
-    // Fetch social media links with identifiers + structured data entries
     let (social_media_links, structured_data_entries) =
         fetch_social_and_structured(pool, url_status_id).await?;
+    let social_media_links_str = join_colon_pairs(
+        social_media_links
+            .iter()
+            .map(|s| (s.platform.as_str(), s.profile_url.as_str())),
+    );
+    let social_media_count = social_media_links.len();
 
-    // Fetch structured data types
-    let (structured_data_types_str, _) = fetch_string_list(
-        pool,
-        "SELECT DISTINCT data_type FROM url_structured_data WHERE url_status_id = ? ORDER BY data_type",
-        url_status_id,
-    )
-    .await?;
-
-    let structured_data_count = fetch_count_query(
-        pool,
-        "SELECT COUNT(*) FROM url_structured_data WHERE url_status_id = ?",
-        url_status_id,
-    )
-    .await?;
+    let mut structured_data_types: Vec<&str> = structured_data_entries
+        .iter()
+        .map(|e| e.data_type.as_str())
+        .collect();
+    structured_data_types.sort_unstable();
+    structured_data_types.dedup();
+    let structured_data_types_str = structured_data_types.join(",");
+    let structured_data_count = structured_data_entries.len();
 
     // Fetch HTTP headers
     let (http_headers_str, http_header_count) = fetch_filtered_http_headers(
@@ -912,7 +901,7 @@ pub async fn build_export_row(
         social_media_count,
         social_media_links,
         structured_data_types_str,
-        structured_data_count: structured_data_count as usize,
+        structured_data_count,
         structured_data_entries,
         http_headers_str,
         http_header_count: http_header_count as usize,

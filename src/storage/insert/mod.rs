@@ -20,6 +20,7 @@ pub(crate) mod utils;
 pub use failure::insert_url_failure;
 pub(crate) use failure::insert_url_partial_failure_in_tx;
 pub use record::insert_persisted_url_record;
+pub(crate) use run::query_run_by_id;
 pub(crate) use run::{count_run_fact_rows, count_run_partial_failures, saturating_i32_count};
 pub use run::{
     insert_run_metadata, query_run_history, update_run_stats, RunMetadata, RunStats, RunSummary,

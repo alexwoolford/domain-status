@@ -89,6 +89,10 @@ pub(crate) async fn fetch_count_query(
 
 /// Helper: Fetch key-value pairs and format as "key:value" strings.
 /// Returns (`joined_string`, count).
+///
+/// Production export derives these strings from structured satellite rows; this
+/// helper remains as the unit-test seam for the CSV `key:value` join format.
+#[cfg(test)]
 pub(crate) async fn fetch_key_value_list(
     pool: &DbPool,
     query: &str,

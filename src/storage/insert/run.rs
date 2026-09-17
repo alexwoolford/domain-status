@@ -212,22 +212,44 @@ pub async fn query_run_history(
         .await
         .map_err(DatabaseError::SqlError)?;
 
-    let summaries: Vec<RunSummary> = rows
+    Ok(rows
         .into_iter()
-        .map(|row| RunSummary {
-            run_id: row.get("run_id"),
-            version: row.get("version"),
-            start_time_ms: row.get("start_time_ms"),
-            end_time_ms: row.get("end_time_ms"),
-            total_urls: row.get("total_urls"),
-            successful_urls: row.get("successful_urls"),
-            failed_urls: row.get("failed_urls"),
-            skipped_urls: row.get("skipped_urls"),
-            elapsed_seconds: row.get("elapsed_seconds"),
-        })
-        .collect();
+        .map(|row| run_summary_from_row(&row))
+        .collect())
+}
 
-    Ok(summaries)
+fn run_summary_from_row(row: &sqlx::sqlite::SqliteRow) -> RunSummary {
+    RunSummary {
+        run_id: row.get("run_id"),
+        version: row.get("version"),
+        start_time_ms: row.get("start_time_ms"),
+        end_time_ms: row.get("end_time_ms"),
+        total_urls: row.get("total_urls"),
+        successful_urls: row.get("successful_urls"),
+        failed_urls: row.get("failed_urls"),
+        skipped_urls: row.get("skipped_urls"),
+        elapsed_seconds: row.get("elapsed_seconds"),
+    }
+}
+
+/// Looks up a run by id, including in-progress runs (`end_time_ms` may be NULL).
+///
+/// Unlike [`query_run_history`], this does not require the run to be completed.
+pub(crate) async fn query_run_by_id(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Option<RunSummary>, DatabaseError> {
+    let row = sqlx::query(
+        "SELECT run_id, version, start_time_ms, end_time_ms, total_urls, successful_urls, \
+         failed_urls, skipped_urls, elapsed_seconds \
+         FROM runs WHERE run_id = ?",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(DatabaseError::SqlError)?;
+
+    Ok(row.map(|row| run_summary_from_row(&row)))
 }
 
 /// Summary of a completed run, suitable for displaying run history.
