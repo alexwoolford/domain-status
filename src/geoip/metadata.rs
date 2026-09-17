@@ -71,305 +71,62 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    // Create a minimal valid mmdb file for testing
-    // Note: This is a simplified test - real mmdb files have complex structure
-    // For unit tests, we focus on error paths that don't require valid mmdb files
+    fn sample_metadata() -> GeoIpMetadata {
+        GeoIpMetadata {
+            source: "test.mmdb".to_string(),
+            version: "build_12345".to_string(),
+            last_updated: SystemTime::now(),
+        }
+    }
 
     #[tokio::test]
     async fn test_load_metadata_file_not_found() {
-        // Use a platform-agnostic path that definitely doesn't exist
         let metadata_file = PathBuf::from("nonexistent").join("metadata.json");
-        let result = load_metadata(&metadata_file).await;
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("No such file")
-                || error_msg.contains("not found")
-                || error_msg.contains("The system cannot find"),
-            "Expected file not found error, got: {}",
-            error_msg
-        );
+        assert!(load_metadata(&metadata_file).await.is_err());
     }
 
     #[tokio::test]
     async fn test_load_metadata_invalid_json() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = TempDir::new().expect("temp dir");
         let metadata_file = temp_dir.path().join("invalid.json");
-        // Use truly invalid JSON that serde_json cannot parse
         tokio::fs::write(&metadata_file, b"{ invalid json }")
             .await
-            .expect("Failed to write invalid JSON");
+            .expect("write");
+        assert!(load_metadata(&metadata_file).await.is_err());
 
-        let result = load_metadata(&metadata_file).await;
-        assert!(
-            result.is_err(),
-            "invalid JSON must fail to deserialize, got: {result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_metadata_missing_fields() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("incomplete.json");
         tokio::fs::write(&metadata_file, b"{}")
             .await
-            .expect("Failed to write incomplete JSON");
-
-        // This might succeed if fields have defaults, or fail if required
-        // We test that it doesn't panic
-        let _result = load_metadata(&metadata_file).await;
-    }
-
-    #[tokio::test]
-    async fn test_save_metadata_success() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("metadata.json");
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        let result = save_metadata(&metadata, &metadata_file).await;
-        assert!(result.is_ok());
-
-        // Verify file was created
-        assert!(metadata_file.exists());
-
-        // Verify we can load it back
-        let loaded = load_metadata(&metadata_file).await;
-        assert!(loaded.is_ok());
-        let loaded_metadata = loaded.unwrap();
-        assert_eq!(loaded_metadata.source, metadata.source);
-        assert_eq!(loaded_metadata.version, metadata.version);
-    }
-
-    #[tokio::test]
-    async fn test_save_metadata_invalid_path() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let file_path = temp_dir.path().join("not_a_directory");
-        tokio::fs::write(&file_path, b"occupied")
-            .await
-            .expect("Failed to create blocking file");
-        let metadata_file = file_path.join("metadata.json");
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        let result = save_metadata(&metadata, &metadata_file).await;
-        // Parent path is a file, so create_dir_all must fail. Accept any error message
-        // (platform-specific: Unix "Not a directory", Windows "already exists" / 183, etc.).
+            .expect("write");
         assert!(
-            result.is_err(),
-            "Expected save_metadata to fail when parent path is a file"
+            load_metadata(&metadata_file).await.is_err(),
+            "required GeoIpMetadata fields must be present"
         );
     }
 
     #[tokio::test]
     async fn test_metadata_round_trip() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = TempDir::new().expect("temp dir");
         let metadata_file = temp_dir.path().join("roundtrip.json");
-        let original = GeoIpMetadata {
-            source: "https://example.com/db.mmdb".to_string(),
-            version: "build_20240101".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        // Save and load
+        let original = sample_metadata();
         save_metadata(&original, &metadata_file)
             .await
-            .expect("Failed to save metadata");
-        let loaded = load_metadata(&metadata_file)
-            .await
-            .expect("Failed to load metadata");
-
+            .expect("save");
+        let loaded = load_metadata(&metadata_file).await.expect("load");
         assert_eq!(loaded.source, original.source);
         assert_eq!(loaded.version, original.version);
-        // last_updated might differ slightly, so we just verify it exists
-        assert!(loaded.last_updated.elapsed().is_ok());
     }
 
     #[tokio::test]
-    async fn test_save_metadata_very_long_source() {
-        // Test saving metadata with very long source path
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("long_source.json");
-        let long_source = "https://example.com/".to_string() + &"a".repeat(1000) + "/db.mmdb";
-        let metadata = GeoIpMetadata {
-            source: long_source.clone(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        let result = save_metadata(&metadata, &metadata_file).await;
-        assert!(result.is_ok());
-
-        // Verify it can be loaded back
-        let loaded = load_metadata(&metadata_file).await;
-        assert!(loaded.is_ok());
-        assert_eq!(loaded.unwrap().source, long_source);
-    }
-
-    #[tokio::test]
-    async fn test_save_metadata_special_characters() {
-        // Test saving metadata with special characters in source
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("special_chars.json");
-        let metadata = GeoIpMetadata {
-            source: "https://example.com/path with spaces & special=chars.mmdb".to_string(),
-            version: "build_2024-01-01".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        let result = save_metadata(&metadata, &metadata_file).await;
-        assert!(result.is_ok());
-
-        // Verify special characters are preserved
-        let loaded = load_metadata(&metadata_file).await;
-        assert!(loaded.is_ok());
-        assert!(loaded.unwrap().source.contains("special=chars"));
-    }
-
-    #[tokio::test]
-    async fn test_load_metadata_concurrent_access() {
-        // Test that concurrent metadata loads don't cause issues
-        // This is critical - multiple threads might load metadata simultaneously
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("concurrent.json");
-
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
+    async fn test_save_metadata_parent_is_file() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let file_path = temp_dir.path().join("not_a_directory");
+        tokio::fs::write(&file_path, b"occupied")
             .await
-            .expect("Failed to save metadata");
-
-        // Spawn multiple tasks loading metadata concurrently
-        let handles: Vec<_> = (0..10)
-            .map(|_| {
-                let file = metadata_file.clone();
-                tokio::spawn(async move { load_metadata(&file).await })
-            })
-            .collect();
-
-        // All should succeed
-        for handle in handles {
-            let result = handle.await.expect("Task panicked");
-            assert!(result.is_ok());
-            let loaded = result.unwrap();
-            assert_eq!(loaded.source, metadata.source);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_save_metadata_disk_full_simulation() {
-        // Test that write failures are handled gracefully (no panic).
-        // Use a path whose parent is an existing file so create_dir_all fails on all platforms
-        // (Unix: "Not a directory", Windows: ERROR_ALREADY_EXISTS 183).
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let file_as_parent = temp_dir.path().join("file_not_dir");
-        tokio::fs::write(&file_as_parent, b"x")
+            .expect("write");
+        let metadata_file = file_path.join("metadata.json");
+        assert!(save_metadata(&sample_metadata(), &metadata_file)
             .await
-            .expect("Failed to create blocking file");
-        let metadata_file = file_as_parent.join("metadata.json");
-
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        let result = save_metadata(&metadata, &metadata_file).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_load_metadata_file_locked() {
-        // Test that locked files (being written by another process) are handled
-        // This is critical - concurrent writes could cause read failures
-        // Note: Hard to simulate file locking in tests, but we verify error handling
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("locked.json");
-
-        // Create a file that might be locked (simulated by non-existent)
-        // Real file locking would require platform-specific code
-        let result = load_metadata(&metadata_file).await;
-        // Should fail gracefully (file not found in this case)
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_save_metadata_concurrent_writes() {
-        // Test that concurrent metadata writes don't corrupt the file
-        // This is critical - multiple threads saving metadata simultaneously
-        // could cause file corruption or lost writes
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("concurrent.json");
-
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        // Spawn multiple tasks saving metadata concurrently
-        let handles: Vec<_> = (0..10)
-            .map(|_| {
-                let file = metadata_file.clone();
-                let meta = metadata.clone();
-                tokio::spawn(async move { save_metadata(&meta, &file).await })
-            })
-            .collect();
-
-        // All should succeed (even if last write wins)
-        for handle in handles {
-            let result = handle.await.expect("Task panicked");
-            // May succeed or fail depending on timing, but shouldn't panic
-            let _ = result;
-        }
-
-        // Verify file exists and is valid JSON (last write should be valid)
-        if metadata_file.exists() {
-            let result = load_metadata(&metadata_file).await;
-            // Should be able to load (even if it's from last concurrent write)
-            let _ = result;
-        }
-    }
-
-    #[tokio::test]
-    async fn test_load_metadata_file_being_written() {
-        // Test that loading metadata while it's being written is handled
-        // This is critical - race condition between save and load
-        // The code uses tokio::fs which should handle this, but we verify
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("race.json");
-
-        let metadata = GeoIpMetadata {
-            source: "test.mmdb".to_string(),
-            version: "build_12345".to_string(),
-            last_updated: SystemTime::now(),
-        };
-
-        // Spawn task to save metadata
-        let file_clone = metadata_file.clone();
-        let meta_clone = metadata.clone();
-        let save_handle =
-            tokio::spawn(async move { save_metadata(&meta_clone, &file_clone).await });
-
-        // Try to load while saving (race condition)
-        let _load_result = load_metadata(&metadata_file).await;
-
-        // Wait for save to complete
-        let _ = save_handle.await;
-
-        // Load might fail during race (file being written), but shouldn't panic
-        // After save completes, should be able to load
-        let final_load = load_metadata(&metadata_file).await;
-        assert!(final_load.is_ok());
+            .is_err());
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ Subdirectories:
 | Subdir | Contents |
 |--------|----------|
 | `fingerprints/` | Merged ruleset cache (7-day TTL); superseded hash dirs pruned after a successful refresh |
-| `geoip/` | GeoLite2 City/ASN MMDB + metadata (orphaned `.*.tmp` cleaned on init) |
+| `geoip/` | GeoLite2 City/ASN MMDB + metadata (7-day TTL; orphaned `.*.tmp` cleaned on init) |
 | `whois/` | Per-domain WHOIS/RDAP JSON (7-day TTL). One client per scan; rate-limited and not-found responses are not cached. |
 | `user_agent/` | Chrome version cache (30-day TTL) |
 
@@ -52,7 +52,8 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 - Disabled unless `MAXMIND_LICENSE_KEY` is set (auto-download) **or** `--geoip <path|url>` points at an MMDB.
 - GeoLite2 (City + ASN) *is* MaxMind’s free tier; a free MaxMind account and license key are still required to download it. There is no unlicensed “lite” fallback. Without a key or `--geoip`, GeoIP stays off and the scan continues.
 - Bare `--geoip` without a value is invalid; the flag always requires a path or URL.
-- Auto-download uses the shared `geoip/` cache subdirectory.
+- Auto-download uses the shared `geoip/` cache subdirectory (7-day TTL).
+- A missing `--geoip` path with `MAXMIND_LICENSE_KEY` set falls back to the same MaxMind auto-download/cache path used when `--geoip` is omitted.
 
 ## WHOIS / RDAP
 

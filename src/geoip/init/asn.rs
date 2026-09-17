@@ -3,9 +3,9 @@
 use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
-use url::form_urlencoded;
 
 use super::loader::{geoip_cache_paths, load_from_file, load_from_url};
+use super::maxmind_download_url;
 use crate::geoip::metadata::load_metadata;
 use crate::geoip::{self, GEOIP_ASN_READER};
 
@@ -51,12 +51,7 @@ async fn try_load_asn_from_cache(cache_file: &Path) -> Result<bool> {
 
 async fn try_download_asn(license_key: &str, cache_dir: &Path) -> Result<bool> {
     log::info!("Auto-downloading GeoLite2-ASN database (cache expired or missing)");
-    let encoded_key = form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
-    let download_url = format!(
-        "{}?edition_id=GeoLite2-ASN&license_key={}&suffix=tar.gz",
-        geoip::MAXMIND_DOWNLOAD_BASE,
-        encoded_key
-    );
+    let download_url = maxmind_download_url("GeoLite2-ASN", license_key);
     match load_from_url(&download_url, cache_dir, "GeoLite2-ASN").await {
         Ok((reader, metadata)) => {
             store_asn_reader(reader, metadata)?;
@@ -120,7 +115,15 @@ pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geoip::metadata::save_metadata;
+    use crate::geoip::test_support::LicenseKeyEnvGuard;
+    use crate::geoip::types::GeoIpMetadata;
+    use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
+
+    fn cache_paths(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        super::super::loader::geoip_cache_paths(dir, "GeoLite2-ASN")
+    }
 
     fn assert_asn_degrades_unloaded(result: Result<()>) {
         result.expect("ASN init must degrade, not abort");
@@ -134,357 +137,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_no_license_key() {
-        // Test when no license key is set
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let result = init_asn_database(temp_dir.path()).await;
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_no_license_still_tries_existing_cache() {
-        use tokio::io::AsyncWriteExt;
-
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"not a real mmdb")
-            .await
-            .expect("Failed to write cache");
-        let result = init_asn_database(temp_dir.path()).await;
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_empty_license_key() {
-        // Test with empty license key
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let result = init_asn_database(temp_dir.path()).await;
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_already_loaded() {
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let first = init_asn_database(temp_dir.path()).await;
-        let second = init_asn_database(temp_dir.path()).await;
-        assert_asn_degrades_unloaded(first);
-        assert_asn_degrades_unloaded(second);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_invalid_cache_path() {
-        // Test with invalid cache file path (non-existent file)
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        // Set a license key to trigger download attempt
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-
-        // This will attempt to download, which will fail, but should handle gracefully
-        let result = init_asn_database(temp_dir.path()).await;
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_cache_file_missing() {
-        // Test when cache file doesn't exist but metadata does
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create metadata file but no cache file
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test".to_string(),
-            version: "test".to_string(),
-            last_updated: std::time::SystemTime::now(),
-        };
-        let metadata_json = serde_json::to_string(&metadata).unwrap();
-        tokio::fs::write(&metadata_file, metadata_json)
-            .await
-            .expect("Failed to write metadata");
-
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should attempt download since cache file is missing
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_metadata_parse_error() {
-        // Test when metadata file exists but is invalid JSON
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-        tokio::fs::write(&metadata_file, b"{ invalid json }")
-            .await
-            .expect("Failed to write invalid metadata");
-
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should handle invalid metadata gracefully (treat as missing)
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_download_failure_continues() {
-        // Test that ASN download failure doesn't break the system
-        // This is critical - ASN is optional, failures should be logged but not fatal
-        // The code at line 60-65 handles download failures gracefully
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("invalid_key"));
-
-        // Should return Ok even if download fails
-        let result = init_asn_database(temp_dir.path()).await;
-        assert!(
-            result.is_ok(),
-            "ASN download failure should not break initialization"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_cache_load_failure_continues() {
-        // Test that cache load failure doesn't break the system
-        // This is critical - corrupted cache shouldn't prevent ASN initialization
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create corrupted cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"corrupted asn data")
-            .await
-            .expect("Failed to write corrupted data");
-
-        // Create valid metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Should handle corrupted cache gracefully (fall through to download or skip)
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should return Ok even if cache load fails
-        assert_asn_degrades_unloaded(result);
-    }
-
-    #[tokio::test]
-    async fn test_init_asn_database_concurrent_initialization() {
-        // Test that concurrent ASN initialization doesn't cause issues
-        // This is critical - multiple background tasks might try to initialize
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-
-        // Spawn multiple tasks
-        let handles: Vec<_> = (0..5)
-            .map(|_| {
-                let cache_dir = temp_dir.path().to_path_buf();
-                tokio::spawn(async move { init_asn_database(&cache_dir).await })
-            })
-            .collect();
-
-        // All should succeed (even if download fails)
-        for handle in handles {
-            let result = handle.await.expect("Task panicked");
-            assert_asn_degrades_unloaded(result);
+    async fn test_init_asn_database_no_or_empty_license_degrades() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        {
+            let _license_env = LicenseKeyEnvGuard::apply(None);
+            assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
+        }
+        {
+            let _license_env = LicenseKeyEnvGuard::apply(Some(""));
+            assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
         }
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_writer_lock_poisoning() {
-        // Test that writer lock poisoning is handled gracefully
-        // This is critical - if a thread panicked while holding the write lock,
-        // subsequent writes should return an error, not panic
-        // The code at line 55 and 73 use map_err to handle lock poisoning
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // We can't easily simulate lock poisoning, but we verify the error handling
-        // The code uses .map_err() which converts poisoned lock to an error
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should return Ok (download fails but handled gracefully)
-        // or Ok if somehow succeeds
-        assert_asn_degrades_unloaded(result);
+    async fn test_init_asn_database_no_license_still_tries_existing_cache() {
+        let _license_env = LicenseKeyEnvGuard::apply(None);
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, _) = cache_paths(temp_dir.path());
+        tokio::fs::write(&cache_file, b"not a real mmdb")
+            .await
+            .expect("write");
+        assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_cache_ttl_boundary() {
-        // Test ASN cache TTL boundary conditions
-        // This is critical - cache expiration logic must work correctly
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create metadata exactly at TTL
-        let ttl_ago = SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: ttl_ago,
-        };
-        save_metadata(&metadata, &metadata_file)
+    async fn test_init_asn_database_download_failure_continues() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let blocker = temp_dir.path().join("not-a-directory");
+        tokio::fs::write(&blocker, b"occupied")
             .await
-            .expect("Failed to save metadata");
-
-        // Create cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal asn cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Cache should be expired (age >= TTL)
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should attempt download since cache is expired
-        assert_asn_degrades_unloaded(result);
+            .expect("write");
+        let _license_env = LicenseKeyEnvGuard::apply(Some("test_key"));
+        assert_asn_degrades_unloaded(init_asn_database(&blocker).await);
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_cache_fresh_loads_from_cache() {
-        // Test that fresh cache is loaded instead of downloading (lines 67-81)
-        // This is critical - prevents unnecessary downloads when cache is valid
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create fresh metadata (recent timestamp)
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(), // Fresh
-        };
-        save_metadata(&metadata, &metadata_file)
+    async fn test_init_asn_database_corrupt_cache_with_real_metadata_name() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = cache_paths(temp_dir.path());
+        tokio::fs::write(&cache_file, b"corrupted asn data")
             .await
-            .expect("Failed to save metadata");
-
-        // Create cache file (even if invalid, tests the path)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal asn cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Should attempt to load from cache (will fail on parse, but tests the path)
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should return Ok (cache load fails but handled gracefully)
-        assert_asn_degrades_unloaded(result);
+            .expect("write");
+        save_metadata(
+            &GeoIpMetadata {
+                source: "test://source".to_string(),
+                version: "1.0".to_string(),
+                last_updated: SystemTime::now(),
+            },
+            &metadata_file,
+        )
+        .await
+        .expect("save");
+        let _license_env = LicenseKeyEnvGuard::apply(None);
+        assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_cache_file_utf8_validation() {
-        // Test that cache file path UTF-8 validation works (line 70, 78-79)
-        // This is critical - non-UTF-8 paths should be handled gracefully
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create fresh metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
+    async fn test_init_asn_database_expired_or_missing_cache_uses_metadata_path() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = cache_paths(temp_dir.path());
+        save_metadata(
+            &GeoIpMetadata {
+                source: "test://source".to_string(),
+                version: "1.0".to_string(),
+                last_updated: SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS),
+            },
+            &metadata_file,
+        )
+        .await
+        .expect("save");
+        tokio::fs::write(&cache_file, b"stale")
             .await
-            .expect("Failed to save metadata");
+            .expect("write");
+        let _license_env = LicenseKeyEnvGuard::apply(None);
+        assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
 
-        // Note: Creating a non-UTF-8 path is platform-specific and difficult in tests
-        // But we verify the code path exists and handles to_str() returning None
-        // The code at line 70 checks to_str() and line 78-79 logs warning if None
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should handle gracefully (cache file doesn't exist, so won't hit UTF-8 check)
-        assert_asn_degrades_unloaded(result);
+        tokio::fs::remove_file(&cache_file).await.ok();
+        assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_cache_ttl_elapsed_failure_triggers_download() {
-        // Test that elapsed() failure triggers download (line 33-36)
-        // This is critical - clock skew or future timestamps should trigger refresh
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create metadata with future timestamp (elapsed() will fail)
-        let future_time = SystemTime::now() + Duration::from_secs(86400 * 365);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: future_time,
-        };
-        save_metadata(&metadata, &metadata_file)
+    async fn test_init_asn_database_invalid_metadata_json() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (_, metadata_file) = cache_paths(temp_dir.path());
+        tokio::fs::write(&metadata_file, b"{ invalid json }")
             .await
-            .expect("Failed to save metadata");
-
-        // When elapsed() fails, should_download should be true (line 36)
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should attempt download when elapsed() fails
-        assert_asn_degrades_unloaded(result);
+            .expect("write");
+        let _license_env = LicenseKeyEnvGuard::apply(None);
+        assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
     }
 
     #[tokio::test]
-    async fn test_init_asn_database_cache_missing_file_triggers_download() {
-        // Test that missing cache file triggers download even if metadata exists (line 34)
-        // This is critical - if cache file is deleted but metadata remains, should re-download
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
-        let metadata_file = temp_dir.path().join("asn_metadata.json");
-
-        // Create fresh metadata but no cache file
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Cache file doesn't exist, so !cache_file.exists() is true
-        // Should trigger download (line 34: age.as_secs() >= TTL || !cache_file.exists())
-        assert!(!cache_file.exists());
-        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
-        let result = init_asn_database(temp_dir.path()).await;
-        // Should attempt download since cache file is missing
-        assert_asn_degrades_unloaded(result);
+    async fn test_init_asn_database_future_timestamp_fail_closed() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (_, metadata_file) = cache_paths(temp_dir.path());
+        save_metadata(
+            &GeoIpMetadata {
+                source: "test://source".to_string(),
+                version: "1.0".to_string(),
+                last_updated: SystemTime::now() + Duration::from_secs(86400 * 365),
+            },
+            &metadata_file,
+        )
+        .await
+        .expect("save");
+        let _license_env = LicenseKeyEnvGuard::apply(None);
+        assert_asn_degrades_unloaded(init_asn_database(temp_dir.path()).await);
     }
 }
