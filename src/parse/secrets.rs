@@ -808,50 +808,6 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
 mod tests {
     use super::*;
 
-    /// Returns a stable redacted representation that preserves dedupe utility without retaining the raw secret.
-    fn redact_exposed_secret_value(value: &str) -> String {
-        if value.starts_with("redacted(") {
-            return value.to_string();
-        }
-
-        let digest = crate::utils::sha256_hex(value.as_bytes());
-        if value.chars().count() <= 8 {
-            format!(
-                "redacted(len={},sha256={})",
-                value.chars().count(),
-                &digest[..16]
-            )
-        } else {
-            let prefix: String = value.chars().take(4).collect();
-            let suffix: String = value
-                .chars()
-                .rev()
-                .take(4)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
-            format!(
-                "redacted({prefix}...{suffix},len={},sha256={})",
-                value.chars().count(),
-                &digest[..16]
-            )
-        }
-    }
-
-    /// Redacts secret occurrences inside analyst context while preserving surrounding text.
-    fn redact_exposed_secret_context(context: &str, matched_value: &str) -> String {
-        if matched_value.is_empty() {
-            return context.to_string();
-        }
-
-        if matched_value.starts_with("redacted(") {
-            return context.to_string();
-        }
-
-        context.replace(matched_value, &redact_exposed_secret_value(matched_value))
-    }
-
     // === Cloud Providers ===
 
     // AWS key: gitleaks uses [A-Z2-7]{16} (no 0,1,8,9); must not end in EXAMPLE (allowlisted)
@@ -2199,23 +2155,6 @@ mod tests {
             token,
             "secretGroup=2 should yield the token (group 2), not 'token' (group 1)"
         );
-    }
-
-    #[test]
-    fn test_redact_exposed_secret_value_replaces_raw_secret() {
-        let redacted = redact_exposed_secret_value(AWS_KEY);
-        assert!(redacted.contains("sha256="));
-        assert!(!redacted.contains(AWS_KEY));
-        assert!(redacted.contains("AKIA"));
-    }
-
-    #[test]
-    fn test_redact_exposed_secret_context_replaces_secret_occurrences() {
-        let context = format!("before {AWS_KEY} after");
-        let redacted = redact_exposed_secret_context(&context, AWS_KEY);
-        assert!(redacted.contains("before"));
-        assert!(redacted.contains("after"));
-        assert!(!redacted.contains(AWS_KEY));
     }
 
     /// Condition AND with `has_paths`: for single-blob we never have a file path, so AND never succeeds and we must not skip.

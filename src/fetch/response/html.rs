@@ -38,7 +38,7 @@ pub(crate) fn parse_html_content(
     debug!("Extracted description for {final_domain}: {description:?}");
 
     // Extract structured data (JSON-LD, Open Graph, Twitter Cards, Schema.org)
-    let structured_data = extract_structured_data(&document, body);
+    let structured_data = extract_structured_data(&document);
     debug!(
         "Extracted structured data for {final_domain}: {} JSON-LD scripts, {} OG tags, {} Twitter tags, {} schema types",
         structured_data.json_ld.len(),
