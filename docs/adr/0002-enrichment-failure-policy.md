@@ -59,7 +59,7 @@ Trade-offs:
 ## Operational Notes
 
 - GeoIP failures log a warning and scanning continues without GeoIP enrichment
-- WHOIS/RDAP is on by default; disable with `--no-whois`. Lookups return `None` on timeout or backend failure
+- WHOIS/RDAP is on by default; disable with `--no-whois`. Lookups return `None` on timeout, backend failure, rate-limit, or not-found. Shared-client init failure logs a warning and continues without WHOIS.
 - runtime metrics and status endpoints are the preferred place to surface degradation signals
 
 ## Related Code
