@@ -4,13 +4,11 @@
 //! including Google Analytics, Facebook Pixel, Google Tag Manager, and Google `AdSense`.
 
 use regex::Regex;
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::LazyLock;
 
 /// Supported analytics/tracking providers.
-///
-/// Eliminates primitive obsession by replacing raw `String` provider names
-/// with a type-safe enum, preventing typos and enabling exhaustive matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnalyticsProvider {
     GoogleAnalytics,
@@ -48,29 +46,26 @@ pub struct AnalyticsId {
     pub id: String,
 }
 
-/// Minimum length for a valid GTM container ID.
-/// Format: GTM- followed by at least 4 uppercase alphanumeric characters = 8 total.
+/// Minimum length for a valid GTM container ID (`GTM-` + at least 4 chars).
 const MIN_GTM_ID_LENGTH: usize = 8;
 
-/// Validates that a string is a valid Google Tag Manager container ID.
-///
-/// Valid GTM IDs:
-/// - Start with uppercase "GTM-"
-/// - Followed by uppercase letters and numbers only
-/// - Minimum length of 8 characters (GTM- + at least 4 chars)
-///
-/// This filters out false positives like:
-/// - "gtm-company" (lowercase prefix)
-/// - "gtm-industry" (lowercase prefix)
-/// - "GTM-" (too short)
-///
-/// # Arguments
-///
-/// * `id` - The candidate GTM ID string
-///
-/// # Returns
-///
-/// `true` if the ID is a valid GTM container ID, `false` otherwise.
+fn compile_re(pattern: &'static str) -> Regex {
+    Regex::new(pattern).expect("hardcoded analytics regex is valid; this is a compile-time bug")
+}
+
+fn id_as_is(captured: &str) -> String {
+    captured.to_string()
+}
+
+fn id_adsense_pub(captured: &str) -> String {
+    format!("pub-{captured}")
+}
+
+fn accept_all(_: &str) -> bool {
+    true
+}
+
+/// Valid GTM IDs start with uppercase `GTM-` and then only A–Z / 0–9.
 fn is_valid_gtm_id(id: &str) -> bool {
     id.starts_with("GTM-")
         && id.len() >= MIN_GTM_ID_LENGTH
@@ -80,151 +75,88 @@ fn is_valid_gtm_id(id: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
+static GA_UA_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#));
+static GA4_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#));
+static FB_PIXEL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#));
+static GTM_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    compile_re(
+        r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]{4,})\b"#,
+    )
+});
+static GTM_STANDALONE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r"\b(GTM-[A-Z0-9]{4,})\b"));
+static ADSENSE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r"(?i)(?:ca-)?pub-(\d{10,})"));
+
+struct AnalyticsRule {
+    regex: &'static LazyLock<Regex>,
+    provider: AnalyticsProvider,
+    map_id: fn(&str) -> String,
+    accept: fn(&str) -> bool,
+}
+
+static ANALYTICS_RULES: &[AnalyticsRule] = &[
+    AnalyticsRule {
+        regex: &GA_UA_PATTERN,
+        provider: AnalyticsProvider::GoogleAnalytics,
+        map_id: id_as_is,
+        accept: accept_all,
+    },
+    AnalyticsRule {
+        regex: &GA4_PATTERN,
+        provider: AnalyticsProvider::GoogleAnalytics4,
+        map_id: id_as_is,
+        accept: accept_all,
+    },
+    AnalyticsRule {
+        regex: &FB_PIXEL_PATTERN,
+        provider: AnalyticsProvider::FacebookPixel,
+        map_id: id_as_is,
+        accept: accept_all,
+    },
+    AnalyticsRule {
+        regex: &GTM_PATTERN,
+        provider: AnalyticsProvider::GoogleTagManager,
+        map_id: id_as_is,
+        accept: is_valid_gtm_id,
+    },
+    AnalyticsRule {
+        regex: &GTM_STANDALONE_PATTERN,
+        provider: AnalyticsProvider::GoogleTagManager,
+        map_id: id_as_is,
+        accept: is_valid_gtm_id,
+    },
+    AnalyticsRule {
+        regex: &ADSENSE_PATTERN,
+        provider: AnalyticsProvider::GoogleAdSense,
+        map_id: id_adsense_pub,
+        accept: accept_all,
+    },
+];
+
 /// Extracts analytics and tracking IDs from HTML content and JavaScript.
 ///
-/// Searches for:
-/// - Google Analytics: `ga('create', 'UA-XXXXX-Y')`, `gtag('config', 'G-XXXXXXXXXX')`
-/// - Facebook Pixel: `fbq('init', 'XXXXX')`
-/// - Google Tag Manager: `GTM-XXXXX` in script src or dataLayer
-/// - Google `AdSense`: Publisher IDs in script src or data attributes
-///
-/// # Arguments
-///
-/// * `html` - The raw HTML content (including script tags)
-///
-/// # Returns
-///
-/// A vector of `AnalyticsId` structs containing provider and ID pairs.
-#[allow(clippy::too_many_lines)] // Each analytics provider has a distinct regex pattern; they are sequential and independent
+/// Searches for Google Analytics (`UA-` / `G-`), Facebook Pixel, Google Tag
+/// Manager (`GTM-XXXX`), and Google `AdSense` publisher IDs.
 pub fn extract_analytics_ids(html: &str) -> Vec<AnalyticsId> {
     let mut analytics_ids = Vec::new();
-    let mut seen_ids = std::collections::HashSet::<(AnalyticsProvider, String)>::new();
+    let mut seen_ids = HashSet::<(AnalyticsProvider, String)>::new();
 
-    // Google Analytics (Universal Analytics): ga('create', 'UA-XXXXX-Y')
-    // Pattern: ga('create', 'UA-XXXXX-Y') or ga("create", "UA-XXXXX-Y")
-    static GA_UA_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)ga\s*\(\s*['"]create['"]\s*,\s*['"](UA-\d+-\d+)['"]"#)
-            .expect("GA_UA_PATTERN is a hardcoded valid regex; this is a compile-time bug")
-    });
-    for cap in GA_UA_PATTERN.captures_iter(html) {
-        if let Some(id) = cap.get(1) {
-            let id_str = id.as_str().to_string();
-            let key = (AnalyticsProvider::GoogleAnalytics, id_str.clone());
-            if seen_ids.insert(key) {
+    for rule in ANALYTICS_RULES {
+        for cap in rule.regex.captures_iter(html) {
+            let Some(id) = cap.get(1) else {
+                continue;
+            };
+            let id_str = (rule.map_id)(id.as_str());
+            if !(rule.accept)(&id_str) {
+                continue;
+            }
+            if seen_ids.insert((rule.provider, id_str.clone())) {
                 analytics_ids.push(AnalyticsId {
-                    provider: AnalyticsProvider::GoogleAnalytics,
-                    id: id_str,
-                });
-            }
-        }
-    }
-
-    // Google Analytics 4 (GA4): gtag('config', 'G-XXXXXXXXXX')
-    // Pattern: gtag('config', 'G-XXXXXXXXXX') or gtag("config", "G-XXXXXXXXXX")
-    static GA4_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)gtag\s*\(\s*['"]config['"]\s*,\s*['"](G-[A-Z0-9]+)['"]"#)
-            .expect("GA4_PATTERN is a hardcoded valid regex; this is a compile-time bug")
-    });
-    for cap in GA4_PATTERN.captures_iter(html) {
-        if let Some(id) = cap.get(1) {
-            let id_str = id.as_str().to_string();
-            let key = (AnalyticsProvider::GoogleAnalytics4, id_str.clone());
-            if seen_ids.insert(key) {
-                analytics_ids.push(AnalyticsId {
-                    provider: AnalyticsProvider::GoogleAnalytics4,
-                    id: id_str,
-                });
-            }
-        }
-    }
-
-    // Facebook Pixel: fbq('init', 'XXXXX')
-    // Pattern: fbq('init', 'XXXXX') or fbq("init", "XXXXX")
-    static FB_PIXEL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)fbq\s*\(\s*['"]init['"]\s*,\s*['"](\d+)['"]"#)
-            .expect("FB_PIXEL_PATTERN is a hardcoded valid regex; this is a compile-time bug")
-    });
-    for cap in FB_PIXEL_PATTERN.captures_iter(html) {
-        if let Some(id) = cap.get(1) {
-            let id_str = id.as_str().to_string();
-            let key = (AnalyticsProvider::FacebookPixel, id_str.clone());
-            if seen_ids.insert(key) {
-                analytics_ids.push(AnalyticsId {
-                    provider: AnalyticsProvider::FacebookPixel,
-                    id: id_str,
-                });
-            }
-        }
-    }
-
-    // Google Tag Manager: GTM-XXXXX in various formats
-    // Patterns:
-    //   - 'dataLayer','GTM-XXXXX' (function call parameter)
-    //   - ns.html?id=GTM-XXXXX (iframe src)
-    //   - gtm.js?id=GTM-XXXXX (script src)
-    //   - "tagIds":["GTM-XXXXX"] (JSON)
-    //   - gtag('config', 'GTM-XXXXX') (gtag call)
-    // Valid GTM container IDs: GTM- followed by uppercase letters and numbers only (typically 6-7 chars)
-    // We use case-sensitive matching to avoid false positives like "gtm-company", "gtm-industry"
-    static GTM_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)(?:gtm|googletagmanager|dataLayer|tagIds|gtm\.js|ns\.html)[^'"">]*['"">]?\s*[:=,]\s*['"]?(GTM-[A-Z0-9]{4,})\b"#)
-            .expect("GTM_PATTERN is a hardcoded valid regex; this is a compile-time bug")
-    });
-    for cap in GTM_PATTERN.captures_iter(html) {
-        if let Some(id) = cap.get(1) {
-            let id_str = id.as_str().to_string();
-            // Validate: must start with uppercase GTM- and contain only uppercase letters/numbers
-            // Filter out common false positives like "gtm-company", "gtm-industry", etc.
-            if is_valid_gtm_id(&id_str) {
-                let key = (AnalyticsProvider::GoogleTagManager, id_str.clone());
-                if seen_ids.insert(key) {
-                    analytics_ids.push(AnalyticsId {
-                        provider: AnalyticsProvider::GoogleTagManager,
-                        id: id_str,
-                    });
-                }
-            }
-        }
-    }
-
-    // Also check for standalone GTM-XXXXX patterns (fallback for edge cases)
-    // This catches GTM IDs that appear without the keywords above
-    // Must be uppercase GTM- followed by uppercase letters/numbers only
-    static GTM_STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\b(GTM-[A-Z0-9]{4,})\b")
-            .expect("GTM_STANDALONE_PATTERN is a hardcoded valid regex; this is a compile-time bug")
-    });
-    for cap in GTM_STANDALONE_PATTERN.captures_iter(html) {
-        if let Some(id) = cap.get(1) {
-            let id_str = id.as_str().to_string();
-            // Validate: must start with uppercase GTM- and contain only uppercase letters/numbers
-            if is_valid_gtm_id(&id_str) {
-                let key = (AnalyticsProvider::GoogleTagManager, id_str.clone());
-                if seen_ids.insert(key) {
-                    analytics_ids.push(AnalyticsId {
-                        provider: AnalyticsProvider::GoogleTagManager,
-                        id: id_str,
-                    });
-                }
-            }
-        }
-    }
-
-    // Google AdSense: Publisher ID in script src
-    // Pattern: ca-pub-XXXXXXXXXX or pub-XXXXXXXXXX
-    // AdSense publisher IDs are typically 16 digits (e.g., pub-1234567890123456)
-    // We require at least 10 digits to avoid false positives like "pub-1"
-    static ADSENSE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(?:ca-)?pub-(\d{10,})")
-            .expect("ADSENSE_PATTERN is a hardcoded valid regex; this is a compile-time bug")
-    });
-    for cap in ADSENSE_PATTERN.captures_iter(html) {
-        if let Some(id) = cap.get(1) {
-            let id_str = format!("pub-{}", id.as_str());
-            let key = (AnalyticsProvider::GoogleAdSense, id_str.clone());
-            if seen_ids.insert(key) {
-                analytics_ids.push(AnalyticsId {
-                    provider: AnalyticsProvider::GoogleAdSense,
+                    provider: rule.provider,
                     id: id_str,
                 });
             }
@@ -239,85 +171,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_analytics_ids_google_analytics_ua() {
-        let html = r#"
-            <script>
-                ga('create', 'UA-123456-1', 'auto');
-            </script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAnalytics);
-        assert_eq!(ids[0].id, "UA-123456-1");
-    }
-
-    #[test]
-    fn test_extract_analytics_ids_google_analytics_ua_double_quotes() {
-        let html = r#"
-            <script>
-                ga("create", "UA-654321-2", "auto");
-            </script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAnalytics);
-        assert_eq!(ids[0].id, "UA-654321-2");
-    }
-
-    #[test]
-    fn test_extract_analytics_ids_google_analytics_4() {
-        let html = r#"
-            <script>
-                gtag('config', 'G-ABCDEFGHIJ');
-            </script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAnalytics4);
-        assert_eq!(ids[0].id, "G-ABCDEFGHIJ");
-    }
-
-    #[test]
-    fn test_extract_analytics_ids_facebook_pixel() {
-        let html = r#"
-            <script>
-                fbq('init', '1234567890');
-            </script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, AnalyticsProvider::FacebookPixel);
-        assert_eq!(ids[0].id, "1234567890");
-    }
-
-    #[test]
-    fn test_extract_analytics_ids_google_tag_manager() {
-        let html = r#"
-            <script>
-                dataLayer = [{'gtm.start': new Date().getTime(), event: 'gtm.js'}];
-                (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-                new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-                j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-                'https://www.googletagmanager.com/gtm.js?id=GTM-XXXXX'+i+dl;f.parentNode.insertBefore(j,f);
-                })(window,document,'script','dataLayer','GTM-XXXXX');
-            </script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert!(!ids.is_empty());
-        assert!(ids
-            .iter()
-            .any(|id| id.provider == AnalyticsProvider::GoogleTagManager && id.id == "GTM-XXXXX"));
-    }
-
-    #[test]
-    fn test_extract_analytics_ids_google_adsense() {
-        let html = r#"
-            <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1234567890123456"></script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].provider, AnalyticsProvider::GoogleAdSense);
-        assert_eq!(ids[0].id, "pub-1234567890123456");
+    fn test_extract_analytics_ids_table() {
+        let cases: &[(&str, AnalyticsProvider, &str)] = &[
+            (
+                r#"<script>ga('create', 'UA-123456-1', 'auto');</script>"#,
+                AnalyticsProvider::GoogleAnalytics,
+                "UA-123456-1",
+            ),
+            (
+                r#"<script>ga("create", "UA-654321-2", "auto");</script>"#,
+                AnalyticsProvider::GoogleAnalytics,
+                "UA-654321-2",
+            ),
+            (
+                r#"<script>gtag('config', 'G-ABCDEFGHIJ');</script>"#,
+                AnalyticsProvider::GoogleAnalytics4,
+                "G-ABCDEFGHIJ",
+            ),
+            (
+                r#"<script>fbq('init', '1234567890');</script>"#,
+                AnalyticsProvider::FacebookPixel,
+                "1234567890",
+            ),
+            (
+                r#"<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1234567890123456"></script>"#,
+                AnalyticsProvider::GoogleAdSense,
+                "pub-1234567890123456",
+            ),
+            (
+                r#"<script>GA('CREATE', 'UA-123456-1', 'auto');</script>"#,
+                AnalyticsProvider::GoogleAnalytics,
+                "UA-123456-1",
+            ),
+            (
+                r#"<script>dataLayer.push('GTM-MMCQ2RJB');</script>"#,
+                AnalyticsProvider::GoogleTagManager,
+                "GTM-MMCQ2RJB",
+            ),
+        ];
+        for &(html, provider, id) in cases {
+            let ids = extract_analytics_ids(html);
+            assert!(
+                ids.iter()
+                    .any(|item| item.provider == provider && item.id == id),
+                "expected {provider:?} {id} in {ids:?} from {html}"
+            );
+        }
     }
 
     #[test]
@@ -333,13 +232,13 @@ mod tests {
         assert_eq!(ids.len(), 3);
         assert!(ids
             .iter()
-            .any(|id| id.provider == AnalyticsProvider::GoogleAnalytics));
+            .any(|id| id.provider == AnalyticsProvider::GoogleAnalytics && id.id == "UA-123456-1"));
+        assert!(ids.iter().any(|id| {
+            id.provider == AnalyticsProvider::GoogleAnalytics4 && id.id == "G-ABCDEFGHIJ"
+        }));
         assert!(ids
             .iter()
-            .any(|id| id.provider == AnalyticsProvider::GoogleAnalytics4));
-        assert!(ids
-            .iter()
-            .any(|id| id.provider == AnalyticsProvider::FacebookPixel));
+            .any(|id| id.provider == AnalyticsProvider::FacebookPixel && id.id == "1234567890"));
     }
 
     #[test]
@@ -351,7 +250,6 @@ mod tests {
             </script>
         "#;
         let ids = extract_analytics_ids(html);
-        // Should only extract once
         assert_eq!(ids.len(), 1);
     }
 
@@ -360,17 +258,5 @@ mod tests {
         let html = "<html><body>No analytics</body></html>";
         let ids = extract_analytics_ids(html);
         assert_eq!(ids.len(), 0);
-    }
-
-    #[test]
-    fn test_extract_analytics_ids_case_insensitive() {
-        let html = r#"
-            <script>
-                GA('CREATE', 'UA-123456-1', 'auto');
-            </script>
-        "#;
-        let ids = extract_analytics_ids(html);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].id, "UA-123456-1");
     }
 }

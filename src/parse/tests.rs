@@ -50,9 +50,7 @@ fn test_extract_title_with_html_entities() {
     let html = r#"<html><head><title>Test &amp; Page &lt;Title&gt;</title></head></html>"#;
     let document = Html::parse_document(html);
     let stats = test_error_stats();
-    let title = extract_title(&document, &stats);
-    // scraper should decode entities
-    assert!(title.contains("&") || title.contains("Test"));
+    assert_eq!(extract_title(&document, &stats), "Test & Page <Title>");
 }
 
 #[test]
@@ -148,7 +146,6 @@ fn test_extract_analytics_ids_gtm_data_layer_format() {
         </script>
     "#;
     let ids = extract_analytics_ids(html);
-    assert!(!ids.is_empty(), "Should find GTM ID in dataLayer format");
     let gtm_ids: Vec<&str> = ids
         .iter()
         .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
@@ -168,7 +165,6 @@ fn test_extract_analytics_ids_gtm_json_format() {
         <script type="application/json">{"gtm":{"tagIds":["GTM-T7L6LT"]}}</script>
     "#;
     let ids = extract_analytics_ids(html);
-    assert!(!ids.is_empty(), "Should find GTM ID in JSON format");
     let gtm_ids: Vec<&str> = ids
         .iter()
         .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
@@ -189,15 +185,19 @@ fn test_extract_analytics_ids_gtm_url_format() {
         <script src="https://www.googletagmanager.com/gtm.js?id=GTM-YYYYY"></script>
     "#;
     let ids = extract_analytics_ids(html);
-    assert!(!ids.is_empty(), "Should find GTM IDs in URL format");
     let gtm_ids: Vec<&str> = ids
         .iter()
         .filter(|id| id.provider == AnalyticsProvider::GoogleTagManager)
         .map(|id| id.id.as_str())
         .collect();
     assert!(
-        gtm_ids.contains(&"GTM-XXXXX") || gtm_ids.contains(&"GTM-YYYYY"),
-        "Should find at least one GTM ID: {:?}",
+        gtm_ids.contains(&"GTM-XXXXX"),
+        "Should find GTM-XXXXX: {:?}",
+        gtm_ids
+    );
+    assert!(
+        gtm_ids.contains(&"GTM-YYYYY"),
+        "Should find GTM-YYYYY: {:?}",
         gtm_ids
     );
 }
