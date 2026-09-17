@@ -1,59 +1,54 @@
 //! IP address resolution and reverse DNS lookup.
-//!
-//! This module provides functions to resolve hostnames to IP addresses
-//! and perform reverse DNS lookups (PTR records).
 
 use anyhow::{Error, Result};
 use hickory_resolver::TokioResolver;
+use std::net::IpAddr;
+
+/// Prefers a public IP when the response contains both public and private
+/// addresses, matching [`SafeResolver`](crate::security::safe_resolver::SafeResolver).
+#[must_use]
+pub(crate) fn prefer_public_ip(ips: impl IntoIterator<Item = IpAddr>) -> Option<IpAddr> {
+    let mut first = None;
+    for ip in ips {
+        if crate::security::safe_resolver::is_public_ip(ip) {
+            return Some(ip);
+        }
+        if first.is_none() {
+            first = Some(ip);
+        }
+    }
+    first
+}
 
 /// Resolves a hostname to an IP address using DNS.
 ///
 /// Prefers a public IP when the response contains both public and private
-/// addresses, so the returned value matches what [`SafeResolver`](crate::security::safe_resolver::SafeResolver) would use
-/// for the actual connection (consistent analytics and no misleading private-IP
-/// entries when DNS returns multiple addresses).
-///
-/// # Arguments
-///
-/// * `host` - The hostname to resolve
-/// * `resolver` - The DNS resolver instance
-///
-/// # Returns
-///
-/// A public IP if present, otherwise the first IP in the response, or an error
-/// if resolution fails or no addresses are found.
+/// addresses, so the returned value matches what [`SafeResolver`](crate::security::safe_resolver::SafeResolver)
+/// would use for the actual connection.
 ///
 /// # Errors
 ///
 /// Returns an error if DNS resolution fails or no IP addresses are found.
 pub async fn resolve_host_to_ip(host: &str, resolver: &TokioResolver) -> Result<String, Error> {
-    // In 0.24, this worked fine without FQDN workarounds
     let response = resolver.lookup_ip(host).await.map_err(Error::new)?;
-    let ip = response
-        .iter()
-        .find(|ip| crate::security::safe_resolver::is_public_ip(*ip))
-        .or_else(|| response.iter().next())
-        .ok_or_else(|| Error::msg("No IP addresses found"))?
-        .to_string();
-    Ok(ip)
+    prefer_public_ip(response.iter())
+        .map(|ip| ip.to_string())
+        .ok_or_else(|| Error::msg("No IP addresses found"))
 }
 
 /// Performs a reverse DNS lookup (PTR record) for an IP address.
 ///
-/// # Arguments
+/// Returns the reverse DNS name, or `None` if the lookup fails.
 ///
-/// * `ip` - The IP address to look up
-/// * `resolver` - The DNS resolver instance
+/// # Errors
 ///
-/// # Returns
-///
-/// The reverse DNS name, or `None` if the lookup fails.
+/// Returns an error if `ip` is not a valid IP address.
 pub async fn reverse_dns_lookup(
     ip: &str,
     resolver: &TokioResolver,
 ) -> Result<Option<String>, Error> {
     use hickory_resolver::proto::rr::Name;
-    let addr: std::net::IpAddr = ip.parse()?;
+    let addr: IpAddr = ip.parse()?;
     match resolver.reverse_lookup(Name::from(addr)).await {
         Ok(response) => {
             use hickory_resolver::proto::rr::RData;
@@ -76,39 +71,52 @@ pub async fn reverse_dns_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::initialization::test_resolver;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn prefer_public_ip_skips_rfc1918_when_public_present() {
+        let private = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let public = IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34));
+        assert_eq!(
+            prefer_public_ip([private, public]),
+            Some(public),
+            "analytics IP must match SafeResolver public preference"
+        );
+    }
+
+    #[test]
+    fn prefer_public_ip_keeps_first_when_all_private() {
+        let first = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let second = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(prefer_public_ip([first, second]), Some(first));
+    }
+
+    #[test]
+    fn prefer_public_ip_empty_is_none() {
+        assert_eq!(prefer_public_ip(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn prefer_public_ip_public_ipv6_beats_ula() {
+        let ula = IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1));
+        let public = IpAddr::V6(Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111));
+        assert_eq!(prefer_public_ip([ula, public]), Some(public));
+    }
 
     #[tokio::test]
     #[ignore = "live DNS; run with --ignored"]
     async fn test_resolve_host_to_ip_success() {
-        let resolver = test_resolver();
+        let resolver = crate::initialization::test_resolver();
         let ip = resolve_host_to_ip("example.com", &resolver)
             .await
             .expect("example.com should resolve when network DNS is available");
-        assert!(!ip.is_empty(), "IP address should not be empty");
-        assert!(
-            ip.contains('.') || ip.contains(':'),
-            "IP address should be IPv4 or IPv6, got {ip}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_resolve_host_to_ip_invalid_domain() {
-        let resolver = test_resolver();
-        // Use a domain that definitely doesn't exist
-        let result =
-            resolve_host_to_ip("this-domain-definitely-does-not-exist-12345.com", &resolver).await;
-        // Should fail with an error
-        assert!(
-            result.is_err(),
-            "DNS resolution should fail for non-existent domain"
-        );
+        assert!(ip.parse::<IpAddr>().is_ok(), "expected an IP, got {ip}");
     }
 
     #[tokio::test]
     #[ignore = "live reverse DNS; run with --ignored"]
     async fn test_reverse_dns_lookup_success() {
-        let resolver = test_resolver();
+        let resolver = crate::initialization::test_resolver();
         let result = reverse_dns_lookup("8.8.8.8", &resolver)
             .await
             .expect("PTR lookup should complete when network DNS is available");
@@ -122,36 +130,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_reverse_dns_lookup_invalid_ip() {
-        let resolver = test_resolver();
-        // Invalid IP address format
+        let resolver = crate::initialization::test_resolver();
         let result = reverse_dns_lookup("not.an.ip.address", &resolver).await;
         assert!(
             result.is_err(),
             "Reverse DNS lookup should error on invalid IP"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reverse_dns_lookup_no_ptr_record() {
-        let resolver = test_resolver();
-        // Use a private IP that likely doesn't have a PTR record
-        // Note: This may still succeed if the IP has a PTR, so we just verify it doesn't error
-        let result = reverse_dns_lookup("192.0.2.1", &resolver).await;
-        assert!(
-            result.is_ok(),
-            "Reverse DNS lookup should not error even if no PTR record"
-        );
-        // Result will be None if no PTR record exists
-    }
-
-    #[tokio::test]
-    async fn test_resolve_host_to_ip_empty_host() {
-        let resolver = test_resolver();
-        // Empty hostname should fail
-        let result = resolve_host_to_ip("", &resolver).await;
-        assert!(
-            result.is_err(),
-            "DNS resolution should fail for empty hostname"
         );
     }
 }

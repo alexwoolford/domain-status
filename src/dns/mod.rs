@@ -8,10 +8,9 @@
 //!
 //! All operations are async and respect system DNS configuration.
 //!
-//! ## Testing
-//!
-//! DNS tests use live resolution. For hermetic tests, consider a mock DNS server
-//! (e.g. hickory-dns test-support style).
+//! Record-type lookups share NXDOMAIN / empty `RRset` handling. Hermetic tests
+//! cover TXT byte caps, public-IP preference, and lookup-error mapping. Live
+//! `example.com` checks are `#[ignore]` (`just test-e2e`).
 
 mod extract;
 mod records;
