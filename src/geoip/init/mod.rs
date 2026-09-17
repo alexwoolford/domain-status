@@ -163,13 +163,14 @@ pub async fn init_geoip(
             Some((reader_arc, metadata.clone()));
         log::info!("GeoIP City database loaded successfully");
 
-        // Try to initialize ASN database in background (non-blocking)
-        let cache_path_clone = cache_path.clone();
-        tokio::spawn(async move {
-            if let Err(e) = asn::init_asn_database(&cache_path_clone).await {
-                log::warn!("Failed to initialize ASN database: {e}");
-            }
-        });
+        let asn_dir = Path::new(&path).parent().unwrap_or(&cache_path);
+        log::info!(
+            "Initializing GeoIP ASN from {} (city source {path})",
+            asn_dir.display()
+        );
+        if let Err(e) = asn::init_asn_database(asn_dir).await {
+            log::warn!("Failed to initialize ASN database: {e}");
+        }
 
         Ok(Some(metadata))
     } else {
