@@ -4,6 +4,9 @@
 ///
 /// Conservative: title markers used by Cloudflare/Akamai, or a small 403 body
 /// that still contains challenge-vendor tokens. Real 403 app pages are kept.
+///
+/// Title/body tokens are closed until a live miss. Do not expand the substring
+/// list from speculation.
 #[must_use]
 pub(crate) fn is_challenge_interstitial(status: u16, title: &str, body: &str) -> bool {
     if challenge_title(title) {

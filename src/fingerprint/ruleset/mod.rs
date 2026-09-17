@@ -140,6 +140,12 @@ fn prune_technology_for_static_detection(
     }
 }
 
+/// Apply the first-party overlay. Every load path (cache, vendored, merge) ends here.
+fn finish_ruleset(mut ruleset: FingerprintRuleset) -> Result<FingerprintRuleset> {
+    apply_first_party_overlay(&mut ruleset.technologies)?;
+    Ok(ruleset)
+}
+
 /// Initializes the fingerprint ruleset from URL or local path.
 ///
 /// Rules are cached locally and refreshed if older than 7 days.
@@ -190,8 +196,8 @@ pub async fn init_ruleset(
     let expected_sources = fingerprint_source_label(&sources);
 
     // Try to load from cache first
-    if let Ok(mut ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
-        apply_first_party_overlay(&mut ruleset.technologies)?;
+    if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
+        let ruleset = finish_ruleset(ruleset)?;
         log::info!(
             "Loaded fingerprint ruleset from cache ({} sources)",
             sources.len()
@@ -325,10 +331,9 @@ async fn fetch_ruleset_from_multiple_sources(
             .into_iter()
             .filter_map(|(name, tech)| ingest_technology(tech).map(|tech| (name, tech)))
             .collect();
-        apply_first_party_overlay(&mut vendored.technologies)?;
         // Do NOT write vendored under the remote `cache_key`. That would poison
         // subsequent cold starts into believing the full GitHub merge is cached.
-        return Ok(vendored);
+        return finish_ruleset(vendored);
     }
 
     if successful_sources < sources.len() {
@@ -353,19 +358,18 @@ async fn fetch_ruleset_from_multiple_sources(
         last_updated: SystemTime::now(),
     };
 
-    apply_first_party_overlay(&mut all_technologies)?;
-
-    log::info!(
-        "Merged {} technologies from {} source(s) (plus first-party overlay)",
-        all_technologies.len(),
-        sources.len()
-    );
-
     let ruleset = FingerprintRuleset {
         technologies: all_technologies,
         categories: all_categories,
         metadata,
     };
+    let ruleset = finish_ruleset(ruleset)?;
+
+    log::info!(
+        "Merged {} technologies from {} source(s) (plus first-party overlay)",
+        ruleset.technologies.len(),
+        sources.len()
+    );
 
     // Cache it with the hash-based cache key
     save_to_cache(&ruleset, cache_dir, cache_key).await?;
