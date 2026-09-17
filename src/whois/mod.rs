@@ -6,14 +6,26 @@ mod types;
 
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
-use whois_service::WhoisClient;
+use whois_service::{LookupStatus, WhoisClient};
 
 pub use types::WhoisResult;
 
 use cache::WhoisCacheStore;
 use parse::{convert_parsed_data, enrich_result_from_raw_text};
+
+/// Process-wide WHOIS/RDAP client (IANA bootstrap once, in-process cache + coalescing).
+pub(crate) type SharedWhoisClient = Arc<WhoisClient>;
+
+/// Build the shared scan client. Failures are best-effort (ADR 0002).
+pub(crate) async fn init_shared_client() -> Result<SharedWhoisClient> {
+    WhoisClient::new()
+        .await
+        .map(Arc::new)
+        .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {e}"))
+}
 
 fn whois_result_is_usable(result: &WhoisResult) -> bool {
     result.registrar.as_deref().is_some_and(|s| !s.is_empty())
@@ -21,6 +33,21 @@ fn whois_result_is_usable(result: &WhoisResult) -> bool {
             .raw_text
             .as_deref()
             .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// Vendor `LookupStatus` is the cache gate: rate-limit banners must not look like a 7-day hit.
+fn lookup_status_is_cacheable(status: LookupStatus, domain: &str) -> bool {
+    match status {
+        LookupStatus::Found => true,
+        LookupStatus::RateLimited => {
+            log::warn!("WHOIS rate-limited for {domain}; not caching");
+            false
+        }
+        LookupStatus::NotFound => {
+            log::debug!("WHOIS not found for {domain}");
+            false
+        }
+    }
 }
 
 /// Performs a WHOIS lookup for a domain
@@ -60,12 +87,25 @@ fn whois_result_is_usable(result: &WhoisResult) -> bool {
 /// # Errors
 /// Returns `Err` when the WHOIS client cannot be created or the lookup fails.
 pub async fn lookup_whois(domain: &str, cache_dir: Option<&Path>) -> Result<Option<WhoisResult>> {
-    lookup_whois_with_lookup(domain, cache_dir, |lookup_domain| {
+    lookup_whois_with_client(domain, cache_dir, None).await
+}
+
+/// Scan-path lookup using the process-wide client when one was built at init.
+pub(crate) async fn lookup_whois_with_client(
+    domain: &str,
+    cache_dir: Option<&Path>,
+    client: Option<&WhoisClient>,
+) -> Result<Option<WhoisResult>> {
+    let existing = client.cloned();
+    lookup_whois_with_lookup(domain, cache_dir, move |lookup_domain| {
         let domain = lookup_domain.to_string();
         async move {
-            let client = WhoisClient::new()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {e}"))?;
+            let client = match existing {
+                Some(client) => client,
+                None => WhoisClient::new()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create WHOIS client: {e}"))?,
+            };
             client.lookup(&domain).await.map_err(anyhow::Error::from)
         }
     })
@@ -110,6 +150,10 @@ where
                 return Ok(None);
             }
         };
+        if !lookup_status_is_cacheable(response.lookup_status, domain) {
+            return Ok(None);
+        }
+
         log::debug!("WHOIS lookup successful for {domain}");
         let result = convert_parsed_data(&response);
         if !whois_result_is_usable(&result) {
@@ -152,7 +196,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::TempDir;
-    use whois_service::{LookupStatus, ParsedWhoisData, WhoisResponse};
+    use whois_service::{ParsedWhoisData, WhoisResponse};
 
     fn fake_response() -> WhoisResponse {
         WhoisResponse {
@@ -278,6 +322,107 @@ mod tests {
         })
         .await
         .expect("second lookup should not use an empty cache entry");
+
+        assert!(second.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    fn rate_limited_response() -> WhoisResponse {
+        WhoisResponse {
+            domain: "throttled.example".to_string(),
+            whois_server: "whois.example.com".to_string(),
+            raw_data: "Number of allowed queries exceeded.".to_string(),
+            parsed_data: Some(ParsedWhoisData {
+                registrar: Some("Example Registrar".to_string()),
+                ..Default::default()
+            }),
+            lookup_status: LookupStatus::RateLimited,
+            cached: false,
+            query_time_ms: 1,
+            parsing_analysis: None,
+        }
+    }
+
+    fn not_found_response() -> WhoisResponse {
+        WhoisResponse {
+            domain: "missing.example".to_string(),
+            whois_server: "RDAP: https://rdap.example.com".to_string(),
+            raw_data: "Domain not found".to_string(),
+            parsed_data: None,
+            lookup_status: LookupStatus::NotFound,
+            cached: false,
+            query_time_ms: 1,
+            parsing_analysis: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_does_not_cache_rate_limited() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let first = lookup_whois_with_lookup("throttled.example", Some(temp_dir.path()), {
+            let calls = Arc::clone(&calls);
+            move |_| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(rate_limited_response())
+                }
+            }
+        })
+        .await
+        .expect("lookup wrapper should not fail");
+        assert!(first.is_none());
+
+        let second = lookup_whois_with_lookup("throttled.example", Some(temp_dir.path()), {
+            let calls = Arc::clone(&calls);
+            move |_| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(rate_limited_response())
+                }
+            }
+        })
+        .await
+        .expect("rate-limited result must not be disk-cached");
+
+        assert!(second.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_returns_none_on_not_found() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let first = lookup_whois_with_lookup("missing.example", Some(temp_dir.path()), {
+            let calls = Arc::clone(&calls);
+            move |_| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(not_found_response())
+                }
+            }
+        })
+        .await
+        .expect("lookup wrapper should not fail");
+        assert!(first.is_none());
+
+        let second = lookup_whois_with_lookup("missing.example", Some(temp_dir.path()), {
+            let calls = Arc::clone(&calls);
+            move |_| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(not_found_response())
+                }
+            }
+        })
+        .await
+        .expect("not-found result must not be disk-cached");
 
         assert!(second.is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 2);

@@ -108,9 +108,10 @@ pub async fn prepare_record_for_insertion(
                     params.resp_data.final_domain
                 );
 
-                let result = match crate::whois::lookup_whois(
+                let result = match crate::whois::lookup_whois_with_client(
                     &params.resp_data.final_domain,
                     Some(params.ctx.runtime.whois_cache_dir.as_path()),
+                    params.ctx.runtime.whois_client.as_deref(),
                 )
                 .await
                 {

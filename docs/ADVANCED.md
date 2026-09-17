@@ -20,7 +20,7 @@ Subdirectories:
 |--------|----------|
 | `fingerprints/` | Merged ruleset cache (7-day TTL); superseded hash dirs pruned after a successful refresh |
 | `geoip/` | GeoLite2 City/ASN MMDB + metadata (orphaned `.*.tmp` cleaned on init) |
-| `whois/` | Per-domain WHOIS/RDAP JSON (7-day TTL) |
+| `whois/` | Per-domain WHOIS/RDAP JSON (7-day TTL). One client per scan; rate-limited and not-found responses are not cached. |
 | `user_agent/` | Chrome version cache (30-day TTL) |
 
 **Not caches:** `--db-path` (SQLite) and `--log-file` remain explicit outputs (cwd by default).

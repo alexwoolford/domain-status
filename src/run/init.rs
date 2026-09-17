@@ -163,9 +163,23 @@ pub async fn init_scan_resources(
         .await
         .context("Failed to run database migrations")?;
 
-    if config.enable_whois {
-        info!("WHOIS/RDAP lookup enabled (rate limit: 1 query per 2 seconds)");
-    }
+    let (enable_whois, whois_client) = if config.enable_whois {
+        match crate::whois::init_shared_client().await {
+            Ok(client) => {
+                info!(
+                    "WHOIS/RDAP lookup enabled (best-effort, {}s timeout, 7-day disk cache)",
+                    crate::config::WHOIS_TIMEOUT_SECS
+                );
+                (true, Some(client))
+            }
+            Err(e) => {
+                warn!("Failed to initialize WHOIS/RDAP client: {e}. Continuing without WHOIS.");
+                (false, None)
+            }
+        }
+    } else {
+        (false, None)
+    };
 
     // Initialize fingerprint ruleset
     let ruleset =
@@ -229,6 +243,17 @@ pub async fn init_scan_resources(
     let progress_callback = config.progress_callback.clone();
 
     // Create shared processing context
+    let mut runtime = RuntimeContext::new(
+        error_stats.clone(),
+        Arc::clone(&timing_stats),
+        Some(run_id.clone()),
+        enable_whois,
+        whois_cache.clone(),
+        config.scan_external_scripts,
+        Arc::clone(&runtime_metrics),
+        config.allow_localhost_for_tests,
+    );
+    runtime.whois_client = whois_client;
     let shared_ctx = Arc::new(ProcessingContext::new(
         NetworkContext::new(
             Arc::clone(&client),
@@ -236,16 +261,7 @@ pub async fn init_scan_resources(
             Arc::clone(&resolver),
         ),
         Arc::clone(&pool),
-        RuntimeContext::new(
-            error_stats.clone(),
-            Arc::clone(&timing_stats),
-            Some(run_id.clone()),
-            config.enable_whois,
-            whois_cache.clone(),
-            config.scan_external_scripts,
-            Arc::clone(&runtime_metrics),
-            config.allow_localhost_for_tests,
-        ),
+        runtime,
         Arc::clone(&ruleset),
     ));
 
