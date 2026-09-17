@@ -99,6 +99,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
                     "version": t.version.clone().map_or(Value::Null, Value::String),
                     "category": t.category.clone().map_or(Value::Null, Value::String),
                     "is_implied": t.is_implied,
+                    "detection_source": t.detection_source.clone().map_or(Value::Null, Value::String),
                 })
             })
             .collect();

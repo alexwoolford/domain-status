@@ -364,7 +364,8 @@ mod tests {
                 technology_name TEXT NOT NULL,
                 technology_version TEXT,
                 technology_category TEXT,
-                is_implied INTEGER NOT NULL DEFAULT 0
+                is_implied INTEGER NOT NULL DEFAULT 0,
+                detection_source TEXT
             )",
         )
         .execute(&pool)

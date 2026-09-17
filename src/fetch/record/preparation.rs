@@ -451,12 +451,14 @@ mod tests {
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
         ];
 

@@ -11,9 +11,14 @@ mod body;
 mod cookies;
 mod dns_cert;
 mod headers;
+mod interstitial;
 mod matching;
 mod signal_match;
+mod source;
 mod utils;
+
+#[cfg(test)]
+mod gold_set;
 
 use reqwest::header::HeaderMap;
 use std::collections::{HashMap, HashSet};
@@ -27,8 +32,11 @@ use body::{check_body_with_ruleset, check_scripts_with_ruleset};
 use cookies::check_cookies_with_ruleset;
 use dns_cert::check_dns_and_cert_with_ruleset;
 use headers::check_headers_with_ruleset;
-use matching::apply_technology_exclusions;
+use matching::{apply_technology_exclusions, apply_technology_requires};
+use source::DetectionSource;
 use utils::{extract_cookies_from_headers, normalize_headers_to_map};
+
+pub(crate) use interstitial::is_challenge_interstitial;
 
 /// Detects technologies from extracted HTML data, headers, and URL.
 ///
@@ -45,7 +53,8 @@ use utils::{extract_cookies_from_headers, normalize_headers_to_map};
 /// Late signals (NS/CNAME / cert issuer / fetched script bodies) are merged after
 /// `parallel_enrich` via [`supplement_technologies_with_dns_cert`] and
 /// [`supplement_technologies_with_script_text`]. TXT/MX/SPF/DMARC and CSP
-/// allowlists are not treated as serving-stack technologies.
+/// allowlists are not treated as serving-stack technologies. Certificate
+/// authorities matched via `certIssuer` are dropped (use `ssl_cert_issuer`).
 ///
 /// Technologies with only runtime `js` object patterns (and no other signals) are not detected.
 ///
@@ -58,12 +67,15 @@ pub struct DetectedTechnology {
     pub category: Option<String>,
     /// True when this technology was added only via another tech's `implies` list.
     pub is_implied: bool,
+    /// Static signal that produced the match (`header`, `html`, `scriptSrc`, `ns`, …).
+    pub detection_source: Option<String>,
 }
 
 #[derive(Clone)]
 struct TechInfo {
     version: Option<String>,
     is_implied: bool,
+    source: DetectionSource,
 }
 
 /// Drops version strings that look like content/git hashes rather than semver.
@@ -88,11 +100,15 @@ fn merge_observed(
     detected: &mut HashMap<String, TechInfo>,
     tech_name: String,
     version: Option<String>,
+    source: DetectionSource,
 ) {
     let version = sanitize_technology_version(version);
     detected
         .entry(tech_name)
         .and_modify(|existing| {
+            if existing.is_implied {
+                existing.source = source;
+            }
             existing.is_implied = false;
             if existing.version.is_none() && version.is_some() {
                 existing.version.clone_from(&version);
@@ -101,6 +117,7 @@ fn merge_observed(
         .or_insert(TechInfo {
             version,
             is_implied: false,
+            source,
         });
 }
 
@@ -136,6 +153,7 @@ fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &Fingerprin
                         TechInfo {
                             version,
                             is_implied: true,
+                            source: DetectionSource::Implied,
                         },
                     );
                     added_any = true;
@@ -148,11 +166,38 @@ fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &Fingerprin
     }
 }
 
-/// Protocol / transport flags that belong in headers/TLS columns, not the stack inventory.
-fn is_denylisted_technology(name: &str) -> bool {
-    name.eq_ignore_ascii_case("HTTP/2")
+/// Protocol / transport flags and CAs that belong in headers/TLS columns, not the stack inventory.
+fn is_denylisted_technology(name: &str, category: Option<&str>) -> bool {
+    if name.eq_ignore_ascii_case("HTTP/2")
         || name.eq_ignore_ascii_case("HTTP/3")
         || name.eq_ignore_ascii_case("HSTS")
+    {
+        return true;
+    }
+    if category.is_some_and(|c| c.eq_ignore_ascii_case("SSL/TLS certificate authorities")) {
+        return true;
+    }
+    is_certificate_authority_name(name)
+}
+
+fn is_certificate_authority_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Let's Encrypt"
+            | "Lets Encrypt"
+            | "DigiCert"
+            | "Sectigo"
+            | "GlobalSign"
+            | "Thawte"
+            | "AWS Certificate Manager"
+            | "Identrust"
+            | "IdenTrust"
+            | "GeoTrust"
+            | "Comodo"
+            | "Entrust"
+            | "RapidSSL"
+            | "Google Trust Services"
+    )
 }
 
 fn finalize_detections(
@@ -160,13 +205,19 @@ fn finalize_detections(
     ruleset: &FingerprintRuleset,
 ) -> Vec<DetectedTechnology> {
     let detected_names: HashSet<String> = detected.keys().cloned().collect();
-    let kept_names = apply_technology_exclusions(&detected_names, ruleset);
+    let after_exclusions = apply_technology_exclusions(&detected_names, ruleset);
+    let kept_names = apply_technology_requires(&after_exclusions, ruleset);
 
     detected
         .into_iter()
-        .filter(|(name, _)| kept_names.contains(name) && !is_denylisted_technology(name))
+        .filter(|(name, _)| kept_names.contains(name))
+        .filter(|(name, _)| {
+            let category = get_technology_category(ruleset, name);
+            !is_denylisted_technology(name, category.as_deref())
+        })
         .map(|(name, info)| DetectedTechnology {
             category: get_technology_category(ruleset, &name),
+            detection_source: Some(info.source.as_str().to_string()),
             name,
             version: info.version,
             is_implied: info.is_implied,
@@ -177,15 +228,42 @@ fn finalize_detections(
 fn detected_to_map(techs: &[DetectedTechnology]) -> HashMap<String, TechInfo> {
     let mut detected = HashMap::with_capacity(techs.len());
     for tech in techs {
+        let source = tech
+            .detection_source
+            .as_deref()
+            .and_then(parse_detection_source)
+            .unwrap_or(if tech.is_implied {
+                DetectionSource::Implied
+            } else {
+                DetectionSource::Html
+            });
         detected.insert(
             tech.name.clone(),
             TechInfo {
                 version: tech.version.clone(),
                 is_implied: tech.is_implied,
+                source,
             },
         );
     }
     detected
+}
+
+fn parse_detection_source(raw: &str) -> Option<DetectionSource> {
+    Some(match raw {
+        "header" => DetectionSource::Header,
+        "cookie" => DetectionSource::Cookie,
+        "html" => DetectionSource::Html,
+        "scriptSrc" => DetectionSource::ScriptSrc,
+        "scripts" => DetectionSource::Scripts,
+        "url" => DetectionSource::Url,
+        "js" => DetectionSource::Js,
+        "ns" => DetectionSource::Ns,
+        "cname" => DetectionSource::Cname,
+        "cert" => DetectionSource::Cert,
+        "implied" => DetectionSource::Implied,
+        _ => return None,
+    })
 }
 
 /// CPU-bound technology detection using a pre-fetched ruleset.
@@ -218,13 +296,23 @@ pub(crate) fn detect_technologies_blocking(
 
     let header_results = check_headers_with_ruleset(ruleset, &header_map);
     for result in header_results {
-        merge_observed(&mut detected, result.tech_name, result.version);
+        merge_observed(
+            &mut detected,
+            result.tech_name,
+            result.version,
+            result.source,
+        );
     }
 
     if !cookies.is_empty() {
         let cookie_results = check_cookies_with_ruleset(ruleset, &cookies);
         for result in cookie_results {
-            merge_observed(&mut detected, result.tech_name, result.version);
+            merge_observed(
+                &mut detected,
+                result.tech_name,
+                result.version,
+                result.source,
+            );
         }
     }
 
@@ -237,7 +325,12 @@ pub(crate) fn detect_technologies_blocking(
         inline_script_text,
     );
     for result in body_results {
-        merge_observed(&mut detected, result.tech_name, result.version);
+        merge_observed(
+            &mut detected,
+            result.tech_name,
+            result.version,
+            result.source,
+        );
     }
 
     // Static script-tag ID match against ruleset `js` keys (e.g. id="__NEXT_DATA__").
@@ -248,7 +341,7 @@ pub(crate) fn detect_technologies_blocking(
                 continue;
             }
             if tech.js.keys().any(|js_key| script_tag_ids.contains(js_key)) {
-                merge_observed(&mut detected, tech_name.clone(), None);
+                merge_observed(&mut detected, tech_name.clone(), None, DetectionSource::Js);
             }
         }
     }
@@ -307,7 +400,12 @@ pub(crate) fn supplement_technologies_with_dns_cert(
     }
 
     for result in supplemental {
-        merge_observed(&mut detected, result.tech_name, result.version);
+        merge_observed(
+            &mut detected,
+            result.tech_name,
+            result.version,
+            result.source,
+        );
     }
     expand_implies(&mut detected, ruleset);
     finalize_detections(detected, ruleset)
@@ -335,7 +433,12 @@ pub(crate) fn supplement_technologies_with_script_text(
 
     let mut detected = detected_to_map(&already_detected);
     for result in supplemental {
-        merge_observed(&mut detected, result.tech_name, result.version);
+        merge_observed(
+            &mut detected,
+            result.tech_name,
+            result.version,
+            result.source,
+        );
     }
     expand_implies(&mut detected, ruleset);
     finalize_detections(detected, ruleset)
@@ -389,6 +492,7 @@ mod tests {
             TechInfo {
                 version: None,
                 is_implied: false,
+                source: DetectionSource::Header,
             },
         );
         detected.insert(
@@ -396,6 +500,7 @@ mod tests {
             TechInfo {
                 version: None,
                 is_implied: false,
+                source: DetectionSource::Header,
             },
         );
         detected.insert(
@@ -403,6 +508,7 @@ mod tests {
             TechInfo {
                 version: None,
                 is_implied: false,
+                source: DetectionSource::Header,
             },
         );
         detected.insert(
@@ -410,6 +516,7 @@ mod tests {
             TechInfo {
                 version: Some("1.18".to_string()),
                 is_implied: false,
+                source: DetectionSource::Header,
             },
         );
         detected.insert(
@@ -417,6 +524,7 @@ mod tests {
             TechInfo {
                 version: Some("2".to_string()),
                 is_implied: false,
+                source: DetectionSource::Header,
             },
         );
         let ruleset = FingerprintRuleset {
@@ -845,8 +953,46 @@ mod tests {
             &HashMap::new(),
             Some("C = US, O = Let's Encrypt, CN = R3"),
         );
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "Let's Encrypt");
+        assert!(
+            result.is_empty(),
+            "certificate authorities must not become url_technologies, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_finalize_drops_ca_category() {
+        let mut detected = HashMap::new();
+        detected.insert(
+            "Custom CA".to_string(),
+            TechInfo {
+                version: None,
+                is_implied: false,
+                source: DetectionSource::Cert,
+            },
+        );
+        detected.insert(
+            "nginx".to_string(),
+            TechInfo {
+                version: None,
+                is_implied: false,
+                source: DetectionSource::Header,
+            },
+        );
+        let mut ca = empty_tech();
+        ca.cats.push(70);
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::from([("Custom CA".into(), ca)]),
+            categories: HashMap::from([(70, "SSL/TLS certificate authorities".into())]),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+        let out = finalize_detections(detected, &ruleset);
+        let names: Vec<_> = out.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"nginx"));
+        assert!(!names.contains(&"Custom CA"));
     }
 
     #[test]
@@ -1020,6 +1166,7 @@ mod tests {
             version: None,
             category: None,
             is_implied: false,
+            detection_source: Some("header".into()),
         }];
         let ruleset = FingerprintRuleset::empty_for_tests();
         let result = supplement_technologies_with_script_text(&ruleset, prior.clone(), "");

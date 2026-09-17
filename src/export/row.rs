@@ -172,6 +172,7 @@ pub struct TechnologyRecord {
     pub version: Option<String>,
     pub category: Option<String>,
     pub is_implied: bool,
+    pub detection_source: Option<String>,
 }
 
 /// Analytics ID record for export (avoids comma/colon delimiter corruption).
@@ -575,7 +576,7 @@ pub async fn build_export_row(
     )
     .await?;
     let tech_struct_sql = format!(
-        "SELECT technology_name, technology_version, technology_category, is_implied
+        "SELECT technology_name, technology_version, technology_category, is_implied, detection_source
          FROM url_technologies WHERE url_status_id = ?{tech_filter} ORDER BY technology_name LIMIT ?"
     );
     let technologies: Vec<TechnologyRecord> = crate::sql::query(tech_struct_sql)
@@ -589,6 +590,7 @@ pub async fn build_export_row(
             version: r.get("technology_version"),
             category: r.get("technology_category"),
             is_implied: r.get::<i64, _>("is_implied") != 0,
+            detection_source: r.get("detection_source"),
         })
         .collect();
     let technology_categories_str = technologies

@@ -1,0 +1,18 @@
+{
+  "Payload": {
+    "cats": [1],
+    "headers": {
+      "x-powered-by": "Payload"
+    },
+    "website": "https://payloadcms.com"
+  },
+  "Amazon S3": {
+    "cats": [31],
+    "headers": {
+      "server": "^AmazonS3$",
+      "x-amz-server-side-encryption": ""
+    },
+    "implies": ["Amazon Web Services"],
+    "website": "https://aws.amazon.com/s3/"
+  }
+}

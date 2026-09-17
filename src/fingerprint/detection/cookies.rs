@@ -9,6 +9,7 @@ use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
 
 use super::signal_match::SignalMatch;
+use super::source::DetectionSource;
 
 /// Result of cookie matching for a single technology.
 pub type CookieMatchResult = SignalMatch;
@@ -102,6 +103,7 @@ pub(crate) fn check_cookies_with_ruleset(
             results.push(CookieMatchResult {
                 tech_name: tech_name.clone(),
                 version,
+                source: DetectionSource::Cookie,
             });
         }
     }

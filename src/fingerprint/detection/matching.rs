@@ -43,6 +43,63 @@ pub(crate) fn apply_technology_exclusions(
     final_detected
 }
 
+/// Drops detections whose Wappalyzer `requires` / `requiresCategory` are unmet.
+///
+/// Iterates to a fixed point so a dropped parent can cause children to drop.
+pub(crate) fn apply_technology_requires(
+    detected: &HashSet<String>,
+    ruleset: &FingerprintRuleset,
+) -> HashSet<String> {
+    const MAX_REQUIRES_DEPTH: u32 = 10;
+    let mut remaining = detected.clone();
+    for _ in 0..MAX_REQUIRES_DEPTH {
+        let mut next = HashSet::new();
+        let mut dropped_any = false;
+        for name in &remaining {
+            if technology_requires_satisfied(name, &remaining, ruleset) {
+                next.insert(name.clone());
+            } else {
+                dropped_any = true;
+            }
+        }
+        remaining = next;
+        if !dropped_any {
+            break;
+        }
+    }
+    remaining
+}
+
+fn technology_requires_satisfied(
+    name: &str,
+    detected: &HashSet<String>,
+    ruleset: &FingerprintRuleset,
+) -> bool {
+    let Some(tech) = ruleset.technologies.get(name) else {
+        return true;
+    };
+    for req in &tech.requires {
+        let (req_name, _) = parse_technology_reference(req);
+        if !detected.contains(&req_name) {
+            return false;
+        }
+    }
+    if tech.requires_category.is_empty() {
+        return true;
+    }
+    detected.iter().any(|other| {
+        if other == name {
+            return false;
+        }
+        ruleset.technologies.get(other).is_some_and(|other_tech| {
+            other_tech
+                .cats
+                .iter()
+                .any(|cat| tech.requires_category.contains(cat))
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +267,58 @@ mod tests {
             !result.contains("Re:amaze"),
             "exclusion must match full name including colon"
         );
+    }
+
+    #[test]
+    fn test_requires_drops_plugin_without_parent() {
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: create_test_metadata(),
+        };
+        let mut plugin = create_empty_technology();
+        plugin.requires.push("WordPress".to_string());
+        ruleset
+            .technologies
+            .insert("Gravity Forms".to_string(), plugin);
+        ruleset
+            .technologies
+            .insert("WordPress".to_string(), create_empty_technology());
+
+        let mut detected = HashSet::new();
+        detected.insert("Gravity Forms".to_string());
+        let result = apply_technology_requires(&detected, &ruleset);
+        assert!(result.is_empty());
+
+        detected.insert("WordPress".to_string());
+        let result = apply_technology_requires(&detected, &ruleset);
+        assert!(result.contains("Gravity Forms"));
+        assert!(result.contains("WordPress"));
+    }
+
+    #[test]
+    fn test_requires_category_needs_another_tech_in_category() {
+        let mut ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::from([(1, "CMS".to_string())]),
+            metadata: create_test_metadata(),
+        };
+        let mut plugin = create_empty_technology();
+        plugin.requires_category.push(1);
+        ruleset
+            .technologies
+            .insert("Some Plugin".to_string(), plugin);
+        let mut cms = create_empty_technology();
+        cms.cats.push(1);
+        ruleset.technologies.insert("WordPress".to_string(), cms);
+
+        let mut only_plugin = HashSet::new();
+        only_plugin.insert("Some Plugin".to_string());
+        assert!(apply_technology_requires(&only_plugin, &ruleset).is_empty());
+
+        only_plugin.insert("WordPress".to_string());
+        let kept = apply_technology_requires(&only_plugin, &ruleset);
+        assert!(kept.contains("Some Plugin"));
+        assert!(kept.contains("WordPress"));
     }
 }

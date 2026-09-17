@@ -75,6 +75,7 @@ fn arrow_type_technologies() -> DataType {
                 Field::new("version", DataType::Utf8, true),
                 Field::new("category", DataType::Utf8, true),
                 Field::new("is_implied", DataType::Boolean, false),
+                Field::new("detection_source", DataType::Utf8, true),
             ]
             .into(),
         ),

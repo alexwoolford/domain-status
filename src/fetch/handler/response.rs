@@ -88,18 +88,31 @@ async fn parallel_enrich(
     ctx: &ProcessingContext,
     final_url_str: &str,
 ) -> Result<EnrichmentResult, Error> {
+    let skip_tech = crate::fingerprint::is_challenge_interstitial(
+        resp_data.status,
+        &html_data.title,
+        resp_data.body.as_ref(),
+    );
     let (tech_result, dns_result, favicon_result, external_script_scan, well_known) = tokio::join!(
         async {
             use crate::fetch::record::detect_technologies_safely;
 
             let tech_start = Instant::now();
-            let technologies = detect_technologies_safely(
-                html_data,
-                resp_data,
-                &ctx.runtime.error_stats,
-                &ctx.ruleset,
-            )
-            .await;
+            let technologies = if skip_tech {
+                log::debug!(
+                    "Skipping technology detection for challenge interstitial {}",
+                    resp_data.final_domain
+                );
+                Vec::new()
+            } else {
+                detect_technologies_safely(
+                    html_data,
+                    resp_data,
+                    &ctx.runtime.error_stats,
+                    &ctx.ruleset,
+                )
+                .await
+            };
             let tech_detection_us = duration_to_us(tech_start.elapsed());
             (technologies, tech_detection_us)
         },
@@ -135,15 +148,19 @@ async fn parallel_enrich(
         (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us),
     ) = dns_result?;
 
-    let technologies_vec = supplement_technologies_after_enrichment(
-        ctx,
-        technologies_vec,
-        &tls_dns_data,
-        &additional_dns,
-        &external_script_scan,
-        &resp_data.final_domain,
-    )
-    .await;
+    let technologies_vec = if skip_tech {
+        Vec::new()
+    } else {
+        supplement_technologies_after_enrichment(
+            ctx,
+            technologies_vec,
+            &tls_dns_data,
+            &additional_dns,
+            &external_script_scan,
+            &resp_data.final_domain,
+        )
+        .await
+    };
 
     Ok(EnrichmentResult {
         technologies_vec,

@@ -5,11 +5,14 @@ use std::collections::HashMap;
 use crate::fingerprint::models::{FingerprintRuleset, Technology};
 use crate::fingerprint::patterns::matches_pattern;
 
+use super::source::DetectionSource;
+
 /// A technology name plus optional version extracted from a signal match.
 #[derive(Debug, Clone)]
 pub(crate) struct SignalMatch {
     pub tech_name: String,
     pub version: Option<String>,
+    pub source: DetectionSource,
 }
 
 /// Match technologies whose `select` map keys exist in `values`.
@@ -21,6 +24,7 @@ pub(crate) fn match_string_map_signal(
     values: &HashMap<String, String>,
     select: impl Fn(&Technology) -> &HashMap<String, String>,
     skip_key: impl Fn(&str) -> bool,
+    source: DetectionSource,
 ) -> Vec<SignalMatch> {
     let mut results = Vec::new();
     for (tech_name, tech) in &ruleset.technologies {
@@ -56,6 +60,7 @@ pub(crate) fn match_string_map_signal(
             results.push(SignalMatch {
                 tech_name: tech_name.clone(),
                 version,
+                source,
             });
         }
     }

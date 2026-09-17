@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Per-host URL admission of 2 tokens/sec whenever `--rate-limit-rps` is enabled (`0` still disables all admission caps).
 - README / `--help` note: scan only hosts you are authorized to scan.
+- First-party fingerprint overlay (`assets/fingerprints/overlay.json`): Payload via `x-powered-by`; Amazon S3 hosting headers only (not CSP/`scriptSrc`).
+- `url_technologies.detection_source` (migration `0016_technology_detection_source.sql`) records the matching signal (`header`, `html`, `scriptSrc`, `ns`, `cname`, `implied`, …).
 
 ### Changed
 - Install and command name is `domain-status` (Rust library crate remains `domain_status`). README audience no longer calls out PE/portfolio intelligence.
@@ -31,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `generic-api-key` no longer treats hyphenated UUID identifiers as secrets (MediaWiki `"key":"<uuid>"` and the same shape on `apiKey=`). Vendor UUID rules such as `hubspot-api-key` are unchanged.
 - `url_http_headers` records the final response only: hop `Alt-Svc` is no longer copied onto the observation.
 - Test helper awaits SQLite rollback on the error path so coverage runs do not flake on `SQLITE_LOCKED_SHAREDCACHE`. Cancellation stress tests use a temp file, not `:memory:` shared cache.
-- Fingerprint inventory is the HTTP serving stack: DNS TXT/MX org-proofs and CSP allowlists no longer become `url_technologies`. `github.com` is not labeled GitHub Pages.
+- Fingerprint inventory is the HTTP serving stack: DNS TXT/MX org-proofs and CSP allowlists no longer become `url_technologies`. `github.com` is not labeled GitHub Pages. SSL/TLS certificate authorities are omitted (use `ssl_cert_issuer`). Wappalyzer `requires` is honored. Challenge/interstitial pages are not fingerprinted.
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.
 - Cookie UPSERT refreshes `domain` and `path` on same-name conflict; `url_status` insert-vs-update is detected from `INSERT … DO NOTHING`, not a pre-check `SELECT`.
 
