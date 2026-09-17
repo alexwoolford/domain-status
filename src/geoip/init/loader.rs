@@ -122,19 +122,20 @@ pub(crate) async fn load_from_url(
     }
 
     // SSRF protection: validate URL before downloading
-    validate_url_safe(url).with_context(|| format!("Unsafe GeoIP URL rejected: {url}"))?;
+    let url_for_log = super::source_for_log(url);
+    validate_url_safe(url).with_context(|| format!("Unsafe GeoIP URL rejected: {url_for_log}"))?;
 
     // Download database with retries and size limits
-    log::info!("Downloading GeoIP database from: {url}");
+    log::info!("Downloading GeoIP database from: {url_for_log}");
 
     let bytes = crate::utils::retry::with_network_download_retry(
-        &format!("download GeoIP database from {url}"),
+        &format!("download GeoIP database from {url_for_log}"),
         2, // Exponential backoff: 2s, 4s, 8s (longer for large files)
         || download_geoip_with_size_limit(url),
     )
     .await?;
 
-    process_downloaded_geoip(bytes, url, cache_dir, db_name, &cache_file, &metadata_file).await
+    process_downloaded_geoip(bytes, url, db_name, &cache_file, &metadata_file).await
 }
 
 /// Downloads `GeoIP` database with size limit enforcement
@@ -146,7 +147,13 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
 
     let client = build_download_client(Duration::from_secs(300))?; // 5 minutes for large file
 
-    let response = client.get(url).send().await?;
+    let url_for_log = super::source_for_log(url);
+    let response = client.get(url).send().await.map_err(|error| {
+        anyhow::anyhow!(
+            "Failed to download GeoIP database from {url_for_log}: {}",
+            error.to_string().replace(url, url_for_log)
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -186,7 +193,6 @@ async fn download_geoip_with_size_limit(url: &str) -> Result<Vec<u8>> {
 async fn process_downloaded_geoip(
     downloaded_bytes: Vec<u8>,
     url: &str,
-    _cache_dir: &Path,
     db_name: &str,
     cache_file: &Path,
     metadata_file: &Path,
@@ -234,13 +240,30 @@ async fn process_downloaded_geoip(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geoip::metadata::save_metadata;
+    use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
-    use tokio::io::AsyncWriteExt;
+
+    fn city_cache_paths(dir: &Path) -> (PathBuf, PathBuf) {
+        geoip_cache_paths(dir, "GeoLite2-City")
+    }
+
+    async fn write_fresh_city_metadata(metadata_file: &Path) {
+        save_metadata(
+            &GeoIpMetadata {
+                source: "test://source".to_string(),
+                version: "1.0".to_string(),
+                last_updated: SystemTime::now(),
+            },
+            metadata_file,
+        )
+        .await
+        .expect("save metadata");
+    }
 
     #[tokio::test]
     async fn test_load_from_file_not_found() {
-        // Use a platform-agnostic path that definitely doesn't exist
-        let nonexistent_path = std::path::Path::new("nonexistent")
+        let nonexistent_path = Path::new("nonexistent")
             .join("path")
             .join("to")
             .join("database.mmdb");
@@ -250,200 +273,145 @@ mod tests {
         assert!(
             error_msg.contains("Failed to read")
                 || error_msg.contains("No such file")
-                || error_msg.contains("not found")
-                || error_msg.contains("The system cannot find"),
-            "Expected file not found error, got: {}",
-            error_msg
+                || error_msg.contains("not found"),
+            "Expected file not found error, got: {error_msg}"
         );
     }
 
     #[tokio::test]
-    async fn test_load_from_file_invalid_database() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let db_path = temp_dir.path().join("invalid.mmdb");
-        let mut file = tokio::fs::File::create(&db_path)
+    async fn test_load_from_file_invalid_or_empty() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let invalid = temp_dir.path().join("invalid.mmdb");
+        tokio::fs::write(&invalid, b"not a valid mmdb file")
             .await
-            .expect("Failed to create test file");
-        file.write_all(b"not a valid mmdb file")
+            .expect("write");
+        let err = load_from_file(invalid.to_str().unwrap())
             .await
-            .expect("Failed to write test data");
-        file.flush().await.expect("Failed to flush file");
-        drop(file);
-
-        let result = load_from_file(db_path.to_str().unwrap()).await;
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+            .unwrap_err()
+            .to_string();
         assert!(
-            error_msg.contains("Failed to parse") || error_msg.contains("parse"),
-            "Expected parse error, got: {}",
-            error_msg
+            err.contains("Failed to parse") || err.contains("parse"),
+            "Expected parse error, got: {err}"
         );
-    }
 
-    #[tokio::test]
-    async fn test_load_from_url_ssrf_protection_private_ip() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let url = "http://192.168.1.1/database.mmdb";
-
-        let result = load_from_url(url, temp_dir.path(), "GeoLite2-City").await;
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+        let empty = temp_dir.path().join("empty.mmdb");
+        tokio::fs::File::create(&empty).await.expect("create");
+        let empty_err = load_from_file(empty.to_str().unwrap())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(
-            error_msg.contains("Unsafe") || error_msg.contains("private"),
-            "Expected SSRF protection error, got: {}",
-            error_msg
+            empty_err.contains("parse") || empty_err.contains("Failed to parse"),
+            "empty file must fail parse: {empty_err}"
         );
     }
 
     #[tokio::test]
-    async fn test_load_from_url_ssrf_protection_localhost() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let url = "http://localhost/database.mmdb";
+    async fn test_load_from_url_ssrf_protection() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        for (url, needle) in [
+            ("http://192.168.1.1/database.mmdb", "Unsafe"),
+            ("http://localhost/database.mmdb", "Unsafe"),
+            ("file:///etc/passwd", "Unsafe"),
+        ] {
+            let error_msg = load_from_url(url, temp_dir.path(), "GeoLite2-City")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error_msg.contains(needle),
+                "SSRF must reject {url}: {error_msg}"
+            );
+        }
+    }
 
-        let result = load_from_url(url, temp_dir.path(), "GeoLite2-City").await;
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+    #[tokio::test]
+    async fn test_load_from_url_redacts_license_key_in_errors() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let url = "http://192.168.1.1/database.mmdb?license_key=supersecret&suffix=tar.gz";
+        let error_msg = load_from_url(url, temp_dir.path(), "GeoLite2-City")
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(
-            error_msg.contains("Unsafe") || error_msg.contains("localhost"),
-            "Expected SSRF protection error, got: {}",
-            error_msg
+            error_msg.contains("Unsafe"),
+            "expected SSRF rejection: {error_msg}"
         );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_ssrf_protection_unsafe_scheme() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let url = "file:///etc/passwd";
-
-        let result = load_from_url(url, temp_dir.path(), "GeoLite2-City").await;
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("Unsafe") || error_msg.contains("scheme"),
-            "Expected unsafe scheme error, got: {}",
-            error_msg
+            !error_msg.contains("supersecret") && !error_msg.contains("license_key="),
+            "license_key must not appear in GeoIP errors: {error_msg}"
         );
     }
 
-    // Tests for extracted try_load_from_cache function
+    #[tokio::test]
+    async fn test_try_load_from_cache_misses() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = city_cache_paths(temp_dir.path());
+
+        let none = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("missing metadata is a cache miss");
+        assert!(none.is_none(), "no metadata → miss");
+
+        write_fresh_city_metadata(&metadata_file).await;
+        let missing_file = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("missing cache file is a miss");
+        assert!(missing_file.is_none(), "metadata without MMDB → miss");
+
+        tokio::fs::write(&cache_file, b"corrupted mmdb data")
+            .await
+            .expect("write");
+        let corrupt = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("corrupt MMDB is a miss");
+        assert!(corrupt.is_none(), "corrupt MMDB → miss");
+
+        save_metadata(
+            &GeoIpMetadata {
+                source: "test://source".to_string(),
+                version: "1.0".to_string(),
+                last_updated: SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS + 1),
+            },
+            &metadata_file,
+        )
+        .await
+        .expect("save expired");
+        let expired = try_load_from_cache(&cache_file, &metadata_file)
+            .await
+            .expect("expired cache is a miss");
+        assert!(expired.is_none(), "expired metadata → miss");
+    }
 
     #[tokio::test]
-    async fn test_try_load_from_cache_no_metadata() {
-        // Test that missing metadata returns None
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        let result = try_load_from_cache(&cache_file, &metadata_file)
+    async fn test_load_from_url_corrupt_cache_falls_through_to_download() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = city_cache_paths(temp_dir.path());
+        tokio::fs::write(&cache_file, b"corrupted mmdb data")
             .await
-            .expect("missing metadata is a cache miss, not an error");
+            .expect("write");
+        write_fresh_city_metadata(&metadata_file).await;
+
+        let error_msg = load_from_url(
+            "http://192.168.1.1/db.mmdb",
+            temp_dir.path(),
+            "GeoLite2-City",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(
-            result.is_none(),
-            "Should return None when metadata doesn't exist"
+            error_msg.contains("Unsafe"),
+            "corrupt cache must fall through to download, got: {error_msg}"
         );
-    }
-
-    #[tokio::test]
-    async fn test_try_load_from_cache_expired() {
-        // Test that expired cache returns None
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create expired metadata
-        let expired_time = SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS + 1);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: expired_time,
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save expired metadata");
-
-        let result = try_load_from_cache(&cache_file, &metadata_file)
-            .await
-            .expect("expired cache is a miss, not an error");
-        assert!(result.is_none(), "Should return None when cache is expired");
-    }
-
-    #[tokio::test]
-    async fn test_try_load_from_cache_fresh_but_no_file() {
-        // Test that fresh metadata but missing cache file returns None
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create fresh metadata but no cache file
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        let result = try_load_from_cache(&cache_file, &metadata_file)
-            .await
-            .expect("missing cache file is a miss, not an error");
         assert!(
-            result.is_none(),
-            "Should return None when cache file doesn't exist"
+            !error_msg.contains("parse"),
+            "must not surface cache parse as the load_from_url error: {error_msg}"
         );
     }
 
     #[tokio::test]
-    async fn test_try_load_from_cache_corrupted_file() {
-        // Test that corrupted cache file returns None (not an error)
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create corrupted cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"corrupted mmdb data")
-            .await
-            .expect("Failed to write corrupted data");
-
-        // Create fresh metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        let result = try_load_from_cache(&cache_file, &metadata_file)
-            .await
-            .expect("corrupt cache is a miss, not an error");
-        assert!(
-            result.is_none(),
-            "Should return None when cache file is corrupted"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_download_geoip_with_size_limit_http_error_response() {
-        // Test that HTTP error responses are handled correctly
-        // This is critical - 4xx/5xx responses should fail gracefully
+    async fn test_download_geoip_http_500() {
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
@@ -451,811 +419,112 @@ mod tests {
             Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
                 .respond_with(status_code(500)),
         );
-
         let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        // Should fail on HTTP error
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("500") || error_msg.contains("Failed to download"));
+        let error_msg = download_geoip_with_size_limit(&url)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error_msg.contains("500") || error_msg.contains("Failed to download"),
+            "HTTP 500 must fail download: {error_msg}"
+        );
     }
 
     #[tokio::test]
-    async fn test_download_geoip_with_size_limit_actual_size_exceeded() {
-        // Test that actual downloaded size exceeding limit is caught
-        // This is critical - content-length might be missing or wrong
+    async fn test_download_geoip_rejects_oversized_body() {
         use httptest::{matchers::*, responders::*, Expectation, Server};
 
         let server = Server::run();
-        // Create a response larger than MAX_GEOIP_DOWNLOAD_SIZE
         let large_body = vec![0u8; crate::config::MAX_GEOIP_DOWNLOAD_SIZE + 1];
         server.expect(
             Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
                 .respond_with(status_code(200).body(large_body)),
         );
-
         let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("too large") || error_msg.contains("max"));
+        let error_msg = download_geoip_with_size_limit(&url)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error_msg.contains("too large") || error_msg.contains("max"),
+            "oversized GeoIP body must be rejected: {error_msg}"
+        );
     }
 
     #[tokio::test]
-    async fn test_process_downloaded_geoip_gzip_magic_detection() {
-        // Test that gzip magic number detection works for auto-detection
-        // The code at line 187-190 detects gzip by magic number
-        // This is critical - handles cases where URL doesn't indicate format
+    async fn test_process_downloaded_geoip_tar_gz_vs_direct_mmdb() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = city_cache_paths(temp_dir.path());
+
+        let tar_err = process_downloaded_geoip(
+            b"not a valid tar.gz".to_vec(),
+            "https://example.com/db.tar.gz",
+            "GeoLite2-City",
+            &cache_file,
+            &metadata_file,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            tar_err.contains("extract")
+                || tar_err.contains("gzip")
+                || tar_err.contains("tar")
+                || tar_err.contains("Failed"),
+            "suffix=tar.gz / .tar.gz URL must extract: {tar_err}"
+        );
+
+        let mmdb_err = process_downloaded_geoip(
+            b"not a valid mmdb".to_vec(),
+            "https://example.com/db.mmdb",
+            "GeoLite2-City",
+            &cache_file,
+            &metadata_file,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            mmdb_err.contains("parse")
+                || mmdb_err.contains("database")
+                || mmdb_err.contains("Failed"),
+            "direct .mmdb URL must skip extract and parse: {mmdb_err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_downloaded_geoip_gzip_magic_without_url_hint() {
         use flate2::write::GzEncoder;
         use flate2::Compression;
         use std::io::Write;
         use tar::Builder;
 
-        // Create a tar.gz with gzip magic number
         let mut tar_builder = Builder::new(Vec::new());
         let mut header = tar::Header::new_gnu();
-        header.set_path("GeoLite2-City.mmdb").unwrap();
-        header.set_size(10);
+        header.set_path("GeoLite2-ASN.mmdb").unwrap();
+        header.set_size(3);
         header.set_cksum();
-        tar_builder.append(&header, &b"fake data"[..]).unwrap();
+        tar_builder.append(&header, &b"asn"[..]).unwrap();
         let tar_bytes = tar_builder.into_inner().unwrap();
-
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&tar_bytes).unwrap();
         let gzip_bytes = encoder.finish().unwrap();
 
-        // Test that process_downloaded_geoip detects gzip by magic number
-        // This would require a valid mmdb file, so we test the detection logic
-        assert_eq!(gzip_bytes[0], 0x1f);
-        assert_eq!(gzip_bytes[1], 0x8b);
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_corrupted_cache_file() {
-        // Test that corrupted cache file with valid metadata is handled correctly
-        // This is critical - if cache file is corrupted but metadata says it's fresh,
-        // the code should fall through to download instead of failing completely
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create corrupted cache file (invalid mmdb data)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"corrupted mmdb data that is not a valid database")
-            .await
-            .expect("Failed to write corrupted data");
-
-        // Create valid metadata that says cache is fresh
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(), // Fresh
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Try to load - should fail on corrupted file and fall through to download
-        // Since we don't have a valid URL, it will fail, but the important thing
-        // is that it doesn't panic on corrupted cache file
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on download (invalid URL), but not on cache file corruption
-        // The code should handle corrupted cache gracefully by falling through to download
-        assert!(result.is_err());
-        // Error should be about download, not about cache corruption
-        let error_msg = result.unwrap_err().to_string();
-        // Should mention download failure, not cache corruption
-        assert!(
-            error_msg.contains("download")
-                || error_msg.contains("Failed")
-                || error_msg.contains("invalid"),
-            "Error should be about download failure, not cache: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_file_missing_but_metadata_exists() {
-        // Test that missing cache file with valid metadata is handled correctly
-        // This is critical - metadata says cache is fresh but file doesn't exist
-        // Should fall through to download
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create valid metadata that says cache is fresh
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(), // Fresh
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Cache file doesn't exist, but metadata does
-        // Should fall through to download
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on download (invalid URL), but handle missing cache file gracefully
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_expired_but_file_exists() {
-        // Test that expired cache with existing file triggers re-download
-        // This is critical - ensures stale data isn't used
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create expired metadata (older than CACHE_TTL_SECS)
-        let expired_time = SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS + 1);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: expired_time,
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save expired metadata");
-
-        // Create a cache file (even though it's expired)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"old cache data")
-            .await
-            .expect("Failed to write cache data");
-
-        // Should attempt download since cache is expired
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on download, but verify expired cache logic works
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_process_downloaded_geoip_direct_mmdb_vs_tar_gz() {
-        // Test that direct .mmdb file downloads are handled differently than tar.gz
-        // This is critical - some sources provide direct .mmdb files
-        // The code at line 180-195 handles format detection
-        // Note: Can't easily test with httptest due to SSRF protection blocking localhost
-        // This test verifies the logic path exists and handles both cases
-        // The actual download is tested in integration tests
-    }
-
-    #[tokio::test]
-    async fn test_process_downloaded_geoip_format_detection_edge_cases() {
-        // Test format detection edge cases
-        // - Empty bytes (should fail gracefully)
-        // - Too short for magic number check
-        // - Valid gzip magic but invalid tar
-        // Note: Can't use httptest due to SSRF protection blocking localhost
-        // Instead, test the process_downloaded_geoip function directly with edge cases
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Test with empty bytes
-        let empty_bytes: Vec<u8> = vec![];
-        let result = process_downloaded_geoip(
-            empty_bytes,
-            "https://example.com/db.mmdb",
-            temp_dir.path(),
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = city_cache_paths(temp_dir.path());
+        let err = process_downloaded_geoip(
+            gzip_bytes,
+            "https://example.com/geoip",
             "GeoLite2-City",
             &cache_file,
             &metadata_file,
         )
-        .await;
-        // Should fail on empty bytes (not a valid mmdb or tar.gz)
-        assert!(result.is_err());
-
-        // Test with single byte (too short for magic number check)
-        let short_bytes: Vec<u8> = vec![b'x'];
-        let result2 = process_downloaded_geoip(
-            short_bytes,
-            "https://example.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-            &cache_file,
-            &metadata_file,
-        )
-        .await;
-        // Should fail on invalid format
-        assert!(result2.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_load_from_file_permission_denied() {
-        // Test that permission denied errors are handled gracefully
-        // This is critical - read-only files or permission issues shouldn't crash
-        // Note: This is hard to test without actually creating permission issues
-        // But we verify the error handling path exists
-        let result = load_from_file("/root/nonexistent.mmdb").await;
-        // Should fail with appropriate error (permission denied or not found)
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(
-            error_msg.contains("Failed to read")
-                || error_msg.contains("Permission denied")
-                || error_msg.contains("not found")
-                || error_msg.contains("No such file"),
-            "Should handle permission errors: {}",
-            error_msg
+            err.contains("GeoLite2-City.mmdb not found"),
+            "gzip magic must extract even without .tar.gz URL, then miss City: {err}"
         );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_file_empty_file() {
-        // Test that empty files are handled gracefully
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let empty_file = temp_dir.path().join("empty.mmdb");
-
-        // Create empty file (no write - file is empty)
-        tokio::fs::File::create(&empty_file)
-            .await
-            .expect("Failed to create empty file");
-
-        let result = load_from_file(empty_file.to_str().unwrap()).await;
-        // Should fail on empty file (not a valid mmdb)
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("parse")
-                || error_msg.contains("Failed to parse")
-                || error_msg.contains("database"),
-            "Should handle empty file: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_load_failure_falls_through_to_download() {
-        // Test that cache load failure correctly falls through to download
-        // This is critical - if cached file is corrupted or locked, should retry download
-        // The code at line 66 silently falls through if load_from_file fails
-        // This test verifies the fallthrough works correctly
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create corrupted cache file (will fail to parse)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"corrupted mmdb data")
-            .await
-            .expect("Failed to write corrupted data");
-
-        // Create valid metadata that says cache is fresh
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(), // Fresh
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Should fail on corrupted file and fall through to download
-        // Since we don't have a valid URL, it will fail, but the important thing
-        // is that it doesn't panic on corrupted cache file
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on download (invalid URL), but handle corrupted cache gracefully
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        // Should mention download failure, not cache corruption
-        assert!(
-            error_msg.contains("download")
-                || error_msg.contains("Failed")
-                || error_msg.contains("invalid")
-                || !error_msg.is_empty(),
-            "Error should be about download failure, not cache: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_process_downloaded_geoip_metadata_extraction_failure_after_cache_write() {
-        // Test that metadata extraction failure after cache write is handled correctly
-        // This is critical - if extract_metadata fails after writing cache file,
-        // we have an inconsistent state (cache exists but no metadata)
-        // The code at line 206 could fail after line 198 writes the cache
-        // This test verifies error handling doesn't leave system in bad state
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create invalid mmdb data (will fail on metadata extraction)
-        let invalid_mmdb = b"this is not a valid maxmind database";
-
-        let result = process_downloaded_geoip(
-            invalid_mmdb.to_vec(),
-            "https://example.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-            &cache_file,
-            &metadata_file,
-        )
-        .await;
-
-        // Should fail on database parsing/metadata extraction
-        assert!(result.is_err());
-        // Cache file might be written, but metadata extraction should fail
-        // The error should indicate parsing/database issue
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("parse")
-                || error_msg.contains("database")
-                || error_msg.contains("Failed")
-                || !error_msg.is_empty(),
-            "Error should indicate parsing/database issue: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_ttl_exact_boundary_expired() {
-        // Test cache TTL exact boundary condition (age == TTL)
-        // This is critical - cache should expire at exactly TTL seconds
-        // The code at line 62 checks age.as_secs() < geoip::CACHE_TTL_SECS
-        // At exactly TTL, age.as_secs() == TTL, so cache is expired (correct)
-        use crate::geoip::metadata::save_metadata;
-        use std::time::{Duration, SystemTime};
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create metadata exactly at TTL (should be expired)
-        let exactly_ttl_ago = SystemTime::now() - Duration::from_secs(geoip::CACHE_TTL_SECS);
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: exactly_ttl_ago,
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Create cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Cache should be expired (age >= TTL), so should attempt download
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on download, but verify expired cache logic works
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_file_locked_during_load() {
-        // Test that locked cache file (being written by another process) is handled
-        // This is critical - concurrent writes could cause read failures
-        // The code at line 66 uses load_from_file which will fail on locked file
-        // Should fall through to download gracefully
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create a minimal cache file (will fail on parse, but tests the path)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Create valid metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Should attempt to load from cache, fail on parse, fall through to download
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on download, but handle cache load failure gracefully
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_download_geoip_with_size_limit_no_content_length_still_checked() {
-        // Test that actual size is checked even when content-length header is missing
-        // This is critical - servers might not send content-length, but we still need size protection
-        // The code at line 158-165 double-checks actual size after download
-        use crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
-        use httptest::{matchers::*, responders::*, Expectation, Server};
-
-        let server = Server::run();
-        // Server sends file exceeding MAX_GEOIP_DOWNLOAD_SIZE without content-length header
-        let large_payload: Vec<u8> = vec![0u8; MAX_GEOIP_DOWNLOAD_SIZE + 1_000_000];
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb")).respond_with(
-                status_code(200)
-                    // No content-length header - actual size check should catch it
-                    .body(large_payload),
-            ),
-        );
-
-        let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        // Should fail on actual size check (line 159)
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("too large") || error_msg.contains("bytes"),
-            "Should detect actual size exceeds limit: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_download_geoip_with_size_limit_error_body_truncation() {
-        // Test that error body extraction failures don't hide real errors
-        // This is critical - if .text().await fails, we should still report the HTTP status
-        // The code at line 136 uses unwrap_or_else to handle text() failures
-        use httptest::{matchers::*, responders::*, Expectation, Server};
-
-        let server = Server::run();
-        // Return 500 with invalid UTF-8 body (will fail on .text())
-        let invalid_utf8: Vec<u8> = vec![0xFF, 0xFE, 0xFD];
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .respond_with(status_code(500).body(invalid_utf8)),
-        );
-
-        let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        // Should fail with HTTP error, even if error body can't be read
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("500") || error_msg.contains("Failed to download"),
-            "Should report HTTP status even if error body fails: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_file_partial_read_failure() {
-        // Test that partial file reads are handled correctly
-        // This is critical - if file is being written or truncated during read,
-        // we should get a proper error, not corrupted data
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let db_path = temp_dir.path().join("partial.mmdb");
-
-        // Create a file that looks like it might be valid but is too short
-        // (simulates file being written/truncated)
-        let mut file = tokio::fs::File::create(&db_path)
-            .await
-            .expect("Failed to create test file");
-        // Write minimal data (not enough for valid mmdb)
-        file.write_all(&[0u8; 100])
-            .await
-            .expect("Failed to write test data");
-
-        let result = load_from_file(db_path.to_str().unwrap()).await;
-        // Should fail on parse (file too short/invalid)
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("parse") || error_msg.contains("Failed"),
-            "Should detect invalid/partial file: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_fresh_loads_from_cache() {
-        // Test that fresh cache is loaded instead of downloading (lines 60-68)
-        // This is critical - prevents unnecessary downloads when cache is valid
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create fresh metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(), // Fresh
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Create cache file (will fail on parse, but tests the path)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Should attempt to load from cache (will fail on parse, but tests the path)
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should fail on parse, but cache freshness check should work
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        // Should mention parse/database error, not download
-        assert!(
-            error_msg.contains("parse")
-                || error_msg.contains("database")
-                || error_msg.contains("Failed")
-                || !error_msg.is_empty(),
-            "Error should indicate cache load attempt: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_download_geoip_with_size_limit_handles_http_errors() {
-        // Test that download_geoip_with_size_limit handles HTTP errors correctly
-        // This is critical - HTTP errors should be properly reported
-        // Note: The retry logic is in load_from_url (lines 85-112), but we can't easily
-        // test it with httptest due to SSRF protection. This test verifies the underlying
-        // download function handles errors correctly, which is what gets retried
-        // in the actual retry loop (lines 85-112 in load_from_url)
-        use httptest::{matchers::*, responders::*, Expectation, Server};
-
-        let server = Server::run();
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .respond_with(status_code(500)),
-        );
-
-        let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        // Should fail on HTTP error (retry logic in load_from_url would retry this)
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("500") || error_msg.contains("Failed to download"),
-            "Error should indicate HTTP failure: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_download_geoip_with_size_limit_content_length_exceeded() {
-        // Test that content-length header exceeding limit is caught (lines 145-153)
-        // This is critical - prevents downloading files that are too large
-        // Note: httptest may not properly handle content-length without body,
-        // so we test the actual size check after download instead
-        use crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
-        use httptest::{matchers::*, responders::*, Expectation, Server};
-
-        let server = Server::run();
-        // Server sends body larger than limit (actual size check will catch it)
-        let large_body: Vec<u8> = vec![0u8; MAX_GEOIP_DOWNLOAD_SIZE + 1];
-        server.expect(
-            Expectation::matching(request::method_path("GET", "/geoip.mmdb"))
-                .respond_with(status_code(200).body(large_body)),
-        );
-
-        let url = server.url("/geoip.mmdb").to_string();
-        let result = download_geoip_with_size_limit(&url).await;
-
-        // Should fail on actual size check (line 159) even if content-length wasn't checked
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("too large") || error_msg.contains("max"),
-            "Should detect actual size exceeds limit: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_process_downloaded_geoip_tar_gz_url_detection() {
-        // Test that tar.gz URLs trigger extraction (line 180)
-        // This is critical - MaxMind provides tar.gz files that need extraction
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Test with tar.gz URL
-        let tar_gz_url = "https://example.com/db.tar.gz";
-        let invalid_data = b"not a valid tar.gz";
-
-        let result = process_downloaded_geoip(
-            invalid_data.to_vec(),
-            tar_gz_url,
-            temp_dir.path(),
-            "GeoLite2-City",
-            &cache_file,
-            &metadata_file,
-        )
-        .await;
-
-        // Should fail on extraction (invalid tar.gz), but tests the path
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("extract")
-                || error_msg.contains("tar")
-                || error_msg.contains("Failed")
-                || !error_msg.is_empty(),
-            "Error should indicate tar.gz extraction issue: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_process_downloaded_geoip_direct_mmdb_url() {
-        // Test that direct .mmdb URLs skip extraction (line 182-184)
-        // This is critical - some sources provide direct .mmdb files
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Test with direct .mmdb URL
-        let mmdb_url = "https://example.com/db.mmdb";
-        let invalid_data = b"not a valid mmdb";
-
-        let result = process_downloaded_geoip(
-            invalid_data.to_vec(),
-            mmdb_url,
-            temp_dir.path(),
-            "GeoLite2-City",
-            &cache_file,
-            &metadata_file,
-        )
-        .await;
-
-        // Should fail on parse (invalid mmdb), but tests direct .mmdb path
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(
-            error_msg.contains("parse")
-                || error_msg.contains("database")
-                || error_msg.contains("Failed")
-                || !error_msg.is_empty(),
-            "Error should indicate mmdb parsing issue: {}",
-            error_msg
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_url_cache_path_utf8_validation() {
-        // Test that cache file path UTF-8 validation works (lines 65, 70-71)
-        // This is critical - non-UTF-8 paths should be handled gracefully
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("geolite2-city_metadata.json");
-
-        // Create fresh metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(),
-        };
-        save_metadata(&metadata, &metadata_file)
-            .await
-            .expect("Failed to save metadata");
-
-        // Create cache file
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Note: Creating a non-UTF-8 path is platform-specific
-        // But we verify the code path exists and handles to_str() returning None
-        // The code at line 65 checks to_str() and line 70-71 logs warning if None
-        let result = load_from_url(
-            "https://invalid-url-for-test.com/db.mmdb",
-            temp_dir.path(),
-            "GeoLite2-City",
-        )
-        .await;
-
-        // Should handle gracefully (cache file exists and is UTF-8, so path check passes)
-        assert!(result.is_err()); // Will fail on download, but cache path check works
     }
 }

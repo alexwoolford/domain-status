@@ -12,7 +12,7 @@ This document records risks from malformed, oversized, or maliciously crafted ex
 |------|-----------|-------------------|
 | WHOIS/RDAP | DoS, panic | Size cap; parse returns Option/Result; no unwrap on untrusted in production |
 | TLS/certificate | Panic, malformed DER | x509_parser returns Result; date parsing returns Err |
-| GeoIP (tar.gz / .mmdb) | DoS, OOM | Entry count + entry size limits; take(read_limit); one expect on constant |
+| GeoIP (tar.gz / .mmdb) | DoS, OOM | Entry count + entry size limits; take(read_limit); try_from + context on constant |
 | HTML/response body | DoS, OOM | Stream + MAX_RESPONSE_BODY_SIZE; script/header/error caps |
 | Secret detection | Bounded CPU (linear-time regex); panic | Rust `regex` + size caps + `spawn_blocking` (see §5) |
 | Technology fingerprinting | Bounded CPU (large ruleset × body) | Rust `regex` + `spawn_blocking` (see §6) |
@@ -77,11 +77,11 @@ This document records risks from malformed, oversized, or maliciously crafted ex
 
 - `MAX_GEOIP_ARCHIVE_ENTRY_COUNT` (128): loop bails after inspecting that many entries.
 - `MAX_GEOIP_ARCHIVE_ENTRY_SIZE` (100 MB): per-entry size check before and after read; `entry.take(read_limit)` caps read.
-- `read_limit` is derived from `MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1` with `.expect("GeoIP archive size limit fits in u64")` — this is a constant sanity check, not untrusted input; ensure the constant stays within u64.
+- `read_limit` is derived from `MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1` with `u64::try_from(...).context(...)?` — this is a constant sanity check, not untrusted input; keep the constant small enough that `+ 1` fits in `u64`.
 
 **Recommendations:**
 
-- Keep the single `.expect()` on the constant; document in code that `MAX_GEOIP_ARCHIVE_ENTRY_SIZE` must be chosen so that `+ 1` fits in u64.
+- Keep the size-limit conversion as `Result` (`try_from` + `context`); document in code that `MAX_GEOIP_ARCHIVE_ENTRY_SIZE` must be chosen so that `+ 1` fits in u64.
 - Continue to avoid unwrap/expect on entry content, path components, or decompressed streams from untrusted archives.
 
 ---

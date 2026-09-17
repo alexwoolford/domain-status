@@ -112,7 +112,8 @@ The merged ruleset is cached in `…/domain_status/fingerprints/` for 7 days. Co
 
 GeoIP is optional and best-effort.
 
-- If `--geoip` is supplied, that path or URL is used.
+- If `--geoip` is supplied and the path exists (or is an `http(s)` URL), that source is used.
+- If `--geoip` is a missing local path and `MAXMIND_LICENSE_KEY` is set, the scanner falls back to MaxMind auto-download/cache.
 - Otherwise the scanner attempts an automatic MaxMind download when `MAXMIND_LICENSE_KEY` is set.
 - Databases are cached in `…/domain_status/geoip/` for 7 days.
 - Failures are logged and scanning continues without GeoIP enrichment.

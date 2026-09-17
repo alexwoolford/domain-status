@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scan stderr reports skipped URLs, drops the post-scan tip/emoji banners, and uses a spinner when the input length is unknown (stdin).
 - Scan reuses one WHOIS/RDAP client per process (vendor coalescing / in-process cache). `RateLimited` and `NotFound` are not written to the 7-day disk cache. Startup logs the real policy (5s timeout, 7-day cache) instead of a 1-query-per-2s limiter that never existed.
 - SQLite scan pool is capped at 32 connections (one writer + WAL readers) instead of matching `--max-concurrency`. Enrichment inserts keep a single `*_in_tx` path. Core satellite DELETE failures skip remaining child inserts and record one `Satellite insert error` without rolling back `url_status`.
+- GeoIP lookup parses the IP first and stores a row when **either** City or ASN has data (ASN-only IPs no longer drop `asn`/`asn_org`). Download logs and retry labels strip MaxMind `license_key` query strings. City still requires `--geoip` or `MAXMIND_LICENSE_KEY`; ASN still degrades on failure. Archive extract tests cover the 128-entry / 100 MB caps.
 
 ### Fixed
 - `generic-api-key` no longer treats hyphenated UUID identifiers as secrets (MediaWiki `"key":"<uuid>"` and the same shape on `apiKey=`). Vendor UUID rules such as `hubspot-api-key` are unchanged.

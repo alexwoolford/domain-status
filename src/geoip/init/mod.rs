@@ -17,19 +17,20 @@ use crate::geoip::{self, GEOIP_CITY_READER};
 
 use loader::{geoip_cache_paths, load_from_file, load_from_url};
 
-/// Directory used for ASN MMDB cache and download.
-///
-/// Always the `GeoIP` cache dir passed to [`init_geoip`], never the parent of the
-/// `City` source (which may be a `MaxMind` download URL).
-#[must_use]
-fn asn_init_dir(cache_path: &Path) -> &Path {
-    cache_path
-}
-
 /// Strip query string so `MaxMind` `license_key=` is not written to scan logs.
 #[must_use]
-fn city_source_for_log(path: &str) -> &str {
+pub(super) fn source_for_log(path: &str) -> &str {
     path.split_once('?').map_or(path, |(base, _)| base)
+}
+
+/// `MaxMind` permalink for a `GeoLite2` edition (`GeoLite2-City` or `GeoLite2-ASN`).
+#[must_use]
+pub(super) fn maxmind_download_url(edition_id: &str, license_key: &str) -> String {
+    let encoded_key = form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
+    format!(
+        "{}?edition_id={edition_id}&license_key={encoded_key}&suffix=tar.gz",
+        geoip::MAXMIND_DOWNLOAD_BASE
+    )
 }
 
 /// Resolves a `MaxMind` download URL or cached `.mmdb` path when `MAXMIND_LICENSE_KEY` is set.
@@ -52,13 +53,7 @@ async fn resolve_from_license_key(cache_path: &Path) -> Option<String> {
 
     if should_download {
         log::info!("Auto-downloading GeoLite2-City database (cache expired or missing)");
-        let encoded_key =
-            form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
-        Some(format!(
-            "{}?edition_id=GeoLite2-City&license_key={}&suffix=tar.gz",
-            geoip::MAXMIND_DOWNLOAD_BASE,
-            encoded_key
-        ))
+        Some(maxmind_download_url("GeoLite2-City", &license_key))
     } else {
         log::info!("Using cached GeoIP database");
         Some(cache_file.to_string_lossy().to_string())
@@ -153,7 +148,10 @@ pub async fn init_geoip(
         if let Some((_, ref metadata)) = *reader {
             // Check if source matches
             if metadata.source == path {
-                log::info!("GeoIP City database already loaded: {path}");
+                log::info!(
+                    "GeoIP City database already loaded: {}",
+                    source_for_log(&path)
+                );
                 false // Don't reload, but still try ASN
             } else {
                 true // Different source, reload
@@ -163,8 +161,7 @@ pub async fn init_geoip(
         }
     };
 
-    if should_load {
-        // Load City database
+    let metadata = if should_load {
         let (reader, metadata) = if path.starts_with("http://") || path.starts_with("https://") {
             load_from_url(&path, &cache_path, "GeoLite2-City").await?
         } else {
@@ -177,38 +174,42 @@ pub async fn init_geoip(
             .map_err(|e| anyhow::anyhow!("GeoIP City writer lock poisoned: {e}"))? =
             Some((reader_arc, metadata.clone()));
         log::info!("GeoIP City database loaded successfully");
-
-        let asn_dir = asn_init_dir(&cache_path);
-        log::info!(
-            "Initializing GeoIP ASN from {} (city source {})",
-            asn_dir.display(),
-            city_source_for_log(&path)
-        );
-        if let Err(e) = asn::init_asn_database(asn_dir).await {
-            log::warn!("Failed to initialize ASN database: {e}");
-        }
-
-        Ok(Some(metadata))
+        metadata
     } else {
-        // Already loaded, just return metadata
         let reader = GEOIP_CITY_READER
             .read()
             .map_err(|e| anyhow::anyhow!("GeoIP City reader lock poisoned: {e}"))?;
-        Ok(reader.as_ref().map(|(_, metadata)| metadata.clone()))
+        reader
+            .as_ref()
+            .map(|(_, metadata)| metadata.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!("GeoIP City reader vanished after already-loaded check")
+            })?
+    };
+
+    log::info!(
+        "Initializing GeoIP ASN from {} (city source {})",
+        cache_path.display(),
+        source_for_log(&path)
+    );
+    if let Err(e) = asn::init_asn_database(&cache_path).await {
+        log::warn!("Failed to initialize ASN database: {e}");
     }
+
+    Ok(Some(metadata))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geoip::metadata::save_metadata;
+    use crate::geoip::types::GeoIpMetadata;
+    use std::time::SystemTime;
     use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_init_geoip_no_path_no_license() {
-        // Test when no path and no license key
-        // Ensure environment variable is cleared (previous tests might have set it)
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
-
         let metadata = init_geoip(None, None)
             .await
             .expect("disabled GeoIP must not abort init");
@@ -226,7 +227,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_geoip_empty_license_key() {
-        // Test with empty license key
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some(""));
         let metadata = init_geoip(None, None)
             .await
@@ -239,7 +239,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_geoip_invalid_path() {
-        // Without a license key, a missing local path must still fail (no silent disable).
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let result = init_geoip(Some("nonexistent/path/to/database.mmdb"), None).await;
         assert!(result.is_err());
@@ -248,17 +247,14 @@ mod tests {
             error_msg.contains("Failed to read")
                 || error_msg.contains("No such file")
                 || error_msg.contains("not found"),
-            "Expected file not found error, got: {}",
-            error_msg
+            "Expected file not found error, got: {error_msg}"
         );
     }
 
     #[tokio::test]
     async fn test_missing_local_geoip_falls_back_to_license_key() {
-        // Missing --geoip path + license key → resolve to MaxMind download URL (not bare path).
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = TempDir::new().expect("temp dir");
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test-license-key"));
-
         let resolved =
             resolve_geoip_source(Some("nonexistent/GeoLite2-City.mmdb"), temp_dir.path())
                 .await
@@ -281,9 +277,8 @@ mod tests {
     #[tokio::test]
     async fn test_missing_local_geoip_without_license_keeps_path() {
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = TempDir::new().expect("temp dir");
         let missing = "nonexistent/GeoLite2-City.mmdb";
-
         let resolved = resolve_geoip_source(Some(missing), temp_dir.path())
             .await
             .expect("resolve should succeed");
@@ -295,223 +290,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_already_loaded() {
-        // This test would require setting up a loaded database first
-        // For now, we just verify the function doesn't panic
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        // Use a path that doesn't exist to trigger error path
-        let result = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
-        // Should fail, but verify error handling works
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_different_source_reloads() {
-        // Test that different source paths trigger reload
-        // This is critical - if source changes, database should be reloaded
-        // The code at line 106 checks if metadata.source == path
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // First call with one path (will fail, but sets up the check)
-        let result1 = init_geoip(Some("path1.mmdb"), Some(temp_dir.path())).await;
-        // Second call with different path should trigger reload check
-        let result2 = init_geoip(Some("path2.mmdb"), Some(temp_dir.path())).await;
-
-        // Both should fail (files don't exist), but verify error handling works
-        assert!(result1.is_err());
-        assert!(result2.is_err());
-        // The important thing is that different sources are detected
-        // This is tested implicitly through the source comparison logic
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_concurrent_initialization() {
-        // Test that concurrent initialization attempts don't cause panics
-        // This is critical - multiple threads calling init_geoip simultaneously
-        // should be handled gracefully
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Spawn multiple tasks trying to initialize simultaneously
-        let handles: Vec<_> = (0..5)
-            .map(|_| {
-                let cache_dir = temp_dir.path().to_path_buf();
-                tokio::spawn(
-                    async move { init_geoip(Some("nonexistent.mmdb"), Some(&cache_dir)).await },
-                )
-            })
-            .collect();
-
-        // Wait for all tasks
-        for handle in handles {
-            let result = handle.await.expect("Task panicked");
-            // All should fail (file doesn't exist), but shouldn't panic
-            assert!(result.is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_asn_failure_doesnt_affect_city_error_path() {
-        // ASN is optional and awaited after City loads. A missing City file fails first;
-        // that error must still be a normal Result, not a panic from ASN init.
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let result = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_writer_lock_poisoning_handles_gracefully() {
-        // Test that writer lock poisoning is handled gracefully
-        // This is critical - if a thread panicked while holding the write lock,
-        // subsequent writes should return an error, not panic
-        // The code at line 128 uses map_err to handle lock poisoning
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // We can't easily simulate lock poisoning, but we verify the error handling
-        // The code uses .map_err() which converts poisoned lock to an error
-        let result = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
-        // Should fail on file not found, but verify error handling works
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_source_path_comparison_prevents_stale_data() {
-        // Test that source path comparison correctly identifies different sources
-        // This is critical - if source comparison fails, stale data could be used
-        // The code at line 106 compares metadata.source == path
-        // Edge cases: absolute vs relative paths, URL encoding differences
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Test that different path formats are detected as different sources
-        // This ensures stale data isn't used when source changes
-        // Note: We can't easily test with real database, but we verify the comparison logic
-        // The important thing is that different paths trigger reload
-        let result1 = init_geoip(Some("path1.mmdb"), Some(temp_dir.path())).await;
-        let result2 = init_geoip(Some("path2.mmdb"), Some(temp_dir.path())).await;
-
-        // Both should fail (files don't exist), but verify error handling works
-        // The source comparison at line 106 should detect these as different sources
-        assert!(result1.is_err());
-        assert!(result2.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_url_path_detection_handles_http_https() {
-        // Test that URL path detection correctly identifies HTTP/HTTPS URLs
-        // This is critical - incorrect detection could cause file load instead of download
-        // The code at line 119 checks path.starts_with("http://") || path.starts_with("https://")
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Test with HTTP URL (should be detected as URL, not file)
-        let result = init_geoip(Some("http://example.com/db.mmdb"), Some(temp_dir.path())).await;
-        // Should attempt to load from URL (will fail on invalid URL, but path detection works)
+    async fn test_init_geoip_http_url_is_download_not_file() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        // Loopback is SSRF-rejected in validate_url_safe — proves URL vs file routing
+        // without a live download (the download client has a 300s timeout).
+        let result = init_geoip(Some("http://127.0.0.1/db.mmdb"), Some(temp_dir.path())).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        // Should mention download/URL, not file not found
         assert!(
-            error_msg.contains("download")
-                || error_msg.contains("Failed")
-                || error_msg.contains("URL")
-                || error_msg.contains("invalid")
-                || !error_msg.is_empty(),
-            "Error should indicate URL download issue, not file: {}",
-            error_msg
+            error_msg.contains("Unsafe"),
+            "HTTP GeoIP source must fail as a download, not a missing file: {error_msg}"
+        );
+        assert!(
+            !error_msg.contains("No such file"),
+            "HTTP GeoIP source must not take the local-file path: {error_msg}"
         );
     }
 
     #[tokio::test]
     async fn test_init_geoip_invalid_city_file_fails_before_asn_download() {
-        // Invalid City MMDB must fail on parse without waiting on MaxMind ASN download.
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Clear license key and use an *existing* invalid file so parallel tests that set
-        // MAXMIND_LICENSE_KEY cannot trigger the missing-path MaxMind download fallback
-        // (which would make this timing assertion flake/fail).
+        let temp_dir = TempDir::new().expect("temp dir");
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let bad_db = temp_dir.path().join("not-a-database.mmdb");
-        std::fs::write(&bad_db, b"not-a-valid-mmdb")
-            .expect("Failed to write invalid GeoIP fixture");
-        let bad_db_path = bad_db.to_str().expect("temp path should be UTF-8");
-
+        std::fs::write(&bad_db, b"not-a-valid-mmdb").expect("write invalid fixture");
+        let bad_db_path = bad_db.to_str().expect("UTF-8");
         let start = std::time::Instant::now();
         let result = init_geoip(Some(bad_db_path), Some(temp_dir.path())).await;
         let elapsed = start.elapsed();
-
         assert!(result.is_err());
         assert!(
             elapsed.as_secs() < 1,
             "invalid City MMDB must fail locally before any ASN download"
         );
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_cache_ttl_checking_logic() {
-        // Test that cache TTL checking logic works correctly (lines 59-68)
-        // This is critical - cache expiration should trigger re-download
-        // We test the logic even if we can't create a real cache
-
-        // Test that age >= TTL triggers download
-        let ttl = geoip::CACHE_TTL_SECS;
-        let age_older = std::time::Duration::from_secs(ttl + 1);
-        assert!(age_older.as_secs() >= ttl);
-
-        // Test that age < TTL doesn't trigger download
-        let age_newer = std::time::Duration::from_secs(ttl - 1);
-        assert!(age_newer.as_secs() < ttl);
-
-        // Test that elapsed() failure triggers download (line 63-64)
-        // This is tested implicitly - if elapsed() fails, should_download is true
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_source_path_comparison_logic() {
-        // Test that source path comparison logic works correctly (lines 104-111)
-        // This is critical - same source should not reload, different source should reload
-
-        // Test that same source string comparison works
-        let source1 = "test.mmdb";
-        let source2 = "test.mmdb";
-        assert_eq!(source1, source2);
-
-        // Test that different source triggers reload
-        let source3 = "different.mmdb";
-        assert_ne!(source1, source3);
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_url_vs_file_path_detection() {
-        // Test that URL vs file path detection works correctly (line 119)
-        // This is critical - URLs should use load_from_url, files should use load_from_file
-
-        let http_url = "http://example.com/db.mmdb";
-        let https_url = "https://example.com/db.mmdb";
-        let file_path = "/path/to/file.mmdb";
-        let relative_path = "file.mmdb";
-
-        assert!(http_url.starts_with("http://"));
-        assert!(https_url.starts_with("https://"));
-        assert!(!file_path.starts_with("http://") && !file_path.starts_with("https://"));
-        assert!(!relative_path.starts_with("http://") && !relative_path.starts_with("https://"));
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_writer_lock_error_handling() {
-        // Test that writer lock errors are handled correctly (line 128)
-        // This is critical - lock poisoning should return an error, not panic
-
-        // The code uses .write().map_err() which converts lock errors to anyhow::Error
-        // We verify the pattern is correct
-        let error_msg = "GeoIP City writer lock poisoned: test";
-        assert!(error_msg.contains("poisoned"));
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_reader_lock_error_handling() {
-        // Test that reader lock errors are handled correctly (lines 102, 144)
-        // This is critical - lock poisoning should return an error, not panic
-
-        // The code uses .read().map_err() which converts lock errors to anyhow::Error
-        let error_msg = "GeoIP City reader lock poisoned: test";
-        assert!(error_msg.contains("poisoned"));
     }
 
     #[test]
@@ -526,60 +336,32 @@ mod tests {
             "parent(City download URL) must not be treated as the GeoIP cache dir"
         );
         assert_eq!(
-            asn_init_dir(cache),
-            cache,
-            "ASN must initialize from the GeoIP cache dir even when City is a URL"
-        );
-        assert_eq!(
-            city_source_for_log(
+            source_for_log(
                 "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=secret&suffix=tar.gz"
             ),
             "https://download.maxmind.com/app/geoip_download",
-            "MaxMind license query string must not appear in the ASN init log"
+            "MaxMind license query string must not appear in GeoIP logs"
         );
         assert_eq!(
-            city_source_for_log("/var/cache/domain_status/geoip/GeoLite2-City.mmdb"),
+            source_for_log("/var/cache/domain_status/geoip/GeoLite2-City.mmdb"),
             "/var/cache/domain_status/geoip/GeoLite2-City.mmdb"
         );
-    }
-
-    #[tokio::test]
-    async fn test_init_geoip_multiple_calls_same_source_no_reload() {
-        // Test that multiple calls with same source don't cause unnecessary reloads
-        // This is critical - prevents resource waste and potential race conditions
-        // The code at line 106-108 should detect same source and skip reload
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Call init_geoip twice with same (invalid) path
-        // Both should fail, but verify the source comparison logic works
-        let path = "same_path.mmdb";
-        let result1 = init_geoip(Some(path), Some(temp_dir.path())).await;
-        let result2 = init_geoip(Some(path), Some(temp_dir.path())).await;
-
-        // Both should fail (file doesn't exist)
-        assert!(result1.is_err());
-        assert!(result2.is_err());
-        // The important thing is that source comparison works correctly
-        // (tested implicitly - if source matched, second call would skip reload)
+        let url = maxmind_download_url("GeoLite2-City", "secret");
+        assert!(url.contains("edition_id=GeoLite2-City"));
+        assert_eq!(
+            source_for_log(&url),
+            "https://download.maxmind.com/app/geoip_download"
+        );
     }
 
     #[tokio::test]
     async fn test_init_geoip_cache_path_default_vs_provided() {
-        // Test that cache path defaults correctly when not provided (lines 43-45)
-        // This is critical - default cache dir should be used when cache_dir is None
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
-
-        // Test with None cache_dir (should use default)
         let result1 = init_geoip(None, None).await;
         assert!(result1.is_ok());
-
-        // Test with provided cache_dir
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = TempDir::new().expect("temp dir");
         let result2 = init_geoip(None, Some(temp_dir.path())).await;
         assert!(result2.is_ok());
-
-        // Both should handle cache path correctly
-        // Default path resolution uses the shared cache root (XDG / DOMAIN_STATUS_CACHE_DIR).
         let default_path =
             crate::cache_paths::geoip_dir(&crate::cache_paths::resolve_cache_root(None));
         assert!(
@@ -591,45 +373,45 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_geoip_automatic_download_with_fresh_cache() {
-        // Test that fresh cache is used instead of downloading (lines 83-87)
-        // This is critical - prevents unnecessary downloads when cache is valid
-        use crate::geoip::metadata::save_metadata;
-        use std::time::SystemTime;
-        use tempfile::TempDir;
-        use tokio::io::AsyncWriteExt;
-
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let cache_file = temp_dir.path().join("GeoLite2-City.mmdb");
-        let metadata_file = temp_dir.path().join("metadata.json");
-
-        // Create fresh metadata
-        let metadata = crate::geoip::types::GeoIpMetadata {
-            source: "test://source".to_string(),
-            version: "1.0".to_string(),
-            last_updated: SystemTime::now(), // Fresh
-        };
-        save_metadata(&metadata, &metadata_file)
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (cache_file, metadata_file) = geoip_cache_paths(temp_dir.path(), "GeoLite2-City");
+        save_metadata(
+            &GeoIpMetadata {
+                source: "test://source".to_string(),
+                version: "1.0".to_string(),
+                last_updated: SystemTime::now(),
+            },
+            &metadata_file,
+        )
+        .await
+        .expect("save");
+        tokio::fs::write(&cache_file, b"minimal cache")
             .await
-            .expect("Failed to save metadata");
-
-        // Create cache file (will fail on parse, but tests the path)
-        let mut file = tokio::fs::File::create(&cache_file)
-            .await
-            .expect("Failed to create cache file");
-        file.write_all(b"minimal cache")
-            .await
-            .expect("Failed to write cache");
-
-        // Should use cached file (line 86) instead of downloading
+            .expect("write");
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(Some("test_key"));
         let result = init_geoip(None, Some(temp_dir.path())).await;
-        // Should fail on parse, but cache usage path should be tested
-        assert!(result.is_err());
+        assert!(
+            result.is_err(),
+            "fresh City cache with a non-MMDB body must fail on parse, not download"
+        );
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Invalid MaxMind")
+                || error_msg.contains("MMDB")
+                || error_msg.contains("parse")
+                || error_msg.contains("Failed to"),
+            "expected local cache parse failure, got: {error_msg}"
+        );
+        assert!(
+            !error_msg.contains("download.maxmind.com"),
+            "fresh cache must not fall through to MaxMind download: {error_msg}"
+        );
     }
 
     #[tokio::test]
     async fn test_init_geoip_missing_file_fails_consistently() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
+        let temp_dir = TempDir::new().expect("temp dir");
         let result1 = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
         let result2 = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
         assert!(result1.is_err(), "missing MMDB must fail the first init");
