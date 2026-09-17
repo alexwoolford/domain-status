@@ -15,6 +15,14 @@ pub use types::WhoisResult;
 use cache::WhoisCacheStore;
 use parse::{convert_parsed_data, enrich_result_from_raw_text};
 
+fn whois_result_is_usable(result: &WhoisResult) -> bool {
+    result.registrar.as_deref().is_some_and(|s| !s.is_empty())
+        || result
+            .raw_text
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+}
+
 /// Performs a WHOIS lookup for a domain
 ///
 /// This function uses the `whois-service` crate which:
@@ -80,9 +88,12 @@ where
     let cache = WhoisCacheStore::default();
 
     if let Some(cached) = cache.load(&cache_path, domain).await? {
-        log::debug!("WHOIS cache hit for {domain}");
         let result = enrich_result_from_raw_text(WhoisResult::from(cached.result));
-        return Ok(Some(result));
+        if whois_result_is_usable(&result) {
+            log::debug!("WHOIS cache hit for {domain}");
+            return Ok(Some(result));
+        }
+        log::warn!("Ignoring empty cached WHOIS for {domain}");
     }
 
     log::debug!("Starting WHOIS lookup for domain: {domain}");
@@ -101,6 +112,12 @@ where
         };
         log::debug!("WHOIS lookup successful for {domain}");
         let result = convert_parsed_data(&response);
+        if !whois_result_is_usable(&result) {
+            log::warn!(
+                "WHOIS lookup returned no usable fields for {domain}; not caching empty result"
+            );
+            return Ok(None);
+        }
 
         cache.save(&cache_path, domain, &result).await?;
 
@@ -215,6 +232,55 @@ mod tests {
         .expect("lookup wrapper should not fail");
 
         assert!(result.is_none());
+    }
+
+    fn empty_response() -> WhoisResponse {
+        WhoisResponse {
+            domain: "empty.example".to_string(),
+            whois_server: "whois.example.com".to_string(),
+            raw_data: String::new(),
+            parsed_data: None,
+            lookup_status: LookupStatus::Found,
+            cached: false,
+            query_time_ms: 1,
+            parsing_analysis: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lookup_whois_does_not_cache_empty_payload() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let first = lookup_whois_with_lookup("empty.example", Some(temp_dir.path()), {
+            let calls = Arc::clone(&calls);
+            move |_| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(empty_response())
+                }
+            }
+        })
+        .await
+        .expect("lookup wrapper should not fail");
+        assert!(first.is_none());
+
+        let second = lookup_whois_with_lookup("empty.example", Some(temp_dir.path()), {
+            let calls = Arc::clone(&calls);
+            move |_| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(empty_response())
+                }
+            }
+        })
+        .await
+        .expect("second lookup should not use an empty cache entry");
+
+        assert!(second.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test(start_paused = true)]

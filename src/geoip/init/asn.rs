@@ -9,78 +9,109 @@ use super::loader::{geoip_cache_paths, load_from_file, load_from_url};
 use crate::geoip::metadata::load_metadata;
 use crate::geoip::{self, GEOIP_ASN_READER};
 
-/// Initializes the ASN database (runs in background after City database is loaded)
-pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
-    // Check if already loaded
-    {
-        let reader = GEOIP_ASN_READER
-            .read()
-            .map_err(|e| anyhow::anyhow!("GeoIP ASN reader lock poisoned: {e}"))?;
-        if reader.is_some() {
-            return Ok(()); // Already loaded
+fn asn_reader_loaded() -> Result<bool> {
+    let reader = GEOIP_ASN_READER
+        .read()
+        .map_err(|e| anyhow::anyhow!("GeoIP ASN reader lock poisoned: {e}"))?;
+    Ok(reader.is_some())
+}
+
+fn store_asn_reader(
+    reader: maxminddb::Reader<Vec<u8>>,
+    metadata: geoip::GeoIpMetadata,
+) -> Result<()> {
+    let reader_arc = Arc::new(reader);
+    *GEOIP_ASN_READER
+        .write()
+        .map_err(|e| anyhow::anyhow!("GeoIP ASN writer lock poisoned: {e}"))? =
+        Some((reader_arc, metadata));
+    Ok(())
+}
+
+async fn try_load_asn_from_cache(cache_file: &Path) -> Result<bool> {
+    let Some(path) = cache_file.to_str() else {
+        log::warn!(
+            "Cache file path contains invalid UTF-8: {}",
+            cache_file.display()
+        );
+        return Ok(false);
+    };
+    match load_from_file(path).await {
+        Ok((reader, metadata)) => {
+            store_asn_reader(reader, metadata)?;
+            log::info!("GeoIP ASN database loaded from cache");
+            Ok(true)
+        }
+        Err(e) => {
+            log::warn!("Failed to load cached ASN database: {e}");
+            Ok(false)
         }
     }
+}
 
-    // Try to get license key for auto-download
-    if let Ok(license_key) = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV) {
-        if !license_key.is_empty() {
-            let (cache_file, metadata_file) = geoip_cache_paths(cache_dir, "GeoLite2-ASN");
+async fn try_download_asn(license_key: &str, cache_dir: &Path) -> Result<bool> {
+    log::info!("Auto-downloading GeoLite2-ASN database (cache expired or missing)");
+    let encoded_key = form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
+    let download_url = format!(
+        "{}?edition_id=GeoLite2-ASN&license_key={}&suffix=tar.gz",
+        geoip::MAXMIND_DOWNLOAD_BASE,
+        encoded_key
+    );
+    match load_from_url(&download_url, cache_dir, "GeoLite2-ASN").await {
+        Ok((reader, metadata)) => {
+            store_asn_reader(reader, metadata)?;
+            log::info!("GeoIP ASN database loaded successfully");
+            Ok(true)
+        }
+        Err(e) => {
+            log::warn!("Failed to load ASN database: {e}. Continuing without ASN lookups.");
+            Ok(false)
+        }
+    }
+}
 
-            // Check if cached version exists and is fresh
-            let should_download = if let Ok(metadata) = load_metadata(&metadata_file).await {
+/// Initializes the ASN database after the City database is loaded.
+///
+/// Uses a cached `GeoLite2-ASN.mmdb` even when `MAXMIND_LICENSE_KEY` is unset.
+/// Auto-download still requires the license key.
+pub(crate) async fn init_asn_database(cache_dir: &Path) -> Result<()> {
+    if asn_reader_loaded()? {
+        return Ok(());
+    }
+
+    let (cache_file, metadata_file) = geoip_cache_paths(cache_dir, "GeoLite2-ASN");
+    let license_key = std::env::var(geoip::MAXMIND_LICENSE_KEY_ENV)
+        .ok()
+        .filter(|key| !key.is_empty());
+
+    let should_download = license_key.is_some()
+        && match load_metadata(&metadata_file).await {
+            Ok(metadata) => {
                 crate::utils::cache::cache_ttl_exceeded(
                     metadata.last_updated,
                     geoip::CACHE_TTL_SECS,
                     true,
                 ) || !cache_file.exists()
-            } else {
-                true
-            };
+            }
+            Err(_) => true,
+        };
 
-            if should_download {
-                log::info!("Auto-downloading GeoLite2-ASN database (cache expired or missing)");
-                let encoded_key =
-                    form_urlencoded::byte_serialize(license_key.as_bytes()).collect::<String>();
-                let download_url = format!(
-                    "{}?edition_id=GeoLite2-ASN&license_key={}&suffix=tar.gz",
-                    geoip::MAXMIND_DOWNLOAD_BASE,
-                    encoded_key
-                );
-
-                match load_from_url(&download_url, cache_dir, "GeoLite2-ASN").await {
-                    Ok((reader, metadata)) => {
-                        let reader_arc = Arc::new(reader);
-                        *GEOIP_ASN_READER.write().map_err(|e| {
-                            anyhow::anyhow!("GeoIP ASN writer lock poisoned: {e}")
-                        })? = Some((reader_arc, metadata));
-                        log::info!("GeoIP ASN database loaded successfully");
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to load ASN database: {e}. Continuing without ASN lookups."
-                        );
-                    }
-                }
-            } else {
-                // Load from cache
-                if cache_file.exists() {
-                    if let Some(cache_path) = cache_file.to_str() {
-                        if let Ok((reader, metadata)) = load_from_file(cache_path).await {
-                            let reader_arc = Arc::new(reader);
-                            *GEOIP_ASN_READER.write().map_err(|e| {
-                                anyhow::anyhow!("GeoIP ASN writer lock poisoned: {e}")
-                            })? = Some((reader_arc, metadata));
-                            log::info!("GeoIP ASN database loaded from cache");
-                        }
-                    } else {
-                        log::warn!(
-                            "Cache file path contains invalid UTF-8: {}",
-                            cache_file.display()
-                        );
-                    }
-                }
+    if should_download {
+        if let Some(key) = license_key.as_deref() {
+            if try_download_asn(key, cache_dir).await? {
+                return Ok(());
             }
         }
+    }
+
+    log::debug!(
+        "ASN MMDB candidate {} (exists={})",
+        cache_file.display(),
+        cache_file.exists()
+    );
+
+    if cache_file.exists() {
+        try_load_asn_from_cache(&cache_file).await?;
     }
 
     Ok(())
@@ -107,6 +138,23 @@ mod tests {
         // Test when no license key is set
         let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let result = init_asn_database(temp_dir.path()).await;
+        assert_asn_degrades_unloaded(result);
+    }
+
+    #[tokio::test]
+    async fn test_init_asn_database_no_license_still_tries_existing_cache() {
+        use tokio::io::AsyncWriteExt;
+
+        let _license_env = geoip::test_support::LicenseKeyEnvGuard::apply(None);
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let cache_file = temp_dir.path().join("GeoLite2-ASN.mmdb");
+        let mut file = tokio::fs::File::create(&cache_file)
+            .await
+            .expect("Failed to create cache file");
+        file.write_all(b"not a real mmdb")
+            .await
+            .expect("Failed to write cache");
         let result = init_asn_database(temp_dir.path()).await;
         assert_asn_degrades_unloaded(result);
     }
