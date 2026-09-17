@@ -273,6 +273,7 @@ pub struct ExportCommand {
     #[arg(long)]
     pub run_id: Option<String>,
 
+    /// Exact match on `initial_domain` or `final_domain` (not a substring).
     #[arg(long)]
     pub domain: Option<String>,
 

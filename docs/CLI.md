@@ -73,7 +73,7 @@ domain-status export --domain example.com --status 200 --since 1700000000000
 domain-status export --include-implied-tech   # include is_implied=1 fingerprint rows (off by default)
 ```
 
-Export filters (optional): `--domain` (substring match on final domain), `--status` (HTTP status code), `--since` (epoch ms lower bound on `observed_at_ms`), `--run-id`.
+Export filters (optional): `--domain` (exact match on `initial_domain` or `final_domain`), `--status` (HTTP status code), `--since` (epoch ms lower bound on `observed_at_ms`), `--run-id`.
 
 ### Stdout / stderr
 

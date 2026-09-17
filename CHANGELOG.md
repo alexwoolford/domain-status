@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `url_technologies.detection_source` (migration `0016_technology_detection_source.sql`) records the matching signal (`header`, `html`, `scriptSrc`, `ns`, `cname`, `implied`, …).
 
 ### Changed
+- `summary --run-id` resolves in-progress runs via `query_run_by_id`; the text formatter uses `write!`.
+- Export `--domain` is an exact match on `initial_domain` or `final_domain` (docs previously claimed substring-on-final). Implied-tech export is covered by on/off contract tests. CSV technology/analytics/social strings and `structured_data_count` come from the same bounded satellite fetch as JSONL/Parquet (cap `MAX_EXPORT_RELATED_RECORDS`).
 - Install and command name is `domain-status` (Rust library crate remains `domain_status`). README audience no longer calls out PE/portfolio intelligence.
 - Secret triage docs keep generic leftover `generic-api-key` classes (public SDK / CMS / CDN noise) and the leak-hunting query that skips `generic-api-key` / `gcp-api-key` / `jwt`. The catch-all is unchanged.
 - Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.

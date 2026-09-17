@@ -71,7 +71,7 @@ pub struct ExportOptions {
     pub format: ExportFormat,
     /// Optional exact `run_id` filter.
     pub run_id: Option<String>,
-    /// Optional domain filter matching either initial or final domain.
+    /// Optional exact-match filter on `initial_domain` or `final_domain`.
     pub domain: Option<String>,
     /// Optional HTTP status-code filter.
     pub status: Option<u16>,
