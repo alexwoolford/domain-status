@@ -167,37 +167,27 @@ fn expand_implies(detected: &mut HashMap<String, TechInfo>, ruleset: &Fingerprin
 }
 
 /// Protocol / transport flags and CAs that belong in headers/TLS columns, not the stack inventory.
-fn is_denylisted_technology(name: &str, category: Option<&str>) -> bool {
+fn is_denylisted_technology(name: &str, ruleset: &FingerprintRuleset) -> bool {
     if name.eq_ignore_ascii_case("HTTP/2")
         || name.eq_ignore_ascii_case("HTTP/3")
         || name.eq_ignore_ascii_case("HSTS")
     {
         return true;
     }
-    if category.is_some_and(|c| c.eq_ignore_ascii_case("SSL/TLS certificate authorities")) {
-        return true;
-    }
-    is_certificate_authority_name(name)
+    technology_in_category(ruleset, name, "SSL/TLS certificate authorities")
 }
 
-fn is_certificate_authority_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Let's Encrypt"
-            | "Lets Encrypt"
-            | "DigiCert"
-            | "Sectigo"
-            | "GlobalSign"
-            | "Thawte"
-            | "AWS Certificate Manager"
-            | "Identrust"
-            | "IdenTrust"
-            | "GeoTrust"
-            | "Comodo"
-            | "Entrust"
-            | "RapidSSL"
-            | "Google Trust Services"
-    )
+/// True when any of the technology's category IDs resolve to `category`.
+fn technology_in_category(ruleset: &FingerprintRuleset, name: &str, category: &str) -> bool {
+    let Some(tech) = ruleset.technologies.get(name) else {
+        return false;
+    };
+    tech.cats.iter().any(|id| {
+        ruleset
+            .categories
+            .get(id)
+            .is_some_and(|c| c.eq_ignore_ascii_case(category))
+    })
 }
 
 fn finalize_detections(
@@ -211,16 +201,17 @@ fn finalize_detections(
     detected
         .into_iter()
         .filter(|(name, _)| kept_names.contains(name))
-        .filter(|(name, _)| {
-            let category = get_technology_category(ruleset, name);
-            !is_denylisted_technology(name, category.as_deref())
-        })
-        .map(|(name, info)| DetectedTechnology {
-            category: get_technology_category(ruleset, &name),
-            detection_source: Some(info.source.as_str().to_string()),
-            name,
-            version: info.version,
-            is_implied: info.is_implied,
+        .filter_map(|(name, info)| {
+            if is_denylisted_technology(&name, ruleset) {
+                return None;
+            }
+            Some(DetectedTechnology {
+                category: get_technology_category(ruleset, &name),
+                detection_source: Some(info.source.as_str().to_string()),
+                name,
+                version: info.version,
+                is_implied: info.is_implied,
+            })
         })
         .collect()
 }
@@ -937,9 +928,10 @@ mod tests {
     fn test_supplement_cert_issuer_lets_encrypt() {
         let mut tech = empty_tech();
         tech.cert_issuer.push("Let's Encrypt".into());
+        tech.cats.push(70);
         let ruleset = FingerprintRuleset {
             technologies: HashMap::from([("Let's Encrypt".into(), tech)]),
-            categories: HashMap::new(),
+            categories: HashMap::from([(70, "SSL/TLS certificate authorities".into())]),
             metadata: crate::fingerprint::models::FingerprintMetadata {
                 source: "test".into(),
                 version: "0".into(),
@@ -993,6 +985,39 @@ mod tests {
         let names: Vec<_> = out.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"nginx"));
         assert!(!names.contains(&"Custom CA"));
+    }
+
+    #[test]
+    fn test_finalize_drops_ca_when_not_first_category() {
+        let mut detected = HashMap::new();
+        detected.insert(
+            "Mixed".to_string(),
+            TechInfo {
+                version: None,
+                is_implied: false,
+                source: DetectionSource::Cert,
+            },
+        );
+        let mut mixed = empty_tech();
+        mixed.cats.push(1);
+        mixed.cats.push(70);
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::from([("Mixed".into(), mixed)]),
+            categories: HashMap::from([
+                (1, "CMS".into()),
+                (70, "SSL/TLS certificate authorities".into()),
+            ]),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        };
+        let out = finalize_detections(detected, &ruleset);
+        assert!(
+            out.iter().all(|t| t.name != "Mixed"),
+            "CA category must drop even when it is not the first cat, got {out:?}"
+        );
     }
 
     #[test]
