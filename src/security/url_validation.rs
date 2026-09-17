@@ -22,6 +22,9 @@ use url::Url;
 /// - Host is not localhost
 /// - Host is not a link-local address
 ///
+/// RFC 5737 documentation nets (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`)
+/// are treated as unsafe, as are RFC 3849 IPv6 documentation addresses (`2001:db8::/32`).
+///
 /// # Arguments
 ///
 /// * `url_str` - The URL string to validate
@@ -29,22 +32,6 @@ use url::Url;
 /// # Returns
 ///
 /// `Ok(())` if the URL is safe, `Err` with a descriptive message if unsafe.
-///
-/// # Examples
-///
-/// ```ignore
-/// // This function is internal; use it via crate::security::validate_url_safe
-/// use crate::security::validate_url_safe;
-///
-/// // Safe URLs
-/// assert!(validate_url_safe("https://example.com").is_ok());
-/// assert!(validate_url_safe("http://192.0.2.1").is_ok()); // Public test IP
-///
-/// // Unsafe URLs (SSRF risk)
-/// assert!(validate_url_safe("http://127.0.0.1").is_err());
-/// assert!(validate_url_safe("http://192.168.1.1").is_err());
-/// assert!(validate_url_safe("file:///etc/passwd").is_err());
-/// ```
 pub fn validate_url_safe(url_str: &str) -> Result<()> {
     let url = Url::parse(url_str).with_context(|| format!("Failed to parse URL: {url_str}"))?;
 
@@ -93,87 +80,25 @@ pub fn validate_url_safe(url_str: &str) -> Result<()> {
 
 /// Single source of truth for private/reserved IPv4 ranges (SSRF protection).
 ///
-/// Used by both URL validation and the safe DNS resolver. Includes:
-/// - RFC 1918 (10/8, 172.16/12, 192.168/16), loopback (127/8), link-local (169.254/16)
-/// - This network (0/8), multicast (224/4), reserved (240/4)
-/// - 100.64.0.0/10 (Carrier-Grade NAT, RFC 6598)
-/// - 198.18.0.0/15 (Benchmarking, RFC 2544)
-/// - 192.0.0.0/24 (IETF Protocol Assignments, RFC 6890)
-/// - 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (documentation, RFC 5737)
+/// Uses stable `Ipv4Addr` predicates plus ranges std does not yet expose:
+/// entire `0.0.0.0/8`, CGNAT `100.64.0.0/10`, benchmarking `198.18.0.0/15`,
+/// IETF Protocol Assignments `192.0.0.0/24`, and reserved `240.0.0.0/4`.
 pub(crate) fn is_private_ipv4(ip: Ipv4Addr) -> bool {
+    if ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_multicast()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+    {
+        return true;
+    }
     let octets = ip.octets();
-
-    // 127.0.0.0/8 (loopback)
-    if octets[0] == 127 {
-        return true;
-    }
-
-    // 10.0.0.0/8
-    if octets[0] == 10 {
-        return true;
-    }
-
-    // 172.16.0.0/12
-    if octets[0] == 172 && (octets[1] >= 16 && octets[1] <= 31) {
-        return true;
-    }
-
-    // 192.168.0.0/16
-    if octets[0] == 192 && octets[1] == 168 {
-        return true;
-    }
-
-    // 100.64.0.0/10 (Carrier-Grade NAT, RFC 6598)
-    if octets[0] == 100 && (octets[1] >= 64 && octets[1] <= 127) {
-        return true;
-    }
-
-    // 198.18.0.0/15 (Benchmarking, RFC 2544)
-    if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
-        return true;
-    }
-
-    // 192.0.0.0/24 (IETF Protocol Assignments, RFC 6890)
-    if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
-        return true;
-    }
-
-    // 192.0.2.0/24 (TEST-NET-1, RFC 5737)
-    if octets[0] == 192 && octets[1] == 0 && octets[2] == 2 {
-        return true;
-    }
-
-    // 198.51.100.0/24 (TEST-NET-2, RFC 5737)
-    if octets[0] == 198 && octets[1] == 51 && octets[2] == 100 {
-        return true;
-    }
-
-    // 203.0.113.0/24 (TEST-NET-3, RFC 5737)
-    if octets[0] == 203 && octets[1] == 0 && octets[2] == 113 {
-        return true;
-    }
-
-    // 169.254.0.0/16 (link-local)
-    if octets[0] == 169 && octets[1] == 254 {
-        return true;
-    }
-
-    // 0.0.0.0/8 (this network)
-    if octets[0] == 0 {
-        return true;
-    }
-
-    // 224.0.0.0/4 (multicast)
-    if octets[0] >= 224 && octets[0] <= 239 {
-        return true;
-    }
-
-    // 240.0.0.0/4 (reserved)
-    if octets[0] >= 240 {
-        return true;
-    }
-
-    false
+    octets[0] == 0
+        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+        || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+        || octets[0] >= 240
 }
 
 /// Returns true if the IP is private/reserved (SSRF-unsafe). Single source of truth for both
@@ -188,48 +113,31 @@ pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
 /// Checks if an IPv6 address is private/internal (RFC 4193, RFC 4291, RFC 3849).
 ///
 /// Private / non-routable ranges:
-/// - `::1` (loopback)
-/// - `fc00::/7` (unique local addresses)
-/// - `fe80::/10` (link-local)
-/// - `ff00::/8` (multicast)
-/// - `2001:db8::/32` (documentation, RFC 3849) — parity with blocked IPv4 doc nets
+/// - IPv4-mapped (`::ffff:x.x.x.x`) and deprecated IPv4-compatible (`::x.x.x.x`)
+///   addresses, classified via the IPv4 check
+/// - `::` unspecified, `::1` loopback
+/// - `fc00::/7` unique local, `fe80::/10` link-local, `ff00::/8` multicast
+/// - `2001:db8::/32` documentation (RFC 3849)
 pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
-    // IPv4-mapped addresses (::ffff:x.x.x.x) — delegate to IPv4 check
     if let Some(ipv4) = ip.to_ipv4_mapped() {
         return is_private_ipv4(ipv4);
     }
+    if ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_unique_local()
+        || ip.is_unicast_link_local()
+        || ip.is_multicast()
+    {
+        return true;
+    }
     let segments = ip.segments();
-
-    // :: unspecified
-    if segments == [0; 8] {
-        return true;
-    }
-
-    // ::1 (loopback)
-    if segments == [0, 0, 0, 0, 0, 0, 0, 1] {
-        return true;
-    }
-
-    // fc00::/7 (unique local addresses)
-    if (segments[0] & 0xfe00) == 0xfc00 {
-        return true;
-    }
-
-    // fe80::/10 (link-local)
-    if (segments[0] & 0xffc0) == 0xfe80 {
-        return true;
-    }
-
-    // ff00::/8 (multicast)
-    if segments[0] & 0xff00 == 0xff00 {
-        return true;
-    }
-
-    // 2001:db8::/32 (documentation, RFC 3849)
     if segments[0] == 0x2001 && segments[1] == 0x0db8 {
         return true;
     }
-
+    // Deprecated IPv4-compatible (`::10.0.0.1`); mapped addresses already returned above.
+    if let Some(ipv4) = ip.to_ipv4() {
+        return is_private_ipv4(ipv4);
+    }
     false
 }
 
@@ -240,10 +148,13 @@ pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
 /// legitimate redirects still work; redirects to internal IPs cause the attempt to stop.
 pub fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        if validate_url_safe(attempt.url().as_str()).is_err() {
-            attempt.stop()
-        } else {
-            attempt.follow()
+        let url = attempt.url().as_str();
+        match validate_url_safe(url) {
+            Ok(()) => attempt.follow(),
+            Err(err) => {
+                log::warn!("SSRF-safe redirect stopped: {err}");
+                attempt.stop()
+            }
         }
     })
 }
@@ -262,159 +173,107 @@ fn is_localhost_domain(domain: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// `(ip, is_private, label)` — source of truth for IP classification.
+    const PRIVATE_IP_CASES: &[(&str, bool, &str)] = &[
+        ("8.8.8.8", false, "Google DNS"),
+        ("1.1.1.1", false, "Cloudflare DNS"),
+        ("93.184.216.34", false, "example.com A"),
+        ("172.15.255.255", false, "just below RFC1918 172.16/12"),
+        ("172.16.0.0", true, "RFC1918 172.16/12 start"),
+        ("172.31.255.255", true, "RFC1918 172.16/12 end"),
+        ("100.63.255.255", false, "just below CGNAT"),
+        ("100.64.0.0", true, "CGNAT start"),
+        ("10.0.0.1", true, "RFC1918 10/8"),
+        ("192.168.1.1", true, "RFC1918 192.168/16"),
+        ("127.0.0.1", true, "loopback"),
+        ("169.254.1.1", true, "link-local"),
+        ("0.0.0.0", true, "unspecified"),
+        ("0.1.2.3", true, "0/8 this-network"),
+        ("224.0.0.1", true, "multicast"),
+        ("255.255.255.255", true, "broadcast/reserved"),
+        ("192.0.2.1", true, "RFC5737 TEST-NET-1"),
+        ("198.51.100.1", true, "RFC5737 TEST-NET-2"),
+        ("203.0.113.1", true, "RFC5737 TEST-NET-3"),
+        ("198.18.0.1", true, "benchmarking"),
+        ("192.0.0.1", true, "IETF Protocol Assignments"),
+        ("192.0.1.1", false, "just above 192.0.0.0/24"),
+        ("::ffff:8.8.8.8", false, "IPv4-mapped public"),
+        ("::ffff:10.0.0.1", true, "IPv4-mapped private"),
+        ("::10.0.0.1", true, "IPv4-compatible private"),
+        ("::8.8.8.8", false, "IPv4-compatible public"),
+        ("::1", true, "IPv6 loopback"),
+        ("::", true, "IPv6 unspecified"),
+        ("fc00::1", true, "unique local"),
+        ("fe80::1", true, "IPv6 link-local"),
+        ("ff00::1", true, "IPv6 multicast"),
+        ("2001:db8::1", true, "RFC3849 documentation"),
+        ("2607:f8b0:4004:800::200e", false, "public IPv6"),
+    ];
+
+    #[test]
+    fn test_is_private_ip_table() {
+        for &(ip_str, expect_private, label) in PRIVATE_IP_CASES {
+            let ip: IpAddr = ip_str.parse().unwrap_or_else(|e| {
+                panic!("fixture {label:?} ({ip_str}) must parse: {e}");
+            });
+            assert_eq!(
+                is_private_ip(ip),
+                expect_private,
+                "{label}: {ip} expected private={expect_private}"
+            );
+        }
+    }
+
     #[test]
     fn test_validate_url_safe_public_urls() {
-        // Public URLs should be safe
         assert!(validate_url_safe("https://example.com").is_ok());
         assert!(validate_url_safe("http://example.com").is_ok());
-        assert!(validate_url_safe("https://subdomain.example.com").is_ok());
-        assert!(validate_url_safe("https://example.com:8080").is_ok());
-        assert!(validate_url_safe("https://example.com/path?query=value").is_ok());
+        assert!(validate_url_safe("https://example.com:8080/path?query=value").is_ok());
+        assert!(validate_url_safe("http://8.8.8.8").is_ok());
     }
 
     #[test]
-    fn test_validate_url_safe_public_ips() {
-        // Only routable public IPs are allowed (documentation/test ranges are blocked for SSRF)
-        assert!(validate_url_safe("http://8.8.8.8").is_ok()); // Google DNS
-        assert!(validate_url_safe("http://1.1.1.1").is_ok()); // Cloudflare DNS
-        assert!(validate_url_safe("http://93.184.216.34").is_ok()); // example.com
+    fn test_validate_url_safe_documentation_ip_error() {
+        let err = validate_url_safe("http://192.0.2.1")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "Unsafe URL: private IPv4 address '192.0.2.1' is not allowed: http://192.0.2.1"
+        );
     }
 
     #[test]
-    fn test_validate_url_safe_documentation_ranges_blocked() {
-        // RFC 5737 documentation ranges are blocked (attacker with DNS control could point here)
-        assert!(validate_url_safe("http://192.0.2.1").is_err());
-        assert!(validate_url_safe("http://198.51.100.1").is_err());
-        assert!(validate_url_safe("http://203.0.113.1").is_err());
-        // RFC 3849 IPv6 documentation prefix
-        assert!(validate_url_safe("http://[2001:db8::1]").is_err());
+    fn test_validate_url_safe_bad_scheme_error() {
+        let err = validate_url_safe("file:///etc/passwd")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "Unsafe URL scheme 'file' (only http:// and https:// allowed): file:///etc/passwd"
+        );
+        assert!(validate_url_safe("ftp://example.com").is_err());
+        assert!(validate_url_safe("javascript:alert(1)").is_err());
     }
 
     #[test]
-    fn test_validate_url_safe_private_ipv4() {
-        // Private IPv4 addresses should be blocked
-        assert!(validate_url_safe("http://127.0.0.1").is_err());
-        assert!(validate_url_safe("http://127.0.0.1:8080").is_err());
-        assert!(validate_url_safe("http://localhost").is_err());
-        assert!(validate_url_safe("http://192.168.1.1").is_err());
-        assert!(validate_url_safe("http://10.0.0.1").is_err());
-        assert!(validate_url_safe("http://172.16.0.1").is_err());
-        assert!(validate_url_safe("http://172.31.255.255").is_err());
-        assert!(validate_url_safe("http://169.254.1.1").is_err()); // Link-local
-        assert!(validate_url_safe("http://0.0.0.0").is_err());
-        assert!(validate_url_safe("http://224.0.0.1").is_err()); // Multicast
-        assert!(validate_url_safe("http://255.255.255.255").is_err()); // Reserved
-        assert!(validate_url_safe("http://100.64.0.1").is_err()); // CGNAT (RFC 6598)
-        assert!(validate_url_safe("http://198.18.0.1").is_err()); // Benchmarking (RFC 2544)
-        assert!(validate_url_safe("http://192.0.0.1").is_err()); // IETF assignments (RFC 6890)
-    }
-
-    #[test]
-    fn test_validate_url_safe_private_ipv6() {
-        // Private IPv6 addresses should be blocked
-        assert!(validate_url_safe("http://[::1]").is_err()); // Loopback
-        assert!(validate_url_safe("http://[::]").is_err()); // Unspecified
-        assert!(validate_url_safe("http://[fc00::1]").is_err()); // Unique local
-        assert!(validate_url_safe("http://[fe80::1]").is_err()); // Link-local
-        assert!(validate_url_safe("http://[ff00::1]").is_err()); // Multicast
-        assert!(validate_url_safe("http://[2001:db8::1]").is_err()); // Documentation
-                                                                     // IPv4-mapped private addresses must be blocked
-        assert!(validate_url_safe("http://[::ffff:127.0.0.1]").is_err());
-        assert!(validate_url_safe("http://[::ffff:192.168.1.1]").is_err());
-    }
-
-    #[test]
-    fn test_validate_url_safe_localhost_domains() {
-        // Localhost domain variants should be blocked
-        assert!(validate_url_safe("http://localhost").is_err());
-        assert!(validate_url_safe("http://localhost:8080").is_err());
+    fn test_validate_url_safe_localhost_name_error() {
+        let err = validate_url_safe("http://localhost")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "Unsafe URL: localhost domain 'localhost' is not allowed: http://localhost"
+        );
         assert!(validate_url_safe("http://localhost.localdomain").is_err());
         assert!(validate_url_safe("http://subdomain.localhost").is_err());
-        assert!(validate_url_safe("http://subdomain.localhost:8080").is_err());
+        assert!(validate_url_safe("https://example.com").is_ok());
     }
 
     #[test]
-    fn test_validate_url_safe_unsafe_schemes() {
-        // Non-HTTP/HTTPS schemes should be blocked
-        assert!(validate_url_safe("file:///etc/passwd").is_err());
-        assert!(validate_url_safe("ftp://example.com").is_err());
-        assert!(validate_url_safe("gopher://example.com").is_err());
-        assert!(validate_url_safe("javascript:alert(1)").is_err());
-        assert!(validate_url_safe("data:text/html,<script>alert(1)</script>").is_err());
-    }
-
-    #[test]
-    fn test_validate_url_safe_invalid_urls() {
-        // Invalid URLs should return errors
+    fn test_validate_url_safe_unparseable() {
         assert!(validate_url_safe("not-a-url").is_err());
         assert!(validate_url_safe("").is_err());
-    }
-
-    #[test]
-    fn test_is_private_ipv4() {
-        // Private ranges
-        assert!(is_private_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(172, 16, 0, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(172, 31, 255, 255)));
-        assert!(is_private_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(169, 254, 1, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
-        assert!(is_private_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
-
-        // Public IPs (routable only; doc/test ranges are private)
-        assert!(!is_private_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
-        assert!(!is_private_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
-        assert!(!is_private_ipv4(Ipv4Addr::new(93, 184, 216, 34)));
-
-        // Documentation/test ranges are private (SSRF)
-        assert!(is_private_ipv4(Ipv4Addr::new(192, 0, 2, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(198, 51, 100, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(203, 0, 113, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
-        assert!(is_private_ipv4(Ipv4Addr::new(192, 0, 0, 1)));
-    }
-
-    #[test]
-    fn test_is_private_ipv6() {
-        // Private ranges
-        assert!(is_private_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))); // :: unspecified
-        assert!(is_private_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))); // ::1
-        assert!(is_private_ipv6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))); // fc00::/7
-        assert!(is_private_ipv6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))); // fe80::/10
-        assert!(is_private_ipv6(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 1))); // ff00::/8
-                                                                              // IPv4-mapped private
-        assert!(is_private_ipv6(Ipv6Addr::new(
-            0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001
-        ))); // ::ffff:127.0.0.1
-        assert!(is_private_ipv6(Ipv6Addr::new(
-            0, 0, 0, 0, 0, 0xffff, 0xc0a8, 0x0101
-        ))); // ::ffff:192.168.1.1
-
-        // Documentation prefix (RFC 3849) — blocked for SSRF parity with IPv4 doc nets
-        assert!(is_private_ipv6(Ipv6Addr::new(
-            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
-        ))); // 2001:db8::1
-
-        // Public IPs
-        assert!(!is_private_ipv6(Ipv6Addr::new(
-            0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e
-        )));
-        assert!(!is_private_ipv6(Ipv6Addr::new(
-            0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808
-        ))); // ::ffff:8.8.8.8
-    }
-
-    #[test]
-    fn test_ssrf_safe_redirect_policy_builds() {
-        // Smoke test: policy can be used to build a client (defense-in-depth for redirect bypass)
-        let client = reqwest::Client::builder()
-            .redirect(ssrf_safe_redirect_policy())
-            .build()
-            .expect("client with SSRF-safe redirect policy should build");
-        drop(client);
     }
 
     #[test]

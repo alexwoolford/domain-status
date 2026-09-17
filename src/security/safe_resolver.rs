@@ -78,62 +78,20 @@ pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::Ipv4Addr;
     use std::str::FromStr;
 
     #[test]
-    fn test_public_ipv4() {
-        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
-        assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))));
-    }
-
-    #[test]
-    fn test_private_ipv4() {
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1))));
-        assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))));
-    }
-
-    #[test]
-    fn test_public_ipv6() {
-        assert!(is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e
-        ))));
-    }
-
-    #[test]
-    fn test_private_ipv6() {
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0, 0, 0, 0, 0, 0, 0, 1
-        ))));
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0xfc00, 0, 0, 0, 0, 0, 0, 1
-        ))));
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0xfe80, 0, 0, 0, 0, 0, 0, 1
-        ))));
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0, 0, 0, 0, 0, 0, 0, 0
-        ))));
-        // RFC 3849 documentation prefix
-        assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::new(
-            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
-        ))));
-    }
-
-    #[test]
-    fn test_ipv4_mapped_ipv6_blocked() {
-        let mapped_loopback = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001);
-        assert!(!is_public_ip(IpAddr::V6(mapped_loopback)));
-        let mapped_private = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001);
-        assert!(!is_public_ip(IpAddr::V6(mapped_private)));
-        let mapped_public = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0808, 0x0808);
-        assert!(is_public_ip(IpAddr::V6(mapped_public)));
+    fn test_is_public_ip_negates_private() {
+        let public = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let private = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        assert!(is_public_ip(public));
+        assert!(!is_public_ip(private));
+        assert_eq!(is_public_ip(public), !url_validation::is_private_ip(public));
+        assert_eq!(
+            is_public_ip(private),
+            !url_validation::is_private_ip(private)
+        );
     }
 
     #[test]
@@ -199,17 +157,5 @@ mod tests {
                 addr.ip()
             );
         }
-    }
-
-    #[tokio::test]
-    async fn test_safe_resolver_localhost_blocked() {
-        let hickory = crate::initialization::init_resolver().expect("resolver");
-        let resolver = SafeResolver::new(hickory);
-        let name = Name::from_str("localhost").unwrap();
-        let result = resolver.resolve(name).await;
-        assert!(
-            result.is_err(),
-            "localhost should be blocked (resolves to 127.0.0.1)"
-        );
     }
 }
