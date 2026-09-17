@@ -17,6 +17,21 @@ use crate::geoip::{self, GEOIP_CITY_READER};
 
 use loader::{geoip_cache_paths, load_from_file, load_from_url};
 
+/// Directory used for ASN MMDB cache and download.
+///
+/// Always the `GeoIP` cache dir passed to [`init_geoip`], never the parent of the
+/// `City` source (which may be a `MaxMind` download URL).
+#[must_use]
+fn asn_init_dir(cache_path: &Path) -> &Path {
+    cache_path
+}
+
+/// Strip query string so `MaxMind` `license_key=` is not written to scan logs.
+#[must_use]
+fn city_source_for_log(path: &str) -> &str {
+    path.split_once('?').map_or(path, |(base, _)| base)
+}
+
 /// Resolves a `MaxMind` download URL or cached `.mmdb` path when `MAXMIND_LICENSE_KEY` is set.
 ///
 /// Returns `None` when the license key is unset or empty (caller decides how to disable).
@@ -163,10 +178,11 @@ pub async fn init_geoip(
             Some((reader_arc, metadata.clone()));
         log::info!("GeoIP City database loaded successfully");
 
-        let asn_dir = Path::new(&path).parent().unwrap_or(&cache_path);
+        let asn_dir = asn_init_dir(&cache_path);
         log::info!(
-            "Initializing GeoIP ASN from {} (city source {path})",
-            asn_dir.display()
+            "Initializing GeoIP ASN from {} (city source {})",
+            asn_dir.display(),
+            city_source_for_log(&path)
         );
         if let Err(e) = asn::init_asn_database(asn_dir).await {
             log::warn!("Failed to initialize ASN database: {e}");
@@ -334,19 +350,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_background_asn_failure_doesnt_affect_main() {
-        // Test that background ASN initialization failure doesn't affect main init
-        // This is critical - ASN is optional, failures should be logged but not fatal
-        // The code at line 134-138 spawns ASN init in background and logs warnings
+    async fn test_init_geoip_asn_failure_doesnt_affect_city_error_path() {
+        // ASN is optional and awaited after City loads. A missing City file fails first;
+        // that error must still be a normal Result, not a panic from ASN init.
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Use an invalid path that will cause ASN init to fail
-        // But main init should still succeed (or fail for its own reasons)
         let result = init_geoip(Some("nonexistent.mmdb"), Some(temp_dir.path())).await;
-
-        // Main init should fail (file doesn't exist), but ASN failure shouldn't affect it
         assert!(result.is_err());
-        // The important thing is that background task failure doesn't cause panic
     }
 
     #[tokio::test]
@@ -410,10 +419,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_geoip_background_asn_task_doesnt_block() {
-        // Test that background ASN initialization doesn't block main init
-        // This is critical - if background task blocks, init_geoip would hang
-        // The code at line 134 spawns a background task, which should be non-blocking
+    async fn test_init_geoip_invalid_city_file_fails_before_asn_download() {
+        // Invalid City MMDB must fail on parse without waiting on MaxMind ASN download.
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
 
         // Clear license key and use an *existing* invalid file so parallel tests that set
@@ -425,17 +432,14 @@ mod tests {
             .expect("Failed to write invalid GeoIP fixture");
         let bad_db_path = bad_db.to_str().expect("temp path should be UTF-8");
 
-        // Invalid local DB should fail quickly without waiting for ASN (or MaxMind download)
         let start = std::time::Instant::now();
         let result = init_geoip(Some(bad_db_path), Some(temp_dir.path())).await;
         let elapsed = start.elapsed();
 
-        // Should fail quickly (invalid DB), not hang waiting for background task / download
         assert!(result.is_err());
-        // Should return in reasonable time (< 1 second for local file parse failure)
         assert!(
             elapsed.as_secs() < 1,
-            "init_geoip should not block on background ASN task"
+            "invalid City MMDB must fail locally before any ASN download"
         );
     }
 
@@ -510,20 +514,33 @@ mod tests {
         assert!(error_msg.contains("poisoned"));
     }
 
-    #[tokio::test]
-    async fn test_init_geoip_background_asn_spawn_doesnt_block() {
-        // Test that background ASN initialization doesn't block main init (lines 132-138)
-        // This is critical - ASN init should be non-blocking
-
-        // The code uses tokio::spawn which is non-blocking
-        // We verify the pattern is correct
-        tokio::spawn(async {
-            // Simulate ASN init
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        });
-
-        // Main thread should continue immediately (non-blocking spawn verified)
-        // The spawn returns immediately, doesn't block
+    #[test]
+    fn test_asn_init_uses_geoip_cache_dir_not_city_url_parent() {
+        let cache = Path::new("/var/cache/domain_status/geoip");
+        let city_url =
+            "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&suffix=tar.gz";
+        let url_parent = Path::new(city_url).parent();
+        assert_ne!(
+            url_parent.map(Path::as_os_str),
+            Some(cache.as_os_str()),
+            "parent(City download URL) must not be treated as the GeoIP cache dir"
+        );
+        assert_eq!(
+            asn_init_dir(cache),
+            cache,
+            "ASN must initialize from the GeoIP cache dir even when City is a URL"
+        );
+        assert_eq!(
+            city_source_for_log(
+                "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=secret&suffix=tar.gz"
+            ),
+            "https://download.maxmind.com/app/geoip_download",
+            "MaxMind license query string must not appear in the ASN init log"
+        );
+        assert_eq!(
+            city_source_for_log("/var/cache/domain_status/geoip/GeoLite2-City.mmdb"),
+            "/var/cache/domain_status/geoip/GeoLite2-City.mmdb"
+        );
     }
 
     #[tokio::test]
