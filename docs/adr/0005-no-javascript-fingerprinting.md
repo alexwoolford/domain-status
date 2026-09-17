@@ -24,13 +24,13 @@ Technology detection is based on static evidence such as:
 - cookies
 - HTML
 - script URLs (`scriptSrc`) and inline `<script>` text (`scripts`)
-- NS/CNAME DNS records and TLS certificate issuer (matched after DNS/TLS enrichment)
+- NS/CNAME DNS records (matched after DNS enrichment)
 - first-party external script **bodies** when `--scan-external-scripts` is enabled (same fetch as secret scanning; static `scripts` pattern matching only)
 - other response-derived patterns
 
 `--scan-external-scripts` is opt-in because it multiplies GETs. When enabled, fetched first-party bodies improve both secret coverage and technology detection. Third-party CDN scripts remain denylisted. Bodies are matched as text only — never executed.
 
-`url_technologies` is the HTTP serving stack, not an org-vendor inventory. DNS matching uses NS and CNAME only (plus cert issuer). TXT/MX/SPF/DMARC remain in satellite tables. `Content-Security-Policy` / `Content-Security-Policy-Report-Only` header values are not fingerprint evidence (allowlisted hosts stay in `url_csp_domains`). GitHub Pages is dropped when the URL host is `github.com` / `www.github.com`, so the product site is not labeled as Pages.
+`url_technologies` is the HTTP serving stack, not an org-vendor inventory. DNS matching uses NS and CNAME only. TXT/MX/SPF/DMARC remain in satellite tables. `Content-Security-Policy` / `Content-Security-Policy-Report-Only` header values are not fingerprint evidence (allowlisted hosts stay in `url_csp_domains`). Certificate authorities matched via `certIssuer` are not stored as technologies (use `url_status.ssl_cert_issuer`). GitHub Pages is dropped when the URL host is `github.com` / `www.github.com`, so the product site is not labeled as Pages. Wappalyzer `requires` / `requiresCategory` are honored. Challenge/interstitial HTML is not fingerprinted. A first-party overlay (`assets/fingerprints/overlay.json`) is merged last (Payload header; Amazon S3 hosting headers only). `detection_source` is persisted on each `url_technologies` row.
 
 This keeps the scanner aligned with a lightweight, batch-oriented architecture rather than turning it into a browser automation system.
 
@@ -63,5 +63,6 @@ Trade-offs:
 - `src/fingerprint/detection/`
 - `src/fetch/external_scripts.rs`
 - `src/fetch/response/html.rs`
+- `assets/fingerprints/overlay.json`
 - `README.md`
 - `docs/PRODUCTION_HARDENING.md`

@@ -11,6 +11,7 @@ mod categories;
 mod fetch;
 mod github;
 mod local;
+mod overlay;
 mod vendored;
 
 use anyhow::Result;
@@ -28,11 +29,12 @@ use categories::{fetch_categories_from_url, load_categories_from_path};
 use fetch::fetch_from_url;
 use github::get_latest_commit_sha;
 use local::load_from_path;
+use overlay::apply_first_party_overlay;
 use vendored::load_vendored_ruleset;
 
 /// Cache schema version. Bump when `Technology` retained fields change so old
-/// narrowed caches (missing dns/certIssuer/scripts) are not reused.
-const CACHE_SCHEMA_VERSION: &str = "3";
+/// narrowed caches (missing dns/certIssuer/scripts/requires) are not reused.
+const CACHE_SCHEMA_VERSION: &str = "4";
 
 /// Cache filename stem for a source list (schema-prefixed so old caches miss).
 fn fingerprint_cache_key(sources: &[String]) -> String {
@@ -93,6 +95,25 @@ fn is_js_only_technology(tech: &crate::fingerprint::models::Technology) -> bool 
         && tech.url.is_empty()
         && tech.dns.is_empty()
         && tech.cert_issuer.is_empty()
+}
+
+/// Lowercase header/cookie keys, then prune unused payload for static detection.
+pub(crate) fn ingest_technology(
+    mut tech: crate::fingerprint::models::Technology,
+) -> Option<crate::fingerprint::models::Technology> {
+    let mut normalized_headers = HashMap::new();
+    for (header_name, pattern) in tech.headers {
+        normalized_headers.insert(header_name.to_lowercase(), pattern);
+    }
+    tech.headers = normalized_headers;
+
+    let mut normalized_cookies = HashMap::new();
+    for (cookie_name, pattern) in tech.cookies {
+        normalized_cookies.insert(cookie_name.to_lowercase(), pattern);
+    }
+    tech.cookies = normalized_cookies;
+
+    prune_technology_for_static_detection(tech)
 }
 
 /// Strip unused payload; drop only dead js-only rules after script-id filtering.
@@ -164,12 +185,13 @@ pub async fn init_ruleset(
         std::path::Path::to_path_buf,
     );
 
-    // Schema version invalidates caches written before dns/certIssuer/scripts were retained.
+    // Schema version invalidates caches written before requires/overlay fields were retained.
     let cache_key = fingerprint_cache_key(&sources);
     let expected_sources = fingerprint_source_label(&sources);
 
     // Try to load from cache first
-    if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
+    if let Ok(mut ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
+        apply_first_party_overlay(&mut ruleset.technologies)?;
         log::info!(
             "Loaded fingerprint ruleset from cache ({} sources)",
             sources.len()
@@ -247,33 +269,10 @@ async fn fetch_ruleset_from_multiple_sources(
             }
         };
 
-        // Merge technologies (later sources overwrite earlier ones for same tech name)
-        // This matches the Go implementation behavior
-        // Normalize header and cookie keys/values to lowercase (matching Go implementation)
-        for (tech_name, mut tech) in technologies {
-            // Normalize header keys and patterns to lowercase (matching Go: strings.ToLower(header), strings.ToLower(pattern))
-            let mut normalized_headers = HashMap::new();
-            // Normalize header/cookie KEYS to lowercase for case-insensitive lookup.
-            // PATTERNS must NOT be lowercased — they're regexes where \S != \s, \D != \d.
-            for (header_name, pattern) in tech.headers {
-                normalized_headers.insert(header_name.to_lowercase(), pattern);
-            }
-            tech.headers = normalized_headers;
-
-            let mut normalized_cookies = HashMap::new();
-            for (cookie_name, pattern) in tech.cookies {
-                normalized_cookies.insert(cookie_name.to_lowercase(), pattern);
-            }
-            tech.cookies = normalized_cookies;
-
-            // Script and HTML patterns are NOT lowercased — they contain regexes
-            // where case matters (\S vs \s, \D vs \d). The matching engine handles
-            // case-insensitive comparison via regex flags ((?i)) where needed.
-
-            // Note: URL patterns are not normalized to preserve case-sensitive matching
-            // URL patterns are matched against the actual URL which may have case-sensitive paths
-
-            if let Some(tech) = prune_technology_for_static_detection(tech) {
+        // Merge technologies (later sources overwrite earlier ones for same tech name).
+        // Header/cookie KEYS are lowercased; patterns stay intact (regex `\S` vs `\s`).
+        for (tech_name, tech) in technologies {
+            if let Some(tech) = ingest_technology(tech) {
                 all_technologies.insert(tech_name, tech);
             }
         }
@@ -324,10 +323,9 @@ async fn fetch_ruleset_from_multiple_sources(
         vendored.technologies = vendored
             .technologies
             .into_iter()
-            .filter_map(|(name, tech)| {
-                prune_technology_for_static_detection(tech).map(|tech| (name, tech))
-            })
+            .filter_map(|(name, tech)| ingest_technology(tech).map(|tech| (name, tech)))
             .collect();
+        apply_first_party_overlay(&mut vendored.technologies)?;
         // Do NOT write vendored under the remote `cache_key`. That would poison
         // subsequent cold starts into believing the full GitHub merge is cached.
         return Ok(vendored);
@@ -355,8 +353,10 @@ async fn fetch_ruleset_from_multiple_sources(
         last_updated: SystemTime::now(),
     };
 
+    apply_first_party_overlay(&mut all_technologies)?;
+
     log::info!(
-        "Merged {} technologies from {} source(s)",
+        "Merged {} technologies from {} source(s) (plus first-party overlay)",
         all_technologies.len(),
         sources.len()
     );
@@ -398,6 +398,10 @@ mod tests {
             ruleset.metadata.source
         );
         assert!(ruleset.technologies.contains_key("Nginx"));
+        assert!(
+            ruleset.technologies.contains_key("Payload"),
+            "first-party overlay must apply on vendored fallback"
+        );
         assert!(!ruleset.technologies.is_empty());
     }
 

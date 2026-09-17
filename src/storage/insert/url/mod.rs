@@ -379,12 +379,14 @@ mod tests {
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
         ];
         let sans = Vec::new();
@@ -823,6 +825,7 @@ mod tests {
             version: None,
             category: None,
             is_implied: false,
+            detection_source: None,
         }];
         let redirects_first: Vec<(String, u16)> = vec![
             ("http://old.example.com".to_string(), 301),
@@ -861,6 +864,7 @@ mod tests {
             version: Some("2.0".to_string()),
             category: None,
             is_implied: false,
+            detection_source: None,
         }];
         let redirects_second: Vec<(String, u16)> = Vec::new();
 

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::fingerprint::models::FingerprintRuleset;
 
 use super::signal_match::{match_string_map_signal, SignalMatch};
+use super::source::DetectionSource;
 
 /// Result of header matching for a single technology.
 pub type HeaderMatchResult = SignalMatch;
@@ -21,6 +22,7 @@ pub(crate) fn check_headers_with_ruleset(
         headers,
         |tech| &tech.headers,
         is_csp_allowlist_header,
+        DetectionSource::Header,
     )
 }
 

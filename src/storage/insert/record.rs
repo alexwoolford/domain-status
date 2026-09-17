@@ -696,6 +696,7 @@ mod tests {
             version: None,
             category: None,
             is_implied: false,
+            detection_source: None,
         }];
         first.geoip = Some((
             "1.2.3.4".to_string(),
@@ -727,6 +728,7 @@ mod tests {
             version: None,
             category: None,
             is_implied: false,
+            detection_source: None,
         }];
         second.geoip = Some((
             "1.2.3.4".to_string(),
@@ -821,12 +823,14 @@ mod tests {
                     version: None,
                     category: None,
                     is_implied: false,
+                    detection_source: None,
                 },
                 crate::fingerprint::DetectedTechnology {
                     name: "PHP".to_string(),
                     version: None,
                     category: None,
                     is_implied: false,
+                    detection_source: None,
                 },
             ],
             subject_alternative_names: vec![
@@ -1138,6 +1142,7 @@ mod tests {
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             }], // Should still be inserted even if GeoIP fails
             subject_alternative_names: vec![],
             analytics_ids: vec![],

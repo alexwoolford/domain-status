@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-03-01
-- Updated: 2026-07-28
+- Updated: 2026-09-17
 
 ## Context
 
@@ -29,8 +29,9 @@ The scanner will:
 - allow a caller-supplied local path or URL via `--fingerprints`
 - continue with partial upstream success when at least one configured source loads successfully
 - **fall back to a bundled minimal ruleset** (`assets/fingerprints/`, loaded via `src/fingerprint/ruleset/vendored.rs`) when **all** configured sources fail (cold-start offline/CI relief). Remote refresh remains the preferred path when network is available.
+- **apply a first-party overlay** (`assets/fingerprints/overlay.json`) last, after upstream merge, cache load, or vendored fallback, so project-specific rules (Payload, tightened Amazon S3) do not require forking the corpus
 
-When multiple sources are merged, later sources overwrite earlier ones for the same technology key. This is an explicit part of the contract.
+When multiple sources are merged, later sources overwrite earlier ones for the same technology key. The overlay then overwrites those. This is an explicit part of the contract.
 
 ## Consequences
 
@@ -61,6 +62,8 @@ Trade-offs:
 - `src/fingerprint/ruleset/mod.rs`
 - `src/fingerprint/ruleset/cache.rs`
 - `src/fingerprint/ruleset/vendored.rs`
+- `src/fingerprint/ruleset/overlay.rs`
 - `src/fingerprint/ruleset/github/`
 - `assets/fingerprints/`
+- `assets/fingerprints/overlay.json`
 - `docs/PRODUCTION_HARDENING.md`

@@ -40,10 +40,12 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 
 ## Fingerprints
 
-- Default: merge Enthec + HTTPArchive technology directories from GitHub.
+- Default: merge Enthec + HTTPArchive technology directories from GitHub, then apply the first-party overlay in `assets/fingerprints/overlay.json` (adds Payload; tightens Amazon S3 to hosting headers).
 - `GITHUB_TOKEN` raises API rate limits for commit metadata.
-- Without GitHub: `--fingerprints /path/to/rules` (file or directory) for CI, restricted egress, or deterministic runs. This only skips ruleset download — scanning target URLs still needs network access to those hosts.
-- If all remotes fail: bundled minimal ruleset (`vendored:assets/fingerprints`).
+- Without GitHub: `--fingerprints /path/to/rules` (file or directory) for CI, restricted egress, or deterministic runs. This only skips ruleset download — scanning target URLs still needs network access to those hosts. The first-party overlay is still applied on top.
+- If all remotes fail: bundled minimal ruleset (`vendored:assets/fingerprints`) plus the same overlay.
+- `url_technologies` is the HTTP serving stack. Prefer `WHERE is_implied = 0` in summaries. Certificate authorities stay on `url_status.ssl_cert_issuer`. Match evidence is `detection_source`.
+- `--scan-external-scripts` stays off by default (extra GETs / SSRF surface). Turn it on for SPA-heavy jobs so first-party `scripts` patterns can match.
 
 ## GeoIP
 
@@ -69,7 +71,7 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 - **Secret detection** (findings tagged `external_script:<url>`)
 - **Technology fingerprints** via static Wappalyzer `scripts` patterns (no JS execution)
 
-Without the flag, fingerprints still use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/NS/CNAME/cert issuer.
+Without the flag, fingerprints still use `scriptSrc` URL strings and inline `<script>` text from the initial HTML, plus headers/cookies/meta/NS/CNAME. Certificate issuers are stored on `url_status`, not as technologies.
 
 ## TLS certificate capture
 

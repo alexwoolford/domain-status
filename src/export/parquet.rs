@@ -235,12 +235,13 @@ fn write_batch(
     );
     let mut redirect_chain_b = ListBuilder::new(redirect_struct_builder);
 
-    // technologies List<Struct{name, version, category, is_implied}>
+    // technologies List<Struct{name, version, category, is_implied, detection_source}>
     let tech_fields = vec![
         Field::new("name", DataType::Utf8, false),
         Field::new("version", DataType::Utf8, true),
         Field::new("category", DataType::Utf8, true),
         Field::new("is_implied", DataType::Boolean, false),
+        Field::new("detection_source", DataType::Utf8, true),
     ];
     let tech_struct_builder = StructBuilder::new(
         tech_fields,
@@ -249,6 +250,7 @@ fn write_batch(
             Box::new(StringBuilder::new()),
             Box::new(StringBuilder::new()),
             Box::new(BooleanBuilder::new()),
+            Box::new(StringBuilder::new()),
         ],
     );
     let mut technologies_b = ListBuilder::new(tech_struct_builder);
@@ -375,6 +377,13 @@ fn write_batch(
                 .field_builder::<BooleanBuilder>(3)
                 .unwrap()
                 .append_value(tech.is_implied);
+            append_opt_str(
+                technologies_b
+                    .values()
+                    .field_builder::<StringBuilder>(4)
+                    .unwrap(),
+                tech.detection_source.as_ref(),
+            );
             technologies_b.values().append(true);
         }
         technologies_b.append(true);

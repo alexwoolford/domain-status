@@ -70,6 +70,15 @@ pub struct Technology {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_string_or_array")]
     pub excludes: Vec<String>,
+    /// Parent technologies that must already be detected (`requires`).
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_string_or_array")]
+    pub requires: Vec<String>,
+    /// Category IDs that must be present on another detected technology.
+    #[serde(default)]
+    #[serde(alias = "requiresCategory")]
+    #[serde(deserialize_with = "deserialize_u32_or_array")]
+    pub requires_category: Vec<u32>,
 }
 
 /// Deserializes a field that can be either a string or an array of strings
@@ -116,6 +125,81 @@ where
     }
 
     deserializer.deserialize_any(StringOrArrayVisitor)
+}
+
+/// Deserializes a field that can be a number or an array of numbers.
+fn deserialize_u32_or_array<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct U32OrArrayVisitor;
+
+    impl<'de> Visitor<'de> for U32OrArrayVisitor {
+        type Value = Vec<u32>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a number or an array of numbers")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u32::try_from(value)
+                .map(|n| vec![n])
+                .map_err(|_| de::Error::custom("category id exceeds u32"))
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u32::try_from(value)
+                .map(|n| vec![n])
+                .map_err(|_| de::Error::custom("category id must be a non-negative u32"))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value
+                .parse::<u32>()
+                .map(|n| vec![n])
+                .map_err(|_| de::Error::custom("category id string is not u32"))
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(elem) = seq.next_element::<serde_json::Value>()? {
+                let n = match elem {
+                    serde_json::Value::Number(num) => num
+                        .as_u64()
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(|| de::Error::custom("category id is not u32"))?,
+                    serde_json::Value::String(s) => s
+                        .parse::<u32>()
+                        .map_err(|_| de::Error::custom("category id string is not u32"))?,
+                    _ => {
+                        return Err(de::Error::invalid_type(
+                            de::Unexpected::Other("expected number or string"),
+                            &self,
+                        ));
+                    }
+                };
+                vec.push(n);
+            }
+            Ok(vec)
+        }
+    }
+
+    deserializer.deserialize_any(U32OrArrayVisitor)
 }
 
 /// Deserializes a meta map where values can be either strings or arrays of strings
@@ -348,6 +432,27 @@ mod tests {
         assert!(tech.js.is_empty());
         assert!(tech.implies.is_empty());
         assert!(tech.excludes.is_empty());
+        assert!(tech.requires.is_empty());
+        assert!(tech.requires_category.is_empty());
+    }
+
+    #[test]
+    fn test_technology_deserialize_requires_and_requires_category() {
+        let json = r#"{
+            "requires": "WordPress",
+            "requiresCategory": 1
+        }"#;
+        let tech: Technology = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(tech.requires, vec!["WordPress"]);
+        assert_eq!(tech.requires_category, vec![1]);
+
+        let json_arr = r#"{
+            "requires": ["WordPress", "PHP"],
+            "requiresCategory": [1, 11]
+        }"#;
+        let tech: Technology = serde_json::from_str(json_arr).expect("deserialize");
+        assert_eq!(tech.requires, vec!["WordPress", "PHP"]);
+        assert_eq!(tech.requires_category, vec![1, 11]);
     }
 
     /// Test deserializing dns, certIssuer, and scripts fields
@@ -834,5 +939,7 @@ mod tests {
         assert!(tech.js.is_empty());
         assert!(tech.implies.is_empty());
         assert!(tech.excludes.is_empty());
+        assert!(tech.requires.is_empty());
+        assert!(tech.requires_category.is_empty());
     }
 }

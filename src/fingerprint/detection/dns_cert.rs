@@ -6,6 +6,7 @@ use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::matches_pattern;
 
 use super::signal_match::SignalMatch;
+use super::source::DetectionSource;
 
 /// Result of a DNS or cert-issuer match for a single technology.
 pub type DnsCertMatchResult = SignalMatch;
@@ -30,6 +31,7 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
 
         let mut matched = false;
         let mut version: Option<String> = None;
+        let mut source: Option<DetectionSource> = None;
 
         for (record_type, patterns) in &tech.dns {
             if !is_serving_stack_dns_type(record_type) {
@@ -42,6 +44,13 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
                 let result = matches_pattern(pattern, haystack);
                 if result.matched {
                     matched = true;
+                    if source.is_none() {
+                        source = Some(if record_type.eq_ignore_ascii_case("CNAME") {
+                            DetectionSource::Cname
+                        } else {
+                            DetectionSource::Ns
+                        });
+                    }
                     if version.is_none() && result.version.is_some() {
                         version = result.version;
                     }
@@ -60,6 +69,9 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
                 let result = matches_pattern(pattern, issuer);
                 if result.matched {
                     matched = true;
+                    if source.is_none() {
+                        source = Some(DetectionSource::Cert);
+                    }
                     if version.is_none() && result.version.is_some() {
                         version = result.version;
                     }
@@ -74,6 +86,7 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
             results.push(DnsCertMatchResult {
                 tech_name: tech_name.clone(),
                 version,
+                source: source.unwrap_or(DetectionSource::Ns),
             });
         }
     }

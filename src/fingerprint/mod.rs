@@ -39,8 +39,8 @@ pub use ruleset::init_ruleset;
 
 // Blocking detection for the scan hot path (ruleset passed explicitly).
 pub(crate) use detection::{
-    detect_technologies_blocking, dns_records_haystack, supplement_technologies_with_dns_cert,
-    supplement_technologies_with_script_text,
+    detect_technologies_blocking, dns_records_haystack, is_challenge_interstitial,
+    supplement_technologies_with_dns_cert, supplement_technologies_with_script_text,
 };
 // Global getter retained for unit tests that call `init_ruleset` then exercise matchers.
 #[cfg(test)]

@@ -13,11 +13,14 @@ use std::collections::HashMap;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
 
+use super::source::DetectionSource;
+
 /// Result of body matching for a single technology
 #[derive(Debug, Clone)]
 pub struct BodyMatchResult {
     pub tech_name: String,
     pub version: Option<String>,
+    pub source: DetectionSource,
 }
 
 /// Tries patterns against `text`, updating `matched` / `version`.
@@ -87,35 +90,60 @@ pub(crate) fn check_body_with_ruleset(
         }
         let mut matched = false;
         let mut version: Option<String> = None;
+        let mut source: Option<DetectionSource> = None;
 
+        let previously = matched;
         let _ = match_patterns_against_text(&tech.html, html_body, &mut matched, &mut version);
+        if matched && !previously {
+            source = Some(DetectionSource::Html);
+        }
         if version.is_none() {
             for script_src in script_sources {
+                let previously = matched;
                 if match_patterns_against_text(&tech.script, script_src, &mut matched, &mut version)
                 {
+                    if source.is_none() {
+                        source = Some(DetectionSource::ScriptSrc);
+                    }
                     break;
+                }
+                if matched && !previously && source.is_none() {
+                    source = Some(DetectionSource::ScriptSrc);
                 }
             }
         }
         if version.is_none() && !inline_script_text.is_empty() {
+            let previously = matched;
             let _ = match_patterns_against_text(
                 &tech.scripts,
                 inline_script_text,
                 &mut matched,
                 &mut version,
             );
+            if matched && !previously && source.is_none() {
+                source = Some(DetectionSource::Scripts);
+            }
         }
         if version.is_none() {
+            let previously = matched;
             match_meta(&tech.meta, meta_tags, &mut matched, &mut version);
+            if matched && !previously && source.is_none() {
+                source = Some(DetectionSource::Html);
+            }
         }
         if version.is_none() {
+            let previously = matched;
             let _ = match_patterns_against_text(&tech.url, url, &mut matched, &mut version);
+            if matched && !previously && source.is_none() {
+                source = Some(DetectionSource::Url);
+            }
         }
 
         if matched {
             results.push(BodyMatchResult {
                 tech_name: tech_name.clone(),
                 version,
+                source: source.unwrap_or(DetectionSource::Html),
             });
         }
     }
@@ -145,6 +173,7 @@ pub(crate) fn check_scripts_with_ruleset(
             results.push(BodyMatchResult {
                 tech_name: tech_name.clone(),
                 version,
+                source: DetectionSource::Scripts,
             });
         }
     }

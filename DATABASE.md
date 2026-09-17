@@ -3,7 +3,7 @@
 `domain-status` stores scan results in a single SQLite database, defaulting to `./domain_status.db`.
 
 The schema is created by migrations (`migrations/0001_initial_schema.sql` through
-`migrations/0015_observation_enrichments.sql`) and follows a simple pattern:
+`migrations/0016_technology_detection_source.sql`) and follows a simple pattern:
 
 - `runs` stores run-level metadata
 - `url_status` stores one successful observation row per URL result
@@ -214,7 +214,7 @@ These tables are in-transaction with `url_status`.
 | `url_security_txt` | Parsed RFC 9116 `security.txt` (one row per URL) | `source_url`, `http_status`, `contacts`, `expires`, `encryption`, `acknowledgments`, `preferred_languages`, `canonical`, `policy`, `hiring`, `raw_body` |
 | `url_robots_txt` | Fetched `/robots.txt` parent row | `http_status`, `raw_body` |
 | `url_robots_directives` | Parsed robots directives (no sitemap crawl) | `directive`, `value` |
-| `url_technologies` | HTTP serving-stack fingerprint matches (headers, cookies, HTML, `scriptSrc`, NS, CNAME, cert issuer). DNS verification TXT/MX and CSP allowlists are **not** techs — they stay in `url_txt_records` / `url_mx_records` / `url_csp_domains`. `HTTP/3` and `HSTS` are **not** inserted (use headers / `http_version` / TLS). Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied` |
+| `url_technologies` | HTTP serving-stack fingerprint matches (headers, cookies, HTML, `scriptSrc`, NS, CNAME). DNS verification TXT/MX and CSP allowlists are **not** techs — they stay in `url_txt_records` / `url_mx_records` / `url_csp_domains`. Certificate authorities (`Let's Encrypt`, DigiCert, …) are **not** inserted (use `url_status.ssl_cert_issuer`). `HTTP/2` / `HTTP/3` / `HSTS` are **not** inserted (use headers / `http_version` / TLS). Child techs with unmet Wappalyzer `requires` are dropped. Export/summary default to `is_implied = 0`; use `--include-implied-tech` on export to include implied rows. | `technology_name`, `technology_version`, `technology_category`, `is_implied`, `detection_source` |
 
 > **Note on `url_cname_records` and apex domains:** DNS forbids a CNAME record at
 > a zone apex (e.g. `example.com`), so this table is typically empty for

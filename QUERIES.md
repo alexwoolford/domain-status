@@ -57,6 +57,13 @@ ORDER BY us.id, urc.sequence_order;
 
 ## Technology Detection
 
+`url_technologies` is the HTTP **serving stack** (headers, cookies, HTML, `scriptSrc`,
+NS, CNAME). Org-proof DNS (TXT/MX/SPF/DMARC) stays in satellite tables. Certificate
+authorities stay on `url_status.ssl_cert_issuer`. Implied parents (WordPress → PHP)
+are stored with `is_implied = 1`; summaries should filter `WHERE is_implied = 0`
+unless you pass `--include-implied-tech` on export. Match evidence is `detection_source`
+(query 7b).
+
 ### 5. Find all detected technologies
 
 ```sql
@@ -99,6 +106,20 @@ WHERE ut.technology_name = 'WordPress'  -- Replace with your technology
   AND ut.is_implied = 0
 ORDER BY us.final_domain;
 ```
+
+### 7b. Fingerprint match evidence (`detection_source`)
+
+```sql
+SELECT
+    detection_source,
+    COUNT(*) AS n
+FROM url_technologies
+WHERE is_implied = 0
+GROUP BY detection_source
+ORDER BY n DESC;
+```
+
+Certificate issuers are on `url_status.ssl_cert_issuer` (query 10), not `url_technologies`.
 
 ## TLS Certificate Analysis
 
@@ -703,7 +724,7 @@ ORDER BY s.final_domain, d.value;
 
 ## Query validation
 
-SQL cookbook fences in this file, `DATABASE.md`, and `README.md` are executed against a freshly migrated empty SQLite database in CI (`tests/docs_sql_smoke.rs`). That checks **syntax and schema alignment** (empty result sets are fine). Apply the full migration set (`0001`–`0015`) before running these queries on a real scan DB.
+SQL cookbook fences in this file, `DATABASE.md`, and `README.md` are executed against a freshly migrated empty SQLite database in CI (`tests/docs_sql_smoke.rs`). That checks **syntax and schema alignment** (empty result sets are fine). Apply the full migration set (`0001`–`0016`) before running these queries on a real scan DB.
 
 ## Tips
 

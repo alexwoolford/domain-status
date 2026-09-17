@@ -44,6 +44,7 @@ pub(crate) async fn insert_technologies(
             "technology_version",
             "technology_category",
             "is_implied",
+            "detection_source",
         ],
         deduped.len(),
         Some("ON CONFLICT DO NOTHING"),
@@ -56,7 +57,8 @@ pub(crate) async fn insert_technologies(
             .bind(&tech.name)
             .bind(&tech.version)
             .bind(&tech.category)
-            .bind(i64::from(tech.is_implied));
+            .bind(i64::from(tech.is_implied))
+            .bind(&tech.detection_source);
     }
 
     let result = query.execute(&mut **tx).await?;
@@ -90,12 +92,14 @@ mod tests {
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
         ];
 
@@ -130,12 +134,14 @@ mod tests {
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
         ];
 
@@ -167,18 +173,21 @@ mod tests {
                 version: None,
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "WordPress".to_string(),
                 version: Some("6.9".to_string()),
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "PHP".to_string(),
                 version: Some("8.1".to_string()),
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
         ];
 
@@ -247,12 +256,14 @@ mod tests {
                 version: None,
                 category: Some("CMS".to_string()),
                 is_implied: false,
+                detection_source: Some("html".to_string()),
             },
             crate::fingerprint::DetectedTechnology {
                 name: "MySQL".to_string(),
                 version: None,
                 category: Some("Databases".to_string()),
                 is_implied: true,
+                detection_source: Some("implied".to_string()),
             },
         ];
 
@@ -262,7 +273,7 @@ mod tests {
         tx.commit().await.expect("Failed to commit transaction");
 
         let rows = sqlx::query(
-            "SELECT technology_name, is_implied FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
+            "SELECT technology_name, is_implied, detection_source FROM url_technologies WHERE url_status_id = ? ORDER BY technology_name",
         )
         .bind(url_status_id)
         .fetch_all(&pool)
@@ -272,8 +283,16 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get::<String, _>("technology_name"), "MySQL");
         assert_eq!(rows[0].get::<i64, _>("is_implied"), 1);
+        assert_eq!(
+            rows[0].get::<Option<String>, _>("detection_source"),
+            Some("implied".to_string())
+        );
         assert_eq!(rows[1].get::<String, _>("technology_name"), "WordPress");
         assert_eq!(rows[1].get::<i64, _>("is_implied"), 0);
+        assert_eq!(
+            rows[1].get::<Option<String>, _>("detection_source"),
+            Some("html".to_string())
+        );
     }
 
     #[tokio::test]
@@ -288,12 +307,14 @@ mod tests {
                 version: Some("1.0".to_string()),
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
             crate::fingerprint::DetectedTechnology {
                 name: "Re:amaze".to_string(),
                 version: Some("1.0".to_string()),
                 category: None,
                 is_implied: false,
+                detection_source: None,
             },
         ];
 
