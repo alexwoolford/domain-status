@@ -15,20 +15,6 @@ pub(crate) async fn insert_security_headers(
         return Ok(());
     }
 
-    if let Some(hsts_value) = security_headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
-        .map(|(_, v)| v)
-    {
-        let directives = crate::security::parse_hsts_directive(hsts_value);
-        log::debug!(
-            "HSTS directives for url_status_id {url_status_id}: max_age={:?} include_subdomains={} preload={}",
-            directives.max_age,
-            directives.include_subdomains,
-            directives.preload
-        );
-    }
-
     let headers: Vec<(&String, &String)> = security_headers.iter().collect();
 
     insert_key_value_batch(
