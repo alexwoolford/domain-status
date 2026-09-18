@@ -48,6 +48,10 @@ git push origin v0.1.0
 - Build binaries for all platforms (Linux, macOS Intel, macOS ARM, Windows)
 - Create a GitHub release with the binaries attached
 - Generate release notes from CHANGELOG.md
+- Publish `domain-status-cli` then `domain-status` to crates.io (skips a crate if that version is already on the index)
+- Update the Homebrew tap
+
+The `CARGO_REGISTRY_TOKEN` repo secret must be a [crates.io API token](https://crates.io/settings/tokens) with `publish-update` (and crate scopes for **both** `domain-status` and `domain-status-cli` if you restrict tokens). A 403 here means the GitHub secret is missing those permissions; GitHub Release and Homebrew can still succeed.
 
 ### 4. Verify Release
 
@@ -111,6 +115,8 @@ Currently, macOS binaries are unsigned, which triggers Gatekeeper warnings. To e
 **Note**: For open-source projects, code signing is optional but improves user experience. Many projects skip it due to the cost and complexity.
 
 ## Publishing to crates.io
+
+Tagging a release publishes both crates via GitHub Actions. Use the steps below only as a fallback (for example if `CARGO_REGISTRY_TOKEN` is missing `publish-update`). Do not re-run a failed publish job after a successful local publish unless the workflow treats “already on crates.io” as success — crates.io rejects the same version twice.
 
 The main crate depends on `domain-status-cli` (path dependency, rustc name `domain_status_cli`). When publishing, Cargo expects that dependency on the registry, so publish the CLI crate first, then the main crate.
 
