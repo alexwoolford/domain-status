@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-17
+
 ### Added
 - Per-host URL admission of 2 tokens/sec whenever `--rate-limit-rps` is enabled (`0` still disables all admission caps).
 - README / `--help` note: scan only hosts you are authorized to scan.
@@ -16,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `summary --run-id` resolves in-progress runs via `query_run_by_id`; the text formatter uses `write!`.
 - Export `--domain` is an exact match on `initial_domain` or `final_domain` (docs previously claimed substring-on-final). Implied-tech export is covered by on/off contract tests. CSV technology/analytics/social strings and `structured_data_count` come from the same bounded satellite fetch as JSONL/Parquet (cap `MAX_EXPORT_RELATED_RECORDS`).
-- Install and command name is `domain-status` (Rust library crate remains `domain_status`). README audience no longer calls out PE/portfolio intelligence.
+- Install and command name is `domain-status` (Rust library crate remains `domain_status`). GitHub Release assets are `domain-status-{os-arch}`; Homebrew installs `domain-status` and keeps a `domain_status` symlink. README audience no longer calls out PE/portfolio intelligence.
+- Default requests no longer send a Google Referer (`sec-fetch-site: none`).
 - Secret triage docs keep generic leftover `generic-api-key` classes (public SDK / CMS / CDN noise) and the leak-hunting query that skips `generic-api-key` / `gcp-api-key` / `jwt`. The catch-all is unchanged.
 - Test hygiene: overlay TOML sentinels must land on `Config`; `url_status` column defs are checked against INSERT/UPDATE SQL and the migrated schema; export no longer pins magic CSV/Parquet counts; dropped `as_str` / no-assert / stdlib-copy placebos.
 - File-local polish: shared const `bytes_eq` helpers; enrichment insert outcomes are a write enum; JSON-LD rows use `property_name` `@document`.
@@ -37,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `generic-api-key` no longer treats hyphenated UUID identifiers as secrets (MediaWiki `"key":"<uuid>"` and the same shape on `apiKey=`). Vendor UUID rules such as `hubspot-api-key` are unchanged.
 - `url_http_headers` records the final response only: hop `Alt-Svc` is no longer copied onto the observation.
 - Test helper awaits SQLite rollback on the error path so coverage runs do not flake on `SQLITE_LOCKED_SHAREDCACHE`. Cancellation stress tests use a temp file, not `:memory:` shared cache.
-- Fingerprint inventory is the HTTP serving stack: DNS TXT/MX org-proofs and CSP allowlists no longer become `url_technologies`. `github.com` is not labeled GitHub Pages. SSL/TLS certificate authorities are omitted (use `ssl_cert_issuer`). Wappalyzer `requires` is honored. Challenge/interstitial pages are not fingerprinted.
+- Fingerprint inventory is the HTTP serving stack: DNS TXT/MX org-proofs and CSP allowlists no longer become `url_technologies`. The GitHub product host is not labeled GitHub Pages. SSL/TLS certificate authorities are omitted (use `ssl_cert_issuer`). Wappalyzer `requires` is honored. Challenge/interstitial pages are not fingerprinted.
 - Cooperative cancel (Ctrl-C) now writes a `url_failures` row (`Scan cancelled`) so finalize `COUNT(*)` matches live `failed_urls`.
 - Cookie UPSERT refreshes `domain` and `path` on same-name conflict; `url_status` insert-vs-update is detected from `INSERT … DO NOTHING`, not a pre-check `SELECT`.
 
@@ -404,7 +407,8 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain-status/compare/v0.1.29...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain-status/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/alexwoolford/domain-status/compare/v0.1.29...v0.2.0
 [0.1.29]: https://github.com/alexwoolford/domain-status/compare/v0.1.28...v0.1.29
 [0.1.28]: https://github.com/alexwoolford/domain-status/compare/v0.1.27...v0.1.28
 [0.1.27]: https://github.com/alexwoolford/domain-status/compare/v0.1.26...v0.1.27

@@ -18,8 +18,7 @@ use std::collections::HashMap;
 /// - **Accept headers**: Match modern browser content negotiation
 /// - **Accept-Language**: Indicates English-speaking user (common default)
 /// - **Accept-Encoding**: Supports compression (gzip, deflate, brotli)
-/// - **Referer**: Simulates navigation from Google (common entry point)
-/// - **Sec-Fetch-***: Modern browser security headers (helps with some detection systems)
+/// - **Sec-Fetch-***: Modern browser security headers (`sec-fetch-site: none` — no Referer)
 /// - **Upgrade-Insecure-Requests**: Indicates preference for HTTPS
 /// - **Cache-Control**: Indicates fresh content request
 ///
@@ -46,7 +45,6 @@ impl RequestHeaders {
             )
             .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
             .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
-            .header(reqwest::header::REFERER, "https://www.google.com/")
             .header(
                 reqwest::header::HeaderName::from_static("sec-fetch-dest"),
                 "document",

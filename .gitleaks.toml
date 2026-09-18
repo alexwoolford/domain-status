@@ -1,7 +1,7 @@
-# Gitleaks configuration for domain_status
+# Gitleaks configuration for domain-status
 # Scans for secrets, API keys, tokens, passwords, etc.
 
-title = "domain_status Secret Detection"
+title = "domain-status Secret Detection"
 
 [extend]
 # Use default rules

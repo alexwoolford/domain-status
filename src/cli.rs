@@ -247,7 +247,7 @@ fn init_scan_logging(
     let level = log_level_override.unwrap_or_else(|| log_level_filter(log_level));
     init_logger_to_file(level, log_format, log_file).context("Failed to initialize file logger")?;
     eprintln!("Logs: {}", log_file.display());
-    log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
+    log::info!("domain-status version {}", env!("DOMAIN_STATUS_VERSION"));
     Ok(())
 }
 
@@ -394,7 +394,7 @@ async fn execute_scan_with_reporting(mut config: Config, no_progress: bool) -> R
 async fn execute_export_command(export_cmd: ExportCommand) -> Result<i32> {
     init_logger_with(log_level_filter(&LogLevel::Info), LogFormat::Plain)
         .context("Failed to initialize logger")?;
-    log::info!("domain_status version {}", env!("DOMAIN_STATUS_VERSION"));
+    log::info!("domain-status version {}", env!("DOMAIN_STATUS_VERSION"));
 
     let output_path = if let Some(ref path_str) = export_cmd.output {
         if path_str == "-" {

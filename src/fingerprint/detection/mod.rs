@@ -1038,7 +1038,7 @@ mod tests {
     #[test]
     fn github_com_server_header_is_not_github_pages() {
         let ruleset = github_pages_ruleset();
-        let headers = server_header("github.com");
+        let headers = server_header("GitHub.com");
         let result = detect_named(&ruleset, &headers, "https://github.com/");
         assert!(
             result.iter().all(|t| t.name != "GitHub Pages"),
@@ -1093,21 +1093,17 @@ mod tests {
         let mut csp = HeaderMap::new();
         csp.insert(
             reqwest::header::HeaderName::from_static("content-security-policy"),
-            "img-src https://inaturalist-open-data.s3.amazonaws.com"
+            "img-src https://media.example.s3.amazonaws.com"
                 .parse()
                 .unwrap(),
         );
-        let wikipedia = detect_named(&ruleset, &csp, "https://www.wikipedia.org/");
+        let csp_only = detect_named(&ruleset, &csp, "https://example.com/");
         assert!(
-            wikipedia.iter().all(|t| t.name != "Amazon S3"),
-            "CSP allowlists must not insert Amazon S3, got {wikipedia:?}"
+            csp_only.iter().all(|t| t.name != "Amazon S3"),
+            "CSP allowlists must not insert Amazon S3, got {csp_only:?}"
         );
 
-        let hosted = detect_named(
-            &ruleset,
-            &server_header("AmazonS3"),
-            "https://bucket.s3.amazonaws.com/",
-        );
+        let hosted = detect_named(&ruleset, &server_header("AmazonS3"), "https://example.com/");
         assert!(
             hosted.iter().any(|t| t.name == "Amazon S3"),
             "Server: AmazonS3 should still fingerprint S3 hosting, got {hosted:?}"

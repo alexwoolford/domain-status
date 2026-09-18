@@ -153,7 +153,7 @@ fn vercel_x_powered_by_next_js() {
         &ruleset,
         &headers,
         "<html></html>",
-        "https://vercel.com/",
+        "https://example.com/",
         &[],
     );
     let names = names(&result);
@@ -186,7 +186,7 @@ fn payload_x_powered_by_is_detected() {
         &ruleset,
         &headers,
         "<html></html>",
-        "https://vercel.com/",
+        "https://example.com/",
         &[],
     );
     assert!(
@@ -212,21 +212,21 @@ fn s3_csp_only_is_not_amazon_s3() {
     let mut csp = HeaderMap::new();
     csp.insert(
         reqwest::header::HeaderName::from_static("content-security-policy"),
-        "img-src https://inaturalist-open-data.s3.amazonaws.com"
+        "img-src https://media.example.s3.amazonaws.com"
             .parse()
             .unwrap(),
     );
-    let wikipedia = detect(&ruleset, &csp, "", "https://www.wikipedia.org/", &[]);
+    let csp_only = detect(&ruleset, &csp, "", "https://example.com/", &[]);
     assert!(
-        wikipedia.iter().all(|t| t.name != "Amazon S3"),
-        "CSP allowlists must not insert Amazon S3, got {wikipedia:?}"
+        csp_only.iter().all(|t| t.name != "Amazon S3"),
+        "CSP allowlists must not insert Amazon S3, got {csp_only:?}"
     );
 
     let hosted = detect(
         &ruleset,
         &server_header("AmazonS3"),
         "",
-        "https://bucket.s3.amazonaws.com/",
+        "https://example.com/",
         &[],
     );
     assert!(
@@ -250,8 +250,8 @@ fn overlay_s3_script_src_alone_is_not_hosting() {
         &ruleset,
         &HeaderMap::new(),
         "",
-        "https://github.com/",
-        &["https://github-production-user-asset-6210df.s3.amazonaws.com/foo.js".into()],
+        "https://example.com/",
+        &["https://files.example.s3.amazonaws.com/foo.js".into()],
     );
     assert!(
         result.iter().all(|t| t.name != "Amazon S3"),

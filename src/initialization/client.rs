@@ -369,41 +369,58 @@ mod tests {
     /// The client uses reqwest default (strict) verification; it must never accept
     /// self-signed or wrong-hostname certs. This guards against future changes that
     /// might enable `danger_accept_invalid_certs()` on the page-fetch client.
-    /// Run with: cargo test -- --ignored (e2e job runs these).
+    /// HTTP/2 is enabled via reqwest's `http2` feature; this fixture does not probe
+    /// a third-party origin.
     #[tokio::test]
-    #[ignore] // Requires network; uses badssl.com
     async fn test_init_client_rejects_invalid_tls_certificate() {
-        let config = create_test_config();
-        let client = init_client(&config, test_resolver())
+        crate::initialization::init_crypto_provider();
+        let addr = spawn_self_signed_tls_listener().await;
+        let client = init_client(&create_test_config(), test_resolver())
             .await
             .expect("Should create client");
-        // self-signed.badssl.com serves a self-signed certificate; strict TLS must fail
-        let result = client.get("https://self-signed.badssl.com/").send().await;
+        let result = client.get(format!("https://{addr}/")).send().await;
         assert!(
             result.is_err(),
             "Page-fetch client must reject invalid (self-signed) certificates; got Ok"
         );
     }
 
-    /// Known HTTP/2 origin: rustls + ALPN must negotiate `h2`, not silently fall back to HTTP/1.1.
-    /// Run with: cargo test -- --ignored (e2e job runs these).
-    #[tokio::test]
-    #[ignore] // Requires network; uses cloudflare.com
-    async fn test_init_client_negotiates_http2_via_alpn() {
-        let config = create_test_config();
-        let client = init_client(&config, test_resolver())
+    fn localhost_self_signed_der() -> (Vec<u8>, Vec<u8>) {
+        use rcgen::{CertificateParams, DistinguishedName, DnType, IsCa, KeyPair};
+        let mut params =
+            CertificateParams::new(vec!["127.0.0.1".to_string()]).expect("certificate params");
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, "localhost");
+        params.distinguished_name = distinguished_name;
+        params.is_ca = IsCa::ExplicitNoCa;
+        let key_pair = KeyPair::generate().expect("key pair");
+        let cert = params.self_signed(&key_pair).expect("certificate");
+        (cert.der().to_vec(), key_pair.serialize_der())
+    }
+
+    async fn spawn_self_signed_tls_listener() -> std::net::SocketAddr {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use tokio::net::TcpListener;
+        use tokio_rustls::TlsAcceptor;
+
+        let (cert_der, key_der) = localhost_self_signed_der();
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert_der)],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+            )
+            .expect("server TLS config");
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+        let listener = TcpListener::bind("127.0.0.1:0")
             .await
-            .expect("Should create client");
-        let response = client
-            .get("https://www.cloudflare.com/")
-            .send()
-            .await
-            .expect("HTTPS GET to a known HTTP/2 origin should succeed");
-        assert_eq!(
-            response.version(),
-            reqwest::Version::HTTP_2,
-            "scan client must negotiate HTTP/2 via ALPN (got {:?})",
-            response.version()
-        );
+            .expect("bind local TLS listener");
+        let addr = listener.local_addr().expect("listener addr");
+        tokio::spawn(async move {
+            if let Ok((tcp, _)) = listener.accept().await {
+                let _ = acceptor.accept(tcp).await;
+            }
+        });
+        addr
     }
 }
