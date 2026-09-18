@@ -1,4 +1,4 @@
-# Example configuration for domain_status (optional).
+# Example configuration for domain-status (optional).
 #
 # Use: --config path/to/this/file
 # Precedence: CLI > DOMAIN_STATUS_* env (clap) > this file > defaults.
@@ -19,7 +19,7 @@
 # max_concurrency = 30
 # timeout_seconds = 10
 # drain_timeout_secs = 10
-# user_agent    = "domain_status/0.1"
+# user_agent    = "domain-status/0.2"
 # rate_limit_rps = 15                 # 0 disables global and per-host (2/sec) caps
 # log_level     = "info"               # or use CLI -v / -q
 # log_format    = "plain"              # plain | json (scan log file)

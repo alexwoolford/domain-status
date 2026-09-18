@@ -147,7 +147,7 @@ mod tests {
         let mut csp_only = HashMap::new();
         csp_only.insert(
             "content-security-policy".to_string(),
-            "img-src https://inaturalist-open-data.s3.amazonaws.com".to_string(),
+            "img-src https://media.example.s3.amazonaws.com".to_string(),
         );
         let results = check_headers_with_ruleset(&ruleset, &csp_only);
         assert!(
@@ -158,7 +158,7 @@ mod tests {
         let mut report_only = HashMap::new();
         report_only.insert(
             "content-security-policy-report-only".to_string(),
-            "script-src https://github-cloud.s3.amazonaws.com".to_string(),
+            "script-src https://static.example.s3.amazonaws.com".to_string(),
         );
         let report_results = check_headers_with_ruleset(&ruleset, &report_only);
         assert!(

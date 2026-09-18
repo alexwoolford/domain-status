@@ -1,5 +1,5 @@
 -- ============================================================================
--- domain_status - Initial Schema (Consolidated)
+-- domain-status - Initial Schema (Consolidated)
 -- ============================================================================
 -- This is a clean, consolidated schema that replaces the 33 iterative migrations.
 --

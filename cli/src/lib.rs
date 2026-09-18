@@ -1,5 +1,5 @@
 #![allow(clippy::doc_markdown)] // CLI doc comments appear in --help; backticks look wrong there.
-//! CLI definition for domain_status (single source of truth).
+//! CLI definition for domain-status (single source of truth).
 //!
 //! Used by the main crate for parsing and by build.rs for shell completions and man page.
 

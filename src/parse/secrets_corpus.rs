@@ -367,7 +367,7 @@ fn fp_corpus_wordpress_explicit_port_path_not_credential_url() {
         "credential-bearing-url",
     );
     assert_no_rule(
-        r#"<img src="https://mooremedical.com:443/wp-content/foo@cdn.example">"#,
+        r#"<img src="https://example.com:443/wp-content/foo@cdn.example">"#,
         "credential-bearing-url",
     );
     assert_no_rule(

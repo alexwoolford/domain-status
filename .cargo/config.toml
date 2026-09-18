@@ -1,4 +1,4 @@
-# Cargo configuration for the domain_status project
+# Cargo configuration for the domain-status project
 
 [env]
 # Suppress logs during tests for clean, professional test output

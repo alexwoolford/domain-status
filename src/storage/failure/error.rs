@@ -214,8 +214,8 @@ mod tests {
         // Live scan shape: reqwest Connect failures embed "dns error" in the chain.
         // That must not become DnsNsLookupError (`contains("ns")` matching inside "dns").
         let error = anyhow::anyhow!(
-            "error sending request for url (https://0-in.com/): client error (Connect) \
-             (error chain: error sending request for url (https://0-in.com/) \
+            "error sending request for url (https://example.invalid/): client error (Connect) \
+             (error chain: error sending request for url (https://example.invalid/) \
              -> client error (Connect) -> dns error -> ...)"
         );
         assert_eq!(

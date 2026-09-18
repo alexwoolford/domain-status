@@ -24,8 +24,8 @@ Prioritized security findings and actions from the Security Posture Report imple
 
 ### P0 (done in this pass)
 
-- **Re-establish transport trust boundaries:** Document in code that page-fetch clients never disable TLS verification; add integration test that page-fetch rejects invalid certs (e.g. `https://self-signed.badssl.com/`).
-  **Done:** [src/initialization/client.rs](src/initialization/client.rs) doc comments and `test_init_client_rejects_invalid_tls_certificate` (run with `--ignored` / in e2e job).
+- **Re-establish transport trust boundaries:** Document in code that page-fetch clients never disable TLS verification; add a local self-signed TLS fixture that page-fetch must reject.
+  **Done:** [src/initialization/client.rs](src/initialization/client.rs) doc comments and `test_init_client_rejects_invalid_tls_certificate`.
 
 ### P1 (ongoing / follow-up)
 
