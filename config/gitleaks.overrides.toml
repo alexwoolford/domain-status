@@ -247,16 +247,18 @@ entropy = 3.0
 keywords = ["basic"]
 
 # ── Credential-bearing URLs (from Titus kingfisher.uri.1) ──
-# Detects https:// or http:// URLs with embedded user:password before @.
-# Broader than the database-connection-uri rule (catches any protocol).
+# Detects https:// or http:// URLs with embedded user:password before @,
+# or a distinctive prefixed token as userinfo without a colon
+# (`https://ghp_…@host`). Do not allow any `https://name@host` — that is
+# mailbox userinfo, not a credential.
 #
 # Password class omits `/` (RFC 3986 userinfo cannot contain it). Including
 # `/` made `https://host:443/path@later` parse as user=`host`,
 # password=`443/path`, host=`later` (WordPress explicit-port media URLs).
 [[rules]]
 id = "credential-bearing-url"
-description = "URL with embedded credentials (user:password@host)"
-regex = '''https?://[A-Za-z0-9._~%!$&'()*+,;=-]+:([A-Za-z0-9._~%!$&'()*+,;=-]{3,})@(?:[A-Za-z0-9._-]+|\[[A-Fa-f0-9:.]+\])'''
+description = "URL with embedded credentials (user:password@host or prefixed-token userinfo)"
+regex = '''https?://(?:[A-Za-z0-9._~%!$&'()*+,;=-]+:([A-Za-z0-9._~%!$&'()*+,;=-]{3,})|((?:ghp_|glpat-|sk_|xox|AKIA)[A-Za-z0-9._~%!$&'()*+,;=-]{8,}))@(?:[A-Za-z0-9._-]+|\[[A-Fa-f0-9:.]+\])'''
 secretGroup = 1
 entropy = 3.0
 keywords = ["http://", "https://"]

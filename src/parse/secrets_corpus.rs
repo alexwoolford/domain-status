@@ -514,3 +514,86 @@ fn tp_corpus_jsdelivr_nearby_does_not_suppress_real_credential_url() {
     );
     assert_rule(&body, "credential-bearing-url");
 }
+
+// ---------------------------------------------------------------------------
+// Type I / Type II: mailbox userinfo, PEM size, Basic placeholders.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fp_corpus_mailto_address_not_credential_url() {
+    assert_no_rule(
+        r#"<a href="mailto:name@example.com">contact</a>"#,
+        "credential-bearing-url",
+    );
+}
+
+#[test]
+fn fp_corpus_email_only_userinfo_not_credential_url() {
+    // `https://name@host` is mailbox userinfo, not a credential. The
+    // prefixed-token path must not reopen this.
+    assert_no_rule(
+        r#"fetch("https://name@example.com/inbox")"#,
+        "credential-bearing-url",
+    );
+}
+
+#[test]
+fn fp_corpus_percent_encoded_mailbox_userinfo_not_credential_url() {
+    // Password is not a placeholder stopword and not a distinctive prefix.
+    let body = r#"smtp = "https://jane.doe%40example.com:smtpstarttls99@mail.example.net""#;
+    assert_no_rule(body, "credential-bearing-url");
+}
+
+#[test]
+fn fp_corpus_mailto_adjacent_userinfo_not_credential_url() {
+    let body = concat!(
+        r#"<a href="mailto:admin@example.com">write us</a>"#,
+        r#" fetch("https://docs:tokenpublic1@api.example.com/v1")"#,
+    );
+    assert_no_rule(body, "credential-bearing-url");
+}
+
+#[test]
+fn tp_corpus_prefixed_token_userinfo_without_colon_still_detects() {
+    let token = keep_credential_password();
+    let body = format!(r#"fetch("https://{token}@api.example.com/v1/data")"#);
+    let secrets = detect_exposed_secrets(&body);
+    let found = credential_url_finding(&secrets);
+    assert_eq!(found.matched_value, token);
+    assert_eq!(found.severity.as_str(), "critical");
+}
+
+#[test]
+fn tp_corpus_mailbox_user_with_prefixed_password_still_detects() {
+    let password = keep_credential_password();
+    let body = format!(r#"fetch("https://jane.doe%40example.com:{password}@api.example.com/v1")"#);
+    assert_rule(&body, "credential-bearing-url");
+}
+
+#[test]
+fn fp_corpus_header_only_pem_not_private_key() {
+    // Matches the gitleaks 64-char filler floor but the decoded body is crumbs.
+    let body = "-----BEGIN RSA PRIVATE KEY-----\n\
+                MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7\n\
+                -----END RSA PRIVATE KEY-----";
+    assert_no_rule(body, "private-key");
+}
+
+#[test]
+fn tp_corpus_long_synthetic_pem_still_detects() {
+    let body = "-----BEGIN RSA PRIVATE KEY-----\n\
+                MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7VJTUt9Us8cKj\n\
+                MzEfYyjiWA4R4/M2bS1GB4t7NXp98C3SC6dVMvDuictGeurT8jNbvJZHtCSuYEvu\n\
+                MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7VJTUt9Us8cKj\n\
+                -----END RSA PRIVATE KEY-----";
+    assert_rule(body, "private-key");
+}
+
+#[test]
+fn tp_corpus_long_random_basic_auth_still_detects() {
+    use base64::Engine;
+    let pair = format!("deploy:{}", "xK9mP2vQ8nR4wL7sT3jH");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(pair.as_bytes());
+    let body = format!(r#"xhr.setRequestHeader("Authorization", "Basic {encoded}");"#);
+    assert_rule(&body, "http-basic-auth");
+}

@@ -13,6 +13,8 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use base64::Engine;
+
 /// Number of context characters to capture before and after a match.
 const CONTEXT_CHARS: usize = 80;
 
@@ -225,6 +227,8 @@ fn web_rule_match_is_plausible(rule_id: &str, matched_value: &str) -> bool {
                 .is_some_and(|c| c.is_ascii_lowercase());
             !(starts_lower && looks_like_camel_case_identifier(matched_value))
         }
+        "private-key" => private_key_body_is_plausible(matched_value),
+        "http-basic-auth" => http_basic_auth_is_plausible(matched_value),
         _ => true,
     }
 }
@@ -238,9 +242,18 @@ fn web_rule_match_is_plausible(rule_id: &str, matched_value: &str) -> bool {
 /// `apiKey`/`appKey` assignments of 32-40 hex (many third-party SDKs use that shape). Keep
 /// the finding only when nearby text identifies Datadog — not by denylisting every
 /// other product (Bugsnag, Amplitude, Cookie Control, Algolia, …).
-fn web_rule_match_is_plausible_in_context(rule_id: &str, nearby_text: &str) -> bool {
+fn web_rule_match_is_plausible_in_context(
+    rule_id: &str,
+    matched_value: &str,
+    nearby_text: &str,
+    full_match: &str,
+    line_content: &str,
+) -> bool {
     match rule_id {
         "datadog-access-token" => nearby_text_looks_like_datadog(nearby_text),
+        "credential-bearing-url" => {
+            credential_bearing_url_is_plausible(matched_value, full_match, line_content)
+        }
         _ => true,
     }
 }
@@ -260,6 +273,151 @@ fn nearby_text_looks_like_datadog(nearby_text: &str) -> bool {
         "dd_site",
     ];
     MARKERS.iter().any(|m| lower.contains(m))
+}
+
+/// Distinctive token prefixes that make userinfo a credential even without a colon,
+/// and that keep a mailbox-shaped `user:pass@host` finding.
+const DISTINCTIVE_USERINFO_PREFIXES: &[&str] = &["ghp_", "glpat-", "sk_", "xox", "AKIA"];
+
+fn captured_has_distinctive_userinfo_prefix(value: &str) -> bool {
+    DISTINCTIVE_USERINFO_PREFIXES
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
+}
+
+/// Mailbox / mailto userinfo is not a credential URL unless the captured secret
+/// is a distinctive prefixed token (`ghp_…`, `xoxb-…`, …).
+fn credential_bearing_url_is_plausible(
+    matched_value: &str,
+    full_match: &str,
+    line_content: &str,
+) -> bool {
+    if captured_has_distinctive_userinfo_prefix(matched_value) {
+        return true;
+    }
+    if line_content.to_ascii_lowercase().contains("mailto:") {
+        return false;
+    }
+    if userinfo_user_is_mailbox_shaped(full_match) {
+        return false;
+    }
+    // Email-only `https://name@host` (no colon) must not become a finding.
+    if !full_match_userinfo_has_colon(full_match) {
+        return false;
+    }
+    true
+}
+
+fn full_match_userinfo_has_colon(full_match: &str) -> bool {
+    let Some((_, rest)) = full_match.split_once("://") else {
+        return false;
+    };
+    rest.split('@')
+        .next()
+        .is_some_and(|userinfo| userinfo.contains(':'))
+}
+
+/// Percent-encoded mailbox (`local%40domain.tld`) as the userinfo username.
+fn userinfo_user_is_mailbox_shaped(full_match: &str) -> bool {
+    let Some((_, rest)) = full_match.split_once("://") else {
+        return false;
+    };
+    let Some(userinfo) = rest.split('@').next() else {
+        return false;
+    };
+    let user = userinfo.split(':').next().unwrap_or(userinfo);
+    let lower = user.to_ascii_lowercase();
+    let Some(at) = lower.find("%40") else {
+        return false;
+    };
+    let local = &lower[..at];
+    let domain = &lower[at + 3..];
+    !local.is_empty()
+        && domain.contains('.')
+        && domain
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
+/// Minimum decoded PKCS body (bytes) for `private-key`. Header-only / crumb
+/// PEMs are not a usable RSA/EC key.
+const PRIVATE_KEY_MIN_DECODED_BODY: usize = 64;
+
+fn private_key_body_is_plausible(pem: &str) -> bool {
+    pem_decoded_body_len(pem) >= PRIVATE_KEY_MIN_DECODED_BODY
+}
+
+fn pem_decoded_body_len(pem: &str) -> usize {
+    let Some(b64) = pem_base64_body(pem) else {
+        return 0;
+    };
+    match base64::engine::general_purpose::STANDARD.decode(b64.as_bytes()) {
+        Ok(bytes) => bytes.len(),
+        // Long but non-canonical padding: 4 base64 chars ≈ 3 bytes.
+        Err(_) if b64.len() >= 86 => b64.len().saturating_mul(3) / 4,
+        Err(_) => 0,
+    }
+}
+
+fn pem_base64_body(pem: &str) -> Option<String> {
+    let begin = pem.find("-----BEGIN")?;
+    let after_first_dashes = pem.get(begin + 5..)?;
+    let header_end_rel = after_first_dashes.find("-----")?;
+    let body_start = begin + 5 + header_end_rel + 5;
+    let rest = pem.get(body_start..)?;
+    let body_end = rest
+        .find("-----END")
+        .or_else(|| rest.rfind("KEY-----"))
+        .unwrap_or(rest.len());
+    let raw = rest.get(..body_end)?;
+    let b64: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '+' | '/' | '='))
+        .collect();
+    if b64.is_empty() {
+        None
+    } else {
+        Some(b64)
+    }
+}
+
+/// Textbook `user:pass` is 8 decoded bytes / 12 Base64 chars. Require more.
+const HTTP_BASIC_MIN_DECODED_LEN: usize = 10;
+
+fn http_basic_auth_is_plausible(matched_value: &str) -> bool {
+    let Some(bytes) = decode_http_basic(matched_value) else {
+        return false;
+    };
+    if bytes.len() < HTTP_BASIC_MIN_DECODED_LEN {
+        return false;
+    }
+    let Ok(decoded) = std::str::from_utf8(&bytes) else {
+        return true;
+    };
+    let Some((user, pass)) = decoded.split_once(':') else {
+        return false;
+    };
+    !http_basic_pair_is_placeholder(user, pass)
+}
+
+fn decode_http_basic(value: &str) -> Option<Vec<u8>> {
+    let trimmed = value.trim();
+    base64::engine::general_purpose::STANDARD
+        .decode(trimmed.as_bytes())
+        .ok()
+        .or_else(|| {
+            base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(trimmed.as_bytes())
+                .ok()
+        })
+}
+
+fn http_basic_pair_is_placeholder(user: &str, pass: &str) -> bool {
+    const USERS: &[&str] = &["user", "foo", "bar", "beep", "admin"];
+    const PASSES: &[&str] = &["pass", "password", "foo", "bar", "beep", "boop"];
+    let user = user.to_ascii_lowercase();
+    let pass = pass.to_ascii_lowercase();
+    USERS.contains(&user.as_str()) && PASSES.contains(&pass.as_str())
 }
 
 /// Severity for a gitleaks rule id.
@@ -795,7 +953,13 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
             }
             let context = extract_context(body, mat.start(), mat.end());
             let line_content = line_containing(body, mat.start(), mat.end());
-            if !web_rule_match_is_plausible_in_context(&rule.id, &context) {
+            if !web_rule_match_is_plausible_in_context(
+                &rule.id,
+                &matched_value,
+                &context,
+                full_match,
+                line_content,
+            ) {
                 continue;
             }
             if rule_allowlist_skips(&rule.allowlists, &matched_value, line_content, full_match) {
@@ -1034,8 +1198,13 @@ mod tests {
 
     #[test]
     fn test_detect_rsa_private_key() {
-        // gitleaks private-key regex expects BEGIN...KEY-----[\s\S-]{64,}?...KEY-----
-        let body = "-----BEGIN RSA PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7\n-----END RSA PRIVATE KEY-----";
+        // Decoded-body floor rejects header-only crumbs; this block is large
+        // enough to be a key (3 × 64-char lines ≈ 144 decoded bytes).
+        let body = "-----BEGIN RSA PRIVATE KEY-----\n\
+                    MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7VJTUt9Us8cKj\n\
+                    MzEfYyjiWA4R4/M2bS1GB4t7NXp98C3SC6dVMvDuictGeurT8jNbvJZHtCSuYEvu\n\
+                    MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7VJTUt9Us8cKj\n\
+                    -----END RSA PRIVATE KEY-----";
         let secrets = detect_exposed_secrets(body);
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].secret_type, "private-key");

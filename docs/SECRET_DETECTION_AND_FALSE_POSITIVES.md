@@ -49,6 +49,9 @@ Prefer maintainable fixes over growing per-site exception lists:
 | Google AI Studio / **Gemini** API keys (`AIza…`) | gcp-api-key | Same shape as Maps/Firebase browser keys; there is **no** separate `gemini-api-key` rule | Detected and stored as `gcp-api-key` at **Low**; triage like other Google client keys |
 | Netlify CWV / shop / session JWTs | jwt | Public or short-lived client tokens | Keep claims in `url_jwt_claims`; severity usually Low — not a private signing key |
 | HTML `id="[40 hex]"` (e.g. Wix build) | sourcegraph-access-token | Build/instance ID | Allowlisted in overrides |
+| `mailto:` line or mailbox userinfo (`local%40domain`, email-only `name@host`) | credential-bearing-url | Email in a URL, not a credential | Plausibility: drop unless the captured secret has `ghp_` / `glpat-` / `sk_` / `xox` / `AKIA` |
+| Header-only / crumb PEM | private-key | Not a usable key | Decoded-body size floor (64 bytes) |
+| Docs Basic (`user:pass`, `beep:boop`, `admin`+`password`) | http-basic-auth | Textbook / docs placeholder | Decode, then reject placeholder pairs and tiny decoded length |
 
 ## How to triage
 
@@ -63,6 +66,7 @@ Prefer maintainable fixes over growing per-site exception lists:
   allowlisted. Leftover **`generic-api-key`** is still often cookie-consent
   widgets or i18n JSON — always read `context` before escalating.
 - Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`, `sk-…T3BlbkFJ…` OpenAI, `sk-ant-api03-` / `sk-ant-admin01-` Anthropic). Treat `gcp-api-key` (including Gemini/AI Studio `AIza…` keys), `jwt`, Amz-Credential AWS IDs, Algolia **search** keys, and Contentful CDA tokens as **Low** inventory. Algolia **admin** assignments stay Medium.
+- **`credential-bearing-url`** stays Critical for `user:password@host` with a non-mailbox password, and for prefixed-token userinfo **with or without** a colon (`https://deploy:ghp_…@host` and `https://ghp_…@host`). Mailbox / `mailto:` userinfo is dropped. Header-only PEMs are dropped; full-size PEMs stay Critical. `http-basic-auth` stays High when the decoded pair is not a docs placeholder.
 - When assessing possible misses, join `url_status.body_truncated` and `external_scripts_eligible` / `external_scripts_scanned` (incomplete scan when truncated or eligible > scanned).
 - Inspect **`context`**: Look for `data-*-form`, `id="..."`, `email-protection#`, or other HTML patterns that indicate a public identifier or obfuscation.
 - For high-confidence secrets, prefer findings where the value has a known token format (prefix, length) and the context does not match the patterns above.
