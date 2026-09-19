@@ -61,6 +61,14 @@ deny:
 secrets:
     pre-commit run gitleaks --all-files
 
+# Fixture host hygiene (staged files)
+host-hygiene:
+    python3 scripts/host_hygiene.py
+
+# Fixture host hygiene (whole tree)
+host-hygiene-all:
+    python3 scripts/host_hygiene.py --all
+
 # Install pre-commit hooks
 install-hooks:
     pre-commit install

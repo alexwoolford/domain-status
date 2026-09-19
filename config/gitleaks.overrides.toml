@@ -274,14 +274,13 @@ keywords = ["mailchimp", "-us"]
 # FP-reduction allowlists for the catch-all `generic-api-key` rule and a
 # couple of related rules whose upstream regex is too broad.
 #
-# Derived from a 500-URL --scan-external-scripts study cross-validated
-# against a checked set of historical findings in the local fixtures DB. Each pattern
-# below was checked against the high-value rule types
-#   (aws-access-token, private-key, database-connection-uri, openai-api-key,
-#    github-pat, github-fine-grained-pat, gitlab-pat, slack-bot-token,
-#    vault-batch-token, vault-service-token, credential-bearing-url,
-#    jdbc-connection-string, grafana-api-key, mailchimp-api-key)
-# in the historical DB and confirmed to skip ZERO of those rows.
+# Patterns are justified by identifier / syntax shape (JS exports, public
+# widget IDs), not by named scan targets. They are intended not to skip
+# high-value rule types (aws-access-token, private-key, database-connection-uri,
+# openai-api-key, github-pat, github-fine-grained-pat, gitlab-pat,
+# slack-bot-token, vault-batch-token, vault-service-token,
+# credential-bearing-url, jdbc-connection-string, grafana-api-key,
+# mailchimp-api-key).
 # ============================================================================
 
 # `generic-api-key` match-target stopwords: substrings that ONLY appear in
@@ -304,13 +303,7 @@ keywords = ["mailchimp", "-us"]
 #   "Object.defineProperty": JS module-export prologue
 #   "PLATFORM_Viewer_Builder_": Wix builder i18n keys
 #   "00000000-0000-4000-8000-000000000000":
-#                            Wix recaptcha library hardcoded UUID (12 sites)
-#   "QUl6YVN5RVhBTVBMRVRFU1RLRVlOT1RGUk9NU0NBTg==":
-#                            base64-encoded form of a Google Maps API key
-#                            shared by the same JS library across 22 sites
-#                            (raw key intentionally not inlined here so the
-#                            gitleaks self-scan doesn't flag this comment;
-#                            base64-decode the entry above to see the value)
+#                            synthetic UUID stopword for hardcoded library IDs
 [[append]]
 rule_id = "generic-api-key"
 regexTarget = "match"
@@ -327,7 +320,6 @@ stopwords = [
     "Object.defineProperty",
     "PLATFORM_Viewer_Builder_",
     "00000000-0000-4000-8000-000000000000",
-    "QUl6YVN5RVhBTVBMRVRFU1RLRVlOT1RGUk9NU0NBTg==",
 ]
 
 # `generic-api-key` line-target regexes: match the LINE the value sits on,
@@ -391,15 +383,8 @@ regexes = [
 # matches a lot of lowerCamelCase JS-identifier names that happen to
 # appear in JSON-config blocks alongside "linkedin" strings.
 #
-# Each entry below is a JS-identifier name observed at multiple unrelated
-# domains in the historical fixture corpus. The single real positive seen so far
-# (`SyntheticIdent16` on example.com) starts with uppercase and looks
-# random - none of the stopwords below would falsely match it.
-#
-# This is item-specific (each entry is an exact JS identifier name) but
-# very targeted: cross-checked against the 29 historical
-# `linkedin-client-secret` findings, eliminates 27 of them, preserves the
-# 2 plausible real positives.
+# Each entry is an exact JS identifier. Opaque uppercase-leading 16-char
+# values are not listed here and still match.
 [[append]]
 rule_id = "linkedin-client-secret"
 regexTarget = "match"

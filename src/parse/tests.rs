@@ -135,7 +135,7 @@ fn test_extract_meta_description_missing() {
 // Analytics ID extraction tests
 #[test]
 fn test_extract_analytics_ids_gtm_data_layer_format() {
-    // Test GTM in dataLayer format (like example.com)
+    // Test GTM in dataLayer format
     let html = r#"
         <script>
             (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
@@ -160,7 +160,7 @@ fn test_extract_analytics_ids_gtm_data_layer_format() {
 
 #[test]
 fn test_extract_analytics_ids_gtm_json_format() {
-    // Test GTM in JSON format (like Example Org)
+    // Test GTM in JSON format
     let html = r#"
         <script type="application/json">{"gtm":{"tagIds":["GTM-TEST002"]}}</script>
     "#;

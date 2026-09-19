@@ -44,3 +44,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: host-hygiene
+        name: fixture host hygiene
+        entry: python3 scripts/host_hygiene.py
+        language: system
+        pass_filenames: false
+        always_run: true
