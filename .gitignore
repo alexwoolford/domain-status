@@ -45,9 +45,7 @@ secrets.toml
 
 # MCP server config (contains user-specific absolute paths)
 .mcp.json
-.cursor/*
-!.cursor/skills/
-!.cursor/skills/**
+.cursor/
 
 # Local editor / debugger settings
 .vscode/
