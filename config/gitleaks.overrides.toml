@@ -355,9 +355,16 @@ regexes = [
     '''(?i)ddClientToken\s*[:=]\s*['"`]?pub''',
     # Wix shared SuperCheckout / Rigor library tokens
     '''(?i)\b(sccApiKey|rigorApiKey)\s*[:=]''',
-    # Algolia search-only key paired with appId on the same line
-    # (admin keys never appear paired with appId in client-side code)
+    # Algolia search-only key paired with appId on the same line.
+    # Narrow camelCase names only — does not match ALGOLIA_ADMIN_KEY.
+    # Dedicated `algolia-api-key` findings are kept and severity-demoted in Rust.
     '''(?i)algoliaApiKey.*algoliaAppId|algoliaAppId.*algoliaApiKey''',
+    # ImageBoss CDN URL-signing / cache token (public-by-design in img URLs)
+    '''(?i)\bbossToken\s*[:=]''',
+    # YouTube thumbnail CDN embed `key=` (not a credential)
+    '''(?i)ytimg\.com[^\s\"']*[?&]key=''',
+    # Vimeo player embed `key=` (not a credential)
+    '''(?i)(?:player\.)?vimeo\.com[^\s\"']*[?&]key=''',
     # Azure App Insights browser SDK — instrumentationKey is public-by-design
     '''(?i)instrumentationKey\s*[:=]''',
     # Prismic / CMS link objects — document UUID next to link_type / linkType
@@ -375,18 +382,9 @@ regexes = [
 [[append]]
 rule_id = "generic-api-key"
 regexes = [
-    # Weglot public widget key format
-    '''(?i)^wg_[0-9a-f]{32}$''',
+    # Weglot public widget key format (`wg_` + 32 or 33 hex)
+    '''(?i)^wg_[0-9a-f]{32,33}$''',
 ]
-
-# `algolia-api-key` line-target allowlist: same Algolia search-key/appId
-# pairing logic, applied to the dedicated Algolia rule. Search keys are
-# safe-by-design when shipped client-side; admin keys would never appear
-# paired with `algoliaAppId`.
-[[append]]
-rule_id = "algolia-api-key"
-regexTarget = "line"
-regexes = ['''(?i)algoliaApiKey.*algoliaAppId|algoliaAppId.*algoliaApiKey''']
 
 # `linkedin-client-secret` match-target stopwords: the upstream rule fires
 # on any 16-char `[a-zA-Z0-9_]{16}` near the literal "linkedin", which

@@ -334,8 +334,13 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
         // so we treat it as Medium-by-default to keep High meaningful.
         | "generic-api-key" => SecretSeverity::Medium,
         // Low: intentionally public client identifiers (Maps/Firebase embeds,
-        // Mapbox public tokens). Still recorded for inventory, but not triage-urgent.
-        "gcp-api-key" | "mapbox-api-token" => SecretSeverity::Low,
+        // Mapbox public tokens, Contentful Delivery API tokens). Still recorded
+        // for inventory, but not triage-urgent. Algolia search keys are Medium
+        // here and demoted to Low in `severity_for_finding` unless the
+        // assignment is an admin/write key.
+        "gcp-api-key" | "mapbox-api-token" | "contentful-delivery-api-token" => {
+            SecretSeverity::Low
+        }
         // Low: JWTs on the web are usually CDN/session/buyer tokens, not private
         // API credentials. Keep for inventory; do not treat as triage-urgent.
         "jwt" | "jwt-base64" => SecretSeverity::Low,
@@ -343,17 +348,37 @@ fn severity_for_rule_id(rule_id: &str) -> SecretSeverity {
     }
 }
 
+/// Assignment names that identify an Algolia **admin/write** key.
+/// Search keys share the same 32-alnum shape; only the identifier distinguishes them.
+fn algolia_assignment_is_admin(nearby_text: &str) -> bool {
+    let lower = nearby_text.to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "admin_key",
+        "adminkey",
+        "adminapikey",
+        "admin_api_key",
+        "algolia_admin",
+        "algoliaadmin",
+    ];
+    MARKERS.iter().any(|m| lower.contains(m))
+}
+
 /// Severity for a finding, with context-aware demotion for known public-temp shapes.
 ///
 /// AWS access key IDs embedded in `X-Amz-Credential=` pre-signed URL query params
 /// are real IDs but temporary/public URL material — record as Low, not High.
-fn severity_for_finding(rule_id: &str, line_content: &str) -> SecretSeverity {
+/// Algolia search keys shipped next to an App ID are public-by-design; admin
+/// assignments stay Medium.
+fn severity_for_finding(rule_id: &str, line_content: &str, nearby_text: &str) -> SecretSeverity {
     let severity = severity_for_rule_id(rule_id);
     if rule_id == "aws-access-token"
         && line_content
             .to_ascii_lowercase()
             .contains("x-amz-credential=")
     {
+        return SecretSeverity::Low;
+    }
+    if rule_id == "algolia-api-key" && !algolia_assignment_is_admin(nearby_text) {
         return SecretSeverity::Low;
     }
     severity
@@ -784,7 +809,7 @@ fn detect_exposed_secrets_inner(body: &str, use_prefilter: bool) -> Vec<ExposedS
 
             let location: Cow<'static, str> =
                 Cow::Borrowed(infer_location_for_body_match(body, mat.start(), &context));
-            let severity = severity_for_finding(&rule.id, line_content);
+            let severity = severity_for_finding(&rule.id, line_content, &context);
             let decoded_jwt = match rule.id.as_str() {
                 "jwt" => crate::parse::jwt::decode_jwt(&matched_value),
                 "jwt-base64" => crate::parse::jwt::decode_jwt_base64(&matched_value),
@@ -1062,6 +1087,16 @@ mod tests {
         assert_eq!(
             severity_for_rule_id("mapbox-api-token"),
             SecretSeverity::Low
+        );
+        assert_eq!(
+            severity_for_rule_id("contentful-delivery-api-token"),
+            SecretSeverity::Low,
+            "Contentful Delivery tokens are public-by-design client keys"
+        );
+        assert_eq!(
+            severity_for_rule_id("algolia-api-key"),
+            SecretSeverity::Medium,
+            "Algolia admin stays Medium; search keys demote in severity_for_finding"
         );
     }
 
@@ -1953,6 +1988,20 @@ mod tests {
             secrets_wg
         );
 
+        // Observed leftover format is wg_ + 33 hex (36 chars), not 32.
+        let weglot_33 = "wg_0123456789abcdef0123456789abcdef0";
+        assert_eq!(weglot_33.len(), 36);
+        let body_wg33 = format!(r#"Weglot.initialize({{ api_key: '{weglot_33}' }});"#);
+        let secrets_wg33 = detect_exposed_secrets(&body_wg33);
+        assert!(
+            secrets_wg33
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key"
+                    && s.matched_value.eq_ignore_ascii_case(weglot_33))),
+            "Weglot wg_ + 33 hex should be allowlisted; got {:?}",
+            secrets_wg33
+        );
+
         let uuid = "12345678-1234-1234-1234-123456789abc";
         let body_ai = format!(r#"instrumentationKey:'{uuid}'"#);
         let secrets_ai = detect_exposed_secrets(&body_ai);
@@ -2079,6 +2128,141 @@ mod tests {
             secrets_ok
         );
         assert_eq!(hit.unwrap().matched_value, secret);
+    }
+
+    /// `ImageBoss` `bossToken=` and YouTube/Vimeo embed `key=` are public CDN
+    /// params, not credentials. A first-party `api_key=` query must still fire.
+    #[test]
+    fn test_generic_cdn_embed_product_ids_skipped() {
+        let hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(hex64.len(), 64);
+        let body_boss = format!(
+            r#"<img src="https://img.ibosscdn.com/assets/hero.jpg?bossToken={hex64}&w=800">"#
+        );
+        let secrets_boss = detect_exposed_secrets(&body_boss);
+        assert!(
+            secrets_boss
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == hex64)),
+            "ImageBoss bossToken should be allowlisted; got {:?}",
+            secrets_boss
+        );
+
+        let hex32 = "0123456789abcdef0123456789abcdef";
+        assert_eq!(hex32.len(), 32);
+        let body_yt = format!(
+            r#"<img src="https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg?sqp=-o&key={hex32}">"#
+        );
+        let secrets_yt = detect_exposed_secrets(&body_yt);
+        assert!(
+            secrets_yt
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == hex32)),
+            "ytimg.com embed key= should be allowlisted; got {:?}",
+            secrets_yt
+        );
+
+        let body_vimeo = format!(
+            r#"<iframe src="https://player.vimeo.com/video/123456789?key={hex32}"></iframe>"#
+        );
+        let secrets_vimeo = detect_exposed_secrets(&body_vimeo);
+        assert!(
+            secrets_vimeo
+                .iter()
+                .all(|s| !(s.secret_type == "generic-api-key" && s.matched_value == hex32)),
+            "vimeo.com embed key= should be allowlisted; got {:?}",
+            secrets_vimeo
+        );
+
+        let body_first_party = format!(r#"fetch("https://example.com/api?api_key={hex32}")"#);
+        let secrets_fp = detect_exposed_secrets(&body_first_party);
+        assert!(
+            secrets_fp
+                .iter()
+                .any(|s| s.secret_type == "generic-api-key" && s.matched_value == hex32),
+            "first-party api_key= must still match generic-api-key; got {:?}",
+            secrets_fp
+        );
+    }
+
+    /// Algolia search keys are Low inventory; admin assignments stay Medium.
+    #[test]
+    fn test_algolia_search_demoted_admin_stays_medium() {
+        let key = "a1b2c3d4e5f6789012345678abcdef01";
+        assert_eq!(key.len(), 32);
+
+        let body_search =
+            format!(r#"const cfg = {{ algoliaApiKey: "{key}", algoliaAppId: "ABC123XYZ0" }};"#);
+        let secrets_search = detect_exposed_secrets(&body_search);
+        let search = secrets_search
+            .iter()
+            .find(|s| s.secret_type == "algolia-api-key");
+        assert!(
+            search.is_some(),
+            "Algolia search key should still be recorded; got {:?}",
+            secrets_search
+        );
+        assert_eq!(
+            search.unwrap().severity,
+            SecretSeverity::Low,
+            "Algolia search key should be Low inventory"
+        );
+
+        let body_admin = format!(r#"const ALGOLIA_ADMIN_KEY = "{key}";"#);
+        let secrets_admin = detect_exposed_secrets(&body_admin);
+        let admin = secrets_admin
+            .iter()
+            .find(|s| s.secret_type == "algolia-api-key");
+        assert!(
+            admin.is_some(),
+            "Algolia admin key should be recorded; got {:?}",
+            secrets_admin
+        );
+        assert_eq!(
+            admin.unwrap().severity,
+            SecretSeverity::Medium,
+            "Algolia admin assignment must stay Medium"
+        );
+
+        // Admin next to an App ID must not be demoted (pairing is not a suppress).
+        let body_both =
+            format!(r#"ALGOLIA_APPLICATION_ID="ABC123XYZ0"; ALGOLIA_ADMIN_KEY="{key}";"#);
+        let secrets_both = detect_exposed_secrets(&body_both);
+        let both = secrets_both
+            .iter()
+            .find(|s| s.secret_type == "algolia-api-key");
+        assert!(
+            both.is_some(),
+            "Algolia admin+appId should still be recorded; got {:?}",
+            secrets_both
+        );
+        assert_eq!(
+            both.unwrap().severity,
+            SecretSeverity::Medium,
+            "Algolia admin next to App ID must stay Medium"
+        );
+    }
+
+    /// Contentful Delivery API tokens are Low inventory (browser-embeddable).
+    #[test]
+    fn test_contentful_delivery_token_is_low() {
+        let token = "9f3k2m8q1p7n4t6w0x5z8b2c7d1h4j9l3s6v0y2a8fq";
+        assert_eq!(token.len(), 43);
+        let body = format!(r#"contentfulAccessToken="{token}""#);
+        let secrets = detect_exposed_secrets(&body);
+        let cda = secrets
+            .iter()
+            .find(|s| s.secret_type == "contentful-delivery-api-token");
+        assert!(
+            cda.is_some(),
+            "Contentful delivery token should be recorded; got {:?}",
+            secrets
+        );
+        assert_eq!(
+            cda.unwrap().severity,
+            SecretSeverity::Low,
+            "Contentful CDA should be Low inventory"
+        );
     }
 
     /// JWT rule severity is explicitly Low (inventory, not triage-urgent).

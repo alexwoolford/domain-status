@@ -27,12 +27,16 @@ Prefer maintainable fixes over growing per-site exception lists:
 | `x-hubspot-correlation-id: uuid` | hubspot-api-key | Request correlation header, not API key | Allowlisted (`x-hubspot-correlation-id`) |
 | `hubspotFormId*` / `hubspot_button_id` / `hubspotSignupguid` / `hubspotID` | hubspot-api-key | Public form/widget UUID | Allowlisted (form/button/guid/signup name shapes) |
 | `app.powerbi.com/view?r=eyJrIjoi…` | grafana-api-key | Power BI embed token shares Grafana's `eyJrIjoi` prefix | Allowlisted (`powerbi.com`) |
-| `wg_<32 hex>` | generic-api-key | Weglot public widget key | Allowlisted (`^wg_[0-9a-f]{32}$`) |
+| `wg_<32–33 hex>` | generic-api-key | Weglot public widget key | Allowlisted (`^wg_[0-9a-f]{32,33}$`) |
+| `bossToken=<hex64>` | generic-api-key | ImageBoss CDN URL-signing / cache token | Allowlisted (`bossToken\s*[:=]`) |
+| `ytimg.com` / `vimeo.com` `?key=` / `&key=` | generic-api-key | YouTube thumbnail / Vimeo player embed param | Allowlisted (host + `key=` together; not all `url_parameter`) |
 | `instrumentationKey:` / `InstrumentationKey=` | generic-api-key | Azure App Insights browser SDK public key | Allowlisted |
 | `link_type` / `linkType` + `"key":"<hex\|uuid>"` | generic-api-key | Prismic/CMS document UUID | Allowlisted (`link[_]?type\s*:`) |
 | React/SVG `key:"<32–40 hex>"` | generic-api-key | Framework reconciliation / CMS bare `key` | Allowlisted (bare `key` property only; not `apiKey`) |
 | `botSignalToken:` | generic-api-key | Public anti-bot challenge token | Allowlisted |
 | `X-Amz-Credential=AKIA\|ASIA…` | aws-access-token | Pre-signed URL temporary credential ID | Severity demoted to **Low** (still stored) |
+| Algolia 32-alnum search key | algolia-api-key | Browser search-only key (same shape as admin) | Severity **Low** unless assignment is admin/write (`ADMIN_KEY`, `adminApiKey`, `ALGOLIA_ADMIN`); pairing with App ID is **not** a suppress |
+| Contentful Delivery API token (43-char) | contentful-delivery-api-token | Browser-embeddable CDA token | Severity **Low** (rule is delivery-only; management tokens are a different shape) |
 | `"datadogVersion":"<40 hex>"` | datadog-access-token | Build hash, not API key | Rule replaced: credential assignment only |
 | Bare `apiKey:"<hex>"` (Bugsnag, Amplitude, Algolia, …) | datadog-access-token | Regex still matches generic `apiKey`/`appKey`; many SDKs use that shape | Keep only when nearby text identifies Datadog (`datadog`, `dd_api`, `dd_rum`, …) |
 | `EAAA…` in binary | square-access-token | WebP/binary collision | Rule replaced: `sq0atp-` only |
@@ -55,10 +59,10 @@ Prefer maintainable fixes over growing per-site exception lists:
   `generic-api-key` trustworthy.
 - Use **`location`** and **`context`**. For **prefixed** rules, `inline_script`,
   `url_parameter`, `set_cookie`, and `external_script:…` are stronger signals.
-  For leftover **`generic-api-key`**, the same locations are often YouTube/Vimeo
-  embed `key=`, cookie-consent widgets, i18n JSON, or CDN `bossToken=` hashes —
-  always read `context` before escalating.
-- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`, `sk-…T3BlbkFJ…` OpenAI, `sk-ant-api03-` / `sk-ant-admin01-` Anthropic). Treat `gcp-api-key` (including Gemini/AI Studio `AIza…` keys), `jwt`, and Amz-Credential AWS IDs as **Low** inventory, not urgent leaks.
+  ImageBoss `bossToken=` and YouTube `ytimg` / Vimeo embed `key=` are
+  allowlisted. Leftover **`generic-api-key`** is still often cookie-consent
+  widgets or i18n JSON — always read `context` before escalating.
+- Prefer **Critical/High** findings with distinctive token prefixes (`AKIA` outside Amz-Credential, `SG.`, `shpat_`, `sk_live_`, `ghp_`, `glc_`, `sk-…T3BlbkFJ…` OpenAI, `sk-ant-api03-` / `sk-ant-admin01-` Anthropic). Treat `gcp-api-key` (including Gemini/AI Studio `AIza…` keys), `jwt`, Amz-Credential AWS IDs, Algolia **search** keys, and Contentful CDA tokens as **Low** inventory. Algolia **admin** assignments stay Medium.
 - When assessing possible misses, join `url_status.body_truncated` and `external_scripts_eligible` / `external_scripts_scanned` (incomplete scan when truncated or eligible > scanned).
 - Inspect **`context`**: Look for `data-*-form`, `id="..."`, `email-protection#`, or other HTML patterns that indicate a public identifier or obfuscation.
 - For high-confidence secrets, prefer findings where the value has a known token format (prefix, length) and the context does not match the patterns above.
@@ -74,22 +78,21 @@ hyphenated 8-4-4-4-12 hex (the UUID subtract already shipped):
 
 | Class | Share of sample | What it was |
 |-------|-----------------|-------------|
-| Public SaaS / widget client | majority | Weglot `api_key` that is **not** `wg_…`, CCM19/Cookiebot, Elementor a11y, Altcha/Sentinel, Bugsnag, Mixpanel, Datadog, Dynatrace, Unbxd, Yext, Shopify storefront, reCAPTCHA, … |
-| CDN / theme hash | common | ImageBoss `bossToken=` (hex64) and Shopify `keys_signature` |
+| Public SaaS / widget client | majority | CCM19/Cookiebot, Elementor a11y, Altcha/Sentinel, Bugsnag, Mixpanel, Datadog, Dynatrace, Unbxd, Yext, Shopify storefront, reCAPTCHA, … |
+| CDN / theme hash | common | Shopify `keys_signature` (ImageBoss `bossToken=` is allowlisted) |
 | i18n JSON `"key"` | common | Translations bundles with thousands of leftover rows on a single URL |
-| Embed URL `key=` | common | YouTube / Vimeo oEmbed |
 | CMS / document id | occasional | `_key`, `vueKey`, store `key`, experiment `key` |
 | Cookie / CSRF | occasional | CleanTalk, AntiXsrf, cache key, page `xsrfToken` |
 | Likely credential | rare | Named `*Secret` / `*Token` / access token in first-party JS (not a public SDK id) |
 
 **Do not** drop `generic-api-key`, hex32, cookies, or `external_script` JSON from
 that table. Hex32 in the sample mixed embed keys, CMS ids, and a few real
-tokens. Skipping catch-all on external JSON would also drop bundle leaks. The
-UUID cut remains the last low-regret Type I. Next subtract would need its own
-product-format evidence (for example Weglot keys that are not `wg_…` still fire;
-`wg_` is already allowlisted).
+tokens. Skipping catch-all on external JSON would also drop bundle leaks.
+Product-format subtracts that shipped: Weglot `wg_` 32–33 hex, ImageBoss
+`bossToken=`, and YouTube `ytimg` / Vimeo host+`key=`. Do not add a Weglot
+*context* allowlist for unprefixed tokens.
 
-Re-measure UUID disappearance only after a scan with the current binary.
+Re-measure leftover generic after a scan with the current binary.
 
 ## Audit queries
 
