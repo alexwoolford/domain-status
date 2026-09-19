@@ -146,6 +146,51 @@ fn finish_ruleset(mut ruleset: FingerprintRuleset) -> Result<FingerprintRuleset>
     Ok(ruleset)
 }
 
+/// One-line ruleset identity for startup logs and tests.
+pub(crate) fn ruleset_identity_summary(ruleset: &FingerprintRuleset) -> String {
+    let source = ruleset.metadata.source.replace('\n', " + ");
+    let quality = if ruleset.metadata.version == "bundled-minimal" {
+        "degraded: bundled-minimal"
+    } else {
+        "full"
+    };
+    format!(
+        "Fingerprint ruleset: {} technologies, source={source}, version={}, {quality}",
+        ruleset.technologies.len(),
+        ruleset.metadata.version
+    )
+}
+
+fn is_github_rate_limit_error(err: &str) -> bool {
+    err.to_ascii_lowercase().contains("rate limit")
+}
+
+/// Operator-visible degraded-mode notice (stderr + warn). Does not abort the scan.
+fn announce_degraded_fingerprints(failures: &[(String, String)], tech_count: usize) {
+    let mut msg = format!(
+        "Full fingerprint catalog unavailable; using bundled-minimal ({tech_count} technologies). \
+         Technology detection will under-count versus Enthec + HTTPArchive. \
+         Retry when GitHub is reachable, or pass --fingerprints."
+    );
+    if !failures.is_empty() {
+        msg.push_str(" Failed sources:");
+        for (source, err) in failures {
+            msg.push_str(&format!(" [{source}: {err}]"));
+        }
+    }
+    if failures
+        .iter()
+        .any(|(_, err)| is_github_rate_limit_error(err))
+    {
+        msg.push_str(
+            " GITHUB_TOKEN is optional rate-limit headroom (60 → 5000 requests/hour), \
+             not required for the full catalog.",
+        );
+    }
+    log::warn!("{msg}");
+    eprintln!("{msg}");
+}
+
 /// Initializes the fingerprint ruleset from URL or local path.
 ///
 /// Rules are cached locally and refreshed if older than 7 days.
@@ -198,20 +243,9 @@ pub async fn init_ruleset(
     // Try to load from cache first
     if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
         let ruleset = finish_ruleset(ruleset)?;
-        log::info!(
-            "Loaded fingerprint ruleset from cache ({} sources)",
-            sources.len()
-        );
         let ruleset_arc = Arc::new(ruleset);
         *RULESET.write().await = Some(ruleset_arc.clone());
         return Ok(ruleset_arc);
-    }
-
-    // If cache miss and we're about to fetch, warn about potential rate limits
-    if sources.iter().any(|s| s.contains("github.com")) && std::env::var("GITHUB_TOKEN").is_err() {
-        log::info!(
-            "💡 Tip: Set GITHUB_TOKEN environment variable to avoid rate limits (60 → 5000 requests/hour)"
-        );
     }
 
     // Fetch from all sources and merge
@@ -244,6 +278,7 @@ async fn fetch_ruleset_from_multiple_sources(
     let mut all_categories = HashMap::new();
     let mut versions = Vec::new();
     let mut successful_sources = 0;
+    let mut source_failures: Vec<(String, String)> = Vec::new();
 
     // Fetch from all sources and merge
     // If a source fails, log a warning but continue with other sources
@@ -262,15 +297,11 @@ async fn fetch_ruleset_from_multiple_sources(
                 techs
             }
             Err(e) => {
+                let err = e.to_string();
                 log::warn!(
-                    "Failed to fetch from source '{source}': {e}. Continuing with other sources..."
+                    "Failed to fetch from source '{source}': {err}. Continuing with other sources..."
                 );
-                // Check if this is a rate limit error and provide helpful guidance
-                if e.to_string().contains("rate limit") {
-                    log::warn!(
-                        "💡 Tip: Set GITHUB_TOKEN environment variable to increase rate limits from 60 to 5000 requests/hour"
-                    );
-                }
+                source_failures.push((source.clone(), err));
                 continue; // Skip this source, try others
             }
         };
@@ -320,11 +351,6 @@ async fn fetch_ruleset_from_multiple_sources(
     // Ensure we got at least one successful source; otherwise use the bundled
     // minimal ruleset so offline/CI cold starts still work.
     if successful_sources == 0 {
-        log::warn!(
-            "Failed to fetch ruleset from all {} source(s); using bundled minimal fingerprints. \
-             Prefer setting GITHUB_TOKEN, using a local --fingerprints path, or retrying when network is available.",
-            sources.len()
-        );
         let mut vendored = load_vendored_ruleset()?;
         vendored.technologies = vendored
             .technologies
@@ -333,7 +359,9 @@ async fn fetch_ruleset_from_multiple_sources(
             .collect();
         // Do NOT write vendored under the remote `cache_key`. That would poison
         // subsequent cold starts into believing the full GitHub merge is cached.
-        return finish_ruleset(vendored);
+        let ruleset = finish_ruleset(vendored)?;
+        announce_degraded_fingerprints(&source_failures, ruleset.technologies.len());
+        return Ok(ruleset);
     }
 
     if successful_sources < sources.len() {
@@ -401,12 +429,41 @@ mod tests {
             "expected vendored source, got {}",
             ruleset.metadata.source
         );
+        assert_eq!(ruleset.metadata.version, "bundled-minimal");
         assert!(ruleset.technologies.contains_key("Nginx"));
         assert!(
             ruleset.technologies.contains_key("Payload"),
             "first-party overlay must apply on vendored fallback"
         );
         assert!(!ruleset.technologies.is_empty());
+        let summary = ruleset_identity_summary(&ruleset);
+        assert!(
+            summary.contains(&ruleset.technologies.len().to_string()),
+            "summary must include tech count: {summary}"
+        );
+        assert!(
+            summary.contains("degraded: bundled-minimal"),
+            "summary must mark degraded mode: {summary}"
+        );
+    }
+
+    #[test]
+    fn ruleset_identity_summary_marks_full_catalog() {
+        let ruleset = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "https://a.example\nhttps://b.example".to_string(),
+                version: "abc123".to_string(),
+                last_updated: SystemTime::now(),
+            },
+        };
+        let summary = ruleset_identity_summary(&ruleset);
+        assert!(summary.contains("0 technologies"));
+        assert!(summary.contains("https://a.example + https://b.example"));
+        assert!(summary.contains("version=abc123"));
+        assert!(summary.contains(", full"));
+        assert!(!summary.contains("degraded"));
     }
 
     #[tokio::test]

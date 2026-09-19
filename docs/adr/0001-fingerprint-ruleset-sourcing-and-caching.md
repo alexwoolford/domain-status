@@ -53,7 +53,7 @@ Trade-offs:
 
 ## Operational Notes
 
-- `GITHUB_TOKEN` is optional but recommended to reduce GitHub API rate-limit issues during metadata lookup
+- `GITHUB_TOKEN` is optional rate-limit headroom (60 → 5000 requests/hour), not a requirement for the full catalog. Mention it in logs only when a fetch actually hit the GitHub API rate limit.
 - Fingerprint cache files live under the shared platform cache root (`…/domain_status/fingerprints/`), not the process working directory (see [docs/ADVANCED.md](../ADVANCED.md)). Treat them as regenerable runtime artifacts.
 - for fully deterministic CI, prefer an explicit `--fingerprints` path over relying on the vendored fallback
 

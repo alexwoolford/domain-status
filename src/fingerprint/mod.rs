@@ -36,6 +36,7 @@ pub use detection::{get_technology_category, DetectedTechnology};
 pub use models::{FingerprintMetadata, FingerprintRuleset, Technology};
 #[allow(unused_imports)] // These are public API re-exports, even if not used in tests
 pub use ruleset::init_ruleset;
+pub(crate) use ruleset::ruleset_identity_summary;
 
 // Blocking detection for the scan hot path (ruleset passed explicitly).
 pub(crate) use detection::{
