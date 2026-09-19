@@ -208,7 +208,7 @@ def main() -> int:
         hits.extend(scan_text(rel, text, exact, suffixes))
 
     if hits:
-        print("host-hygiene: scan-target / provenance breadcrumbs found:")
+        print("host-hygiene: named-host or provenance breadcrumbs found:")
         for h in hits:
             print(f"  {h}")
         print(
