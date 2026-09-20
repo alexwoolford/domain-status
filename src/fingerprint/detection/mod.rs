@@ -1241,4 +1241,118 @@ mod tests {
         let result = get_technology_category(&ruleset, "NonExistentTech");
         assert_eq!(result, None);
     }
+
+    /// Kills: rewriting any `parse_detection_source` match arm (e.g. `"header"`
+    /// → `Cookie`, or dropping `"scriptSrc"`) or the `_ => return None` default.
+    #[rstest::rstest]
+    #[case("header", Some(DetectionSource::Header))]
+    #[case("cookie", Some(DetectionSource::Cookie))]
+    #[case("html", Some(DetectionSource::Html))]
+    #[case("scriptSrc", Some(DetectionSource::ScriptSrc))]
+    #[case("scripts", Some(DetectionSource::Scripts))]
+    #[case("url", Some(DetectionSource::Url))]
+    #[case("js", Some(DetectionSource::Js))]
+    #[case("ns", Some(DetectionSource::Ns))]
+    #[case("cname", Some(DetectionSource::Cname))]
+    #[case("cert", Some(DetectionSource::Cert))]
+    #[case("implied", Some(DetectionSource::Implied))]
+    #[case("", None)]
+    #[case("HEADER", None)]
+    #[case("Header", None)]
+    fn test_parse_detection_source_maps_exact_variant(
+        #[case] raw: &str,
+        #[case] expected: Option<DetectionSource>,
+    ) {
+        assert_eq!(parse_detection_source(raw), expected);
+    }
+
+    /// Kills: dropping `to_ascii_lowercase` / `trim_end_matches('.')`, treating
+    /// `github.com` as a prefix of another registrable host, or rejecting
+    /// userinfo on `https://user@github.com/` (the host is still `github.com`).
+    #[rstest::rstest]
+    #[case("https://github.com/octocat", true)]
+    #[case("https://www.github.com/login", true)]
+    #[case("https://GitHub.com/", true)]
+    #[case("https://github.com./", true)]
+    #[case("https://user@github.com/", true)]
+    #[case("https://github.com.example.net/", false)]
+    #[case("https://notgithub.example.com/", false)]
+    #[case("not a url", false)]
+    #[case("user@github.com", false)]
+    fn test_is_github_dot_com_host_contract(#[case] url: &str, #[case] expected: bool) {
+        assert_eq!(is_github_dot_com_host(url), expected);
+    }
+
+    /// Kills: deleting `!` on `cookies.is_empty()` (or skipping
+    /// `check_cookies_with_ruleset`) so a present `_uetsid` cookie is not
+    /// observed as `cookie`.
+    #[test]
+    fn detect_technologies_blocking_set_cookie_is_cookie_source() {
+        let mut tech = empty_tech();
+        tech.cookies.insert("_uetsid".to_string(), String::new());
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies: HashMap::from([("Microsoft Advertising".into(), tech)]),
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::SET_COOKIE,
+            "_uetsid=ABCDEF".parse().unwrap(),
+        );
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &headers,
+            &HashMap::new(),
+            &[],
+            "",
+            "https://example.com/",
+            &HashSet::new(),
+            "",
+        )
+        .expect("detect");
+        let hit = result
+            .iter()
+            .find(|t| t.name == "Microsoft Advertising")
+            .expect("cookie gate must run");
+        assert_eq!(hit.detection_source.as_deref(), Some("cookie"));
+    }
+
+    /// Kills: deleting `!` on `script_tag_ids.is_empty()` so a `__NEXT_DATA__`
+    /// script-tag id is not observed as `js`.
+    #[test]
+    fn detect_technologies_blocking_script_tag_id_is_js_source() {
+        let mut tech = empty_tech();
+        tech.js.insert("__NEXT_DATA__".to_string(), String::new());
+        let ruleset = Arc::new(FingerprintRuleset {
+            technologies: HashMap::from([("Next.js".into(), tech)]),
+            categories: HashMap::new(),
+            metadata: crate::fingerprint::models::FingerprintMetadata {
+                source: "test".into(),
+                version: "0".into(),
+                last_updated: std::time::SystemTime::now(),
+            },
+        });
+        let script_tag_ids = HashSet::from(["__NEXT_DATA__".to_string()]);
+        let result = detect_technologies_blocking(
+            &ruleset,
+            &HeaderMap::new(),
+            &HashMap::new(),
+            &[],
+            "",
+            "https://example.com/",
+            &script_tag_ids,
+            "",
+        )
+        .expect("detect");
+        let hit = result
+            .iter()
+            .find(|t| t.name == "Next.js")
+            .expect("script-tag gate must run");
+        assert_eq!(hit.detection_source.as_deref(), Some("js"));
+    }
 }

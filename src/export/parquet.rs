@@ -964,10 +964,14 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::fields::{field_by_id, PARQUET_FIELD_ORDER};
     use super::super::types::{ExportFormat, ExportOptions};
     use super::{build_schema, export_parquet};
     use crate::storage::migrations::run_migrations;
-    use arrow::array::{Array, BooleanArray, ListArray, StringArray, StructArray};
+    use arrow::array::{
+        Array, BooleanArray, Int32Array, Int64Array, ListArray, RecordBatch, StringArray,
+        StructArray,
+    };
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use sqlx::{Row, SqlitePool};
     use std::path::{Path, PathBuf};
@@ -1356,5 +1360,326 @@ mod tests {
             on,
             vec![("PHP".to_string(), true), ("nginx".to_string(), false)]
         );
+    }
+
+    fn read_parquet_batch(path: &Path) -> RecordBatch {
+        let file = std::fs::File::open(path).expect("open parquet");
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).expect("parse Parquet");
+        let mut reader = builder.build().expect("build reader");
+        reader.next().expect("batch").expect("batch ok")
+    }
+
+    fn row_for_domain(batch: &RecordBatch, domain: &str) -> usize {
+        let arr = batch
+            .column_by_name("final_domain")
+            .expect("final_domain")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("final_domain StringArray");
+        (0..arr.len())
+            .find(|&i| arr.value(i) == domain)
+            .unwrap_or_else(|| panic!("missing row for {domain}"))
+    }
+
+    fn list_len(batch: &RecordBatch, name: &str, row: usize) -> usize {
+        let list = batch
+            .column_by_name(name)
+            .unwrap_or_else(|| panic!("missing list column {name}"))
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap_or_else(|| panic!("{name} should be ListArray"));
+        usize::try_from(list.value_length(row)).expect("list length")
+    }
+
+    fn utf8_opt(batch: &RecordBatch, name: &str, row: usize) -> Option<String> {
+        let arr = batch
+            .column_by_name(name)
+            .unwrap_or_else(|| panic!("missing utf8 column {name}"))
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap_or_else(|| panic!("{name} should be StringArray"));
+        if arr.is_null(row) {
+            None
+        } else {
+            Some(arr.value(row).to_string())
+        }
+    }
+
+    fn i32_val(batch: &RecordBatch, name: &str, row: usize) -> i32 {
+        batch
+            .column_by_name(name)
+            .unwrap_or_else(|| panic!("missing i32 column {name}"))
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap_or_else(|| panic!("{name} should be Int32Array"))
+            .value(row)
+    }
+
+    fn i32_opt(batch: &RecordBatch, name: &str, row: usize) -> Option<i32> {
+        let arr = batch
+            .column_by_name(name)
+            .unwrap_or_else(|| panic!("missing i32 column {name}"))
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap_or_else(|| panic!("{name} should be Int32Array"));
+        if arr.is_null(row) {
+            None
+        } else {
+            Some(arr.value(row))
+        }
+    }
+
+    fn i64_opt(batch: &RecordBatch, name: &str, row: usize) -> Option<i64> {
+        let arr = batch
+            .column_by_name(name)
+            .unwrap_or_else(|| panic!("missing i64 column {name}"))
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap_or_else(|| panic!("{name} should be Int64Array"));
+        if arr.is_null(row) {
+            None
+        } else {
+            Some(arr.value(row))
+        }
+    }
+
+    async fn populate_full_satellites(pool: &SqlitePool, url_id: i64) {
+        sqlx::query("UPDATE url_status SET tls_version = ?, ssl_cert_subject = ? WHERE id = ?")
+            .bind("TLSv1.3")
+            .bind("CN=full.example.com")
+            .bind(url_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO url_nameservers (url_status_id, nameserver) VALUES (?, ?)")
+            .bind(url_id)
+            .bind("ns1.example.com")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO url_technologies (url_status_id, technology_name, technology_version)
+             VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("WordPress")
+        .bind("6.8")
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO url_ipv6_addresses (url_status_id, ipv6_address) VALUES (?, ?)")
+            .bind(url_id)
+            .bind("2001:db8::1")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO url_caa_records (url_status_id, flag, tag, value) VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind(0i64)
+        .bind("issue")
+        .bind("ca.example.com")
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO url_certificate_sans (url_status_id, san_value) VALUES (?, ?)")
+            .bind(url_id)
+            .bind("full.example.com")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO url_geoip (url_status_id, country_code, country_name, asn)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("US")
+        .bind("United States")
+        .bind(64496i64)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO url_whois (url_status_id, registrar, registrant_country) VALUES (?, ?, ?)",
+        )
+        .bind(url_id)
+        .bind("Example Registrar")
+        .bind("US")
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO url_favicons (url_status_id, favicon_url, hash) VALUES (?, ?, ?)")
+            .bind(url_id)
+            .bind("https://full.example.com/favicon.ico")
+            .bind(12345i64)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn parquet_name(id: &str) -> &'static str {
+        field_by_id(id)
+            .parquet
+            .as_ref()
+            .unwrap_or_else(|| panic!("{id} missing parquet spec"))
+            .name
+    }
+
+    fn assert_every_column_type(batch: &RecordBatch) {
+        let expected = build_schema();
+        assert_eq!(
+            batch.num_columns(),
+            expected.fields().len(),
+            "column count must match build_schema()"
+        );
+        for id in PARQUET_FIELD_ORDER {
+            let spec = field_by_id(id)
+                .parquet
+                .as_ref()
+                .unwrap_or_else(|| panic!("{id} missing parquet spec"));
+            let col = batch
+                .column_by_name(spec.name)
+                .unwrap_or_else(|| panic!("missing Parquet column {} (id {id})", spec.name));
+            let want = (spec.data_type)();
+            assert_eq!(
+                col.data_type(),
+                &want,
+                "Arrow type mismatch for id {id} / {}",
+                spec.name
+            );
+            let field = expected
+                .field_with_name(spec.name)
+                .unwrap_or_else(|_| panic!("schema missing {}", spec.name));
+            assert_eq!(field.data_type(), &want, "schema type for {}", spec.name);
+            assert_eq!(
+                field.is_nullable(),
+                spec.nullable,
+                "nullability for {}",
+                spec.name
+            );
+        }
+    }
+
+    fn assert_sparse_vs_full_core(batch: &RecordBatch, sparse: usize, full: usize) {
+        assert_eq!(
+            utf8_opt(batch, "url", sparse).as_deref(),
+            Some("https://sparse.example.com")
+        );
+        assert_eq!(
+            utf8_opt(batch, "url", full).as_deref(),
+            Some("https://full.example.com")
+        );
+        assert_eq!(list_len(batch, "nameservers", sparse), 0);
+        assert_eq!(list_len(batch, "nameservers", full), 1);
+        assert_eq!(list_len(batch, "technologies", sparse), 0);
+        assert_eq!(list_len(batch, "technologies", full), 1);
+        assert_eq!(i32_val(batch, "technology_count", sparse), 0);
+        assert_eq!(i32_val(batch, "technology_count", full), 1);
+        assert!(utf8_opt(batch, "tls_version", sparse).is_none());
+        assert_eq!(
+            utf8_opt(batch, "tls_version", full).as_deref(),
+            Some("TLSv1.3")
+        );
+        assert!(utf8_opt(batch, "ssl_cert_subject", sparse).is_none());
+        assert_eq!(
+            utf8_opt(batch, "ssl_cert_subject", full).as_deref(),
+            Some("CN=full.example.com")
+        );
+        assert_eq!(list_len(batch, "certificate_sans", sparse), 0);
+        assert_eq!(list_len(batch, "certificate_sans", full), 1);
+        assert_eq!(list_len(batch, "ipv6_addresses", sparse), 0);
+        assert_eq!(list_len(batch, "ipv6_addresses", full), 1);
+        assert_eq!(list_len(batch, "caa_records", sparse), 0);
+        assert_eq!(list_len(batch, "caa_records", full), 1);
+    }
+
+    fn assert_sparse_vs_full_enrichment(batch: &RecordBatch, sparse: usize, full: usize) {
+        assert!(utf8_opt(batch, "geoip_country_code", sparse).is_none());
+        assert_eq!(
+            utf8_opt(batch, "geoip_country_code", full).as_deref(),
+            Some("US")
+        );
+        assert!(utf8_opt(batch, "whois_registrar", sparse).is_none());
+        assert_eq!(
+            utf8_opt(batch, "whois_registrar", full).as_deref(),
+            Some("Example Registrar")
+        );
+        assert!(i32_opt(batch, "favicon_hash", sparse).is_none());
+        assert_eq!(i32_opt(batch, "favicon_hash", full), Some(12345));
+        assert!(utf8_opt(batch, "favicon_url", sparse).is_none());
+        assert_eq!(
+            utf8_opt(batch, "favicon_url", full).as_deref(),
+            Some("https://full.example.com/favicon.ico")
+        );
+        assert_eq!(
+            i64_opt(batch, "observed_at_ms", sparse),
+            Some(1_704_067_200_000)
+        );
+        assert_eq!(
+            utf8_opt(batch, "run_id", sparse).as_deref(),
+            Some("test-run-1")
+        );
+        for id in [
+            "redirect_chain",
+            "oids",
+            "cname_records",
+            "script_hosts",
+            "txt_records",
+            "mx_records",
+            "analytics_ids",
+            "social_media_links",
+            "structured_data_entries",
+            "http_headers",
+            "security_headers",
+            "partial_failures",
+            "contact_links",
+            "exposed_secrets",
+        ] {
+            let name = parquet_name(id);
+            assert_eq!(list_len(batch, name, sparse), 0, "sparse {name} empty list");
+            assert_eq!(list_len(batch, name, full), 0, "full leftover {name} empty");
+        }
+    }
+
+    /// Kills: dropping any `write_batch` column so a `PARQUET_FIELD_ORDER` id is
+    /// missing or mistyped, or writing empty lists / nulls for populated
+    /// nameserver / tech / TLS / CAA / IPv6 / geoip / whois / favicon satellites.
+    #[tokio::test]
+    async fn test_parquet_every_field_order_column_type_and_null() {
+        let temp_db = NamedTempFile::new().expect("temp DB");
+        let db_path = temp_db.path();
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .unwrap();
+        run_migrations(&pool).await.unwrap();
+        create_test_url_status(&pool, "sparse.example.com").await;
+        let full_id = create_test_url_status(&pool, "full.example.com").await;
+        populate_full_satellites(&pool, full_id).await;
+        drop(pool);
+
+        let temp_file = NamedTempFile::new().expect("temp output");
+        let output_path = temp_file.path().to_path_buf();
+        let count = export_parquet(&ExportOptions {
+            db_path: db_path.to_path_buf(),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Parquet,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect("export");
+        assert_eq!(count, 2);
+
+        let batch = read_parquet_batch(&output_path);
+        assert_eq!(batch.num_rows(), 2);
+        assert_every_column_type(&batch);
+        let sparse = row_for_domain(&batch, "sparse.example.com");
+        let full = row_for_domain(&batch, "full.example.com");
+        assert_sparse_vs_full_core(&batch, sparse, full);
+        assert_sparse_vs_full_enrichment(&batch, sparse, full);
     }
 }

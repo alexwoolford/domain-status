@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 /// Demonstrates the fix: reqwest with `connect_timeout`.
 #[tokio::test]
-#[ignore]
+#[ignore = "blackhole connect timing; run with --ignored"]
 async fn test_http_client_with_connect_timeout_fix() {
     // Use non-routable IP - TCP connect will hang/timeout
     let blackhole_ip = "10.255.255.1:80";

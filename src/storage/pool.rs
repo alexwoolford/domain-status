@@ -159,7 +159,7 @@ pub async fn init_db_pool_with_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
     #[tokio::test]
     async fn test_init_db_pool_with_path_success() {
@@ -256,5 +256,55 @@ mod tests {
         assert_eq!(sqlite_pool_size(30), 30);
         assert_eq!(sqlite_pool_size(32), SQLITE_POOL_CONNECTION_CAP);
         assert_eq!(sqlite_pool_size(10_000), SQLITE_POOL_CONNECTION_CAP);
+    }
+
+    /// Kills: `init_db_pool_with_path` returning `Ok` (or a non-`FileCreationError`)
+    /// when a parent path is a file, or dropping the dest path from `context`.
+    #[tokio::test]
+    async fn test_init_db_pool_unwritable_parent_is_file_creation_error() {
+        let tmp = TempDir::new().expect("tempdir");
+        let blocker = tmp.path().join("not_a_directory");
+        std::fs::write(&blocker, b"x").expect("write blocker");
+        let dest = blocker.join("domain_status.db");
+        let err = init_db_pool_with_path(&dest, 2)
+            .await
+            .expect_err("file-as-parent must fail");
+        match err {
+            DatabaseError::FileCreationError { context, .. } => {
+                assert!(
+                    context.contains(&dest.display().to_string()),
+                    "FileCreationError context must name the dest path, got: {context}"
+                );
+            }
+            other => panic!("expected FileCreationError, got {other:?}"),
+        }
+    }
+
+    /// Kills: `AlreadyExists` guard replaced with `true` so a non-`AlreadyExists`
+    /// `create_new` error (parent not writable) is swallowed into `SqlError`.
+    /// Dest-is-directory is `AlreadyExists` on this platform, so it cannot kill
+    /// that mutant.
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_init_db_pool_unwritable_dest_is_file_creation_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().expect("tempdir");
+        let parent = tmp.path().join("locked");
+        std::fs::create_dir(&parent).expect("parent");
+        let dest = parent.join("domain_status.db");
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555))
+            .expect("lock parent");
+        let result = init_db_pool_with_path(&dest, 2).await;
+        let _ = std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755));
+        let err = result.expect_err("unwritable dest must fail");
+        match err {
+            DatabaseError::FileCreationError { context, .. } => {
+                assert!(
+                    context.contains(&dest.display().to_string()),
+                    "FileCreationError context must name the dest path, got: {context}"
+                );
+            }
+            other => panic!("expected FileCreationError, got {other:?}"),
+        }
     }
 }

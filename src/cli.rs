@@ -146,6 +146,8 @@ const SCAN_CONFIG_ARG_IDS: &[&str] = &[
 /// CLI-only scan arg ids (not [`FileConfig`] fields).
 const SCAN_CONFIG_CLI_ONLY_ARG_IDS: &[&str] = &["no_whois"];
 
+/// Compile-time inventory check — not a coverage gap; the `const` assert below
+/// fails the build if this is wrong.
 const fn keys_subset(subset: &[&str], superset: &[&str]) -> bool {
     let mut i = 0;
     while i < subset.len() {
@@ -157,6 +159,8 @@ const fn keys_subset(subset: &[&str], superset: &[&str]) -> bool {
     true
 }
 
+/// Compile-time inventory check — not a coverage gap; the `const` assert below
+/// fails the build if this is wrong.
 const fn scan_config_ids_are_file_or_cli_only() -> bool {
     let mut i = 0;
     while i < SCAN_CONFIG_ARG_IDS.len() {

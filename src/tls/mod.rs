@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access - run with `cargo test -- --ignored`
+    #[ignore = "requires live network"]
     async fn test_get_ssl_certificate_info_valid_domain() {
         init_crypto_for_test();
         let resolver = test_resolver();

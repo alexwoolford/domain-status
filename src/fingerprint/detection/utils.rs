@@ -192,17 +192,19 @@ mod tests {
         assert!(!normalized.contains_key("SERVER"));
     }
 
+    /// Kills: `normalize_headers_to_map` inserting a key for a non-UTF8
+    /// `HeaderValue` (the `to_str()` skip).
     #[test]
     fn test_normalize_headers_to_map_invalid_utf8() {
         let mut headers = HeaderMap::new();
-        // Create a header value that's not valid UTF-8
         let invalid_value = HeaderValue::from_bytes(&[0xFF, 0xFE, 0xFD]).unwrap();
-        // Use a standard header name that exists
         headers.insert(reqwest::header::SERVER, invalid_value);
 
         let normalized = normalize_headers_to_map(&headers);
-        // Invalid UTF-8 should be filtered out (to_str() fails)
-        assert!(normalized.is_empty() || !normalized.contains_key("server"));
+        assert!(
+            normalized.is_empty(),
+            "non-UTF8 header values must be skipped, got: {normalized:?}"
+        );
     }
 
     #[test]

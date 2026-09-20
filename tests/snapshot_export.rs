@@ -206,3 +206,33 @@ fn cli_scan_short_help_hides_advanced_flags() {
         assert_not_contains(&short_help, needle, "`scan -h` output");
     }
 }
+
+/// Kills: `execute_export_command` returning success when `--db-path` parent
+/// directory does not exist.
+#[test]
+fn cli_export_missing_db_exits_nonzero() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let missing = temp.path().join("no-such-dir").join("missing.db");
+    let out = temp.path().join("out.csv");
+    let mut cmd = domain_status_bin();
+    cmd.env_remove("DOMAIN_STATUS_DB_PATH").args([
+        "export",
+        "--db-path",
+        missing.to_str().expect("utf8"),
+        "--format",
+        "csv",
+        "--output",
+        out.to_str().expect("utf8"),
+    ]);
+    let output = cmd.output().expect("run export");
+    assert!(
+        !output.status.success(),
+        "export to missing db parent should fail, stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed") || stderr.contains("database") || stderr.contains("export"),
+        "stderr should mention the failure, got:\n{stderr}"
+    );
+}

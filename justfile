@@ -45,6 +45,11 @@ coverage:
     cargo tarpaulin --out Html --output-dir coverage --all-features --timeout 120
     @echo "📊 Coverage report: coverage/index.html"
 
+# Module-scoped mutation testing (not a CI gate).
+# Usage: just mutants src/storage/migrations.rs
+mutants FILE:
+    cargo mutants -f {{FILE}} --test-tool=cargo
+
 # Build release binary
 build:
     cargo build --release --locked

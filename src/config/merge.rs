@@ -540,9 +540,10 @@ mod tests {
     fn test_merge_fail_on_invalid_rejected_valid_applied_cli_overrides() {
         // Invalid fail_on fails deserialization (no silent skip)
         let err = file_config_from_json(json!({"fail_on": "boom"})).unwrap_err();
+        let err_s = err.to_string();
         assert!(
-            err.to_string().contains("fail_on") || err.to_string().contains("boom"),
-            "invalid fail_on must fail deserialize, got: {err}"
+            err_s.contains("fail_on"),
+            "invalid fail_on must name the field, got: {err_s}"
         );
 
         // Valid file value applied when CLI not explicit
@@ -577,11 +578,12 @@ mod tests {
             "explicit CLI fail_on must override file"
         );
 
-        // Invalid bool for enable_whois fails deserialization
-        let bool_err = file_config_from_json(json!({"enable_whois": "maybe"})).unwrap_err();
+        // Invalid bool for enable_whois fails deserialization (TOML names the key)
+        let bool_err = file_config_from_toml(r#"enable_whois = "maybe""#).unwrap_err();
+        let bool_s = bool_err.to_string();
         assert!(
-            bool_err.to_string().contains("bool") || bool_err.to_string().contains("maybe"),
-            "invalid enable_whois must fail deserialize, got: {bool_err}"
+            bool_s.contains("enable_whois"),
+            "invalid enable_whois must name the field, got: {bool_s}"
         );
 
         // CLI-style any-failure must parse from env/TOML
@@ -600,19 +602,15 @@ mod tests {
         );
     }
 
+    /// Kills: invalid `enable_whois` deserializing as `Ok(Some(false))` or an
+    /// `Err` that does not name the field.
     #[test]
     fn test_invalid_bool_deserialize_fails_instead_of_forcing_false() {
-        // Previously silent skip could leave stale true; invalid values must error.
-        let err = file_config_from_json(json!({
-            "enable_whois": "maybe",
-            "scan_external_scripts": " nah "
-        }))
-        .unwrap_err();
+        let err = file_config_from_toml(r#"enable_whois = "maybe""#).unwrap_err();
+        let err_s = err.to_string();
         assert!(
-            err.to_string().contains("bool")
-                || err.to_string().contains("maybe")
-                || err.to_string().contains("nah"),
-            "invalid bools must fail deserialize, got: {err}"
+            err_s.contains("enable_whois"),
+            "invalid enable_whois must name the field, got: {err_s}"
         );
         assert!(parse_bool("maybe").is_none());
         assert!(parse_bool(" nah ").is_none());
@@ -808,5 +806,93 @@ mod tests {
         for key in FILE_CONFIG_OVERLAY_KEYS {
             assert_overlay_sentinel_on_config(&config, key);
         }
+    }
+
+    fn file_config_from_toml(toml: &str) -> Result<FileConfig, config::ConfigError> {
+        let settings = config::Config::builder()
+            .add_source(config::File::from_str(toml, config::FileFormat::Toml))
+            .build()?;
+        settings.try_deserialize()
+    }
+
+    /// Kills: deleting any `parse_log_level` arm (`error`/`warn`/`info`/`debug`/
+    /// `trace`) or accepting an unknown token.
+    #[rstest::rstest]
+    #[case("error", Some(LogLevel::Error))]
+    #[case("warn", Some(LogLevel::Warn))]
+    #[case("info", Some(LogLevel::Info))]
+    #[case("debug", Some(LogLevel::Debug))]
+    #[case("trace", Some(LogLevel::Trace))]
+    #[case("ERROR", Some(LogLevel::Error))]
+    #[case("unknown", None)]
+    #[case("", None)]
+    fn test_parse_log_level_exact(#[case] raw: &str, #[case] expected: Option<LogLevel>) {
+        assert_eq!(parse_log_level(raw), expected);
+    }
+
+    /// Kills: deleting the `plain` (or `json`) arm of `parse_log_format`.
+    #[rstest::rstest]
+    #[case("plain", Some(LogFormat::Plain))]
+    #[case("json", Some(LogFormat::Json))]
+    #[case("PLAIN", Some(LogFormat::Plain))]
+    #[case("yaml", None)]
+    #[case("", None)]
+    fn test_parse_log_format_exact(#[case] raw: &str, #[case] expected: Option<LogFormat>) {
+        assert_eq!(parse_log_format(raw), expected);
+    }
+
+    /// Kills: deleting the `never` arm of `parse_fail_on`, or dropping any
+    /// any-failure spelling / `pct>`.
+    #[rstest::rstest]
+    #[case("never", Some(FailOn::Never))]
+    #[case("any-failure", Some(FailOn::AnyFailure))]
+    #[case("any_failure", Some(FailOn::AnyFailure))]
+    #[case("anyfailure", Some(FailOn::AnyFailure))]
+    #[case("pct>", Some(FailOn::PctGreaterThan))]
+    #[case("NEVER", Some(FailOn::Never))]
+    #[case("always", None)]
+    #[case("", None)]
+    fn test_parse_fail_on_exact(#[case] raw: &str, #[case] expected: Option<FailOn>) {
+        assert_eq!(parse_fail_on(raw), expected);
+    }
+
+    /// Kills: `visit_u64`/`visit_i64` dropping `1`/`0`, or string/bool
+    /// synonyms for `enable_whois` failing to deserialize from TOML.
+    #[rstest::rstest]
+    #[case("enable_whois = 1", true)]
+    #[case("enable_whois = 0", false)]
+    #[case(r#"enable_whois = "yes""#, true)]
+    #[case(r#"enable_whois = "no""#, false)]
+    #[case("enable_whois = true", true)]
+    #[case("enable_whois = false", false)]
+    fn test_enable_whois_toml_synonyms(#[case] toml: &str, #[case] expected: bool) {
+        let fc = file_config_from_toml(toml).expect("valid enable_whois TOML");
+        assert_eq!(fc.enable_whois, Some(expected), "toml={toml}");
+    }
+
+    /// Kills: `visit_u64` mapping `1` → `false` (JSON numbers take this path;
+    /// TOML integers typically take `visit_i64`).
+    #[test]
+    fn test_enable_whois_json_integer_synonyms() {
+        let one = file_config_from_json(json!({"enable_whois": 1})).expect("1");
+        assert_eq!(one.enable_whois, Some(true));
+        let zero = file_config_from_json(json!({"enable_whois": 0})).expect("0");
+        assert_eq!(zero.enable_whois, Some(false));
+    }
+
+    /// Kills: unknown `fail_on` / `log_level` / `log_format` silently defaulting
+    /// instead of `Err` that names the field.
+    #[rstest::rstest]
+    #[case(r#"fail_on = "boom""#, "fail_on")]
+    #[case(r#"log_level = "silent""#, "log_level")]
+    #[case(r#"log_format = "yaml""#, "log_format")]
+    #[case(r#"enable_whois = "maybe""#, "enable_whois")]
+    fn test_unknown_config_value_err_names_field(#[case] toml: &str, #[case] field: &str) {
+        let err = file_config_from_toml(toml).expect_err("unknown value must fail");
+        let err_s = err.to_string();
+        assert!(
+            err_s.contains(field),
+            "reject must name {field}, got: {err_s}"
+        );
     }
 }

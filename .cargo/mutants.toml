@@ -1,0 +1,5 @@
+# Third-party patch overlay — not our code to test.
+exclude_globs = ["vendor/**"]
+# Long-running scan orchestration needs headroom over the baseline test time.
+timeout_multiplier = 3.0
+minimum_test_timeout = 120

@@ -188,6 +188,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Kills: `fetch_categories_from_url` returning `Err` without
+    /// `"Failed to fetch categories"` (e.g. a bare status-only message).
     #[tokio::test]
     async fn test_fetch_categories_from_url_http_error() {
         let server = Server::run();
@@ -201,9 +203,14 @@ mod tests {
         let result = fetch_categories_from_url(&url).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Failed to fetch categories") || error_msg.contains("404"));
+        assert!(
+            error_msg.contains("Failed to fetch categories"),
+            "expected fetch-failed context, got: {error_msg}"
+        );
     }
 
+    /// Kills: `fetch_categories_from_url` dropping the
+    /// `"Failed to parse categories JSON"` context on invalid JSON.
     #[tokio::test]
     async fn test_fetch_categories_from_url_invalid_json() {
         let server = Server::run();
@@ -217,7 +224,10 @@ mod tests {
         let result = fetch_categories_from_url(&url).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("parse") || error_msg.contains("JSON"));
+        assert!(
+            error_msg.contains("Failed to parse categories JSON"),
+            "expected parse-context, got: {error_msg}"
+        );
     }
 
     #[tokio::test]
@@ -241,6 +251,8 @@ mod tests {
         assert!(!categories.contains_key(&0)); // "invalid" should not be parsed
     }
 
+    /// Kills: `fetch_categories_from_url` flattening a missing `name` field so
+    /// the source chain no longer contains serde's `missing field`.
     #[tokio::test]
     async fn test_fetch_categories_from_url_missing_name() {
         let server = Server::run();
@@ -253,16 +265,18 @@ mod tests {
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
         let result = fetch_categories_from_url(&url).await;
-        // Missing name field should cause deserialization error
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
+        let err = result.expect_err("missing name must fail deserialize");
         assert!(
-            error_msg.contains("missing field")
-                || error_msg.contains("parse")
-                || error_msg.contains("JSON")
+            err.to_string().contains("Failed to parse categories JSON"),
+            "expected parse-context, got: {err}"
+        );
+        assert!(
+            err.chain().any(|e| e.to_string().contains("missing field")),
+            "source chain must name the missing field, got: {err:#}"
         );
     }
 
+    /// Contract: `{}` loads as an empty map (`is_ok` then `len() == 0`).
     #[tokio::test]
     async fn test_fetch_categories_from_url_empty_categories() {
         let server = Server::run();
@@ -314,6 +328,8 @@ mod tests {
         );
     }
 
+    /// Kills: `load_categories_from_path` dropping the
+    /// `"Failed to parse categories JSON"` context on invalid JSON.
     #[tokio::test]
     async fn test_load_categories_from_path_invalid_json() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -331,7 +347,10 @@ mod tests {
         let result = load_categories_from_path(&tech_path).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("parse") || error_msg.contains("JSON"));
+        assert!(
+            error_msg.contains("Failed to parse categories JSON"),
+            "expected parse-context, got: {error_msg}"
+        );
     }
 
     #[tokio::test]

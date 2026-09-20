@@ -368,4 +368,117 @@ mod tests {
         let result = fetch_and_hash_favicon(&client, None, &favicon_url).await;
         assert!(result.is_none(), "4xx response must yield None");
     }
+
+    fn no_redirect_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("client")
+    }
+
+    /// Manual hop loop calls `validate_url_safe`, which rejects loopback. Map
+    /// RFC `example.com` to the mock so same-origin `Location` hops are allowed.
+    fn example_com_client(server: &wiremock::MockServer) -> (reqwest::Client, String) {
+        let addr = server.address();
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve("example.com", *addr)
+            .build()
+            .expect("client");
+        (client, format!("http://example.com:{}", addr.port()))
+    }
+
+    /// Kills: `OnLimit::Abort` returning `Some` when the body is one byte over
+    /// `max_size`, or dropping an exact-size body.
+    #[tokio::test]
+    async fn test_fetch_favicon_bytes_size_cap() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path("/exact.ico"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![1u8; 8]))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/over.ico"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![1u8; 9]))
+            .mount(&server)
+            .await;
+        let client = no_redirect_client();
+        let exact = fetch_favicon_bytes(&client, &format!("{}/exact.ico", server.uri()), 8)
+            .await
+            .expect("exact");
+        assert_eq!(exact.as_deref(), Some(&[1u8; 8][..]));
+        let over = fetch_favicon_bytes(&client, &format!("{}/over.ico", server.uri()), 8)
+            .await
+            .expect("over");
+        assert_eq!(over, None, "one byte over max_size must abort");
+    }
+
+    /// Kills: following redirects automatically (or ignoring `Location`) so a
+    /// same-origin 302 never yields the hop body.
+    #[tokio::test]
+    async fn test_fetch_favicon_bytes_follows_same_origin_redirect() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path("/start.ico"))
+            .respond_with(wiremock::ResponseTemplate::new(302).insert_header("Location", "/ok.ico"))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/ok.ico"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![9u8; 4]))
+            .mount(&server)
+            .await;
+        let (client, origin) = example_com_client(&server);
+        let got = fetch_favicon_bytes(&client, &format!("{origin}/start.ico"), 64)
+            .await
+            .expect("redirect hop");
+        assert_eq!(got.as_deref(), Some(&[9u8; 4][..]));
+    }
+
+    /// Kills: following a redirect to `127.0.0.1` (SSRF hop must be `None`).
+    /// Destination serves a body so a skipped `validate_url_safe` would yield `Some`.
+    #[tokio::test]
+    async fn test_fetch_favicon_bytes_rejects_ssrf_redirect() {
+        let server = wiremock::MockServer::start().await;
+        let stolen = format!("http://127.0.0.1:{}/stolen.ico", server.address().port());
+        wiremock::Mock::given(wiremock::matchers::path("/favicon.ico"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(302).insert_header("Location", stolen.as_str()),
+            )
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/stolen.ico"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![3u8; 4]))
+            .mount(&server)
+            .await;
+        let got = fetch_favicon_bytes(
+            &no_redirect_client(),
+            &format!("{}/favicon.ico", server.uri()),
+            64,
+        )
+        .await
+        .expect("ssrf hop");
+        assert_eq!(got, None, "loopback redirect must be rejected");
+    }
+
+    /// Kills: raising `MAX_FAVICON_REDIRECTS` so a 6-hop chain still returns
+    /// a body.
+    #[tokio::test]
+    async fn test_fetch_favicon_bytes_stops_after_five_redirects() {
+        let server = wiremock::MockServer::start().await;
+        for i in 0..6 {
+            let path = format!("/h{i}");
+            let next = format!("/h{}", i + 1);
+            wiremock::Mock::given(wiremock::matchers::path(path.as_str()))
+                .respond_with(wiremock::ResponseTemplate::new(302).insert_header("Location", next))
+                .mount(&server)
+                .await;
+        }
+        wiremock::Mock::given(wiremock::matchers::path("/h6"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![7u8; 4]))
+            .mount(&server)
+            .await;
+        let (client, origin) = example_com_client(&server);
+        let got = fetch_favicon_bytes(&client, &format!("{origin}/h0"), 64)
+            .await
+            .expect("loop");
+        assert_eq!(got, None, "six 302 hops must exceed the redirect cap");
+    }
 }

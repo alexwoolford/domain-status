@@ -5,6 +5,8 @@
 //! This ensures migrations work for distributed binaries without requiring the
 //! migrations directory to be present alongside the executable.
 
+use std::path::Path;
+
 use include_dir::{include_dir, Dir};
 use sqlx::{Pool, Sqlite};
 use tempfile::TempDir;
@@ -45,74 +47,64 @@ static MIGRATIONS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 /// callers can walk `std::error::Error::source()` (or use `anyhow::chain`)
 /// to inspect causes — no `anyhow::Error` is leaked across the public API.
 pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), MigrationError> {
-    // In development, try to use the source migrations directory first (faster)
-    let source_migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-
+    let source_migrations = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
     if source_migrations.exists() {
-        // Use source directory in development - migrations are available at build path
-        let migrator = sqlx::migrate::Migrator::new(source_migrations.as_path()).await?;
-        migrator.run(pool).await?;
-        Ok(())
+        run_migrations_from_dir(pool, &source_migrations).await
     } else {
-        // Extract embedded migrations to temp directory for distributed binaries
-        // Keep temp_dir in scope for the entire function to ensure files stay available
-        let temp_dir = TempDir::new().map_err(|e| MigrationError::ExtractIo {
-            context: "creating tempdir for embedded migrations".to_string(),
+        run_migrations_embedded(pool).await
+    }
+}
+
+/// Writes compile-time embedded migration files into `dest`.
+///
+/// Used by the shipped binary (no source `migrations/` directory) and by tests
+/// that force that path.
+pub(crate) fn extract_embedded_migrations(dest: &Path) -> Result<(), MigrationError> {
+    std::fs::create_dir_all(dest).map_err(|e| MigrationError::ExtractIo {
+        context: format!("creating migrations directory at {}", dest.display()),
+        source: e,
+    })?;
+
+    for file in MIGRATIONS_DIR.files() {
+        let file_path = dest.join(file.path());
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| MigrationError::ExtractIo {
+                context: format!("creating migration parent directory {}", parent.display()),
+                source: e,
+            })?;
+        }
+        std::fs::write(&file_path, file.contents()).map_err(|e| MigrationError::ExtractIo {
+            context: format!("writing embedded migration {}", file_path.display()),
             source: e,
         })?;
-        let migrations_path = temp_dir.path().join("migrations");
-
-        // Wrap blocking filesystem operations in spawn_blocking to avoid blocking tokio runtime.
-        // This is a one-time startup operation with small files, so impact is minimal.
-        let migrations_path_for_task = migrations_path.clone();
-        let extract_result = tokio::task::spawn_blocking(move || -> Result<(), MigrationError> {
-            std::fs::create_dir_all(&migrations_path_for_task).map_err(|e| {
-                MigrationError::ExtractIo {
-                    context: format!(
-                        "creating migrations directory at {}",
-                        migrations_path_for_task.display()
-                    ),
-                    source: e,
-                }
-            })?;
-
-            // Extract all migration files
-            for file in MIGRATIONS_DIR.files() {
-                let file_path = migrations_path_for_task.join(file.path());
-                if let Some(parent) = file_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| MigrationError::ExtractIo {
-                        context: format!(
-                            "creating migration parent directory {}",
-                            parent.display()
-                        ),
-                        source: e,
-                    })?;
-                }
-                std::fs::write(&file_path, file.contents()).map_err(|e| {
-                    MigrationError::ExtractIo {
-                        context: format!("writing embedded migration {}", file_path.display()),
-                        source: e,
-                    }
-                })?;
-            }
-            Ok(())
-        })
-        .await?;
-        extract_result?;
-
-        // Run migrations from the temp directory
-        // temp_dir stays alive for the entire function, so files remain accessible
-        let migrator = sqlx::migrate::Migrator::new(migrations_path.as_path()).await?;
-        migrator.run(pool).await?;
-        Ok(())
     }
+    Ok(())
+}
+
+/// Release-binary path: extract embedded SQL to a tempdir, then migrate.
+pub(crate) async fn run_migrations_embedded(pool: &Pool<Sqlite>) -> Result<(), MigrationError> {
+    let temp_dir = TempDir::new().map_err(|e| MigrationError::ExtractIo {
+        context: "creating tempdir for embedded migrations".to_string(),
+        source: e,
+    })?;
+    let migrations_path = temp_dir.path().join("migrations");
+    let migrations_path_for_task = migrations_path.clone();
+    tokio::task::spawn_blocking(move || extract_embedded_migrations(&migrations_path_for_task))
+        .await??;
+    run_migrations_from_dir(pool, &migrations_path).await
+}
+
+async fn run_migrations_from_dir(pool: &Pool<Sqlite>, dir: &Path) -> Result<(), MigrationError> {
+    let migrator = sqlx::migrate::Migrator::new(dir).await?;
+    migrator.run(pool).await?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sqlx::SqlitePool;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
     /// `run_migrations` now returns a typed [`MigrationError`] instead of
     /// `anyhow::Error`. This test asserts that downstream callers can
@@ -142,14 +134,12 @@ mod tests {
         assert!(source.downcast_ref::<std::io::Error>().is_some());
     }
 
+    /// Characterization: `is_ok` on the dev `migrations/` branch only.
     #[tokio::test]
     async fn test_run_migrations_success_with_memory_db() {
-        // Test successful migration on a fresh memory database
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("Failed to create test pool");
-
-        // This should succeed - migrations should run successfully
         let result = run_migrations(&pool).await;
         assert!(
             result.is_ok(),
@@ -157,60 +147,39 @@ mod tests {
         );
     }
 
+    /// Characterization: `is_ok` on the dev `migrations/` branch only.
     #[tokio::test]
     async fn test_run_migrations_success_with_file_db() {
-        // Test successful migration on a file-based database
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let db_path = temp_file.path();
-
         let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
             .await
             .expect("Failed to create test pool");
-
-        // This should succeed - migrations should run successfully
         let result = run_migrations(&pool).await;
         assert!(result.is_ok(), "Migrations should succeed on file database");
     }
 
+    /// Characterization: `is_ok` twice on the dev `migrations/` branch only.
     #[tokio::test]
     async fn test_run_migrations_idempotency() {
-        // Test that running migrations twice is safe (idempotent)
-        // This is critical - migrations should be safe to run multiple times
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("Failed to create test pool");
-
-        // Run migrations first time
         let result1 = run_migrations(&pool).await;
         assert!(result1.is_ok(), "First migration run should succeed");
-
-        // Run migrations second time (should be idempotent)
         let result2 = run_migrations(&pool).await;
         assert!(
             result2.is_ok(),
             "Second migration run should succeed (idempotent)"
         );
-
-        // Verify database schema is still correct after second run
-        // This is tested implicitly by the fact that migrations use IF NOT EXISTS
-        // and the second run doesn't fail
     }
 
-    /// Smoke test that `run_migrations` succeeds against a fresh in-memory pool.
-    ///
-    /// In dev (where `migrations/` exists at the workspace root) this exercises
-    /// the source-directory branch of `run_migrations`. In distributed binaries
-    /// the embedded-extraction branch handles the same job; both end up running
-    /// the same SQL, so this is the only branch easily exercisable from tests.
-    /// The previous version of this test claimed to test the embedded path
-    /// (which it cannot do without injecting a path), so it was renamed to
-    /// reflect what it actually verifies.
+    /// Characterization: `is_ok` on the dev `migrations/` branch only.
     #[tokio::test]
     async fn test_run_migrations_succeeds_on_fresh_pool() {
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("Failed to create test pool");
-
         let result = run_migrations(&pool).await;
         assert!(
             result.is_ok(),
@@ -248,6 +217,122 @@ mod tests {
             sql_names.len(),
             16,
             "migration count changed — update DATABASE.md intro and this assertion"
+        );
+    }
+
+    async fn table_names(pool: &SqlitePool) -> Vec<String> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
+             ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .expect("sqlite_master");
+        rows.into_iter().map(|(n,)| n).collect()
+    }
+
+    async fn table_info(
+        pool: &SqlitePool,
+        table: &str,
+    ) -> Vec<(i64, String, String, i64, Option<String>, i64)> {
+        sqlx::query_as(
+            r#"SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(?1)"#,
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_else(|e| panic!("PRAGMA table_info({table}): {e}"))
+    }
+
+    /// Kills: `extract_embedded_migrations` writing a different set of `.sql`
+    /// files than the on-disk `migrations/` directory (count ≠ 16).
+    #[test]
+    fn test_extract_embedded_migrations_writes_sixteen_sql_files() {
+        let dest = TempDir::new().expect("tempdir");
+        extract_embedded_migrations(dest.path()).expect("extract");
+        let mut sql_names: Vec<String> = std::fs::read_dir(dest.path())
+            .expect("read dest")
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                name.ends_with(".sql").then_some(name)
+            })
+            .collect();
+        sql_names.sort();
+        assert_eq!(
+            sql_names.len(),
+            16,
+            "embedded extract must write 16 SQL files, got {sql_names:?}"
+        );
+    }
+
+    /// Kills: `run_migrations_embedded` applying a different schema than the
+    /// on-disk `run_migrations` path (table set or `PRAGMA table_info`).
+    #[tokio::test]
+    async fn test_embedded_schema_matches_on_disk_migrations() {
+        let on_disk = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("on-disk pool");
+        run_migrations(&on_disk).await.expect("on-disk migrate");
+
+        let embedded = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("embedded pool");
+        run_migrations_embedded(&embedded)
+            .await
+            .expect("embedded migrate");
+
+        let on_disk_tables = table_names(&on_disk).await;
+        let embedded_tables = table_names(&embedded).await;
+        assert_eq!(
+            on_disk_tables, embedded_tables,
+            "embedded extract must create the same tables as on-disk migrations"
+        );
+        for table in &on_disk_tables {
+            assert_eq!(
+                table_info(&on_disk, table).await,
+                table_info(&embedded, table).await,
+                "PRAGMA table_info mismatch for {table}"
+            );
+        }
+    }
+
+    /// Kills: `extract_embedded_migrations` returning `Ok` (or a non-`ExtractIo`
+    /// error) when `dest` cannot be created because a parent path is a file.
+    #[test]
+    fn test_extract_embedded_migrations_unwritable_parent_is_extract_io() {
+        let tmp = TempDir::new().expect("tempdir");
+        let blocker = tmp.path().join("not_a_directory");
+        std::fs::write(&blocker, b"x").expect("write blocker");
+        let dest = blocker.join("migrations");
+        let err = extract_embedded_migrations(&dest).expect_err("file-as-parent must fail");
+        match err {
+            MigrationError::ExtractIo { context, .. } => {
+                assert!(
+                    context.contains(&dest.display().to_string())
+                        || context.contains(&blocker.display().to_string()),
+                    "ExtractIo context must name the dest path, got: {context}"
+                );
+            }
+            other => panic!("expected ExtractIo, got {other:?}"),
+        }
+    }
+
+    /// Kills: mapping a panicked `spawn_blocking` join with `.unwrap()` instead
+    /// of `?` into [`MigrationError::BlockingTask`].
+    #[tokio::test]
+    async fn test_spawn_blocking_panic_is_blocking_task() {
+        let result: Result<(), MigrationError> = async {
+            tokio::task::spawn_blocking(|| -> Result<(), MigrationError> {
+                panic!("extract boom");
+            })
+            .await??;
+            Ok(())
+        }
+        .await;
+        assert!(
+            matches!(result, Err(MigrationError::BlockingTask(_))),
+            "panicked extract task must surface as BlockingTask, got: {result:?}"
         );
     }
 }

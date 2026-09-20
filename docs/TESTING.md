@@ -87,6 +87,22 @@ cargo test --doc
 
 Coverage upload is **informational**. Codecov does not fail CI. Do not chase line coverage with “does not panic” or soft-skip tests — prefer a failing assert when the interesting path did not run (`#[ignore]` with an honest reason, or an offline fixture).
 
+`vendor/` is ignored: it is a rustls-only patch of upstream `whois-service`, not first-party code. Components (`storage`, `fetch`, `fingerprint`, `export`, `config`, `security`, `whois`, `geoip`, `cli`, `parse`) are informational so a strong subsystem cannot hide a weak one.
+
+## Mutation testing
+
+A covered line is not a checked line. `cargo-mutants` injects single-line production bugs and reports which ones the suite still passes — those **missed** mutants are the headline metric, not coverage deltas.
+
+```bash
+cargo install --locked cargo-mutants
+
+# Module-scoped only. A repo-wide run takes hours.
+cargo mutants -f src/storage/migrations.rs --test-tool=cargo
+# or: just mutants src/storage/migrations.rs
+```
+
+Results land under `mutants.out/` (`caught` / `missed` / `unviable` / `timeout`). Run one module at a time locally (`just mutants FILE`). Pull requests run `cargo mutants --in-diff` against the base branch (see `.github/workflows/ci.yml`); that job fails on missed mutants. It is not a repo-wide gate.
+
 ## Placebo checklist (avoid / convert)
 
 1. `let _ = result;` after a call under test

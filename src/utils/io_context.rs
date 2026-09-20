@@ -124,3 +124,73 @@ pub fn print_io_error_hint_if_applicable(error: &anyhow::Error) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Kills: `ensure_parent_dir_secure` creating a directory for a bare
+    /// filename or `./file` (those parents must be no-ops).
+    #[test]
+    fn test_ensure_parent_dir_secure_noop_for_bare_filename_and_dot() {
+        assert!(
+            ensure_parent_dir_secure(Path::new("file.db")).is_ok(),
+            "bare filename has an empty parent"
+        );
+        assert!(
+            ensure_parent_dir_secure(Path::new("./file.db")).is_ok(),
+            "parent `.` must be a no-op"
+        );
+    }
+
+    /// Kills: creating the parent without setting mode `0o700`.
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_parent_dir_secure_creates_owner_only_dir() {
+        let tmp = TempDir::new().expect("tempdir");
+        let dest = tmp.path().join("nested").join("db.sqlite");
+        ensure_parent_dir_secure(&dest).expect("create parent");
+        let parent = dest.parent().expect("parent");
+        assert!(parent.is_dir());
+        let mode = std::fs::metadata(parent)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "newly created parent must be owner-only");
+    }
+
+    /// Kills: chmod'ing a pre-existing parent (must leave `0o755`).
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_parent_dir_secure_leaves_existing_dir_mode() {
+        let tmp = TempDir::new().expect("tempdir");
+        let parent = tmp.path().join("already");
+        std::fs::create_dir(&parent).expect("mkdir");
+        let mut perms = std::fs::metadata(&parent).expect("meta").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&parent, perms).expect("chmod 755");
+        ensure_parent_dir_secure(&parent.join("db.sqlite")).expect("existing parent");
+        let mode = std::fs::metadata(&parent)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755, "pre-existing parent must not be chmod'd");
+    }
+
+    /// Kills: `ensure_parent_dir_secure` returning `Ok` when a parent path is
+    /// a file.
+    #[test]
+    fn test_ensure_parent_dir_secure_file_as_parent_is_err() {
+        let tmp = TempDir::new().expect("tempdir");
+        let blocker = tmp.path().join("not_a_directory");
+        std::fs::write(&blocker, b"x").expect("write blocker");
+        let dest = blocker.join("db.sqlite");
+        assert!(
+            ensure_parent_dir_secure(&dest).is_err(),
+            "file-as-parent must fail"
+        );
+    }
+}
