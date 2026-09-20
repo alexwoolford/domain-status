@@ -209,6 +209,41 @@ jobs:
         # The .gitleaks.toml file in the repo root will be automatically detected
         # Default behavior: scans for secrets, exits with code 1 if found, redacts output
 
+  mutants:
+    name: Mutation testing (in-diff)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR base
+        run: git fetch --no-tags --depth=1 origin ${{ github.base_ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '.'
+          cache-on-failure: true
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Run cargo mutants on the PR diff
+        run: cargo mutants --in-diff "origin/${{ github.base_ref }}" --test-tool=cargo
+
   e2e:
     name: End-to-End Tests (Network Required)
     runs-on: ubuntu-latest

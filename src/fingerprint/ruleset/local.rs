@@ -92,6 +92,7 @@ mod tests {
         );
     }
 
+    /// Contract: empty JSON object loads as an empty map (`is_ok` then empty).
     #[tokio::test]
     async fn test_load_from_path_empty_file() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");

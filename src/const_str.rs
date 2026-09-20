@@ -1,4 +1,7 @@
 //! Const `&str` helpers for compile-time inventory asserts.
+//!
+//! Tarpaulin does not observe `const fn` bodies; `const _: () = assert!(...)`
+//! already fails the build if these helpers are wrong.
 
 /// Byte-wise equality usable in `const` (no `PartialEq` on slices in const).
 pub(crate) const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {

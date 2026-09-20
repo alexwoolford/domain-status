@@ -78,7 +78,7 @@ async fn create_test_run(pool: &SqlitePool, run_id: &str) {
 // Expected: This test should HANG or PANIC if the bug exists.
 
 #[tokio::test]
-#[ignore] // Remove ignore to run this test
+#[ignore = "adversarial hang hunt; not a CI contract"]
 async fn test_connection_pool_exhaustion_during_cancellation() {
     // Create pool with VERY limited connections (same as max workers)
     let (pool, _tmp) = create_test_pool_with_limits(5).await;
@@ -138,7 +138,7 @@ async fn test_connection_pool_exhaustion_during_cancellation() {
 // Expected: This test should DEADLOCK or cause database corruption.
 
 #[tokio::test]
-#[ignore] // Remove ignore to run this test
+#[ignore = "adversarial hang hunt; not a CI contract"]
 async fn test_checkpoint_during_active_transactions() {
     let (pool, _tmp) = create_test_pool_with_limits(10).await;
     create_test_run(&pool, "test-run-1").await;
@@ -211,7 +211,7 @@ async fn test_checkpoint_during_active_transactions() {
 // Expected: Should find orphaned satellite records or foreign key violations.
 
 #[tokio::test]
-#[ignore] // Remove ignore to run this test
+#[ignore = "adversarial hang hunt; not a CI contract"]
 async fn test_cascade_cancellation_timing_attack() {
     let (pool, _tmp) = create_test_pool_with_limits(10).await;
     create_test_run(&pool, "test-run-1").await;
@@ -304,7 +304,7 @@ async fn test_cascade_cancellation_timing_attack() {
 // Expected: Pool should become exhausted and hang.
 
 #[tokio::test]
-#[ignore] // Remove ignore to run this test
+#[ignore = "adversarial hang hunt; not a CI contract"]
 async fn test_connection_leak_from_cancellations() {
     let (pool, _tmp) = create_test_pool_with_limits(3).await; // Very small pool
     create_test_run(&pool, "test-run-1").await;
@@ -367,7 +367,7 @@ async fn test_connection_leak_from_cancellations() {
 // Expected: Reads should see consistent snapshots (all or nothing).
 
 #[tokio::test]
-#[ignore] // Remove ignore to run this test
+#[ignore = "adversarial hang hunt; not a CI contract"]
 async fn test_read_consistency_during_rollback() {
     let (pool, _tmp) = create_test_pool_with_limits(10).await;
     create_test_run(&pool, "test-run-1").await;

@@ -202,25 +202,13 @@ mod tests {
         );
     }
 
+    /// Kills: `validate_and_normalize_url` accepting a scheme-only `https://`
+    /// (returning `Some`) instead of `None`.
     #[test]
     fn test_validate_and_normalize_url_edge_cases() {
-        // Empty string
-        let result = validate_and_normalize_url("");
-        assert_eq!(result, None);
-
-        // Just whitespace
-        let result = validate_and_normalize_url("   ");
-        assert_eq!(result, None);
-
-        // URL with only scheme
-        let result = validate_and_normalize_url("https://");
-        // URL parser may accept this, but it's not a valid URL for our purposes
-        // Test actual behavior
-        let parsed = result.and_then(|s| url::Url::parse(&s).ok());
-        // If it parses, it should have a host
-        if let Some(url) = parsed {
-            assert!(url.host().is_some() || url.host_str().is_some());
-        }
+        assert_eq!(validate_and_normalize_url(""), None);
+        assert_eq!(validate_and_normalize_url("   "), None);
+        assert_eq!(validate_and_normalize_url("https://"), None);
     }
 
     #[test]
@@ -258,30 +246,26 @@ mod tests {
         assert_eq!(result, Some("https://example.com".to_string()));
     }
 
+    /// Kills: `validate_and_normalize_url` accepting a scheme-only `http://`
+    /// (returning `Some`) instead of `None`.
     #[test]
     fn test_validate_and_normalize_url_malformed() {
-        // Various malformed URLs
-        let result = validate_and_normalize_url("://example.com");
-        assert_eq!(result, None);
-
-        let result = validate_and_normalize_url("http://");
-        // May parse but won't have a host - test actual behavior
-        let parsed = result.and_then(|s| url::Url::parse(&s).ok());
-        if let Some(url) = parsed {
-            // If it parses, check if it's actually valid
-            assert!(url.host().is_some() || url.host_str().is_some());
-        }
+        assert_eq!(validate_and_normalize_url("://example.com"), None);
+        assert_eq!(validate_and_normalize_url("http://"), None);
     }
 
+    /// Kills: `validate_and_normalize_url` decoding `+` in the path (or
+    /// dropping the path) instead of preserving `path+with+plus`.
     #[test]
     fn test_validate_and_normalize_url_special_characters() {
-        // URLs with special characters in path
-        let result = validate_and_normalize_url("example.com/path%20with%20spaces");
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("/path"));
-
-        let result = validate_and_normalize_url("example.com/path+with+plus");
-        assert!(result.is_some());
+        assert_eq!(
+            validate_and_normalize_url("example.com/path%20with%20spaces"),
+            Some("https://example.com/path%20with%20spaces".to_string())
+        );
+        assert_eq!(
+            validate_and_normalize_url("example.com/path+with+plus"),
+            Some("https://example.com/path+with+plus".to_string())
+        );
     }
 
     #[test]
@@ -324,7 +308,7 @@ mod tests {
         );
     }
 
-    // Property-based tests using proptest
+    // Characterization: fuzz-shaped Some/no-panic guards, not exact-string contracts.
     use proptest::prelude::*;
 
     proptest! {

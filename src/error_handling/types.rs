@@ -363,4 +363,155 @@ mod tests {
             .expect("source should downcast to io::Error");
         assert_eq!(io_err.kind(), std::io::ErrorKind::PermissionDenied);
     }
+
+    /// Kills: swapping any `ErrorType::as_str` arm (e.g. `NotFound` →
+    /// `"Bad Request (400)"`) or `Display::fmt` returning `Ok` without writing
+    /// `as_str`.
+    #[test]
+    fn test_error_type_as_str_is_exact_unique_and_displayed() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let expected: &[(ErrorType, &str)] = &[
+            (
+                ErrorType::HttpRequestBuilderError,
+                "HTTP request builder error",
+            ),
+            (
+                ErrorType::HttpRequestRedirectError,
+                "HTTP request redirect error",
+            ),
+            (
+                ErrorType::HttpRequestStatusError,
+                "HTTP request status error",
+            ),
+            (
+                ErrorType::HttpRequestTimeoutError,
+                "HTTP request timeout error",
+            ),
+            (ErrorType::HttpRequestRequestError, "HTTP request error"),
+            (
+                ErrorType::HttpRequestConnectError,
+                "HTTP request connect error",
+            ),
+            (ErrorType::HttpRequestBodyError, "HTTP request body error"),
+            (
+                ErrorType::HttpRequestDecodeError,
+                "HTTP request decode error",
+            ),
+            (ErrorType::HttpRequestOtherError, "HTTP request other error"),
+            (ErrorType::HttpRequestTooManyRequests, "Too many requests"),
+            (
+                ErrorType::HttpRequestBotDetectionError,
+                "Bot detection (403 Forbidden)",
+            ),
+            (ErrorType::HttpRequestBadRequest, "Bad Request (400)"),
+            (ErrorType::HttpRequestUnauthorized, "Unauthorized (401)"),
+            (ErrorType::HttpRequestNotFound, "Not Found (404)"),
+            (
+                ErrorType::HttpRequestInternalServerError,
+                "Internal Server Error (500)",
+            ),
+            (ErrorType::HttpRequestBadGateway, "Bad Gateway (502)"),
+            (
+                ErrorType::HttpRequestServiceUnavailable,
+                "Service Unavailable (503)",
+            ),
+            (
+                ErrorType::HttpRequestGatewayTimeout,
+                "Gateway Timeout (504)",
+            ),
+            (ErrorType::ProcessUrlTimeout, "Process URL timeout"),
+            (ErrorType::ScanCancelled, "Scan cancelled"),
+            (ErrorType::DnsForwardLookupError, "DNS forward lookup error"),
+            (ErrorType::DnsNsLookupError, "DNS NS lookup error"),
+            (ErrorType::DnsTxtLookupError, "DNS TXT lookup error"),
+            (ErrorType::DnsMxLookupError, "DNS MX lookup error"),
+            (ErrorType::DnsCnameLookupError, "DNS CNAME lookup error"),
+            (ErrorType::DnsAaaaLookupError, "DNS AAAA lookup error"),
+            (ErrorType::DnsCaaLookupError, "DNS CAA lookup error"),
+            (ErrorType::TlsCertificateError, "TLS certificate error"),
+            (
+                ErrorType::TechnologyDetectionError,
+                "Technology detection error",
+            ),
+            (ErrorType::SatelliteInsertError, "Satellite insert error"),
+        ];
+        assert_eq!(
+            expected.len(),
+            ErrorType::iter().count(),
+            "add an as_str row when a new ErrorType variant lands"
+        );
+        let mut seen = HashSet::new();
+        for (variant, token) in expected {
+            assert_eq!(variant.as_str(), *token, "{variant:?}");
+            assert_eq!(
+                format!("{variant}"),
+                *token,
+                "Display must write as_str for {variant:?}"
+            );
+            assert!(seen.insert(*token), "duplicate ErrorType as_str: {token}");
+        }
+        for variant in ErrorType::iter() {
+            assert!(
+                expected.iter().any(|(v, _)| *v == variant),
+                "missing as_str row for {variant:?}"
+            );
+        }
+    }
+
+    /// Kills: swapping `WarningType::as_str` arms or replacing the function
+    /// with `""` / `"xyzzy"`.
+    #[test]
+    fn test_warning_type_as_str_is_exact_and_unique() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let expected: &[(WarningType, &str)] = &[
+            (
+                WarningType::MissingMetaDescription,
+                "Missing meta description",
+            ),
+            (WarningType::MissingTitle, "Missing title"),
+        ];
+        assert_eq!(expected.len(), WarningType::iter().count());
+        let mut seen = HashSet::new();
+        for (variant, token) in expected {
+            assert_eq!(variant.as_str(), *token, "{variant:?}");
+            assert!(seen.insert(*token), "duplicate WarningType as_str: {token}");
+        }
+        for variant in WarningType::iter() {
+            assert!(
+                expected.iter().any(|(v, _)| *v == variant),
+                "missing as_str row for {variant:?}"
+            );
+        }
+    }
+
+    /// Kills: swapping `InfoType::as_str` arms or replacing the function
+    /// with `""` / `"xyzzy"`.
+    #[test]
+    fn test_info_type_as_str_is_exact_and_unique() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let expected: &[(InfoType, &str)] = &[
+            (InfoType::HttpRedirect, "HTTP redirect"),
+            (InfoType::HttpsRedirect, "HTTP to HTTPS redirect"),
+            (InfoType::BotDetection403, "Bot detection (403)"),
+            (InfoType::MultipleRedirects, "Multiple redirects"),
+        ];
+        assert_eq!(expected.len(), InfoType::iter().count());
+        let mut seen = HashSet::new();
+        for (variant, token) in expected {
+            assert_eq!(variant.as_str(), *token, "{variant:?}");
+            assert!(seen.insert(*token), "duplicate InfoType as_str: {token}");
+        }
+        for variant in InfoType::iter() {
+            assert!(
+                expected.iter().any(|(v, _)| *v == variant),
+                "missing as_str row for {variant:?}"
+            );
+        }
+    }
 }

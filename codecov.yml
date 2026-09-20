@@ -7,6 +7,9 @@ codecov:
     - "**/*_test.rs"
     # Exclude test modules within source files
     - "**/#[cfg(test)]"
+    # rustls-only patch of upstream whois-service — not first-party. Behaviour
+    # this repo depends on is tested at src/whois/, not inside vendor/.
+    - "vendor/**"
 
   # Coverage settings — never fail PR checks on coverage (Dependabot / cleanup PRs
   # were showing a red codecov/project X while Actions Test jobs were green).
@@ -26,3 +29,56 @@ codecov:
     layout: "reach,diff,flags,tree"
     behavior: default
     require_changes: false
+
+# Per-subsystem visibility. Statuses stay informational — this is not a new gate.
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        informational: true
+        target: auto
+      - type: patch
+        informational: true
+        target: auto
+  individual_components:
+    - component_id: storage
+      name: storage
+      paths:
+        - src/storage/**
+    - component_id: fetch
+      name: fetch
+      paths:
+        - src/fetch/**
+    - component_id: fingerprint
+      name: fingerprint
+      paths:
+        - src/fingerprint/**
+    - component_id: export
+      name: export
+      paths:
+        - src/export/**
+    - component_id: config
+      name: config
+      paths:
+        - src/config/**
+    - component_id: security
+      name: security
+      paths:
+        - src/security/**
+    - component_id: whois
+      name: whois
+      paths:
+        - src/whois/**
+    - component_id: geoip
+      name: geoip
+      paths:
+        - src/geoip/**
+    - component_id: cli
+      name: cli
+      paths:
+        - cli/**
+        - src/cli.rs
+    - component_id: parse
+      name: parse
+      paths:
+        - src/parse/**

@@ -247,4 +247,98 @@ mod tests {
         let url = Url::parse("https://example.com/path?q=1").unwrap();
         assert_eq!(origin_root(&url).as_deref(), Some("https://example.com"));
     }
+
+    fn test_client() -> Client {
+        Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("client")
+    }
+
+    /// Kills: `fetch_security_txt_one` returning `None` for a 200 Contact line,
+    /// or dropping `source_url` / `http_status`.
+    #[tokio::test]
+    async fn test_fetch_security_txt_one_parses_contact() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/.well-known/security.txt"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("Contact: mailto:security@example.com\n"),
+            )
+            .mount(&server)
+            .await;
+        let url = format!("{}/.well-known/security.txt", server.uri());
+        let data = fetch_security_txt_one(&test_client(), &url)
+            .await
+            .expect("200 Contact must parse");
+        assert_eq!(data.contacts, vec!["mailto:security@example.com"]);
+        assert_eq!(data.source_url, url);
+        assert_eq!(data.http_status, 200);
+    }
+
+    /// Kills: treating 404 or an empty 200 body as a parsed security.txt.
+    #[tokio::test]
+    async fn test_fetch_security_txt_one_404_and_empty_are_none() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path("/missing"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/empty"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("   \n"))
+            .mount(&server)
+            .await;
+        let client = test_client();
+        assert!(
+            fetch_security_txt_one(&client, &format!("{}/missing", server.uri()))
+                .await
+                .is_none(),
+            "404 must be None"
+        );
+        assert!(
+            fetch_security_txt_one(&client, &format!("{}/empty", server.uri()))
+                .await
+                .is_none(),
+            "empty 200 must be None"
+        );
+    }
+
+    /// Kills: aborting (or keeping more than `MAX_WELL_KNOWN_BODY`) when the
+    /// body exceeds 64 KiB.
+    #[tokio::test]
+    async fn test_fetch_security_txt_one_truncates_oversized_body() {
+        let server = wiremock::MockServer::start().await;
+        let mut body = String::from("Contact: mailto:security@example.com\n");
+        body.push_str(&"x".repeat(MAX_WELL_KNOWN_BODY));
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        let url = format!("{}/.well-known/security.txt", server.uri());
+        let data = fetch_security_txt_one(&test_client(), &url)
+            .await
+            .expect("oversized 200 must still parse");
+        assert_eq!(data.raw_body.len(), MAX_WELL_KNOWN_BODY);
+        assert_eq!(data.contacts, vec!["mailto:security@example.com"]);
+    }
+
+    /// Kills: adding a `Content-Type` gate that drops `application/octet-stream`.
+    #[tokio::test]
+    async fn test_fetch_security_txt_one_ignores_content_type() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "application/octet-stream")
+                    .set_body_string("Contact: mailto:security@example.com\n"),
+            )
+            .mount(&server)
+            .await;
+        let url = format!("{}/.well-known/security.txt", server.uri());
+        let data = fetch_security_txt_one(&test_client(), &url)
+            .await
+            .expect("wrong Content-Type must still parse");
+        assert_eq!(data.contacts, vec!["mailto:security@example.com"]);
+    }
 }

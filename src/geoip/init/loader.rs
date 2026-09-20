@@ -430,6 +430,8 @@ mod tests {
         );
     }
 
+    /// Kills: `OnLimit::Error` accepting a streamed body one byte over
+    /// `MAX_GEOIP_DOWNLOAD_SIZE` (message must contain `too large`).
     #[tokio::test]
     async fn test_download_geoip_rejects_oversized_body() {
         use httptest::{matchers::*, responders::*, Expectation, Server};
@@ -446,9 +448,71 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error_msg.contains("too large") || error_msg.contains("max"),
+            error_msg.contains("too large"),
             "oversized GeoIP body must be rejected: {error_msg}"
         );
+    }
+
+    /// Serves one HTTP/1.1 200 with an explicit `Content-Length` that may not
+    /// match `body`. httptest/hyper cannot do this (they panic on mismatch).
+    async fn serve_content_length_lie(content_length: usize, body: &[u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let body = body.to_vec();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 2048];
+            let _ = socket.read(&mut buf).await;
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+            );
+            let _ = socket.write_all(header.as_bytes()).await;
+            let _ = socket.write_all(&body).await;
+        });
+        format!("http://{addr}/geoip.mmdb")
+    }
+
+    /// Kills: skipping `reject_if_content_length_exceeds` so a lying
+    /// `Content-Length: MAX+1` with a tiny body is accepted.
+    #[tokio::test]
+    async fn test_download_geoip_rejects_lying_content_length() {
+        let max = crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
+        let url = serve_content_length_lie(max + 1, b"tiny").await;
+        let error_msg = download_geoip_with_size_limit(&url)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error_msg.contains("too large"),
+            "lying Content-Length must be rejected: {error_msg}"
+        );
+        assert!(
+            error_msg.contains(&max.to_string()),
+            "error must name the max byte count {max}, got: {error_msg}"
+        );
+    }
+
+    /// Kills: treating `Content-Length == MAX` as oversize (the header check
+    /// is `>` not `>=`). Hyper then errors on the short body (`error decoding
+    /// response body`); that is not a size-cap rejection.
+    #[tokio::test]
+    async fn test_download_geoip_accepts_content_length_at_cap() {
+        let max = crate::config::MAX_GEOIP_DOWNLOAD_SIZE;
+        let url = serve_content_length_lie(max, b"tiny").await;
+        match download_geoip_with_size_limit(&url).await {
+            Ok(bytes) => assert_eq!(bytes, b"tiny"),
+            Err(err) => {
+                let error_msg = err.to_string();
+                assert!(
+                    !error_msg.contains("too large"),
+                    "Content-Length at the cap must pass the header check: {error_msg}"
+                );
+            }
+        }
     }
 
     #[tokio::test]

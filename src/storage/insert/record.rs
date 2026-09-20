@@ -440,7 +440,8 @@ mod tests {
     use crate::error_handling::ErrorType;
     use crate::geoip::GeoIpResult;
     use crate::parse::{
-        AnalyticsId, AnalyticsProvider, SocialMediaLink, SocialPlatform, StructuredData,
+        AnalyticsId, AnalyticsProvider, ExposedSecret, SecretSeverity, SocialMediaLink,
+        SocialPlatform, StructuredData,
     };
     use crate::storage::models::UrlRecord;
     use crate::storage::CookieInfo;
@@ -682,6 +683,238 @@ mod tests {
                 error_type == "Satellite insert error" && message.starts_with("url_cookies:")
             }),
             "core satellite SQL Err must land in url_partial_failures, got {rows:?}"
+        );
+    }
+
+    /// Kills: a failed `url_caa_records` insert rolling back `url_status` or
+    /// omitting the `url_caa_records:` `url_partial_failures` row.
+    #[tokio::test]
+    async fn test_caa_insert_error_persists_to_url_partial_failures() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        sqlx::query(
+            "CREATE TRIGGER caa_forced_insert_failure
+             BEFORE INSERT ON url_caa_records
+             BEGIN
+               SELECT RAISE(ABORT, 'forced caa insert failure');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install CAA insert-failure trigger");
+
+        let mut record = empty_persisted(create_test_url_record());
+        record.caa_records =
+            Some(r#"[{"flag":0,"tag":"issue","value":"ca.example.com"}]"#.to_string());
+
+        let upsert = insert_persisted_url_record(&pool, record)
+            .await
+            .expect("url_status must still commit when CAA insert fails");
+
+        let caa_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_caa_records WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count CAA");
+        assert_eq!(caa_count, 0, "failed CAA insert must not leave a row");
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ?",
+        )
+        .bind(upsert.id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch partial failures");
+        assert!(
+            rows.iter().any(|(error_type, message)| {
+                error_type == "Satellite insert error" && message.starts_with("url_caa_records:")
+            }),
+            "CAA SQL Err must land in url_partial_failures, got {rows:?}"
+        );
+    }
+
+    /// Kills: a failed enrichment DELETE rolling back the already-committed
+    /// `url_status` UPSERT, or wiping prior `url_geoip` despite the abort.
+    #[tokio::test]
+    async fn test_enrichment_txn_abort_keeps_url_status_and_prior_geoip() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        let mut first = empty_persisted(create_test_url_record());
+        first.url_record.title = "First title".to_string();
+        first.geoip = Some((
+            "1.2.3.4".to_string(),
+            GeoIpResult {
+                country_code: Some("US".to_string()),
+                country_name: Some("United States".to_string()),
+                ..GeoIpResult::default()
+            },
+        ));
+        let first_id = insert_persisted_url_record(&pool, first)
+            .await
+            .expect("first insert")
+            .id;
+
+        sqlx::query(
+            "CREATE TRIGGER geoip_forced_delete_failure
+             BEFORE DELETE ON url_geoip
+             BEGIN
+               SELECT RAISE(ABORT, 'forced enrichment delete failure');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install geoip delete-failure trigger");
+
+        let mut second = empty_persisted(create_test_url_record());
+        second.url_record.title = "Second title".to_string();
+        second.geoip = Some((
+            "1.2.3.4".to_string(),
+            GeoIpResult {
+                country_code: Some("DE".to_string()),
+                country_name: Some("Germany".to_string()),
+                ..GeoIpResult::default()
+            },
+        ));
+        let upsert = insert_persisted_url_record(&pool, second)
+            .await
+            .expect("url_status must still commit when enrichment txn aborts");
+
+        assert_eq!(upsert.id, first_id, "UPSERT must keep the same fact-row id");
+
+        let title: String = sqlx::query_scalar("SELECT title FROM url_status WHERE id = ?")
+            .bind(upsert.id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch title");
+        assert_eq!(title, "Second title", "fact-row title must update");
+
+        let country: Option<String> =
+            sqlx::query_scalar("SELECT country_code FROM url_geoip WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch geoip");
+        assert_eq!(
+            country.as_deref(),
+            Some("US"),
+            "aborted enrichment txn must keep the prior GeoIP row"
+        );
+    }
+
+    /// Kills: a failed `url_exposed_secrets` insert rolling back `url_status`
+    /// or omitting the `url_exposed_secrets:` `url_partial_failures` row.
+    #[tokio::test]
+    async fn test_secrets_insert_error_persists_to_url_partial_failures() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        sqlx::query(
+            "CREATE TRIGGER secrets_forced_insert_failure
+             BEFORE INSERT ON url_exposed_secrets
+             BEGIN
+               SELECT RAISE(ABORT, 'forced secrets insert failure');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install secrets insert-failure trigger");
+
+        let mut record = empty_persisted(create_test_url_record());
+        record.exposed_secrets = vec![ExposedSecret {
+            secret_type: "aws-access-token".to_string(),
+            matched_value: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            context: "var key = AKIAIOSFODNN7EXAMPLE;".to_string(),
+            severity: SecretSeverity::High,
+            location: std::borrow::Cow::Borrowed("inline_script"),
+            decoded_jwt: None,
+        }];
+
+        let upsert = insert_persisted_url_record(&pool, record)
+            .await
+            .expect("url_status must still commit when secrets insert fails");
+
+        let secret_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_exposed_secrets WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count secrets");
+        assert_eq!(
+            secret_count, 0,
+            "failed secrets insert must not leave a row"
+        );
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ?",
+        )
+        .bind(upsert.id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch partial failures");
+        assert!(
+            rows.iter().any(|(error_type, message)| {
+                error_type == "Satellite insert error"
+                    && message.starts_with("url_exposed_secrets:")
+            }),
+            "secrets SQL Err must land in url_partial_failures, got {rows:?}"
+        );
+    }
+
+    /// Kills: `try_enrich_tx` replaced with `()` so a failed `url_geoip` INSERT
+    /// never records `url_geoip:` in `url_partial_failures`.
+    #[tokio::test]
+    async fn test_geoip_insert_error_persists_to_url_partial_failures() {
+        let pool = create_test_pool().await;
+        create_test_run(&pool, "test-run-123").await;
+
+        sqlx::query(
+            "CREATE TRIGGER geoip_forced_insert_failure
+             BEFORE INSERT ON url_geoip
+             BEGIN
+               SELECT RAISE(ABORT, 'forced geoip insert failure');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install geoip insert-failure trigger");
+
+        let mut record = empty_persisted(create_test_url_record());
+        record.geoip = Some((
+            "192.0.2.1".to_string(),
+            GeoIpResult {
+                country_code: Some("US".to_string()),
+                country_name: Some("United States".to_string()),
+                ..GeoIpResult::default()
+            },
+        ));
+
+        let upsert = insert_persisted_url_record(&pool, record)
+            .await
+            .expect("url_status must still commit when GeoIP insert fails");
+
+        let geoip_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM url_geoip WHERE url_status_id = ?")
+                .bind(upsert.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count geoip");
+        assert_eq!(geoip_count, 0, "failed GeoIP insert must not leave a row");
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT error_type, error_message FROM url_partial_failures WHERE url_status_id = ?",
+        )
+        .bind(upsert.id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch partial failures");
+        assert!(
+            rows.iter().any(|(error_type, message)| {
+                error_type == "Satellite insert error" && message.starts_with("url_geoip:")
+            }),
+            "GeoIP SQL Err must land in url_partial_failures, got {rows:?}"
         );
     }
 

@@ -391,4 +391,251 @@ mod tests {
             "mail2.example.com"
         );
     }
+
+    async fn caa_rows(pool: &sqlx::SqlitePool, url_status_id: i64) -> Vec<(i32, String, String)> {
+        sqlx::query_as(
+            "SELECT flag, tag, value FROM url_caa_records WHERE url_status_id = ? \
+             ORDER BY tag, value",
+        )
+        .bind(url_status_id)
+        .fetch_all(pool)
+        .await
+        .expect("fetch CAA")
+    }
+
+    /// Kills: `insert_caa_records` treating `None` / invalid JSON / `[]` as a
+    /// SQL write instead of `Ok` with zero rows.
+    #[tokio::test]
+    async fn test_insert_caa_records_none_invalid_and_empty_are_noop() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let mut tx = pool.begin().await.expect("tx");
+        insert_caa_records(&mut tx, url_status_id, None)
+            .await
+            .expect("None");
+        insert_caa_records(&mut tx, url_status_id, Some(&"not-json".to_string()))
+            .await
+            .expect("invalid JSON must be Ok");
+        insert_caa_records(&mut tx, url_status_id, Some(&"[]".to_string()))
+            .await
+            .expect("empty array");
+        tx.commit().await.expect("commit");
+
+        assert!(
+            caa_rows(&pool, url_status_id).await.is_empty(),
+            "None / invalid JSON / [] must write zero CAA rows"
+        );
+    }
+
+    /// Kills: dropping `flag`/`tag`/`value` columns or writing a different
+    /// `issue` / `ca.example.com` pair.
+    #[tokio::test]
+    async fn test_insert_caa_records_writes_flag_tag_value() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let json = r#"[{"flag":0,"tag":"issue","value":"ca.example.com"}]"#.to_string();
+
+        let mut tx = pool.begin().await.expect("tx");
+        insert_caa_records(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+
+        assert_eq!(
+            caa_rows(&pool, url_status_id).await,
+            vec![(0, "issue".to_string(), "ca.example.com".to_string())]
+        );
+    }
+
+    /// Kills: `ON CONFLICT` inserting a second row instead of updating `flag`.
+    #[tokio::test]
+    async fn test_insert_caa_records_conflict_updates_flag() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let first = r#"[{"flag":0,"tag":"issue","value":"ca.example.com"}]"#.to_string();
+        let second = r#"[{"flag":128,"tag":"issue","value":"ca.example.com"}]"#.to_string();
+
+        let mut tx = pool.begin().await.expect("tx1");
+        insert_caa_records(&mut tx, url_status_id, Some(&first))
+            .await
+            .expect("first");
+        tx.commit().await.expect("commit1");
+
+        let mut tx = pool.begin().await.expect("tx2");
+        insert_caa_records(&mut tx, url_status_id, Some(&second))
+            .await
+            .expect("second");
+        tx.commit().await.expect("commit2");
+
+        assert_eq!(
+            caa_rows(&pool, url_status_id).await,
+            vec![(128, "issue".to_string(), "ca.example.com".to_string())],
+            "same tag+value must update flag, not duplicate"
+        );
+    }
+
+    async fn cname_targets(pool: &sqlx::SqlitePool, url_status_id: i64) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT cname_target FROM url_cname_records WHERE url_status_id = ? \
+             ORDER BY cname_target",
+        )
+        .bind(url_status_id)
+        .fetch_all(pool)
+        .await
+        .expect("fetch CNAME")
+    }
+
+    async fn ipv6_addrs(pool: &sqlx::SqlitePool, url_status_id: i64) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT ipv6_address FROM url_ipv6_addresses WHERE url_status_id = ? \
+             ORDER BY ipv6_address",
+        )
+        .bind(url_status_id)
+        .fetch_all(pool)
+        .await
+        .expect("fetch IPv6")
+    }
+
+    /// Kills: `insert_cname_records` treating `None` / invalid JSON / `[]` as a
+    /// SQL write instead of `Ok` with zero rows.
+    #[tokio::test]
+    async fn test_insert_cname_records_none_invalid_and_empty_are_noop() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let mut tx = pool.begin().await.expect("tx");
+        insert_cname_records(&mut tx, url_status_id, None)
+            .await
+            .expect("None");
+        insert_cname_records(&mut tx, url_status_id, Some(&"not-json".to_string()))
+            .await
+            .expect("invalid JSON must be Ok");
+        insert_cname_records(&mut tx, url_status_id, Some(&"[]".to_string()))
+            .await
+            .expect("empty array");
+        tx.commit().await.expect("commit");
+
+        assert!(
+            cname_targets(&pool, url_status_id).await.is_empty(),
+            "None / invalid JSON / [] must write zero CNAME rows"
+        );
+    }
+
+    /// Kills: `insert_cname_records` returning `Ok(())` without writing
+    /// `cdn.example.com`.
+    #[tokio::test]
+    async fn test_insert_cname_records_writes_target() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let json = r#"["cdn.example.com"]"#.to_string();
+
+        let mut tx = pool.begin().await.expect("tx");
+        insert_cname_records(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+
+        assert_eq!(
+            cname_targets(&pool, url_status_id).await,
+            vec!["cdn.example.com".to_string()]
+        );
+    }
+
+    /// Kills: `ON CONFLICT` inserting a second `cdn.example.com` row.
+    #[tokio::test]
+    async fn test_insert_cname_records_conflict_is_noop() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let json = r#"["cdn.example.com"]"#.to_string();
+
+        let mut tx = pool.begin().await.expect("tx1");
+        insert_cname_records(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("first");
+        tx.commit().await.expect("commit1");
+
+        let mut tx = pool.begin().await.expect("tx2");
+        insert_cname_records(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("second");
+        tx.commit().await.expect("commit2");
+
+        assert_eq!(
+            cname_targets(&pool, url_status_id).await,
+            vec!["cdn.example.com".to_string()],
+            "same cname_target must not duplicate"
+        );
+    }
+
+    /// Kills: `insert_ipv6_addresses` treating `None` / invalid JSON / `[]` as a
+    /// SQL write instead of `Ok` with zero rows.
+    #[tokio::test]
+    async fn test_insert_ipv6_addresses_none_invalid_and_empty_are_noop() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+
+        let mut tx = pool.begin().await.expect("tx");
+        insert_ipv6_addresses(&mut tx, url_status_id, None)
+            .await
+            .expect("None");
+        insert_ipv6_addresses(&mut tx, url_status_id, Some(&"not-json".to_string()))
+            .await
+            .expect("invalid JSON must be Ok");
+        insert_ipv6_addresses(&mut tx, url_status_id, Some(&"[]".to_string()))
+            .await
+            .expect("empty array");
+        tx.commit().await.expect("commit");
+
+        assert!(
+            ipv6_addrs(&pool, url_status_id).await.is_empty(),
+            "None / invalid JSON / [] must write zero IPv6 rows"
+        );
+    }
+
+    /// Kills: `insert_ipv6_addresses` returning `Ok(())` without writing
+    /// `2001:db8::1`.
+    #[tokio::test]
+    async fn test_insert_ipv6_addresses_writes_address() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let json = r#"["2001:db8::1"]"#.to_string();
+
+        let mut tx = pool.begin().await.expect("tx");
+        insert_ipv6_addresses(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("insert");
+        tx.commit().await.expect("commit");
+
+        assert_eq!(
+            ipv6_addrs(&pool, url_status_id).await,
+            vec!["2001:db8::1".to_string()]
+        );
+    }
+
+    /// Kills: `ON CONFLICT` inserting a second `2001:db8::1` row.
+    #[tokio::test]
+    async fn test_insert_ipv6_addresses_conflict_is_noop() {
+        let pool = create_test_pool().await;
+        let url_status_id = create_test_url_status_default(&pool).await;
+        let json = r#"["2001:db8::1"]"#.to_string();
+
+        let mut tx = pool.begin().await.expect("tx1");
+        insert_ipv6_addresses(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("first");
+        tx.commit().await.expect("commit1");
+
+        let mut tx = pool.begin().await.expect("tx2");
+        insert_ipv6_addresses(&mut tx, url_status_id, Some(&json))
+            .await
+            .expect("second");
+        tx.commit().await.expect("commit2");
+
+        assert_eq!(
+            ipv6_addrs(&pool, url_status_id).await,
+            vec!["2001:db8::1".to_string()],
+            "same ipv6_address must not duplicate"
+        );
+    }
 }

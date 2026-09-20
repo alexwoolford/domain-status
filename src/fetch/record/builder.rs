@@ -307,6 +307,7 @@ mod tests {
     use crate::parse::StructuredData;
     use crate::whois::WhoisResult;
     use chrono::NaiveDateTime;
+    use proptest::prelude::*;
     use reqwest::header::HeaderMap;
     use std::collections::{HashMap, HashSet};
 
@@ -888,5 +889,73 @@ mod tests {
         // Run ID should be propagated to partial failure records
         assert_eq!(persisted_record.partial_failures.len(), 1);
         assert_eq!(persisted_record.partial_failures[0].run_id, run_id);
+    }
+
+    /// Kills: dropping `cdn.example.com`, keeping `'self'` / `none` /
+    /// `unsafe-inline`, leaving a `*.` wildcard on the captured host, or
+    /// skipping `to_lowercase` on the FQDN.
+    #[rstest::rstest]
+    #[case::happy(
+        "default-src https://cdn.example.com; script-src 'self' https://*.example.net none 'unsafe-inline'",
+        &[
+            ("default-src", "cdn.example.com", Some("example.com")),
+            ("script-src", "example.net", Some("example.net")),
+        ]
+    )]
+    #[case::uppercased_host(
+        "default-src HTTPS://CDN.EXAMPLE.COM",
+        &[("default-src", "cdn.example.com", Some("example.com"))]
+    )]
+    fn extract_csp_domains_happy_path(
+        #[case] csp: &str,
+        #[case] expected: &[(&str, &str, Option<&str>)],
+    ) {
+        let got = extract_csp_domains(csp);
+        let got: Vec<(&str, &str, Option<&str>)> = got
+            .iter()
+            .map(|(d, f, r)| (d.as_str(), f.as_str(), r.as_deref()))
+            .collect();
+        assert_eq!(got, expected);
+    }
+
+    /// Kills: panicking on empty / `;;;` / no-space / `javascript:` / `data:`,
+    /// or inventing a host from those tokens.
+    #[rstest::rstest]
+    #[case::empty("")]
+    #[case::semicolons(";;;")]
+    #[case::no_space("default-srchttps://cdn.example.com")]
+    #[case::javascript("javascript:")]
+    #[case::data("data:")]
+    fn extract_csp_domains_hostile_omits_hosts(#[case] csp: &str) {
+        assert!(extract_csp_domains(csp).is_empty());
+    }
+
+    /// Kills: adding an IP filter that drops `192.0.2.1`, or panicking on it.
+    #[test]
+    fn extract_csp_domains_documentation_ip() {
+        let got = extract_csp_domains("default-src http://192.0.2.1");
+        assert_eq!(
+            got,
+            vec![(
+                "default-src".to_string(),
+                "192.0.2.1".to_string(),
+                Some("2.1".to_string()),
+            )]
+        );
+    }
+
+    proptest! {
+        /// Kills: `extract_csp_domains` panicking on arbitrary ASCII or returning
+        /// a mixed-case FQDN.
+        #[test]
+        fn extract_csp_domains_random_ascii_never_panics(
+            s in prop::collection::vec(0u8..=127, 0..128)
+                .prop_map(|b| String::from_utf8(b).expect("ASCII"))
+        ) {
+            let rows = extract_csp_domains(&s);
+            for (_, fqdn, _) in &rows {
+                prop_assert_eq!(fqdn, &fqdn.to_lowercase());
+            }
+        }
     }
 }

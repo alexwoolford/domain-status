@@ -577,22 +577,25 @@ mod tests {
         assert!(display.contains("test message"));
     }
 
+    /// Kills: `ConfigValidationError` Display dropping the field name or
+    /// message (e.g. formatting only one of the two).
     #[test]
     fn test_config_validation_error_error_trait() {
-        // Test that ConfigValidationError implements std::error::Error
         let err = ConfigValidationError {
             field: "test_field".to_string(),
             message: "test message".to_string(),
         };
-        // Verify it can be used as Error trait object
         let error_ref: &dyn std::error::Error = &err;
-        let error_msg = error_ref.to_string();
-        assert!(error_msg.contains("test_field") || error_msg.contains("test message"));
+        assert_eq!(
+            error_ref.to_string(),
+            "Invalid config 'test_field': test message"
+        );
     }
 
+    /// Kills: `Config` Debug rendering an unset `progress_callback` as
+    /// `"<callback>"` instead of `None`.
     #[test]
     fn test_config_debug_formatting() {
-        // Test that Config Debug implementation works correctly
         let config = Config {
             max_concurrency: 50,
             rate_limit_rps: 25,
@@ -605,13 +608,20 @@ mod tests {
         assert!(debug_str.contains("Config"));
         assert!(debug_str.contains("max_concurrency"));
         assert!(debug_str.contains("50"));
-        // Progress callback should be shown as "<callback>" not actual function pointer
-        assert!(debug_str.contains("<callback>") || !debug_str.contains("0x"));
+        assert!(
+            debug_str.contains("progress_callback: None"),
+            "unset callback must debug as None, got: {debug_str}"
+        );
+        assert!(
+            !debug_str.contains("<callback>"),
+            "unset callback must not render as <callback>, got: {debug_str}"
+        );
     }
 
+    /// Kills: `Config` Debug exposing a function pointer (`0x…`) instead of
+    /// `"<callback>"` when `progress_callback` is set.
     #[test]
     fn test_config_debug_with_callback() {
-        // Test Debug formatting when progress_callback is set
         use std::sync::Arc;
         let callback =
             Arc::new(|_completed: usize, _failed: usize, _skipped: usize, _total: usize| {});
@@ -620,8 +630,14 @@ mod tests {
             ..Default::default()
         };
         let debug_str = format!("{:?}", config);
-        // Should show "<callback>" not expose the actual function pointer
-        assert!(debug_str.contains("<callback>") || !debug_str.contains("0x"));
+        assert!(
+            debug_str.contains("<callback>"),
+            "set callback must render as <callback>, got: {debug_str}"
+        );
+        assert!(
+            !debug_str.contains("0x"),
+            "set callback must not expose a function pointer, got: {debug_str}"
+        );
     }
 
     #[test]

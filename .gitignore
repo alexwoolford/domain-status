@@ -8,6 +8,10 @@
 
 # Coverage reports
 coverage/
+
+# cargo-mutants output (local; not a CI artifact)
+mutants.out/
+mutants.out.old/
 *.xml
 tarpaulin-report.html
 
