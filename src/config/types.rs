@@ -199,6 +199,10 @@ pub struct Config {
     /// drain-timeout path; raise it for production scans with very slow upstream
     /// services (e.g. WHOIS-heavy workloads on small batches).
     pub drain_timeout_secs: u64,
+
+    /// Allow a scan to start on the vendored / partial fingerprint catalog.
+    /// Default scans abort when the Enthec + `HTTPArchive` merge is incomplete.
+    pub allow_degraded_fingerprints: bool,
 }
 
 impl Default for Config {
@@ -226,6 +230,7 @@ impl Default for Config {
             dependency_overrides: None,
             allow_localhost_for_tests: false,
             drain_timeout_secs: 10,
+            allow_degraded_fingerprints: false,
         }
     }
 }
@@ -261,6 +266,10 @@ impl std::fmt::Debug for Config {
             )
             .field("allow_localhost_for_tests", &self.allow_localhost_for_tests)
             .field("drain_timeout_secs", &self.drain_timeout_secs)
+            .field(
+                "allow_degraded_fingerprints",
+                &self.allow_degraded_fingerprints,
+            )
             .finish()
     }
 }

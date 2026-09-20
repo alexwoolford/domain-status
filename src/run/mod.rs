@@ -674,6 +674,7 @@ mod tests {
             dependency_overrides: None,
             allow_localhost_for_tests: false,
             drain_timeout_secs: 10,
+            allow_degraded_fingerprints: true,
         };
 
         let result = run_scan(config).await;
@@ -768,6 +769,7 @@ mod tests {
             dependency_overrides: None,
             allow_localhost_for_tests: false,
             drain_timeout_secs: 10,
+            allow_degraded_fingerprints: false,
         };
 
         // Comment lines are skipped; the remaining URL is attempted. Use empty local

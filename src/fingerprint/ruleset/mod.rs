@@ -66,6 +66,10 @@ const DEFAULT_FINGERPRINTS_URLS: &[&str] = &[
     "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies",
 ];
 
+/// Minimum technology count for a default remote merge to count as a full catalog.
+/// Vendored fallback is ~17 names; a healthy Enthec + `HTTPArchive` merge is thousands.
+const MIN_FULL_TECHNOLOGIES: usize = 1000;
+
 /// Global ruleset cache (lazy-loaded)
 static RULESET: LazyLock<Arc<RwLock<Option<Arc<FingerprintRuleset>>>>> =
     LazyLock::new(|| Arc::new(RwLock::new(None)));
@@ -149,11 +153,7 @@ fn finish_ruleset(mut ruleset: FingerprintRuleset) -> Result<FingerprintRuleset>
 /// One-line ruleset identity for startup logs and tests.
 pub(crate) fn ruleset_identity_summary(ruleset: &FingerprintRuleset) -> String {
     let source = ruleset.metadata.source.replace('\n', " + ");
-    let quality = if ruleset.metadata.version == "bundled-minimal" {
-        "degraded: bundled-minimal"
-    } else {
-        "full"
-    };
+    let quality = ruleset_quality_label(ruleset);
     format!(
         "Fingerprint ruleset: {} technologies, source={source}, version={}, {quality}",
         ruleset.technologies.len(),
@@ -161,11 +161,61 @@ pub(crate) fn ruleset_identity_summary(ruleset: &FingerprintRuleset) -> String {
     )
 }
 
+fn ruleset_quality_label(ruleset: &FingerprintRuleset) -> &'static str {
+    if ruleset.metadata.version == "bundled-minimal" || ruleset.metadata.source.contains("vendored")
+    {
+        "degraded: bundled-minimal"
+    } else if ruleset.technologies.len() >= MIN_FULL_TECHNOLOGIES {
+        "full"
+    } else if is_default_remote_source(&ruleset.metadata.source) {
+        "thin"
+    } else {
+        "explicit"
+    }
+}
+
+fn is_default_remote_source(source: &str) -> bool {
+    DEFAULT_FINGERPRINTS_URLS
+        .iter()
+        .all(|url| source.contains(url))
+}
+
+fn catalog_is_complete(successful_sources: usize, expected: usize, tech_count: usize) -> bool {
+    successful_sources == expected && tech_count >= MIN_FULL_TECHNOLOGIES
+}
+
 fn is_github_rate_limit_error(err: &str) -> bool {
     err.to_ascii_lowercase().contains("rate limit")
 }
 
-/// Operator-visible degraded-mode notice (stderr + warn). Does not abort the scan.
+fn catalog_unavailable_error(failures: &[(String, String)]) -> anyhow::Error {
+    let mut msg =
+        "Full fingerprint catalog unavailable. Refusing to start a scan with an incomplete \
+         technology ruleset. Retry when GitHub is reachable, pass --fingerprints, or \
+         --allow-degraded-fingerprints for the vendored subset."
+            .to_string();
+    if !failures.is_empty() {
+        msg.push_str(" Failed sources:");
+        for (source, err) in failures {
+            msg.push_str(&format!(" [{source}: {err}]"));
+        }
+    }
+    if failures
+        .iter()
+        .any(|(_, err)| is_github_rate_limit_error(err))
+    {
+        msg.push_str(" GITHUB_TOKEN is optional rate-limit headroom (60 → 5000 requests/hour).");
+    }
+    if failures
+        .iter()
+        .any(|(_, err)| err.contains("401") || err.to_ascii_lowercase().contains("bad credentials"))
+    {
+        msg.push_str(" GITHUB_TOKEN was rejected (401). Unset it or use a valid token.");
+    }
+    anyhow::anyhow!(msg)
+}
+
+/// Operator-visible degraded-mode notice (stderr + warn). Used only with `--allow-degraded-fingerprints`.
 fn announce_degraded_fingerprints(failures: &[(String, String)], tech_count: usize) {
     let mut msg = format!(
         "Full fingerprint catalog unavailable; using bundled-minimal ({tech_count} technologies). \
@@ -203,6 +253,7 @@ fn announce_degraded_fingerprints(failures: &[(String, String)], tech_count: usi
 pub async fn init_ruleset(
     fingerprints_source: Option<&str>,
     cache_dir: Option<&Path>,
+    allow_degraded: bool,
 ) -> Result<Arc<FingerprintRuleset>> {
     // Fast path: already loaded
     {
@@ -221,6 +272,7 @@ pub async fn init_ruleset(
         }
     }
 
+    let explicit = fingerprints_source.is_some();
     let sources = if let Some(source) = fingerprints_source {
         vec![source.to_string()]
     } else {
@@ -240,12 +292,19 @@ pub async fn init_ruleset(
     let cache_key = fingerprint_cache_key(&sources);
     let expected_sources = fingerprint_source_label(&sources);
 
-    // Try to load from cache first
+    // Try to load from cache first. Default remotes must still meet the floor so a
+    // thin/partial cache cannot masquerade as a full catalog for 7 days.
     if let Ok(ruleset) = load_from_cache(&cache_path, &cache_key, &expected_sources).await {
         let ruleset = finish_ruleset(ruleset)?;
-        let ruleset_arc = Arc::new(ruleset);
-        *RULESET.write().await = Some(ruleset_arc.clone());
-        return Ok(ruleset_arc);
+        if explicit || ruleset.technologies.len() >= MIN_FULL_TECHNOLOGIES {
+            let ruleset_arc = Arc::new(ruleset);
+            *RULESET.write().await = Some(ruleset_arc.clone());
+            return Ok(ruleset_arc);
+        }
+        log::warn!(
+            "Cached fingerprint ruleset has {} technologies (floor {MIN_FULL_TECHNOLOGIES}); refetching",
+            ruleset.technologies.len()
+        );
     }
 
     // Fetch from all sources and merge
@@ -253,7 +312,14 @@ pub async fn init_ruleset(
         "Fetching fingerprint ruleset from {} source(s)",
         sources.len()
     );
-    let ruleset = fetch_ruleset_from_multiple_sources(&sources, &cache_path, &cache_key).await?;
+    let ruleset = fetch_ruleset_from_multiple_sources(
+        &sources,
+        &cache_path,
+        &cache_key,
+        explicit,
+        allow_degraded,
+    )
+    .await?;
     let ruleset_arc = Arc::new(ruleset);
     *RULESET.write().await = Some(ruleset_arc.clone());
     Ok(ruleset_arc)
@@ -273,6 +339,8 @@ async fn fetch_ruleset_from_multiple_sources(
     sources: &[String],
     cache_dir: &Path,
     cache_key: &str,
+    explicit: bool,
+    allow_degraded: bool,
 ) -> Result<FingerprintRuleset> {
     let mut all_technologies = HashMap::new();
     let mut all_categories = HashMap::new();
@@ -348,28 +416,8 @@ async fn fetch_ruleset_from_multiple_sources(
         }
     }
 
-    // Ensure we got at least one successful source; otherwise use the bundled
-    // minimal ruleset so offline/CI cold starts still work.
     if successful_sources == 0 {
-        let mut vendored = load_vendored_ruleset()?;
-        vendored.technologies = vendored
-            .technologies
-            .into_iter()
-            .filter_map(|(name, tech)| ingest_technology(tech).map(|tech| (name, tech)))
-            .collect();
-        // Do NOT write vendored under the remote `cache_key`. That would poison
-        // subsequent cold starts into believing the full GitHub merge is cached.
-        let ruleset = finish_ruleset(vendored)?;
-        announce_degraded_fingerprints(&source_failures, ruleset.technologies.len());
-        return Ok(ruleset);
-    }
-
-    if successful_sources < sources.len() {
-        log::warn!(
-            "Only {} of {} sources succeeded. Some technologies may be missing.",
-            successful_sources,
-            sources.len()
-        );
+        return vendored_or_err(allow_degraded, &source_failures);
     }
 
     let version = if versions.is_empty() {
@@ -378,10 +426,8 @@ async fn fetch_ruleset_from_multiple_sources(
         versions.join(";")
     };
 
-    let source_str = fingerprint_source_label(sources);
-
     let metadata = FingerprintMetadata {
-        source: source_str.clone(),
+        source: fingerprint_source_label(sources),
         version,
         last_updated: SystemTime::now(),
     };
@@ -392,16 +438,49 @@ async fn fetch_ruleset_from_multiple_sources(
         metadata,
     };
     let ruleset = finish_ruleset(ruleset)?;
+    let tech_count = ruleset.technologies.len();
+
+    if !explicit && !catalog_is_complete(successful_sources, sources.len(), tech_count) {
+        if !allow_degraded {
+            return Err(catalog_unavailable_error(&source_failures));
+        }
+        log::warn!(
+            "Partial default fingerprint catalog ({tech_count} technologies, \
+             {successful_sources}/{} sources). Continuing because --allow-degraded-fingerprints is set.",
+            sources.len()
+        );
+        return Ok(ruleset);
+    }
 
     log::info!(
-        "Merged {} technologies from {} source(s) (plus first-party overlay)",
-        ruleset.technologies.len(),
+        "Merged {tech_count} technologies from {} source(s) (plus first-party overlay)",
         sources.len()
     );
 
-    // Cache it with the hash-based cache key
-    save_to_cache(&ruleset, cache_dir, cache_key).await?;
+    // Never persist a thin default merge under the remote cache key.
+    if explicit || tech_count >= MIN_FULL_TECHNOLOGIES {
+        save_to_cache(&ruleset, cache_dir, cache_key).await?;
+    }
 
+    Ok(ruleset)
+}
+
+fn vendored_or_err(
+    allow_degraded: bool,
+    source_failures: &[(String, String)],
+) -> Result<FingerprintRuleset> {
+    if !allow_degraded {
+        return Err(catalog_unavailable_error(source_failures));
+    }
+    let mut vendored = load_vendored_ruleset()?;
+    vendored.technologies = vendored
+        .technologies
+        .into_iter()
+        .filter_map(|(name, tech)| ingest_technology(tech).map(|tech| (name, tech)))
+        .collect();
+    // Do NOT write vendored under the remote `cache_key`.
+    let ruleset = finish_ruleset(vendored)?;
+    announce_degraded_fingerprints(source_failures, ruleset.technologies.len());
     Ok(ruleset)
 }
 
@@ -420,8 +499,14 @@ mod tests {
         ];
         let cache_key = "test-hash-vendored-fallback";
 
-        let result =
-            fetch_ruleset_from_multiple_sources(&invalid_sources, temp_dir.path(), cache_key).await;
+        let result = fetch_ruleset_from_multiple_sources(
+            &invalid_sources,
+            temp_dir.path(),
+            cache_key,
+            false,
+            true,
+        )
+        .await;
 
         let ruleset = result.expect("vendored fallback should succeed when remotes fail");
         assert!(
@@ -449,31 +534,125 @@ mod tests {
 
     #[test]
     fn ruleset_identity_summary_marks_full_catalog() {
+        let mut technologies = HashMap::new();
+        for i in 0..MIN_FULL_TECHNOLOGIES {
+            technologies.insert(
+                format!("Tech{i}"),
+                crate::fingerprint::models::Technology::default(),
+            );
+        }
         let ruleset = FingerprintRuleset {
-            technologies: HashMap::new(),
+            technologies,
             categories: HashMap::new(),
             metadata: FingerprintMetadata {
-                source: "https://a.example\nhttps://b.example".to_string(),
+                source: format!(
+                    "{}\n{}",
+                    DEFAULT_FINGERPRINTS_URLS[0], DEFAULT_FINGERPRINTS_URLS[1]
+                ),
                 version: "abc123".to_string(),
                 last_updated: SystemTime::now(),
             },
         };
         let summary = ruleset_identity_summary(&ruleset);
-        assert!(summary.contains("0 technologies"));
-        assert!(summary.contains("https://a.example + https://b.example"));
+        assert!(summary.contains(&format!("{MIN_FULL_TECHNOLOGIES} technologies")));
         assert!(summary.contains("version=abc123"));
         assert!(summary.contains(", full"));
         assert!(!summary.contains("degraded"));
     }
 
+    #[test]
+    fn ruleset_identity_summary_marks_explicit_and_thin() {
+        let explicit = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: "/tmp/local-fp.json".to_string(),
+                version: "unknown".to_string(),
+                last_updated: SystemTime::now(),
+            },
+        };
+        assert!(
+            ruleset_identity_summary(&explicit).contains("explicit"),
+            "{}",
+            ruleset_identity_summary(&explicit)
+        );
+        let thin = FingerprintRuleset {
+            technologies: HashMap::new(),
+            categories: HashMap::new(),
+            metadata: FingerprintMetadata {
+                source: format!(
+                    "{}\n{}",
+                    DEFAULT_FINGERPRINTS_URLS[0], DEFAULT_FINGERPRINTS_URLS[1]
+                ),
+                version: "abc123".to_string(),
+                last_updated: SystemTime::now(),
+            },
+        };
+        assert!(
+            ruleset_identity_summary(&thin).contains("thin"),
+            "{}",
+            ruleset_identity_summary(&thin)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_ruleset_all_fail_without_allow_returns_err() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let invalid_sources = vec![
+            "https://invalid-url-that-does-not-exist-12345.com/technologies".to_string(),
+            "https://another-invalid-url-67890.com/technologies".to_string(),
+        ];
+        let err = fetch_ruleset_from_multiple_sources(
+            &invalid_sources,
+            temp_dir.path(),
+            "test-hash-abort",
+            false,
+            false,
+        )
+        .await
+        .expect_err("default remotes must abort when every source fails");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Refusing to start") || msg.contains("incomplete"),
+            "{msg}"
+        );
+    }
+
     #[tokio::test]
     async fn test_fetch_ruleset_from_multiple_sources_partial_success() {
-        // Test that partial success (some sources fail) still works
-        // This is critical - if one GitHub repo is rate-limited, we should still use the other
-        // Use one valid local source and one invalid URL
-        // This tests the partial success path (line 246-252)
-        // Note: This requires a valid local ruleset file, which is complex to set up
-        // The logic is: if successful_sources > 0 but < sources.len(), log warning and continue
+        let temp_dir = TempDir::new().expect("temp dir");
+        let local = temp_dir.path().join("techs.json");
+        std::fs::write(&local, r#"{"Nginx":{"headers":{"server":"nginx"}}}"#)
+            .expect("write local ruleset");
+        let sources = vec![
+            local.to_string_lossy().into_owned(),
+            "https://invalid-url-that-does-not-exist-12345.com/technologies".to_string(),
+        ];
+        let err = fetch_ruleset_from_multiple_sources(
+            &sources,
+            temp_dir.path(),
+            "test-hash-partial",
+            false,
+            false,
+        )
+        .await
+        .expect_err("default-style pair must abort when one source fails");
+        assert!(
+            err.to_string().contains("incomplete") || err.to_string().contains("Refusing"),
+            "{}",
+            err
+        );
+
+        let allowed = fetch_ruleset_from_multiple_sources(
+            &sources,
+            temp_dir.path(),
+            "test-hash-partial-allow",
+            false,
+            true,
+        )
+        .await
+        .expect("allow_degraded keeps the partial merge");
+        assert!(allowed.technologies.contains_key("Nginx"));
     }
 
     #[tokio::test]

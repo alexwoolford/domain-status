@@ -1197,7 +1197,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network for default fingerprint sources; use offline fixture tests instead"]
     async fn test_detect_technologies_blocking_with_init_ruleset() {
-        crate::fingerprint::init_ruleset(None, None)
+        crate::fingerprint::init_ruleset(None, None, true)
             .await
             .expect("init_ruleset should succeed when network is available");
         let ruleset = crate::fingerprint::get_ruleset()

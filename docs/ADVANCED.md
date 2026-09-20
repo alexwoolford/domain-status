@@ -43,7 +43,7 @@ Defaults leave DB/log in the working directory so interactive runs keep results 
 - Default: merge Enthec + HTTPArchive technology directories from GitHub, then apply the first-party overlay in `assets/fingerprints/overlay.json` (adds Payload; tightens Amazon S3 to hosting headers).
 - `GITHUB_TOKEN` is optional rate-limit headroom (60 → 5000 GitHub API requests/hour). It is **not** required for the full catalog; a cold start lists two directories and two commit SHAs.
 - Without GitHub: `--fingerprints /path/to/rules` (file or directory) for CI, restricted egress, or deterministic runs. This only skips ruleset download — scanning target URLs still needs network access to those hosts. The first-party overlay is still applied on top.
-- If all remotes fail: bundled minimal ruleset (`vendored:assets/fingerprints`) plus the same overlay. Startup logs the technology count and writes a stderr warning (degraded mode); the scan continues.
+- If all remotes fail, or only one of the two default sources succeeds, or the merged catalog has fewer than 1000 technologies: the scan **aborts**. Pass `--allow-degraded-fingerprints` to continue on the bundled minimal ruleset (`vendored:assets/fingerprints`) plus overlay. A rejected `GITHUB_TOKEN` (401) is retried unauthenticated so a stale token cannot wipe both sources.
 - `url_technologies` is the HTTP serving stack. Prefer `WHERE is_implied = 0` in summaries. Certificate authorities stay on `url_status.ssl_cert_issuer`. Match evidence is `detection_source`.
 - `--scan-external-scripts` stays off by default (extra GETs / SSRF surface). Turn it on for SPA-heavy jobs so first-party `scripts` patterns can match.
 

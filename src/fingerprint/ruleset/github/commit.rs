@@ -50,27 +50,11 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
 
     log::debug!("Fetching commit SHA from: {api_url}");
 
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::USER_AGENT,
-        reqwest::header::HeaderValue::from_static(super::GITHUB_API_USER_AGENT),
-    );
-    // Use GITHUB_TOKEN when set (increases rate limit from 60 to 5000 requests/hour)
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        if !token.is_empty() {
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
-                headers.insert(reqwest::header::AUTHORIZATION, value);
-                log::debug!("Using GITHUB_TOKEN for commit SHA request");
-            }
-        }
-    }
-
     use crate::config::TCP_CONNECT_TIMEOUT_SECS;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-        .default_headers(headers)
         .build()
         .ok()?;
 
@@ -80,7 +64,7 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     }
 
     log::debug!("Fetching commit SHA from GitHub API: {api_url}");
-    match client.get(&api_url).send().await {
+    match super::github_api_get(&client, &api_url).await {
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() {

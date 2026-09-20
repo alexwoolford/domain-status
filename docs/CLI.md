@@ -45,11 +45,12 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 | `--user-agent` | `DOMAIN_STATUS_USER_AGENT` | `user_agent` | Chrome UA (auto-refresh if default) |
 | `--rate-limit-rps` | `DOMAIN_STATUS_RATE_LIMIT_RPS` | `rate_limit_rps` | `15` (`0` disables global and per-host) |
 | `--fingerprints` | `DOMAIN_STATUS_FINGERPRINTS` | `fingerprints` | GitHub defaults |
+| `--allow-degraded-fingerprints` | `DOMAIN_STATUS_ALLOW_DEGRADED_FINGERPRINTS` | — | off (abort unless the full catalog loads) |
 | `--geoip` | `DOMAIN_STATUS_GEOIP` | `geoip` | off (or MaxMind auto via license) |
 | `--status-port` | `DOMAIN_STATUS_STATUS_PORT` | `status_port` | off |
 | `--enable-whois` | `DOMAIN_STATUS_ENABLE_WHOIS` | `enable_whois` | **on** (legacy flag; redundant with the default) |
 | `--no-whois` | — | — | Force-disable WHOIS |
-| `--no-progress` | `DOMAIN_STATUS_NO_PROGRESS` | — | Hide the TTY progress bar (log file still records progress) |
+| `--no-progress` | `DOMAIN_STATUS_NO_PROGRESS` | — | Hide the TTY progress bar (log file still records progress). Also hidden automatically on terminals narrower than 56 columns; prefer this flag for multi-day scans in a tiny pane. |
 | `--cache-dir` | `DOMAIN_STATUS_CACHE_DIR` | `cache_dir` | platform cache + `domain_status/` |
 | `--scan-external-scripts` | `DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS` | `scan_external_scripts` | off |
 | `--fail-on` | `DOMAIN_STATUS_FAIL_ON` | `fail_on` | `never` (`any-failure` \| `pct>`) |

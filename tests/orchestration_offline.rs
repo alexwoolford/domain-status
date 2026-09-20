@@ -81,6 +81,7 @@ fn base_config(input: PathBuf, db: PathBuf, fingerprints: &Path) -> Config {
         dependency_overrides: None,
         allow_localhost_for_tests: true,
         drain_timeout_secs: 10,
+        allow_degraded_fingerprints: false,
     }
 }
 

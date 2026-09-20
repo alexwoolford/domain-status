@@ -27,8 +27,8 @@ The scanner will:
 - use a cache key derived from the configured source list
 - refresh cached rulesets on a 7-day TTL
 - allow a caller-supplied local path or URL via `--fingerprints`
-- continue with partial upstream success when at least one configured source loads successfully
-- **fall back to a bundled minimal ruleset** (`assets/fingerprints/`, loaded via `src/fingerprint/ruleset/vendored.rs`) when **all** configured sources fail (cold-start offline/CI relief). Remote refresh remains the preferred path when network is available.
+- **abort the default scan** when either default remote fails or the merged catalog has fewer than 1000 technologies
+- **fall back to a bundled minimal ruleset** (`assets/fingerprints/`, loaded via `src/fingerprint/ruleset/vendored.rs`) only with `--allow-degraded-fingerprints` (or an explicit `--fingerprints` path). Remote refresh remains the preferred path when network is available.
 - **apply a first-party overlay** (`assets/fingerprints/overlay.json`) last, after upstream merge, cache load, or vendored fallback, so project-specific rules (Payload, tightened Amazon S3) do not require forking the corpus
 
 When multiple sources are merged, later sources overwrite earlier ones for the same technology key. The overlay then overwrites those. This is an explicit part of the contract.
@@ -41,7 +41,7 @@ Positive:
 - keeps the default behavior close to established upstream ecosystems
 - supports deterministic local testing by pointing at local rulesets
 - amortizes cold-start cost through local caching
-- offline/CI first runs no longer hard-fail solely because GitHub is unreachable
+- default Homebrew scans cannot silently run on bundled-minimal after a GitHub failure
 
 Trade-offs:
 
@@ -53,7 +53,7 @@ Trade-offs:
 
 ## Operational Notes
 
-- `GITHUB_TOKEN` is optional rate-limit headroom (60 → 5000 requests/hour), not a requirement for the full catalog. Mention it in logs only when a fetch actually hit the GitHub API rate limit.
+- `GITHUB_TOKEN` is optional rate-limit headroom (60 → 5000 requests/hour), not a requirement for the full catalog. Mention it in logs only when a fetch actually hit the GitHub API rate limit. A 401 Bad credentials response retries the listing unauthenticated.
 - Fingerprint cache files live under the shared platform cache root (`…/domain_status/fingerprints/`), not the process working directory (see [docs/ADVANCED.md](../ADVANCED.md)). Treat them as regenerable runtime artifacts.
 - for fully deterministic CI, prefer an explicit `--fingerprints` path over relying on the vendored fallback
 

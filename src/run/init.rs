@@ -182,11 +182,16 @@ pub async fn init_scan_resources(
     };
 
     // Initialize fingerprint ruleset
-    let ruleset =
-        crate::fingerprint::init_ruleset(config.fingerprints.as_deref(), Some(&fingerprints_cache))
-            .await
-            .context("Failed to initialize fingerprint ruleset")?;
-    info!("{}", crate::fingerprint::ruleset_identity_summary(&ruleset));
+    let ruleset = crate::fingerprint::init_ruleset(
+        config.fingerprints.as_deref(),
+        Some(&fingerprints_cache),
+        config.allow_degraded_fingerprints,
+    )
+    .await
+    .context("Failed to initialize fingerprint ruleset")?;
+    let identity = crate::fingerprint::ruleset_identity_summary(&ruleset);
+    info!("{identity}");
+    eprintln!("{identity}");
 
     // Eagerly load the bundled gitleaks ruleset so any malformed config surfaces as
     // a clean startup error instead of as a panic on first secret-scan use.

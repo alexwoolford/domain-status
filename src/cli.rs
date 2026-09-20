@@ -14,7 +14,6 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use clap::parser::ValueSource;
 use clap::{FromArgMatches, Parser};
@@ -50,6 +49,7 @@ fn config_from_scan_command(cli: ScanCommand) -> Config {
         user_agent: cli.user_agent,
         rate_limit_rps: cli.rate_limit_rps,
         fingerprints: cli.fingerprints,
+        allow_degraded_fingerprints: cli.allow_degraded_fingerprints,
         geoip: cli.geoip,
         status_port: cli.status_port,
         enable_whois,
@@ -255,54 +255,74 @@ fn init_scan_logging(
     Ok(())
 }
 
-/// Fixed-width bar keeps the line from wrapping when counters grow (`wide_bar` + Unicode
-/// msg caused garbled redraws on resize / accidental Enter). Width 30 leaves room for
-/// large `pos`/`len` and ASCII ok/fail/skip on a typical 80-col terminal.
+/// Fixed `{bar:30}` plus `{wide_msg}` so counters truncate instead of wrapping on resize.
 const PROGRESS_BAR_TEMPLATE: &str =
-    "{spinner:.green} [{elapsed_precise}] {bar:30.cyan/blue} {pos}/{len} ({percent}%) {msg}";
+    "{spinner:.green} [{elapsed_precise}] {bar:30.cyan/blue} {wide_msg}";
 
 /// Stdin (and any unknown-length input) has no `len`; a determinate `pos/0` bar is nonsense.
-const PROGRESS_SPINNER_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] {pos} {msg}";
+const PROGRESS_SPINNER_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] {wide_msg}";
+
+/// Hide the bar when the terminal is narrower than chrome + a few counter cells.
+const MIN_PROGRESS_COLS: usize = 56;
 
 #[cfg(test)]
 const PROGRESS_BAR_WIDTH: usize = 30;
 
 fn progress_status_message(completed: usize, failed: usize, skipped: usize) -> String {
-    format!("ok={completed} fail={failed} skip={skipped}")
+    format!("o={completed} f={failed} s={skipped}")
 }
 
-/// Columns used by everything except the fixed bar (ANSI ignored; spinner = 1 cell).
+fn progress_wide_message(
+    completed: usize,
+    failed: usize,
+    skipped: usize,
+    finished: u64,
+    total: usize,
+) -> String {
+    let stats = progress_status_message(completed, failed, skipped);
+    if total == 0 {
+        format!("{finished} {stats}")
+    } else {
+        let percent = finished
+            .saturating_mul(100)
+            .checked_div(total as u64)
+            .unwrap_or(0);
+        format!("{finished}/{total} ({percent}%) {stats}")
+    }
+}
+
+fn stderr_cols() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(80)
+}
+
+/// Visible chrome before `{wide_msg}` (spinner + `[elapsed]` + bar).
 #[cfg(test)]
-fn estimate_progress_fixed_cols(elapsed_precise: &str, pos: u64, len: u64, msg: &str) -> usize {
-    let percent = pos.saturating_mul(100).checked_div(len).unwrap_or(0);
-    let percent_s = format!("({percent}%)");
-    // spinner + spaces/brackets + elapsed + bar + pos/len + percent + msg
-    1 + 1
-        + 1
-        + elapsed_precise.len()
-        + 1
-        + 1
-        + PROGRESS_BAR_WIDTH
-        + 1
-        + pos.to_string().len()
-        + 1
-        + len.to_string().len()
-        + 1
-        + percent_s.len()
-        + 1
-        + msg.chars().count()
+fn estimate_progress_chrome_cols(elapsed_precise: &str) -> usize {
+    1 + 1 + 1 + elapsed_precise.len() + 1 + 1 + PROGRESS_BAR_WIDTH + 1
 }
 
-/// Total visible columns for the progress line at a given terminal width.
+/// Rendered columns at `term_cols`: chrome plus a `wide_msg` that never overflows.
 #[cfg(test)]
 fn estimate_progress_line_cols(
     elapsed_precise: &str,
     pos: u64,
     len: u64,
     msg: &str,
-    _term_cols: Option<usize>,
+    term_cols: Option<usize>,
 ) -> usize {
-    estimate_progress_fixed_cols(elapsed_precise, pos, len, msg)
+    let chrome = estimate_progress_chrome_cols(elapsed_precise);
+    let wide = if len == 0 {
+        format!("{pos} {msg}")
+    } else {
+        let percent = pos.saturating_mul(100).checked_div(len).unwrap_or(0);
+        format!("{pos}/{len} ({percent}%) {msg}")
+    };
+    let untruncated = chrome + wide.chars().count();
+    term_cols.map_or(untruncated, |cols| untruncated.min(cols))
 }
 
 fn create_progress_bar() -> Result<Arc<ProgressBar>> {
@@ -313,7 +333,6 @@ fn create_progress_bar() -> Result<Arc<ProgressBar>> {
             .context("Failed to create progress bar template")?
             .progress_chars("##-"),
     );
-    pb.enable_steady_tick(Duration::from_millis(100));
     Ok(pb)
 }
 
@@ -324,11 +343,23 @@ fn apply_unknown_length_progress_style(pb: &ProgressBar) {
 }
 
 fn create_progress_callback(
-    pb: Arc<ProgressBar>,
+    pb_slot: Arc<std::sync::Mutex<Option<Arc<ProgressBar>>>>,
 ) -> Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync> {
     let unknown_length = AtomicBool::new(false);
+    let length_set = AtomicBool::new(false);
     Arc::new(move |completed, failed, skipped, total| {
-        // completed == successful persisted inserts; skips are counted only in skipped.
+        let pb = {
+            let mut slot = pb_slot.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                if let Ok(pb) = create_progress_bar() {
+                    *slot = Some(pb);
+                }
+            }
+            slot.clone()
+        };
+        let Some(pb) = pb else {
+            return;
+        };
         let finished = (completed + failed + skipped) as u64;
         if total == 0 {
             if !unknown_length.swap(true, Ordering::Relaxed) {
@@ -336,16 +367,20 @@ fn create_progress_callback(
             }
             pb.set_position(finished);
         } else {
-            pb.set_length(total as u64);
+            if !length_set.swap(true, Ordering::Relaxed) {
+                pb.set_length(total as u64);
+            }
             pb.set_position(finished);
         }
-        pb.set_message(progress_status_message(completed, failed, skipped));
+        pb.set_message(progress_wide_message(
+            completed, failed, skipped, finished, total,
+        ));
     })
 }
 
 fn should_show_progress_bar(no_progress: bool) -> bool {
     use std::io::IsTerminal;
-    !no_progress && std::io::stderr().is_terminal()
+    !no_progress && std::io::stderr().is_terminal() && stderr_cols() >= MIN_PROGRESS_COLS
 }
 
 async fn execute_scan_with_reporting(mut config: Config, no_progress: bool) -> Result<i32> {
@@ -360,20 +395,22 @@ async fn execute_scan_with_reporting(mut config: Config, no_progress: bool) -> R
         config.log_level_filter_override,
     )?;
 
-    let progress_bar = if should_show_progress_bar(no_progress) {
-        let pb = create_progress_bar()?;
-        config.progress_callback = Some(create_progress_callback(Arc::clone(&pb)));
-        Some(pb)
-    } else {
-        None
-    };
+    let progress_slot: Arc<std::sync::Mutex<Option<Arc<ProgressBar>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    if should_show_progress_bar(no_progress) {
+        config.progress_callback = Some(create_progress_callback(Arc::clone(&progress_slot)));
+    }
     init_crypto_provider();
 
     let report = run_scan(config.clone())
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    if let Some(pb) = progress_bar {
+    if let Some(pb) = progress_slot
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+    {
         pb.finish_and_clear();
     }
 
@@ -653,25 +690,33 @@ mod tests {
         let late_elapsed = "7d 21:27:56";
         let early_msg = progress_status_message(0, 0, 0);
         let late_msg = progress_status_message(263_688, 139_233, 49);
+        let chrome_early = estimate_progress_chrome_cols(early_elapsed);
+        let chrome_late = estimate_progress_chrome_cols(late_elapsed);
         let early = estimate_progress_line_cols(early_elapsed, 1, 752_906, &early_msg, Some(80));
         let late_80 =
             estimate_progress_line_cols(late_elapsed, 402_970, 752_906, &late_msg, Some(80));
         let late_40 =
             estimate_progress_line_cols(late_elapsed, 402_970, 752_906, &late_msg, Some(40));
-        // Fixed `{bar:N}` ignores terminal width (unlike `{wide_bar}`).
+        assert!(
+            chrome_early <= MIN_PROGRESS_COLS,
+            "early chrome must stay under the hide-bar threshold (got {chrome_early})"
+        );
+        assert!(
+            chrome_late <= MIN_PROGRESS_COLS,
+            "late chrome must stay under the hide-bar threshold (got {chrome_late})"
+        );
         assert_eq!(
-            late_80, late_40,
-            "progress chrome must not depend on terminal width"
+            late_80, 80,
+            "wide_msg must cap the rendered line at 80 cols"
         );
-        assert!(
-            early <= 80,
-            "early progress chrome should fit a typical 80-col terminal (got {early})"
+        assert_eq!(
+            late_40, 40,
+            "wide_msg must cap the rendered line at 40 cols"
         );
-        // Huge counters + long elapsed can still exceed 80; keep a sane upper bound.
-        assert!(
-            late_80 <= 110,
-            "late multi-day chrome should stay reasonably bounded (got {late_80})"
-        );
+        assert!(early <= 80);
+        ProgressStyle::default_bar()
+            .template(PROGRESS_BAR_TEMPLATE)
+            .expect("determinate template must parse");
     }
 
     #[test]
@@ -679,15 +724,11 @@ mod tests {
         ProgressStyle::default_spinner()
             .template(PROGRESS_SPINNER_TEMPLATE)
             .expect("stdin spinner template must parse");
-        let msg = progress_status_message(12, 1, 3);
-        // spinner + space + [elapsed] + space + pos + space + msg
         let elapsed = "00:01:23";
-        let pos = 16u64;
-        let cols =
-            1 + 1 + 1 + elapsed.len() + 1 + 1 + pos.to_string().len() + 1 + msg.chars().count();
+        let chrome = 1 + 1 + 1 + elapsed.len() + 1;
         assert!(
-            cols <= 80,
-            "unknown-length progress chrome should fit 80 cols (got {cols})"
+            chrome <= 80,
+            "unknown-length chrome should fit 80 cols (got {chrome})"
         );
     }
 
@@ -875,6 +916,7 @@ mod tests {
             fail_on_pct_threshold: 15,
             log_file: PathBuf::from("domain_status.log"),
             drain_timeout_secs: 10,
+            allow_degraded_fingerprints: false,
         };
 
         let config: Config = config_from_scan_command(scan_cmd);
@@ -894,6 +936,7 @@ mod tests {
         assert!(config.scan_external_scripts);
         assert_eq!(config.fail_on, FailOn::AnyFailure);
         assert_eq!(config.fail_on_pct_threshold, 15);
+        assert!(!config.allow_degraded_fingerprints);
     }
 
     #[test]

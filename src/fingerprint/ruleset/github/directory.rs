@@ -51,22 +51,7 @@ pub(crate) async fn fetch_from_github_directory(
     let api_url_with_ref = format!("{api_url}?ref={branch}");
     log::debug!("Fetching directory listing from: {api_url_with_ref} (branch: {branch})");
 
-    // Build request with optional GitHub token for authentication
-    let mut request = client
-        .get(&api_url_with_ref)
-        .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", super::GITHUB_API_USER_AGENT);
-
-    // Add GitHub token if available (increases rate limit from 60 to 5000 requests/hour)
-    // Token can be set via environment variable or .env file (loaded at startup)
-    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        if !token.is_empty() {
-            request = request.header("Authorization", format!("Bearer {token}"));
-            log::info!("Using GitHub token for authentication (rate limit: 5000 requests/hour)");
-        }
-    }
-
-    let response = request.send().await?;
+    let response = super::github_api_get(client, &api_url_with_ref).await?;
 
     if !response.status().is_success() {
         let status = response.status();

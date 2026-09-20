@@ -59,6 +59,7 @@ fn create_test_config(
         dependency_overrides: None,
         allow_localhost_for_tests: true, // Mock server is 127.0.0.1; required for rate-limit and concurrency tests
         drain_timeout_secs: 10,
+        allow_degraded_fingerprints: true,
     }
 }
 

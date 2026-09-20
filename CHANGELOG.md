@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-20
+
+### Added
+- `--allow-degraded-fingerprints` / `DOMAIN_STATUS_ALLOW_DEGRADED_FINGERPRINTS` to start a scan on the vendored or partial catalog. Default scans abort instead.
+
+### Changed
+- Default fingerprint init requires both Enthec and HTTPArchive sources and at least 1000 technologies. Thin or partial merges are not written to the fingerprint cache.
+- A rejected `GITHUB_TOKEN` (401) retries the GitHub API listing unauthenticated so a stale token cannot wipe both default sources.
+- Progress bar uses a fixed 30-cell bar plus `{wide_msg}` (no 100ms tick). The line truncates to the terminal width and is hidden below 56 columns.
+
+### Fixed
+- Homebrew 0.2.0 could run for days on `bundled-minimal` (~17 technologies) after a GitHub 401. That path now fails closed unless the operator opts in.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added
@@ -407,7 +420,8 @@ Initial public release.
 - Security audit with `cargo-audit` in CI pipeline
 - URL validation to prevent SSRF attacks
 
-[Unreleased]: https://github.com/alexwoolford/domain-status/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/alexwoolford/domain-status/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/alexwoolford/domain-status/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/alexwoolford/domain-status/compare/v0.1.29...v0.2.0
 [0.1.29]: https://github.com/alexwoolford/domain-status/compare/v0.1.28...v0.1.29
 [0.1.28]: https://github.com/alexwoolford/domain-status/compare/v0.1.27...v0.1.28

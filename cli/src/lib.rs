@@ -208,6 +208,16 @@ pub struct ScanCommand {
     )]
     pub fingerprints: Option<String>,
 
+    /// Start the scan even if the full Enthec + `HTTPArchive` catalog cannot be loaded.
+    /// Default is to abort so technology detection is not silently thin.
+    #[arg(
+        long,
+        env = "DOMAIN_STATUS_ALLOW_DEGRADED_FINGERPRINTS",
+        hide_short_help = true,
+        help_heading = "Advanced"
+    )]
+    pub allow_degraded_fingerprints: bool,
+
     #[arg(
         long,
         env = "DOMAIN_STATUS_STATUS_PORT",
