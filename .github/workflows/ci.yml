@@ -241,8 +241,11 @@ jobs:
         with:
           tool: cargo-mutants
 
+      - name: Write PR diff
+        run: git diff "origin/${{ github.base_ref }}.." | tee git.diff
+
       - name: Run cargo mutants on the PR diff
-        run: cargo mutants --in-diff "origin/${{ github.base_ref }}" --test-tool=cargo
+        run: cargo mutants --in-diff git.diff --test-tool=cargo
 
   e2e:
     name: End-to-End Tests (Network Required)
