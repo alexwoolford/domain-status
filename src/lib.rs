@@ -64,6 +64,8 @@ pub mod cli;
 mod clock;
 pub mod config;
 mod const_str;
+#[cfg(any(test, feature = "bench-utils"))]
+mod cost;
 mod dns;
 mod domain;
 mod error_handling;
@@ -117,6 +119,9 @@ pub use summary::{format_scan_summary, query_scan_summary, ScanSummary, SummaryO
 pub use storage::insert::url::{insert_url_record, UrlRecordInsertParams};
 #[cfg(feature = "test-utils")]
 pub use whois::seed_whois_cache;
+// Cost benches (`cargo bench --features bench-utils`). Not a stable API.
+#[cfg(feature = "bench-utils")]
+pub mod bench_api;
 
 pub use utils::print_io_error_hint_if_applicable;
 pub use whois::{lookup_whois, WhoisResult};

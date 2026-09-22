@@ -3,6 +3,9 @@
 use log::debug;
 use scraper::Html;
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
+
+use crate::utils::duration_to_us;
 
 use crate::parse::{
     detect_exposed_secrets, extract_contact_links, extract_meta_description,
@@ -10,6 +13,15 @@ use crate::parse::{
 };
 
 use super::types::HtmlData;
+
+/// CPU time inside [`parse_html_content_timed`], excluding blocking-pool queue wait.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HtmlContentTiming {
+    /// Parse and extraction, excluding the body secret scan.
+    pub parse_us: u64,
+    /// [`crate::parse::detect_exposed_secrets`] on the HTML body.
+    pub secret_scan_us: u64,
+}
 
 /// Parses HTML content and extracts all relevant data.
 ///
@@ -22,13 +34,24 @@ use super::types::HtmlData;
 /// # Returns
 ///
 /// Extracted HTML data including title, description, structured data, etc.
-#[allow(clippy::too_many_lines)] // Single-pass HTML tree walk extracting ~15 distinct data types
-#[allow(clippy::cognitive_complexity)] // Each HTML element type requires distinct extraction logic
+#[cfg_attr(not(any(test, feature = "bench-utils")), allow(dead_code))]
 pub(crate) fn parse_html_content(
     body: &str,
     final_domain: &str,
     error_stats: &crate::error_handling::ProcessingStats,
 ) -> HtmlData {
+    parse_html_content_timed(body, final_domain, error_stats).0
+}
+
+/// Same as [`parse_html_content`], plus parse and secret-scan CPU time.
+#[allow(clippy::too_many_lines)] // Single-pass HTML tree walk extracting ~15 distinct data types
+#[allow(clippy::cognitive_complexity)] // Each HTML element type requires distinct extraction logic
+pub(crate) fn parse_html_content_timed(
+    body: &str,
+    final_domain: &str,
+    error_stats: &crate::error_handling::ProcessingStats,
+) -> (HtmlData, HtmlContentTiming) {
+    let started = Instant::now();
     let document = Html::parse_document(body);
 
     let title = extract_title(&document, error_stats);
@@ -62,7 +85,9 @@ pub(crate) fn parse_html_content(
     );
 
     // Detect exposed secrets in HTML body
+    let secret_started = Instant::now();
     let exposed_secrets = detect_exposed_secrets(body);
+    let secret_scan_us = duration_to_us(secret_started.elapsed());
     if !exposed_secrets.is_empty() {
         log::info!(
             "Detected {} exposed secret(s) for {final_domain}",
@@ -308,26 +333,34 @@ pub(crate) fn parse_html_content(
         .filter(|v| !v.is_empty())
         .cloned();
 
-    HtmlData {
-        title,
-        description,
-        structured_data,
-        social_media_links,
-        contact_links,
-        exposed_secrets,
-        analytics_ids,
-        meta_tags,
-        script_sources,
-        script_tag_ids,
-        inline_script_text,
-        external_scripts_eligible: 0,
-        external_scripts_scanned: 0,
-        favicon_url,
-        canonical_url,
-        meta_refresh_url,
-        meta_robots,
-        resource_hints,
-    }
+    let total_us = duration_to_us(started.elapsed());
+    let timing = HtmlContentTiming {
+        parse_us: total_us.saturating_sub(secret_scan_us),
+        secret_scan_us,
+    };
+    (
+        HtmlData {
+            title,
+            description,
+            structured_data,
+            social_media_links,
+            contact_links,
+            exposed_secrets,
+            analytics_ids,
+            meta_tags,
+            script_sources,
+            script_tag_ids,
+            inline_script_text,
+            external_scripts_eligible: 0,
+            external_scripts_scanned: 0,
+            favicon_url,
+            canonical_url,
+            meta_refresh_url,
+            meta_robots,
+            resource_hints,
+        },
+        timing,
+    )
 }
 
 #[cfg(test)]

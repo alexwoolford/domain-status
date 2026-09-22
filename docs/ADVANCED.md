@@ -90,6 +90,28 @@ pass the SSRF `is_public_ip` check are attempted.
 - `--drain-timeout-secs` aborts in-flight work after the input queue empties — raise for WHOIS-heavy small batches.
 - Rate limiting: `--rate-limit-rps` is URL **admission** (one token per input URL), not per-HTTP RPS. When that cap is enabled, each host is also limited to 2 URL tokens/sec. `--rate-limit-rps 0` disables both. Lower the global cap if you see 429s.
 
+## Profiling a slow scan
+
+The release binary is stripped. A sample of that process will not show function names. Build the symbols profile and record a short fixture with the same flags as the long run (including `--scan-external-scripts` when that flag is on, so the profile includes script fetches):
+
+```bash
+just build-symbols
+samply record --rate 999 ./target/release-with-symbols/domain-status scan fixture.txt \
+  --scan-external-scripts \
+  --max-concurrency 8 \
+  --rate-limit-rps 3 \
+  --timeout-seconds 20 \
+  --db-path /tmp/profile-scan.db \
+  --log-file /tmp/profile-scan.log \
+  --status-port 8081
+```
+
+`samply` writes a Firefox Profiler profile (an interactive flamegraph). Without it, `sample <pid> 5 -file /tmp/domain-status.sample.txt` still shows whether time sits in `regex`, `scraper`, or `SQLite`, but only if the binary was built with `just build-symbols`.
+
+Leave a multi-day scan running. Profile a few hundred URLs in a second process. `--status-port` exposes per-stage averages at `/status` and `/metrics` (body read, HTML parse, secret scan, fingerprint passes, external scripts, SQLite). The end-of-run timing summary prints the same averages. Body read, HTML parse, and secret scan are parts of HTML parsing. Script fetch and script analysis run in parallel with tech detection and DNS, so those percentages can overlap.
+
+CPU-microseconds per stage on a fixed input is the electricity proxy the suite can measure. Watt-hours are machine-specific; `sudo powermetrics --samplers cpu_power -n 1` can sample package power on this Mac when a later pass needs watts. See [TESTING.md](TESTING.md) for `just bench`.
+
 ## Library embeds
 
 See [docs.rs/domain-status](https://docs.rs/domain-status). Prefer `Config` + `run_scan` + export/summary; advanced modules may narrow in 0.x.

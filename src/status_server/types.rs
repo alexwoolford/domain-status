@@ -219,7 +219,21 @@ pub struct TimingMetrics {
     pub dns_additional_ms: u64,
     pub tls_handshake_ms: u64,
     pub html_parsing_ms: u64,
+    /// Response body read. Part of [`Self::html_parsing_ms`].
+    pub body_read_ms: u64,
+    /// HTML parse and extraction, excluding the body secret scan. Part of [`Self::html_parsing_ms`].
+    pub html_parse_ms: u64,
+    /// Secret scan of the HTML body. Part of [`Self::html_parsing_ms`].
+    pub secret_scan_ms: u64,
     pub tech_detection_ms: u64,
+    /// Late fingerprint supplement (DNS, certificate, fetched script text).
+    pub late_tech_ms: u64,
+    /// External-script HTTP fetches. Overlaps tech detection and DNS.
+    pub external_script_fetch_ms: u64,
+    /// External-script lowercase and secret scan. Overlaps tech detection and DNS.
+    pub external_script_analysis_ms: u64,
+    /// `SQLite` insert of the URL row and satellites.
+    pub sqlite_write_ms: u64,
     pub geoip_lookup_ms: u64,
     pub whois_lookup_ms: u64,
     pub total_ms: u64,
@@ -434,7 +448,14 @@ mod tests {
                 dns_additional_ms: 10,
                 tls_handshake_ms: 50,
                 html_parsing_ms: 30,
+                body_read_ms: 5,
+                html_parse_ms: 20,
+                secret_scan_ms: 4,
                 tech_detection_ms: 25,
+                late_tech_ms: 3,
+                external_script_fetch_ms: 8,
+                external_script_analysis_ms: 6,
+                sqlite_write_ms: 2,
                 geoip_lookup_ms: 5,
                 whois_lookup_ms: 100,
                 total_ms: 415,

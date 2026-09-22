@@ -54,6 +54,17 @@ mutants FILE:
 build:
     cargo build --release --locked
 
+# Release optimizations with debug symbols for samply / sample.
+# The default release binary is stripped, so a flamegraph of it has no function names.
+build-symbols:
+    cargo build --profile release-with-symbols --locked
+
+# Component-cost table (optimized) and the coarse CPU ceiling (debug, also run by CI e2e).
+# Not part of `just test` / `just ci`: absolute times flap, and the ceiling is intentionally wide.
+bench:
+    cargo bench --bench scan_cost --features bench-utils --locked
+    cargo test --lib --locked component_cost_ceiling -- --ignored --nocapture
+
 # Run security audit
 audit:
     cargo audit

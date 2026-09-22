@@ -28,7 +28,7 @@ use crate::error_handling::FingerprintError;
 use crate::fingerprint::models::FingerprintRuleset;
 use crate::fingerprint::patterns::parse_technology_reference;
 
-use body::{check_body_with_ruleset, check_scripts_with_ruleset};
+pub(crate) use body::{check_body_with_ruleset, check_scripts_with_ruleset};
 use cookies::check_cookies_with_ruleset;
 use dns_cert::check_dns_and_cert_with_ruleset;
 use headers::check_headers_with_ruleset;

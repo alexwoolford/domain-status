@@ -39,6 +39,8 @@ pub use ruleset::init_ruleset;
 pub(crate) use ruleset::ruleset_identity_summary;
 
 // Blocking detection for the scan hot path (ruleset passed explicitly).
+#[cfg(any(test, feature = "bench-utils"))]
+pub(crate) use detection::{check_body_with_ruleset, check_scripts_with_ruleset};
 pub(crate) use detection::{
     detect_technologies_blocking, dns_records_haystack, is_challenge_interstitial,
     supplement_technologies_with_dns_cert, supplement_technologies_with_script_text,

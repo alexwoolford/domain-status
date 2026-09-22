@@ -30,6 +30,8 @@ pub use context::{NetworkContext, ProcessingContext, RuntimeContext};
 #[allow(unused_imports)] // Public API re-export, even if not used in tests
 pub use handler::{handle_http_request, handle_response, UrlProcessOutcome};
 pub use redirects::resolve_redirect_chain;
+#[cfg(any(test, feature = "bench-utils"))]
+pub(crate) use response::parse_html_content;
 
 #[cfg(test)]
 mod tests {

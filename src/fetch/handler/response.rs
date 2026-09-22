@@ -5,7 +5,9 @@ use log::debug;
 
 use crate::fetch::dns::fetch_all_dns_data;
 use crate::fetch::record::prepare_record_for_insertion;
-use crate::fetch::response::{extract_response_data, parse_html_content, HtmlData, ResponseData};
+use crate::fetch::response::{
+    extract_response_data, parse_html_content_timed, HtmlData, ResponseData,
+};
 use crate::fetch::ProcessingContext;
 use crate::fetch::UrlProcessOutcome;
 use crate::fingerprint::DetectedTechnology;
@@ -33,7 +35,11 @@ fn serialize_headers(headers: &reqwest::header::HeaderMap) -> String {
 struct ExtractedResponse {
     resp_data: ResponseData,
     html_data: HtmlData,
+    /// Body read plus the parse task, including blocking-pool queue wait.
     html_parsing_us: u64,
+    body_read_us: u64,
+    html_parse_us: u64,
+    secret_scan_us: u64,
 }
 
 /// Extract response bytes/headers and parse HTML on a blocking thread.
@@ -44,25 +50,31 @@ async fn extract_and_parse(
     ctx: &ProcessingContext,
 ) -> Result<Option<ExtractedResponse>, Error> {
     let html_parse_start = Instant::now();
+    let body_read_start = Instant::now();
     let Some(resp_data) = extract_response_data(response, original_url, final_url_str).await?
     else {
         return Ok(None);
     };
+    let body_read_us = duration_to_us(body_read_start.elapsed());
 
     // Parse HTML content on a blocking thread to avoid starving Tokio worker threads.
     // body is `Arc<str>`; `Arc::clone` is cheap (pointer + atomic refcount bump).
     let body = Arc::clone(&resp_data.body);
     let final_domain = resp_data.final_domain.clone();
     let error_stats = ctx.runtime.error_stats.clone();
-    let html_data =
-        tokio::task::spawn_blocking(move || parse_html_content(&body, &final_domain, &error_stats))
-            .await
-            .map_err(|e| anyhow::anyhow!("HTML parsing task failed: {e}"))?;
+    let (html_data, phase) = tokio::task::spawn_blocking(move || {
+        parse_html_content_timed(&body, &final_domain, &error_stats)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("HTML parsing task failed: {e}"))?;
 
     Ok(Some(ExtractedResponse {
         resp_data,
         html_data,
         html_parsing_us: duration_to_us(html_parse_start.elapsed()),
+        body_read_us,
+        html_parse_us: phase.parse_us,
+        secret_scan_us: phase.secret_scan_us,
     }))
 }
 
@@ -79,6 +91,7 @@ struct EnrichmentResult {
     favicon_result: Option<crate::fetch::favicon::FaviconData>,
     external_script_scan: crate::fetch::external_scripts::ExternalScriptScanResult,
     well_known: crate::fetch::well_known::WellKnownData,
+    late_tech_us: u64,
 }
 
 /// Run independent enrichments in parallel: tech detection, DNS/TLS, favicon, scripts.
@@ -148,8 +161,8 @@ async fn parallel_enrich(
         (dns_forward_us, dns_reverse_us, dns_additional_us, tls_handshake_us),
     ) = dns_result?;
 
-    let technologies_vec = if skip_tech {
-        Vec::new()
+    let (technologies_vec, late_tech_us) = if skip_tech {
+        (Vec::new(), 0)
     } else {
         supplement_technologies_after_enrichment(
             ctx,
@@ -165,6 +178,7 @@ async fn parallel_enrich(
     Ok(EnrichmentResult {
         technologies_vec,
         tech_detection_us,
+        late_tech_us,
         tls_dns_data,
         additional_dns,
         partial_failures,
@@ -194,7 +208,8 @@ async fn supplement_technologies_after_enrichment(
     additional_dns: &crate::fetch::dns::AdditionalDnsData,
     external_script_scan: &crate::fetch::external_scripts::ExternalScriptScanResult,
     final_domain: &str,
-) -> Vec<DetectedTechnology> {
+) -> (Vec<DetectedTechnology>, u64) {
+    let started = Instant::now();
     // Build the DNS haystack on the async task (cheap string assembly), then run
     // DNS/cert + optional script-text matching on the blocking pool with the
     // main fingerprint pass.
@@ -207,7 +222,7 @@ async fn supplement_technologies_after_enrichment(
     let script_text = external_script_scan.script_bodies_text.clone();
     let fallback = technologies_vec.clone();
 
-    match tokio::task::spawn_blocking(move || {
+    let techs = match tokio::task::spawn_blocking(move || {
         let techs = crate::fingerprint::supplement_technologies_with_dns_cert(
             ruleset.as_ref(),
             technologies_vec,
@@ -230,7 +245,8 @@ async fn supplement_technologies_after_enrichment(
             log::warn!("Technology late-signal supplement join failed for {final_domain}: {e}");
             fallback
         }
-    }
+    };
+    (techs, duration_to_us(started.elapsed()))
 }
 
 /// Merge external-script and response-header secret findings into `html_data`.
@@ -284,7 +300,7 @@ async fn persist(
     elapsed: f64,
     timestamp: i64,
     ctx: &ProcessingContext,
-) -> Result<(u64, u64, bool), Error> {
+) -> Result<PersistOutcome, Error> {
     debug!(
         "Preparing to insert record for URL: {}",
         resp_data.final_url
@@ -322,18 +338,32 @@ async fn persist(
         })
         .await;
 
+    let write_started = Instant::now();
     let upsert = insert_persisted_url_record(&ctx.pool, persisted_record)
         .await
         .map_err(|e| {
             log::error!("Failed to insert record for URL {final_url_for_logging}: {e}");
             anyhow::anyhow!("Database write failed: {e}")
         })?;
+    let sqlite_write_us = duration_to_us(write_started.elapsed());
     ctx.runtime.runtime_metrics.record_partial_failures(
         upsert.partial_failures_inserted,
         upsert.satellite_insert_errors_inserted,
     );
 
-    Ok((geoip_lookup_us, whois_lookup_us, upsert.inserted))
+    Ok(PersistOutcome {
+        geoip_lookup_us,
+        whois_lookup_us,
+        sqlite_write_us,
+        inserted: upsert.inserted,
+    })
+}
+
+struct PersistOutcome {
+    geoip_lookup_us: u64,
+    whois_lookup_us: u64,
+    sqlite_write_us: u64,
+    inserted: bool,
 }
 
 /// Handles an HTTP response, extracting all relevant data and storing it in the database.
@@ -370,6 +400,9 @@ pub async fn handle_response(
         return Ok(UrlProcessOutcome::Skipped);
     };
     metrics.html_parsing_us = extracted.html_parsing_us;
+    metrics.body_read_us = extracted.body_read_us;
+    metrics.html_parse_us = extracted.html_parse_us;
+    metrics.secret_scan_us = extracted.secret_scan_us;
 
     let ExtractedResponse {
         resp_data,
@@ -386,11 +419,14 @@ pub async fn handle_response(
     metrics.dns_additional_us = enrichment.dns_additional_us;
     metrics.tls_handshake_us = enrichment.tls_handshake_us;
     metrics.tech_detection_us = enrichment.tech_detection_us;
+    metrics.late_tech_us = enrichment.late_tech_us;
+    metrics.external_script_fetch_us = enrichment.external_script_scan.fetch_us;
+    metrics.external_script_analysis_us = enrichment.external_script_scan.analysis_us;
 
     let external_script_scan = std::mem::take(&mut enrichment.external_script_scan);
     merge_secrets(&mut html_data, &resp_data, external_script_scan).await;
 
-    let (geoip_lookup_us, whois_lookup_us, inserted) = persist(
+    let persisted = persist(
         resp_data,
         html_data,
         enrichment,
@@ -401,12 +437,13 @@ pub async fn handle_response(
     )
     .await?;
 
-    metrics.geoip_lookup_us = geoip_lookup_us;
-    metrics.whois_lookup_us = whois_lookup_us;
+    metrics.geoip_lookup_us = persisted.geoip_lookup_us;
+    metrics.whois_lookup_us = persisted.whois_lookup_us;
+    metrics.sqlite_write_us = persisted.sqlite_write_us;
     metrics.total_us = duration_to_us(start_time.elapsed());
     ctx.runtime.timing_stats.record(&metrics);
 
-    Ok(if inserted {
+    Ok(if persisted.inserted {
         UrlProcessOutcome::Inserted
     } else {
         UrlProcessOutcome::Updated

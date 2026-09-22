@@ -22,10 +22,11 @@
 //! references), so isolating it makes the behaviour easy to audit and to
 //! test in isolation.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::parse::ExposedSecret;
 use crate::security::validate_url_safe;
+use crate::utils::duration_to_us;
 
 /// Hard cap on how many `<script src>` URLs we attempt to fetch per page.
 ///
@@ -76,6 +77,10 @@ pub struct ExternalScriptScanResult {
     pub scanned: u32,
     /// Lowercase concatenation of successfully fetched bodies (for `scripts` tech patterns).
     pub script_bodies_text: String,
+    /// Wall time of the script HTTP fetches, in microseconds.
+    pub fetch_us: u64,
+    /// Wall time of lowercase plus secret scan, in microseconds.
+    pub analysis_us: u64,
 }
 
 /// Fetches external scripts referenced by a page and returns secrets found
@@ -115,6 +120,8 @@ pub async fn scan_external_scripts(
             eligible: eligible_count,
             scanned: 0,
             script_bodies_text: String::new(),
+            fetch_us: 0,
+            analysis_us: 0,
         };
     }
 
@@ -129,13 +136,16 @@ pub async fn scan_external_scripts(
         let body_opt = fetch_script_body(client, url).await;
         body_opt.map(|body| (url.clone(), body))
     });
+    let fetch_started = Instant::now();
     let results = futures::future::join_all(fetches).await;
+    let fetch_us = duration_to_us(fetch_started.elapsed());
 
     // Own fetched bodies, then run CPU-bound secret regex work on the blocking
     // pool (same posture as HTML `parse_html_content` / tech detection).
     let owned: Vec<(String, String)> = results.into_iter().flatten().collect();
     let scanned = u32::try_from(owned.len()).unwrap_or(u32::MAX);
 
+    let analysis_started = Instant::now();
     let (all_secrets, script_bodies_text) = tokio::task::spawn_blocking(move || {
         let mut all_secrets: Vec<ExposedSecret> = Vec::new();
         let mut body_parts: Vec<String> = Vec::new();
@@ -161,12 +171,15 @@ pub async fn scan_external_scripts(
         log::warn!("External-script secret scan join failed: {e}");
         (Vec::new(), String::new())
     });
+    let analysis_us = duration_to_us(analysis_started.elapsed());
 
     ExternalScriptScanResult {
         secrets: all_secrets,
         eligible: eligible_count,
         scanned,
         script_bodies_text,
+        fetch_us,
+        analysis_us,
     }
 }
 

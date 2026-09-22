@@ -21,10 +21,36 @@ pub struct UrlTimingMetrics {
     pub dns_additional_us: u64,
     /// TLS handshake time in microseconds
     pub tls_handshake_us: u64,
-    /// HTML parsing time in microseconds
+    /// Wall time for body read plus the HTML parse task, in microseconds.
+    ///
+    /// Includes blocking-pool queue wait. [`Self::body_read_us`],
+    /// [`Self::html_parse_us`], and [`Self::secret_scan_us`] split this stage.
     pub html_parsing_us: u64,
-    /// Technology detection time in microseconds
+    /// Streaming and decoding the response body, in microseconds.
+    pub body_read_us: u64,
+    /// `HTML` parse and extraction, excluding the body secret scan, in microseconds.
+    pub html_parse_us: u64,
+    /// Secret scan of the `HTML` body, in microseconds.
+    ///
+    /// External-script secret scans are part of [`Self::external_script_analysis_us`].
+    pub secret_scan_us: u64,
+    /// First technology-fingerprint pass, in microseconds.
+    ///
+    /// The DNS/cert and fetched-script supplement is [`Self::late_tech_us`].
     pub tech_detection_us: u64,
+    /// Late fingerprint supplement (DNS, certificate, fetched script text), in microseconds.
+    pub late_tech_us: u64,
+    /// External-script HTTP fetches, in microseconds.
+    ///
+    /// Runs in parallel with technology detection and DNS, so this can overlap
+    /// those stages on the wall clock.
+    pub external_script_fetch_us: u64,
+    /// External-script analysis (lowercase plus secret scan), in microseconds.
+    ///
+    /// Runs in parallel with technology detection and DNS.
+    pub external_script_analysis_us: u64,
+    /// `SQLite` insert of the URL row and satellites, in microseconds.
+    pub sqlite_write_us: u64,
     /// `GeoIP` lookup time in microseconds
     pub geoip_lookup_us: u64,
     /// WHOIS lookup time in microseconds
@@ -55,8 +81,22 @@ pub struct TimingStats {
     pub tls_handshake_sum_us: AtomicU64,
     /// Sum of HTML parsing times in microseconds
     pub html_parsing_sum_us: AtomicU64,
+    /// Sum of response-body read times in microseconds
+    pub body_read_sum_us: AtomicU64,
+    /// Sum of HTML parse times in microseconds, excluding the body secret scan
+    pub html_parse_sum_us: AtomicU64,
+    /// Sum of HTML-body secret-scan times in microseconds
+    pub secret_scan_sum_us: AtomicU64,
     /// Sum of technology detection times in microseconds
     pub tech_detection_sum_us: AtomicU64,
+    /// Sum of late fingerprint-supplement times in microseconds
+    pub late_tech_sum_us: AtomicU64,
+    /// Sum of external-script fetch times in microseconds
+    pub external_script_fetch_sum_us: AtomicU64,
+    /// Sum of external-script analysis times in microseconds
+    pub external_script_analysis_sum_us: AtomicU64,
+    /// Sum of `SQLite` write times in microseconds
+    pub sqlite_write_sum_us: AtomicU64,
     /// Sum of `GeoIP` lookup times in microseconds
     pub geoip_lookup_sum_us: AtomicU64,
     /// Sum of WHOIS lookup times in microseconds
@@ -85,8 +125,22 @@ impl TimingStats {
             .fetch_add(metrics.tls_handshake_us, Ordering::Relaxed);
         self.html_parsing_sum_us
             .fetch_add(metrics.html_parsing_us, Ordering::Relaxed);
+        self.body_read_sum_us
+            .fetch_add(metrics.body_read_us, Ordering::Relaxed);
+        self.html_parse_sum_us
+            .fetch_add(metrics.html_parse_us, Ordering::Relaxed);
+        self.secret_scan_sum_us
+            .fetch_add(metrics.secret_scan_us, Ordering::Relaxed);
         self.tech_detection_sum_us
             .fetch_add(metrics.tech_detection_us, Ordering::Relaxed);
+        self.late_tech_sum_us
+            .fetch_add(metrics.late_tech_us, Ordering::Relaxed);
+        self.external_script_fetch_sum_us
+            .fetch_add(metrics.external_script_fetch_us, Ordering::Relaxed);
+        self.external_script_analysis_sum_us
+            .fetch_add(metrics.external_script_analysis_us, Ordering::Relaxed);
+        self.sqlite_write_sum_us
+            .fetch_add(metrics.sqlite_write_us, Ordering::Relaxed);
         self.geoip_lookup_sum_us
             .fetch_add(metrics.geoip_lookup_us, Ordering::Relaxed);
         self.whois_lookup_sum_us
@@ -114,7 +168,18 @@ impl TimingStats {
             dns_additional_us: self.dns_additional_sum_us.load(Ordering::Relaxed) / count,
             tls_handshake_us: self.tls_handshake_sum_us.load(Ordering::Relaxed) / count,
             html_parsing_us: self.html_parsing_sum_us.load(Ordering::Relaxed) / count,
+            body_read_us: self.body_read_sum_us.load(Ordering::Relaxed) / count,
+            html_parse_us: self.html_parse_sum_us.load(Ordering::Relaxed) / count,
+            secret_scan_us: self.secret_scan_sum_us.load(Ordering::Relaxed) / count,
             tech_detection_us: self.tech_detection_sum_us.load(Ordering::Relaxed) / count,
+            late_tech_us: self.late_tech_sum_us.load(Ordering::Relaxed) / count,
+            external_script_fetch_us: self.external_script_fetch_sum_us.load(Ordering::Relaxed)
+                / count,
+            external_script_analysis_us: self
+                .external_script_analysis_sum_us
+                .load(Ordering::Relaxed)
+                / count,
+            sqlite_write_us: self.sqlite_write_sum_us.load(Ordering::Relaxed) / count,
             geoip_lookup_us: self.geoip_lookup_sum_us.load(Ordering::Relaxed) / count,
             whois_lookup_us: self.whois_lookup_sum_us.load(Ordering::Relaxed) / count,
             total_us: self.total_sum_us.load(Ordering::Relaxed) / count,
@@ -144,11 +209,43 @@ impl TimingStats {
         }
     }
 
+    fn log_stage(sum_us: u64, avg_ms: u64, label: &str, total_ms: u64) {
+        log::info!(
+            "{}",
+            Self::format_timing_with_micros(
+                sum_us,
+                avg_ms,
+                label,
+                stage_percentage(avg_ms, total_ms),
+            )
+        );
+    }
+
+    fn log_toggle_stage(
+        sum_us: u64,
+        avg_ms: u64,
+        label: &str,
+        total_ms: u64,
+        enabled: Option<bool>,
+    ) {
+        if let Some(false) = enabled {
+            log::info!(
+                "  {label:20} {avg_ms:>6} ms ({:.1}%) (disabled)",
+                stage_percentage(avg_ms, total_ms)
+            );
+        } else {
+            Self::log_stage(sum_us, avg_ms, label, total_ms);
+        }
+    }
+
     /// Logs a summary of timing statistics.
     ///
     /// Optionally accepts flags to indicate whether `GeoIP` and WHOIS are enabled,
     /// which will be displayed in the output when these features are disabled.
-    #[allow(clippy::too_many_lines)] // Logs one line per timing metric (~12 metrics); splitting would fragment the summary
+    ///
+    /// Body read, HTML parse, and secret scan are parts of HTML parsing.
+    /// Script fetch and script analysis overlap tech detection and DNS, so they
+    /// are logged and left out of the residual overhead.
     pub fn log_summary(&self, geoip_enabled: Option<bool>, whois_enabled: Option<bool>) {
         let count = self.count.load(Ordering::Relaxed);
         if count == 0 {
@@ -156,184 +253,46 @@ impl TimingStats {
             return;
         }
 
-        let avg = self.averages(); // Returns values in microseconds
+        let avg = self.averages();
+        let avg_ms = DisplayMs::from_metrics(&avg);
+        let total_ms = avg_ms.total_ms;
         let total_sum_micros = self.total_sum_us.load(Ordering::Relaxed);
-
-        // Convert to milliseconds for display (struct for log output only)
-        let avg_ms = DisplayMs {
-            http_request_ms: Self::micros_to_ms(avg.http_request_us),
-            dns_forward_ms: Self::micros_to_ms(avg.dns_forward_us),
-            dns_reverse_ms: Self::micros_to_ms(avg.dns_reverse_us),
-            dns_additional_ms: Self::micros_to_ms(avg.dns_additional_us),
-            tls_handshake_ms: Self::micros_to_ms(avg.tls_handshake_us),
-            html_parsing_ms: Self::micros_to_ms(avg.html_parsing_us),
-            tech_detection_ms: Self::micros_to_ms(avg.tech_detection_us),
-            geoip_lookup_ms: Self::micros_to_ms(avg.geoip_lookup_us),
-            whois_lookup_ms: Self::micros_to_ms(avg.whois_lookup_us),
-            total_ms: Self::micros_to_ms(avg.total_us),
-        };
         let total_sum_ms = Self::micros_to_ms(total_sum_micros);
 
         log::info!("=== Timing Metrics Summary ({count} URLs) ===");
         log::info!("Average times per URL:");
-        // Safe percentage calculation: explicitly handles division by zero
-        // Returns 0.0 when total is 0 to prevent panic
-        let percentage = |part: u64, total: u64| -> f64 {
-            if total == 0 {
-                0.0
-            } else {
-                // SAFETY: Cast u64 to f64 for percentage calculation
-                // - Timing values are in microseconds (10^-6 seconds)
-                // - Practical max: processing 1M URLs at 10s each = 10^13 microseconds
-                // - f64 has 53 bits of precision, can exactly represent integers up to 2^53 (9 x 10^15)
-                // - Timing sums in typical usage (< 10^13 μs) are well within f64 range
-                // - If sum exceeds 2^53, precision loss is acceptable for display purposes
-                // - This is display-only code; precision loss of a few microseconds in aggregate stats is negligible
-                #[allow(clippy::cast_precision_loss)]
-                {
-                    part as f64 / total as f64 * 100.0
-                }
-            }
-        };
-
-        // Helper to get sum in microseconds for each metric
-        let http_sum_micros = self.http_request_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                http_sum_micros,
-                avg_ms.http_request_ms,
-                "HTTP Request:",
-                percentage(avg_ms.http_request_ms, avg_ms.total_ms),
-            )
+        self.log_fixed_stages(&avg_ms, total_ms);
+        Self::log_toggle_stage(
+            self.geoip_lookup_sum_us.load(Ordering::Relaxed),
+            avg_ms.geoip_lookup_ms,
+            "GeoIP Lookup:",
+            total_ms,
+            geoip_enabled,
+        );
+        Self::log_toggle_stage(
+            self.whois_lookup_sum_us.load(Ordering::Relaxed),
+            avg_ms.whois_lookup_ms,
+            "WHOIS Lookup:",
+            total_ms,
+            whois_enabled,
+        );
+        Self::log_stage(
+            self.sqlite_write_sum_us.load(Ordering::Relaxed),
+            avg_ms.sqlite_write_ms,
+            "SQLite Write:",
+            total_ms,
         );
 
-        let dns_forward_sum_micros = self.dns_forward_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                dns_forward_sum_micros,
-                avg_ms.dns_forward_ms,
-                "DNS Forward:",
-                percentage(avg_ms.dns_forward_ms, avg_ms.total_ms),
-            )
-        );
-
-        let dns_reverse_sum_micros = self.dns_reverse_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                dns_reverse_sum_micros,
-                avg_ms.dns_reverse_ms,
-                "DNS Reverse:",
-                percentage(avg_ms.dns_reverse_ms, avg_ms.total_ms),
-            )
-        );
-
-        let dns_additional_sum_micros = self.dns_additional_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                dns_additional_sum_micros,
-                avg_ms.dns_additional_ms,
-                "DNS Additional:",
-                percentage(avg_ms.dns_additional_ms, avg_ms.total_ms),
-            )
-        );
-
-        let tls_sum_micros = self.tls_handshake_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                tls_sum_micros,
-                avg_ms.tls_handshake_ms,
-                "TLS Handshake:",
-                percentage(avg_ms.tls_handshake_ms, avg_ms.total_ms),
-            )
-        );
-
-        let html_sum_micros = self.html_parsing_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                html_sum_micros,
-                avg_ms.html_parsing_ms,
-                "HTML Parsing:",
-                percentage(avg_ms.html_parsing_ms, avg_ms.total_ms),
-            )
-        );
-
-        let tech_sum_micros = self.tech_detection_sum_us.load(Ordering::Relaxed);
-        log::info!(
-            "{}",
-            Self::format_timing_with_micros(
-                tech_sum_micros,
-                avg_ms.tech_detection_ms,
-                "Tech Detection:",
-                percentage(avg_ms.tech_detection_ms, avg_ms.total_ms),
-            )
-        );
-        // GeoIP Lookup - show "(disabled)" if GeoIP is not enabled, or show total in microseconds if very fast
-        let geoip_sum_micros = self.geoip_lookup_sum_us.load(Ordering::Relaxed);
-        if let Some(false) = geoip_enabled {
-            log::info!(
-                "  GeoIP Lookup:        {:>6} ms ({:.1}%) (disabled)",
-                avg_ms.geoip_lookup_ms,
-                percentage(avg_ms.geoip_lookup_ms, avg_ms.total_ms)
-            );
-        } else {
-            log::info!(
-                "{}",
-                Self::format_timing_with_micros(
-                    geoip_sum_micros,
-                    avg_ms.geoip_lookup_ms,
-                    "GeoIP Lookup:",
-                    percentage(avg_ms.geoip_lookup_ms, avg_ms.total_ms),
-                )
-            );
-        }
-
-        // WHOIS Lookup - show "(disabled)" if WHOIS is not enabled
-        let whois_sum_micros = self.whois_lookup_sum_us.load(Ordering::Relaxed);
-        if let Some(false) = whois_enabled {
-            log::info!(
-                "  WHOIS Lookup:        {:>6} ms ({:.1}%) (disabled)",
-                avg_ms.whois_lookup_ms,
-                percentage(avg_ms.whois_lookup_ms, avg_ms.total_ms)
-            );
-        } else {
-            log::info!(
-                "{}",
-                Self::format_timing_with_micros(
-                    whois_sum_micros,
-                    avg_ms.whois_lookup_ms,
-                    "WHOIS Lookup:",
-                    percentage(avg_ms.whois_lookup_ms, avg_ms.total_ms),
-                )
-            );
-        }
-
-        let other_ms = avg_ms.total_ms.saturating_sub(
-            avg_ms.http_request_ms
-                + avg_ms.dns_forward_ms
-                + avg_ms.dns_reverse_ms
-                + avg_ms.dns_additional_ms
-                + avg_ms.tls_handshake_ms
-                + avg_ms.html_parsing_ms
-                + avg_ms.tech_detection_ms
-                + avg_ms.geoip_lookup_ms
-                + avg_ms.whois_lookup_ms,
-        );
+        let other_ms = total_ms.saturating_sub(avg_ms.accounted_ms());
         log::info!(
             "  Other/Overhead:      {:>6} ms ({:.1}%)",
             other_ms,
-            percentage(other_ms, avg_ms.total_ms)
+            stage_percentage(other_ms, total_ms)
         );
-        log::info!("  Total:               {:>6} ms", avg_ms.total_ms);
-        // SAFETY: Cast u64 to f64 for display formatting
-        // - Converting microseconds to seconds for human-readable output
-        // - See justification for cast_precision_loss above in percentage closure
-        // - This is display-only code; precision loss is acceptable
+        log::info!("  Total:               {:>6} ms", total_ms);
+        // Converting the microsecond sum to seconds for the human-readable total.
+        // Values in normal scans fit exactly in f64's integer range; past that,
+        // a few microseconds of display error is acceptable.
         #[allow(clippy::cast_precision_loss)]
         {
             log::info!(
@@ -341,6 +300,91 @@ impl TimingStats {
                 total_sum_ms,
                 total_sum_micros as f64 / 1_000_000.0
             );
+        }
+    }
+
+    fn log_fixed_stages(&self, avg_ms: &DisplayMs, total_ms: u64) {
+        let stages = [
+            (
+                self.http_request_sum_us.load(Ordering::Relaxed),
+                avg_ms.http_request_ms,
+                "HTTP Request:",
+            ),
+            (
+                self.dns_forward_sum_us.load(Ordering::Relaxed),
+                avg_ms.dns_forward_ms,
+                "DNS Forward:",
+            ),
+            (
+                self.dns_reverse_sum_us.load(Ordering::Relaxed),
+                avg_ms.dns_reverse_ms,
+                "DNS Reverse:",
+            ),
+            (
+                self.dns_additional_sum_us.load(Ordering::Relaxed),
+                avg_ms.dns_additional_ms,
+                "DNS Additional:",
+            ),
+            (
+                self.tls_handshake_sum_us.load(Ordering::Relaxed),
+                avg_ms.tls_handshake_ms,
+                "TLS Handshake:",
+            ),
+            (
+                self.html_parsing_sum_us.load(Ordering::Relaxed),
+                avg_ms.html_parsing_ms,
+                "HTML Parsing:",
+            ),
+            (
+                self.body_read_sum_us.load(Ordering::Relaxed),
+                avg_ms.body_read_ms,
+                "Body Read:",
+            ),
+            (
+                self.html_parse_sum_us.load(Ordering::Relaxed),
+                avg_ms.html_parse_ms,
+                "HTML Parse:",
+            ),
+            (
+                self.secret_scan_sum_us.load(Ordering::Relaxed),
+                avg_ms.secret_scan_ms,
+                "Secret Scan:",
+            ),
+            (
+                self.tech_detection_sum_us.load(Ordering::Relaxed),
+                avg_ms.tech_detection_ms,
+                "Tech Detection:",
+            ),
+            (
+                self.late_tech_sum_us.load(Ordering::Relaxed),
+                avg_ms.late_tech_ms,
+                "Late Tech:",
+            ),
+            (
+                self.external_script_fetch_sum_us.load(Ordering::Relaxed),
+                avg_ms.external_script_fetch_ms,
+                "Script Fetch:",
+            ),
+            (
+                self.external_script_analysis_sum_us.load(Ordering::Relaxed),
+                avg_ms.external_script_analysis_ms,
+                "Script Analyze:",
+            ),
+        ];
+        for (sum_us, stage_ms, label) in stages {
+            Self::log_stage(sum_us, stage_ms, label, total_ms);
+        }
+    }
+}
+
+/// Percentage of `part_ms` within `total_ms`. Zero when the total is zero.
+fn stage_percentage(part_ms: u64, total_ms: u64) -> f64 {
+    if total_ms == 0 {
+        0.0
+    } else {
+        #[allow(clippy::cast_precision_loss)]
+        {
+            part_ms as f64 / total_ms as f64 * 100.0
         }
     }
 }
@@ -353,10 +397,59 @@ struct DisplayMs {
     dns_additional_ms: u64,
     tls_handshake_ms: u64,
     html_parsing_ms: u64,
+    body_read_ms: u64,
+    html_parse_ms: u64,
+    secret_scan_ms: u64,
     tech_detection_ms: u64,
+    late_tech_ms: u64,
+    external_script_fetch_ms: u64,
+    external_script_analysis_ms: u64,
+    sqlite_write_ms: u64,
     geoip_lookup_ms: u64,
     whois_lookup_ms: u64,
     total_ms: u64,
+}
+
+impl DisplayMs {
+    fn from_metrics(avg: &UrlTimingMetrics) -> Self {
+        Self {
+            http_request_ms: TimingStats::micros_to_ms(avg.http_request_us),
+            dns_forward_ms: TimingStats::micros_to_ms(avg.dns_forward_us),
+            dns_reverse_ms: TimingStats::micros_to_ms(avg.dns_reverse_us),
+            dns_additional_ms: TimingStats::micros_to_ms(avg.dns_additional_us),
+            tls_handshake_ms: TimingStats::micros_to_ms(avg.tls_handshake_us),
+            html_parsing_ms: TimingStats::micros_to_ms(avg.html_parsing_us),
+            body_read_ms: TimingStats::micros_to_ms(avg.body_read_us),
+            html_parse_ms: TimingStats::micros_to_ms(avg.html_parse_us),
+            secret_scan_ms: TimingStats::micros_to_ms(avg.secret_scan_us),
+            tech_detection_ms: TimingStats::micros_to_ms(avg.tech_detection_us),
+            late_tech_ms: TimingStats::micros_to_ms(avg.late_tech_us),
+            external_script_fetch_ms: TimingStats::micros_to_ms(avg.external_script_fetch_us),
+            external_script_analysis_ms: TimingStats::micros_to_ms(avg.external_script_analysis_us),
+            sqlite_write_ms: TimingStats::micros_to_ms(avg.sqlite_write_us),
+            geoip_lookup_ms: TimingStats::micros_to_ms(avg.geoip_lookup_us),
+            whois_lookup_ms: TimingStats::micros_to_ms(avg.whois_lookup_us),
+            total_ms: TimingStats::micros_to_ms(avg.total_us),
+        }
+    }
+
+    /// Stages that occupy distinct stretches of the per-URL wall clock.
+    ///
+    /// Nested parse breakdowns and parallel script work are logged separately
+    /// and omitted here so `Other/Overhead` stays a residual.
+    fn accounted_ms(&self) -> u64 {
+        self.http_request_ms
+            + self.dns_forward_ms
+            + self.dns_reverse_ms
+            + self.dns_additional_ms
+            + self.tls_handshake_ms
+            + self.html_parsing_ms
+            + self.tech_detection_ms
+            + self.late_tech_ms
+            + self.sqlite_write_ms
+            + self.geoip_lookup_ms
+            + self.whois_lookup_ms
+    }
 }
 
 /// Helper function to convert a Duration to microseconds.
@@ -435,6 +528,30 @@ mod tests {
         assert_eq!(stats.http_request_sum_us.load(Ordering::Relaxed), 1000);
         assert_eq!(stats.dns_forward_sum_us.load(Ordering::Relaxed), 500);
         assert_eq!(stats.total_sum_us.load(Ordering::Relaxed), 2000);
+    }
+
+    #[test]
+    fn test_timing_stats_records_split_stages() {
+        let stats = TimingStats::new();
+        stats.record(&UrlTimingMetrics {
+            body_read_us: 11,
+            html_parse_us: 22,
+            secret_scan_us: 33,
+            late_tech_us: 44,
+            external_script_fetch_us: 55,
+            external_script_analysis_us: 66,
+            sqlite_write_us: 77,
+            total_us: 1000,
+            ..Default::default()
+        });
+        let avg = stats.averages();
+        assert_eq!(avg.body_read_us, 11);
+        assert_eq!(avg.html_parse_us, 22);
+        assert_eq!(avg.secret_scan_us, 33);
+        assert_eq!(avg.late_tech_us, 44);
+        assert_eq!(avg.external_script_fetch_us, 55);
+        assert_eq!(avg.external_script_analysis_us, 66);
+        assert_eq!(avg.sqlite_write_us, 77);
     }
 
     #[test]
@@ -588,6 +705,7 @@ mod tests {
             geoip_lookup_us: 10,
             whois_lookup_us: 0,
             total_us: 3000, // Total includes overhead
+            ..Default::default()
         };
 
         stats.record(&metrics);
@@ -660,6 +778,7 @@ mod tests {
             geoip_lookup_us: 10,
             whois_lookup_us: 5,
             total_us: 3000, // Total includes overhead, so sum of components < total
+            ..Default::default()
         };
 
         stats.record(&metrics);

@@ -61,6 +61,14 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Same optimizations as release, with symbols kept for samply / sample.
+# `target/release/domain-status` is stripped, so a flamegraph of that binary
+# has no function names. Build with `--profile release-with-symbols`.
+[profile.release-with-symbols]
+inherits = "release"
+debug = true
+strip = false
+
 [lib]
 name = "domain_status"
 path = "src/lib.rs"
@@ -77,6 +85,8 @@ default = []
 # code. Run the affected tests with `cargo test --features test-utils`
 # (already covered by `just test` / `just ci` / CI's `--all-features`).
 test-utils = []
+# Internal: exposes `bench_api` for `cargo bench`. Not a stable public API.
+bench-utils = []
 
 # Integration tests that drive the low-level insert pipeline directly.
 # `required-features` makes `cargo test` skip them silently (rather than
@@ -100,6 +110,11 @@ required-features = ["test-utils"]
 name = "orchestration_offline"
 path = "tests/orchestration_offline.rs"
 required-features = ["test-utils"]
+
+[[bench]]
+name = "scan_cost"
+harness = false
+required-features = ["bench-utils"]
 
 [dependencies]
 # HTTP requests and async (use rustls only; drop native-tls)
@@ -208,6 +223,7 @@ rstest = "^0.27"             # Parameterized tests and fixtures
 wiremock = "^0.6"           # HTTP mocking for integration tests
 tower = "^0.5"
 rcgen = "^0.14"
+divan = "0.1"
 
 [patch.crates-io]
 # crates.io whois-service 0.3.0 enables reqwest default features (native-tls).

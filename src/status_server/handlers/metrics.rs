@@ -75,9 +75,37 @@ domain_status_timing_tls_handshake_ms {}
 # TYPE domain_status_timing_html_parsing_ms gauge
 domain_status_timing_html_parsing_ms {}
 
+# HELP domain_status_timing_body_read_ms Average response body read time in milliseconds
+# TYPE domain_status_timing_body_read_ms gauge
+domain_status_timing_body_read_ms {}
+
+# HELP domain_status_timing_html_parse_ms Average HTML parse time in milliseconds, excluding the body secret scan
+# TYPE domain_status_timing_html_parse_ms gauge
+domain_status_timing_html_parse_ms {}
+
+# HELP domain_status_timing_secret_scan_ms Average HTML body secret-scan time in milliseconds
+# TYPE domain_status_timing_secret_scan_ms gauge
+domain_status_timing_secret_scan_ms {}
+
 # HELP domain_status_timing_tech_detection_ms Average technology detection time in milliseconds
 # TYPE domain_status_timing_tech_detection_ms gauge
 domain_status_timing_tech_detection_ms {}
+
+# HELP domain_status_timing_late_tech_ms Average late fingerprint supplement time in milliseconds
+# TYPE domain_status_timing_late_tech_ms gauge
+domain_status_timing_late_tech_ms {}
+
+# HELP domain_status_timing_external_script_fetch_ms Average external-script fetch time in milliseconds
+# TYPE domain_status_timing_external_script_fetch_ms gauge
+domain_status_timing_external_script_fetch_ms {}
+
+# HELP domain_status_timing_external_script_analysis_ms Average external-script analysis time in milliseconds
+# TYPE domain_status_timing_external_script_analysis_ms gauge
+domain_status_timing_external_script_analysis_ms {}
+
+# HELP domain_status_timing_sqlite_write_ms Average SQLite write time in milliseconds
+# TYPE domain_status_timing_sqlite_write_ms gauge
+domain_status_timing_sqlite_write_ms {}
 
 # HELP domain_status_timing_geoip_lookup_ms Average GeoIP lookup time in milliseconds
 # TYPE domain_status_timing_geoip_lookup_ms gauge
@@ -97,7 +125,14 @@ domain_status_timing_total_ms {}
                 micros_to_ms(avg.dns_additional_us),
                 micros_to_ms(avg.tls_handshake_us),
                 micros_to_ms(avg.html_parsing_us),
+                micros_to_ms(avg.body_read_us),
+                micros_to_ms(avg.html_parse_us),
+                micros_to_ms(avg.secret_scan_us),
                 micros_to_ms(avg.tech_detection_us),
+                micros_to_ms(avg.late_tech_us),
+                micros_to_ms(avg.external_script_fetch_us),
+                micros_to_ms(avg.external_script_analysis_us),
+                micros_to_ms(avg.sqlite_write_us),
                 micros_to_ms(avg.geoip_lookup_us),
                 micros_to_ms(avg.whois_lookup_us),
                 micros_to_ms(avg.total_us),
@@ -314,6 +349,7 @@ mod tests {
         let timing_stats = Arc::new(TimingStats::new());
         timing_stats.record(&UrlTimingMetrics {
             http_request_us: 1500,
+            secret_scan_us: 1500,
             total_us: 2000,
             ..Default::default()
         });
@@ -339,6 +375,8 @@ mod tests {
         assert!(metrics.contains("domain_status_percentage_dispatched 60"));
         assert!(metrics.contains("domain_status_rate_per_second 12"));
         assert!(metrics.contains("domain_status_timing_http_request_ms 2"));
+        assert!(metrics.contains("domain_status_timing_secret_scan_ms 2"));
+        assert!(metrics.contains("domain_status_timing_sqlite_write_ms 0"));
         assert!(metrics.contains("domain_status_timing_total_ms 2"));
         assert!(metrics.contains("domain_status_runtime_retries_total 1"));
         assert!(metrics.contains("domain_status_partial_failures 3"));

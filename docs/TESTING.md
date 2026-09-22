@@ -114,6 +114,22 @@ Results land under `mutants.out/` (`caught` / `missed` / `unviable` / `timeout`)
 
 Prefer offline fixtures, exact expected sets, and asserting `Err` when init must fail.
 
+## Component cost
+
+`just test` and `just ci` stay correctness gates. Wall-clock budgets flap across machines, so they are not part of those recipes.
+
+`just bench` does two things:
+
+1. `cargo bench --features bench-utils` (divan, optimized) prints a table for the production matchers on a fixed page: fingerprint body and `scripts` passes at 15, 500, and 6000 technologies, secret scan of the page and of a 500 KiB script blob, HTML parse, and one SQLite upsert. The 6000-tech fixture is the stand-in for the full catalog. The vendored ruleset is about 15 technologies and will not show that cost. Compare microseconds per call across the three sizes; the 6000 row divided by 6 is microseconds per 1,000 technologies.
+2. An ignored ceiling test, `component_cost_ceiling`, fails if the warm 6000-tech body pass or the script secret scan exceeds a wide debug-build limit. CI's ignored-test job runs it too. The limit is several times a local debug run so a noisy 10% swing stays green and a stage that becomes wildly more expensive does not.
+
+```bash
+just build-symbols   # flamegraph binary; see ADVANCED.md
+just bench           # divan table + ceiling
+```
+
+CPU time on that fixed input is the portable stand-in for energy. The suite does not measure watt-hours.
+
 ## Sample scan validation
 
 Local scratch DBs/exports belong under a gitignored dir (e.g. `validation_e2e/`) or names already listed in `.gitignore`.
