@@ -9,7 +9,10 @@
 //! `patterns.go:122`) are from the original port circa 2024 and may drift
 //! as the upstream project evolves.
 
+mod compiled;
 mod version;
+
+pub(crate) use compiled::{CompiledPattern, PreparedSignals};
 
 use moka::sync::Cache;
 use std::collections::HashMap;
@@ -29,8 +32,10 @@ const MAX_REGEX_CACHE_SIZE: u64 = 10_000;
 
 /// Global cache for compiled regex patterns.
 /// This cache is shared across all threads and persists for the lifetime of the program.
-/// Regex compilation is expensive (10-100x slower than matching), so caching provides
-/// significant performance improvements when the same patterns are used repeatedly.
+///
+/// Scan matching does not use this cache. Those patterns are compiled once when
+/// the ruleset is finished. The cache remains for cookie-name wildcards and
+/// [`matches_pattern`].
 ///
 /// Uses moka's lock-free concurrent cache for high-throughput concurrent access,
 /// avoiding the mutex contention that would occur with `std::sync::Mutex<LruCache>`.
@@ -65,52 +70,97 @@ pub(crate) struct MetaMatchResult {
 /// # Returns
 ///
 /// `MetaMatchResult` with match status and extracted version (if any).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn check_meta_patterns(
     meta_key: &str,
     patterns: &[String],
     meta_tags: &HashMap<String, Vec<String>>,
+) -> MetaMatchResult {
+    route_meta_key(meta_key, meta_tags, |meta_values| {
+        string_meta_values(patterns, meta_values)
+    })
+}
+
+/// Same key routing as [`check_meta_patterns`], against patterns compiled at load.
+pub(crate) fn check_compiled_meta_patterns(
+    meta_key: &str,
+    patterns: &[CompiledPattern],
+    meta_tags: &HashMap<String, Vec<String>>,
+) -> MetaMatchResult {
+    route_meta_key(meta_key, meta_tags, |meta_values| {
+        compiled_meta_values(patterns, meta_values)
+    })
+}
+
+/// First captured version wins, matching the string-pattern meta loop.
+#[cfg_attr(not(test), allow(dead_code))]
+fn string_meta_values(patterns: &[String], meta_values: &[String]) -> MetaMatchResult {
+    let mut matched_version: Option<String> = None;
+    let mut has_match = false;
+    for meta_value in meta_values {
+        for pattern in patterns {
+            let result = matches_pattern(pattern, meta_value);
+            if absorb_meta_hit(&result, &mut has_match, &mut matched_version) {
+                return MetaMatchResult {
+                    matched: true,
+                    version: matched_version,
+                };
+            }
+        }
+    }
+    MetaMatchResult {
+        matched: has_match,
+        version: matched_version,
+    }
+}
+
+fn compiled_meta_values(patterns: &[CompiledPattern], meta_values: &[String]) -> MetaMatchResult {
+    let mut matched_version: Option<String> = None;
+    let mut has_match = false;
+    for meta_value in meta_values {
+        for pattern in patterns {
+            let result = pattern.evaluate(meta_value);
+            if absorb_meta_hit(&result, &mut has_match, &mut matched_version) {
+                return MetaMatchResult {
+                    matched: true,
+                    version: matched_version,
+                };
+            }
+        }
+    }
+    MetaMatchResult {
+        matched: has_match,
+        version: matched_version,
+    }
+}
+
+/// Returns `true` once a version is captured and the caller should stop.
+fn absorb_meta_hit(
+    result: &PatternMatchResult,
+    has_match: &mut bool,
+    matched_version: &mut Option<String>,
+) -> bool {
+    if result.matched {
+        *has_match = true;
+        if matched_version.is_none() && result.version.is_some() {
+            matched_version.clone_from(&result.version);
+        }
+        return matched_version.is_some();
+    }
+    false
+}
+
+/// Resolve a Wappalyzer meta key to HTML meta values, then run `check_patterns`.
+fn route_meta_key(
+    meta_key: &str,
+    meta_tags: &HashMap<String, Vec<String>>,
+    mut check_patterns: impl FnMut(&[String]) -> MetaMatchResult,
 ) -> MetaMatchResult {
     // wappalyzergo normalizes meta keys to lowercase during update (update-fingerprints/main.go line 271)
     // But when matching, it compares lowercase fingerprint key against raw HTML name (case-sensitive comparison)
     // However, since fingerprint keys are lowercase and we normalize HTML names to lowercase when extracting,
     // we can match directly. But we need to handle the case where meta_key might have a prefix.
     let meta_key_lower = meta_key.to_lowercase();
-
-    // Helper to check patterns against meta values and extract version
-    // wappalyzergo passes raw content value to pattern.Evaluate (which uses case-insensitive regex)
-    // We pass raw content, which is correct
-    // meta_values is a Vec<String> because there can be multiple meta tags with the same name
-    let check_patterns = |meta_values: &[String]| -> MetaMatchResult {
-        let mut matched_version: Option<String> = None;
-        let mut has_match = false;
-
-        // Check all meta values (there can be multiple meta tags with the same name)
-        for meta_value in meta_values {
-            for pattern in patterns {
-                let result = matches_pattern(pattern, meta_value);
-                if result.matched {
-                    has_match = true;
-                    // Take the first version found (matching wappalyzergo behavior)
-                    if matched_version.is_none() && result.version.is_some() {
-                        matched_version.clone_from(&result.version);
-                    }
-                    // If we found a version, we can stop checking patterns for this meta value
-                    if matched_version.is_some() {
-                        break;
-                    }
-                }
-            }
-            // If we found a version, we can stop checking other meta values
-            if matched_version.is_some() {
-                break;
-            }
-        }
-
-        MetaMatchResult {
-            matched: has_match,
-            version: matched_version,
-        }
-    };
 
     // wappalyzergo's matchKeyValueString does: if data != key { continue }
     // where data is the fingerprint meta key (lowercase) and key is the raw HTML meta name
@@ -345,6 +395,7 @@ fn handle_empty_pattern(version_template: Option<&str>) -> PatternMatchResult {
 /// - Patterns with version extraction (e.g., "version:\\1")
 ///
 /// Returns `PatternMatchResult` with match status and extracted version (if any).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn matches_pattern(pattern: &str, text: &str) -> PatternMatchResult {
     let parsed = parse_pattern(pattern);
 

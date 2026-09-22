@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
-use crate::fingerprint::patterns::{check_meta_patterns, matches_pattern};
+use crate::fingerprint::patterns::{check_compiled_meta_patterns, CompiledPattern};
 
 use super::source::DetectionSource;
 
@@ -26,13 +26,13 @@ pub struct BodyMatchResult {
 /// Tries patterns against `text`, updating `matched` / `version`.
 /// Returns `true` when a version was captured (caller may stop early).
 fn match_patterns_against_text(
-    patterns: &[String],
+    patterns: &[CompiledPattern],
     text: &str,
     matched: &mut bool,
     version: &mut Option<String>,
 ) -> bool {
     for pattern in patterns {
-        let result = matches_pattern(pattern, text);
+        let result = pattern.evaluate(text);
         if result.matched {
             *matched = true;
             if version.is_none() && result.version.is_some() {
@@ -47,13 +47,13 @@ fn match_patterns_against_text(
 }
 
 fn match_meta(
-    tech_meta: &HashMap<String, Vec<String>>,
+    tech_meta: &HashMap<String, Vec<CompiledPattern>>,
     meta_tags: &HashMap<String, Vec<String>>,
     matched: &mut bool,
     version: &mut Option<String>,
 ) {
     for (meta_key, patterns) in tech_meta {
-        let result = check_meta_patterns(meta_key, patterns, meta_tags);
+        let result = check_compiled_meta_patterns(meta_key, patterns, meta_tags);
         if result.matched {
             *matched = true;
             if version.is_none() && result.version.is_some() {
@@ -91,17 +91,22 @@ pub(crate) fn check_body_with_ruleset(
         let mut matched = false;
         let mut version: Option<String> = None;
         let mut source: Option<DetectionSource> = None;
+        let prepared = tech.prepared();
 
         let previously = matched;
-        let _ = match_patterns_against_text(&tech.html, html_body, &mut matched, &mut version);
+        let _ = match_patterns_against_text(&prepared.html, html_body, &mut matched, &mut version);
         if matched && !previously {
             source = Some(DetectionSource::Html);
         }
         if version.is_none() {
             for script_src in script_sources {
                 let previously = matched;
-                if match_patterns_against_text(&tech.script, script_src, &mut matched, &mut version)
-                {
+                if match_patterns_against_text(
+                    &prepared.script,
+                    script_src,
+                    &mut matched,
+                    &mut version,
+                ) {
                     if source.is_none() {
                         source = Some(DetectionSource::ScriptSrc);
                     }
@@ -115,7 +120,7 @@ pub(crate) fn check_body_with_ruleset(
         if version.is_none() && !inline_script_text.is_empty() {
             let previously = matched;
             let _ = match_patterns_against_text(
-                &tech.scripts,
+                &prepared.scripts,
                 inline_script_text,
                 &mut matched,
                 &mut version,
@@ -126,14 +131,14 @@ pub(crate) fn check_body_with_ruleset(
         }
         if version.is_none() {
             let previously = matched;
-            match_meta(&tech.meta, meta_tags, &mut matched, &mut version);
+            match_meta(&prepared.meta, meta_tags, &mut matched, &mut version);
             if matched && !previously && source.is_none() {
                 source = Some(DetectionSource::Html);
             }
         }
         if version.is_none() {
             let previously = matched;
-            let _ = match_patterns_against_text(&tech.url, url, &mut matched, &mut version);
+            let _ = match_patterns_against_text(&prepared.url, url, &mut matched, &mut version);
             if matched && !previously && source.is_none() {
                 source = Some(DetectionSource::Url);
             }
@@ -168,7 +173,9 @@ pub(crate) fn check_scripts_with_ruleset(
         }
         let mut matched = false;
         let mut version: Option<String> = None;
-        let _ = match_patterns_against_text(&tech.scripts, script_text, &mut matched, &mut version);
+        let prepared = tech.prepared();
+        let _ =
+            match_patterns_against_text(&prepared.scripts, script_text, &mut matched, &mut version);
         if matched {
             results.push(BodyMatchResult {
                 tech_name: tech_name.clone(),

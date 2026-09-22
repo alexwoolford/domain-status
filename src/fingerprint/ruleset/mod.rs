@@ -147,6 +147,9 @@ fn prune_technology_for_static_detection(
 /// Apply the first-party overlay. Every load path (cache, vendored, merge) ends here.
 fn finish_ruleset(mut ruleset: FingerprintRuleset) -> Result<FingerprintRuleset> {
     apply_first_party_overlay(&mut ruleset.technologies)?;
+    for tech in ruleset.technologies.values() {
+        let _ = tech.prepared();
+    }
     Ok(ruleset)
 }
 

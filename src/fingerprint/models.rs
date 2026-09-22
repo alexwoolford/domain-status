@@ -79,6 +79,10 @@ pub struct Technology {
     #[serde(alias = "requiresCategory")]
     #[serde(deserialize_with = "deserialize_u32_or_array")]
     pub requires_category: Vec<u32>,
+    /// Patterns compiled once at ruleset load. Matchers read this instead of
+    /// re-parsing the string patterns on every URL.
+    #[serde(skip, default)]
+    pub(crate) prepared: std::sync::OnceLock<crate::fingerprint::patterns::PreparedSignals>,
 }
 
 /// Deserializes a field that can be either a string or an array of strings

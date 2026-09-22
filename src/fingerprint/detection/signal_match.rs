@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use crate::fingerprint::models::{FingerprintRuleset, Technology};
-use crate::fingerprint::patterns::matches_pattern;
 
 use super::source::DetectionSource;
 
@@ -28,24 +27,28 @@ pub(crate) fn match_string_map_signal(
 ) -> Vec<SignalMatch> {
     let mut results = Vec::new();
     for (tech_name, tech) in &ruleset.technologies {
+        let prepared = tech.prepared();
         let patterns = select(tech);
         if patterns.is_empty() {
             continue;
         }
         let mut matched = false;
         let mut version: Option<String> = None;
-        for (key, pattern) in patterns {
+        for key in patterns.keys() {
             if skip_key(key) {
                 continue;
             }
             let Some(value) = values.get(key) else {
                 continue;
             };
-            if pattern.is_empty() {
+            let Some(compiled) = prepared.headers.get(key) else {
+                continue;
+            };
+            if compiled.presence_only() {
                 matched = true;
                 break;
             }
-            let result = matches_pattern(pattern, value);
+            let result = compiled.evaluate(value);
             if result.matched {
                 matched = true;
                 if version.is_none() && result.version.is_some() {

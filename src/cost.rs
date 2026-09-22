@@ -145,6 +145,10 @@ fn synthetic_ruleset(tech_count: usize) -> FingerprintRuleset {
         }
         technologies.insert(format!("Tech{i}"), tech);
     }
+    // Compile before the bench closure so samples measure matching only.
+    for tech in technologies.values() {
+        let _ = tech.prepared();
+    }
     FingerprintRuleset {
         technologies,
         categories: HashMap::new(),

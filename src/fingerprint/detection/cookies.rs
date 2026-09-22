@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
-use crate::fingerprint::patterns::matches_pattern;
+use crate::fingerprint::patterns::CompiledPattern;
 
 use super::signal_match::SignalMatch;
 use super::source::DetectionSource;
@@ -35,6 +35,31 @@ fn wildcard_cookie_regex(cookie_name: &str) -> Option<regex::Regex> {
     crate::fingerprint::patterns::get_or_compile_regex(&format!("^{escaped}$"), &cache_key)
 }
 
+/// Apply one compiled cookie pattern.
+///
+/// Returns `true` when the caller should stop walking this cookie name
+/// (presence-only match, or a version was captured).
+fn consider_cookie(
+    compiled: &CompiledPattern,
+    cookie_value: &str,
+    matched: &mut bool,
+    version: &mut Option<String>,
+) -> bool {
+    if compiled.presence_only() {
+        *matched = true;
+        return true;
+    }
+    let result = compiled.evaluate(cookie_value);
+    if result.matched {
+        *matched = true;
+        if version.is_none() && result.version.is_some() {
+            version.clone_from(&result.version);
+        }
+        return version.is_some();
+    }
+    false
+}
+
 /// Checks all technologies against cookies and returns matches.
 ///
 /// This matches wappalyzergo's `checkCookies()` → `matchMapString(cookies, cookiesPart)` flow.
@@ -48,9 +73,10 @@ pub(crate) fn check_cookies_with_ruleset(
         if tech.cookies.is_empty() {
             continue;
         }
+        let prepared = tech.prepared();
         let mut matched = false;
         let mut version: Option<String> = None;
-        for (cookie_name, pattern) in &tech.cookies {
+        for cookie_name in tech.cookies.keys() {
             if cookie_name.contains('*') {
                 // Use the same shared, cached, metachar-escaped helper as the async
                 // path: previously this branch built the regex via
@@ -63,36 +89,20 @@ pub(crate) fn check_cookies_with_ruleset(
                 };
                 for (actual_cookie_name, cookie_value) in cookies {
                     if cookie_regex.is_match(actual_cookie_name) {
-                        if pattern.is_empty() {
-                            matched = true;
+                        let Some(compiled) = prepared.cookies.get(cookie_name) else {
+                            continue;
+                        };
+                        if consider_cookie(compiled, cookie_value, &mut matched, &mut version) {
                             break;
-                        }
-                        let result = matches_pattern(pattern, cookie_value);
-                        if result.matched {
-                            matched = true;
-                            if version.is_none() && result.version.is_some() {
-                                version.clone_from(&result.version);
-                            }
-                            if version.is_some() {
-                                break;
-                            }
                         }
                     }
                 }
             } else if let Some(cookie_value) = cookies.get(cookie_name) {
-                if pattern.is_empty() {
-                    matched = true;
+                let Some(compiled) = prepared.cookies.get(cookie_name) else {
+                    continue;
+                };
+                if consider_cookie(compiled, cookie_value, &mut matched, &mut version) {
                     break;
-                }
-                let result = matches_pattern(pattern, cookie_value);
-                if result.matched {
-                    matched = true;
-                    if version.is_none() && result.version.is_some() {
-                        version.clone_from(&result.version);
-                    }
-                    if version.is_some() {
-                        break;
-                    }
                 }
             }
             if matched && version.is_some() {

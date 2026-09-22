@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use crate::fingerprint::models::FingerprintRuleset;
-use crate::fingerprint::patterns::matches_pattern;
 
 use super::signal_match::SignalMatch;
 use super::source::DetectionSource;
@@ -32,16 +31,20 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
         let mut matched = false;
         let mut version: Option<String> = None;
         let mut source: Option<DetectionSource> = None;
+        let prepared = tech.prepared();
 
-        for (record_type, patterns) in &tech.dns {
+        for record_type in tech.dns.keys() {
             if !is_serving_stack_dns_type(record_type) {
                 continue;
             }
             let Some(haystack) = dns_records.get(&record_type.to_uppercase()) else {
                 continue;
             };
+            let Some(patterns) = prepared.dns.get(record_type) else {
+                continue;
+            };
             for pattern in patterns {
-                let result = matches_pattern(pattern, haystack);
+                let result = pattern.evaluate(haystack);
                 if result.matched {
                     matched = true;
                     if source.is_none() {
@@ -65,8 +68,8 @@ pub(crate) fn check_dns_and_cert_with_ruleset(
         }
 
         if let Some(ref issuer) = cert_issuer_lower {
-            for pattern in &tech.cert_issuer {
-                let result = matches_pattern(pattern, issuer);
+            for pattern in &prepared.cert_issuer {
+                let result = pattern.evaluate(issuer);
                 if result.matched {
                     matched = true;
                     if source.is_none() {
