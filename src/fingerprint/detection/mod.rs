@@ -13,6 +13,8 @@ mod dns_cert;
 mod headers;
 mod interstitial;
 mod matching;
+#[cfg(test)]
+mod parity;
 mod signal_match;
 mod source;
 mod utils;

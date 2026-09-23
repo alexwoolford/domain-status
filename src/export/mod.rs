@@ -14,6 +14,9 @@ mod queries;
 mod row;
 mod types;
 
+#[cfg(test)]
+mod technology_roundtrip;
+
 pub use csv::export_csv;
 pub use jsonl::export_jsonl;
 pub use parquet::export_parquet;
