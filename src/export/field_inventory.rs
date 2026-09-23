@@ -22,9 +22,37 @@ pub(crate) const URL_STATUS_REQUIRED_IN_FLAT_EXPORT: &[&str] = &[
     "cert_fingerprint_sha256",
 ];
 
+/// Captured on `url_status` but intentionally omitted from flat CSV/Parquet.
+///
+/// Query `SQLite` (or add an export later) if you need these. Listed here so the
+/// omission is deliberate rather than accidental drift.
+#[cfg(test)]
+pub(crate) const URL_STATUS_DB_ONLY: &[&str] = &[
+    "ssl_cert_valid_from_ms",
+    "external_scripts_eligible",
+    "external_scripts_scanned",
+    "cert_serial_number",
+    "cert_is_self_signed",
+    "cert_is_wildcard",
+    "cert_is_mismatched",
+    "meta_refresh_url",
+];
+
+/// Satellite tables persisted but not flattened into CSV/Parquet today.
+/// Query `SQLite` (or add an export later). Listed so the omission is deliberate.
+#[cfg(test)]
+pub(crate) const SATELLITE_DB_ONLY: &[&str] = &[
+    "url_cookies",
+    "url_security_txt",
+    "url_robots_txt",
+    "url_robots_directives",
+    "url_csp_domains",
+    "url_resource_hints",
+];
+
 #[cfg(test)]
 mod tests {
-    use super::URL_STATUS_REQUIRED_IN_FLAT_EXPORT;
+    use super::{SATELLITE_DB_ONLY, URL_STATUS_DB_ONLY, URL_STATUS_REQUIRED_IN_FLAT_EXPORT};
     use crate::export::fields::{
         self, flat_shared_fields, CSV_FIELD_ORDER, EXPORT_FIELDS, PARQUET_FIELD_ORDER,
     };
@@ -33,32 +61,6 @@ mod tests {
         URL_STATUS_COLUMN_DEFS, URL_STATUS_CORE_SATELLITE_TABLES,
         URL_STATUS_ENRICHMENT_SATELLITE_TABLES,
     };
-
-    /// Captured on `url_status` but intentionally omitted from flat CSV/Parquet.
-    ///
-    /// Query `SQLite` (or add an export later) if you need these. Listed here so the
-    /// omission is deliberate rather than accidental drift.
-    const URL_STATUS_DB_ONLY: &[&str] = &[
-        "ssl_cert_valid_from_ms",
-        "external_scripts_eligible",
-        "external_scripts_scanned",
-        "cert_serial_number",
-        "cert_is_self_signed",
-        "cert_is_wildcard",
-        "cert_is_mismatched",
-        "meta_refresh_url",
-    ];
-
-    /// Satellite tables persisted but not flattened into CSV/Parquet today.
-    /// Query `SQLite` (or add an export later). Listed so the omission is deliberate.
-    const SATELLITE_DB_ONLY: &[&str] = &[
-        "url_cookies",
-        "url_security_txt",
-        "url_robots_txt",
-        "url_robots_directives",
-        "url_csp_domains",
-        "url_resource_hints",
-    ];
 
     fn csv_has_column(name: &str) -> bool {
         fields::csv_column_names().any(|n| n == name)

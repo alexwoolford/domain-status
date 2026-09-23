@@ -15,6 +15,8 @@ mod row;
 mod types;
 
 #[cfg(test)]
+mod column_sentinel;
+#[cfg(test)]
 mod technology_roundtrip;
 
 pub use csv::export_csv;

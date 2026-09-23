@@ -1,5 +1,7 @@
 //! Status server HTTP handlers.
 
+#[cfg(test)]
+mod coverage;
 mod health;
 mod metrics;
 mod status;
