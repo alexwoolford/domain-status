@@ -612,8 +612,10 @@ mod tests {
 
     #[test]
     fn second_literal_matches_on_its_own() {
-        let mut tech = Technology::default();
-        tech.scripts = vec!["alpha-needle".to_string(), "beta-needle".to_string()];
+        let tech = Technology {
+            scripts: vec!["alpha-needle".to_string(), "beta-needle".to_string()],
+            ..Default::default()
+        };
         let mut technologies = HashMap::new();
         technologies.insert("Widget".to_string(), tech);
         let index = LiteralIndex::build(&technologies);
