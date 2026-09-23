@@ -150,6 +150,7 @@ fn finish_ruleset(mut ruleset: FingerprintRuleset) -> Result<FingerprintRuleset>
     for tech in ruleset.technologies.values() {
         let _ = tech.prepared();
     }
+    let _ = ruleset.literals();
     Ok(ruleset)
 }
 
@@ -436,6 +437,7 @@ async fn fetch_ruleset_from_multiple_sources(
     };
 
     let ruleset = FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: all_technologies,
         categories: all_categories,
         metadata,
@@ -545,6 +547,7 @@ mod tests {
             );
         }
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: FingerprintMetadata {
@@ -566,6 +569,7 @@ mod tests {
     #[test]
     fn ruleset_identity_summary_marks_explicit_and_thin() {
         let explicit = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: FingerprintMetadata {
@@ -580,6 +584,7 @@ mod tests {
             ruleset_identity_summary(&explicit)
         );
         let thin = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: FingerprintMetadata {

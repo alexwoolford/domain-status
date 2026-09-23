@@ -90,6 +90,7 @@ pub(crate) async fn load_from_cache(
     };
 
     Ok(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies,
         categories,
         metadata,
@@ -165,6 +166,7 @@ mod tests {
 
     fn create_test_ruleset(source: &str) -> FingerprintRuleset {
         FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: std::collections::HashMap::new(),
             categories: std::collections::HashMap::new(),
             metadata: FingerprintMetadata {

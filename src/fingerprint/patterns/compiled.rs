@@ -85,10 +85,6 @@ fn evaluate_regex(
 /// Every signal on one technology, compiled.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedSignals {
-    pub(crate) html: Vec<CompiledPattern>,
-    pub(crate) script: Vec<CompiledPattern>,
-    pub(crate) scripts: Vec<CompiledPattern>,
-    pub(crate) url: Vec<CompiledPattern>,
     pub(crate) meta: HashMap<String, Vec<CompiledPattern>>,
     pub(crate) headers: HashMap<String, CompiledPattern>,
     pub(crate) cookies: HashMap<String, CompiledPattern>,
@@ -99,10 +95,6 @@ pub(crate) struct PreparedSignals {
 impl PreparedSignals {
     fn from_technology(tech: &Technology) -> Self {
         Self {
-            html: compile_list(&tech.html),
-            script: compile_list(&tech.script),
-            scripts: compile_list(&tech.scripts),
-            url: compile_list(&tech.url),
             meta: compile_list_map(&tech.meta),
             headers: compile_map(&tech.headers),
             cookies: compile_map(&tech.cookies),
@@ -131,7 +123,7 @@ impl Technology {
 }
 
 /// `None` drops a pattern that can never match (low confidence or invalid regex).
-fn compile_pattern(pattern: &str) -> Option<CompiledPattern> {
+pub(super) fn compile_pattern(pattern: &str) -> Option<CompiledPattern> {
     if pattern.is_empty() {
         return Some(CompiledPattern::Any {
             version_template: None,

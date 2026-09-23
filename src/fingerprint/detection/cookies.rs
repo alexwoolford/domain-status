@@ -131,6 +131,7 @@ mod tests {
 
     fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {
         FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: FingerprintMetadata {

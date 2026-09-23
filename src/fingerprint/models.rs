@@ -282,6 +282,10 @@ pub struct FingerprintRuleset {
     pub categories: HashMap<u32, String>,
     /// Metadata about the ruleset
     pub metadata: FingerprintMetadata,
+    /// Literal needles for `HTML`, script URL, script text, and page URL patterns.
+    ///
+    /// Filled when the ruleset is finished so those channels are one scan per haystack.
+    pub(crate) literals: std::sync::OnceLock<crate::fingerprint::patterns::LiteralIndex>,
 }
 
 impl FingerprintRuleset {
@@ -297,6 +301,7 @@ impl FingerprintRuleset {
                 version: "0".into(),
                 last_updated: SystemTime::now(),
             },
+            literals: std::sync::OnceLock::new(),
         }
     }
 }

@@ -149,7 +149,8 @@ fn synthetic_ruleset(tech_count: usize) -> FingerprintRuleset {
     for tech in technologies.values() {
         let _ = tech.prepared();
     }
-    FingerprintRuleset {
+    let ruleset = FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies,
         categories: HashMap::new(),
         metadata: FingerprintMetadata {
@@ -157,7 +158,9 @@ fn synthetic_ruleset(tech_count: usize) -> FingerprintRuleset {
             version: tech_count.to_string(),
             last_updated: SystemTime::UNIX_EPOCH,
         },
-    }
+    };
+    let _ = ruleset.literals();
+    ruleset
 }
 
 #[must_use]

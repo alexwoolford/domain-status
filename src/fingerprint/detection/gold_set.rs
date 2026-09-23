@@ -67,6 +67,7 @@ fn github_com_is_not_pages_docusign_or_m365() {
     react.html.push("react".into());
 
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([
             ("GitHub Pages".into(), pages),
             ("DocuSign".into(), docusign),
@@ -108,6 +109,7 @@ fn wordpress_html_detects_wordpress() {
     wp.implies.push("PHP".into());
     let php = empty_tech();
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([("WordPress".into(), wp), ("PHP".into(), php)]),
         categories: HashMap::from([(1, "CMS".into())]),
         metadata: meta(),
@@ -136,6 +138,7 @@ fn vercel_x_powered_by_next_js() {
     next.implies.push("React".into());
     next.implies.push("Node.js".into());
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([
             ("Next.js".into(), next),
             ("React".into(), empty_tech()),
@@ -173,6 +176,7 @@ fn payload_x_powered_by_is_detected() {
         .headers
         .insert("x-powered-by".into(), "Payload".into());
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([("Payload".into(), payload)]),
         categories: HashMap::new(),
         metadata: meta(),
@@ -204,6 +208,7 @@ fn s3_csp_only_is_not_amazon_s3() {
     );
     s3.headers.insert("server".into(), "^AmazonS3$".into());
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([("Amazon S3".into(), s3)]),
         categories: HashMap::new(),
         metadata: meta(),
@@ -242,6 +247,7 @@ fn overlay_s3_script_src_alone_is_not_hosting() {
     s3.headers
         .insert("x-amz-server-side-encryption".into(), String::new());
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([("Amazon S3".into(), s3)]),
         categories: HashMap::new(),
         metadata: meta(),
@@ -266,6 +272,7 @@ fn lets_encrypt_is_not_a_technology() {
     le.cert_issuer.push("Let's Encrypt".into());
     le.cats.push(70);
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([("Let's Encrypt".into(), le)]),
         categories: HashMap::from([(70, "SSL/TLS certificate authorities".into())]),
         metadata: meta(),
@@ -291,6 +298,7 @@ fn gravity_forms_requires_wordpress() {
     let mut wp = empty_tech();
     wp.html.push("wp-content".into());
     let ruleset = Arc::new(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies: HashMap::from([("Gravity Forms".into(), plugin), ("WordPress".into(), wp)]),
         categories: HashMap::new(),
         metadata: meta(),

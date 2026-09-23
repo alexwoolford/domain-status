@@ -519,6 +519,7 @@ mod tests {
             },
         );
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -619,6 +620,7 @@ mod tests {
         technologies.insert("TechC".to_string(), empty_tech());
 
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -658,6 +660,7 @@ mod tests {
         technologies.insert("PHP".to_string(), empty_tech());
 
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -698,6 +701,7 @@ mod tests {
         technologies.insert("Magento".to_string(), empty_tech());
 
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -743,6 +747,7 @@ mod tests {
         technologies.insert("TechC".to_string(), empty_tech());
 
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -787,6 +792,7 @@ mod tests {
         technologies.insert("TechB".to_string(), tech_b);
 
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -831,6 +837,7 @@ mod tests {
         technologies.insert("TechB".to_string(), tech_b);
 
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -870,6 +877,7 @@ mod tests {
         technologies.insert("Amazon Web Services".to_string(), empty_tech());
 
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -901,6 +909,7 @@ mod tests {
         technologies.insert("Gmail".into(), gmail);
 
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -930,6 +939,7 @@ mod tests {
         tech.cert_issuer.push("Let's Encrypt".into());
         tech.cats.push(70);
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("Let's Encrypt".into(), tech)]),
             categories: HashMap::from([(70, "SSL/TLS certificate authorities".into())]),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -973,6 +983,7 @@ mod tests {
         let mut ca = empty_tech();
         ca.cats.push(70);
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("Custom CA".into(), ca)]),
             categories: HashMap::from([(70, "SSL/TLS certificate authorities".into())]),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -1002,6 +1013,7 @@ mod tests {
         mixed.cats.push(1);
         mixed.cats.push(70);
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("Mixed".into(), mixed)]),
             categories: HashMap::from([
                 (1, "CMS".into()),
@@ -1081,6 +1093,7 @@ mod tests {
         );
         s3.headers.insert("server".into(), "AmazonS3".into());
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("Amazon S3".into(), s3)]),
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -1117,6 +1130,7 @@ mod tests {
             .insert("server".into(), r"^GitHub\.com$".into());
         pages.url.push(r"\.github\.io".into());
         Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("GitHub Pages".into(), pages)]),
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -1163,6 +1177,7 @@ mod tests {
         technologies.insert("JavaScript".to_string(), empty_tech());
 
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -1291,6 +1306,7 @@ mod tests {
         let mut tech = empty_tech();
         tech.cookies.insert("_uetsid".to_string(), String::new());
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("Microsoft Advertising".into(), tech)]),
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {
@@ -1329,6 +1345,7 @@ mod tests {
         let mut tech = empty_tech();
         tech.js.insert("__NEXT_DATA__".to_string(), String::new());
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::from([("Next.js".into(), tech)]),
             categories: HashMap::new(),
             metadata: crate::fingerprint::models::FingerprintMetadata {

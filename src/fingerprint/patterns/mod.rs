@@ -10,9 +10,11 @@
 //! as the upstream project evolves.
 
 mod compiled;
+mod literals;
 mod version;
 
 pub(crate) use compiled::{CompiledPattern, PreparedSignals};
+pub(crate) use literals::LiteralIndex;
 
 use moka::sync::Cache;
 use std::collections::HashMap;

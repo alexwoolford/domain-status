@@ -121,6 +121,7 @@ mod tests {
     #[test]
     fn test_apply_technology_exclusions_no_exclusions() {
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -139,6 +140,7 @@ mod tests {
     #[test]
     fn test_apply_technology_exclusions_with_exclusion() {
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -161,6 +163,7 @@ mod tests {
     #[test]
     fn test_apply_technology_exclusions_multiple_exclusions() {
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -188,6 +191,7 @@ mod tests {
     #[test]
     fn test_apply_technology_exclusions_exclusion_not_detected() {
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -208,6 +212,7 @@ mod tests {
     #[test]
     fn test_apply_technology_exclusions_unknown_technology() {
         let ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -224,6 +229,7 @@ mod tests {
     #[test]
     fn test_apply_technology_exclusions_missing_technology_in_ruleset() {
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -246,6 +252,7 @@ mod tests {
     fn test_colon_in_tech_name_is_not_treated_as_version_separator() {
         // Names like Re:amaze must stay intact; exclusions key on bare names only.
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -272,6 +279,7 @@ mod tests {
     #[test]
     fn test_requires_drops_plugin_without_parent() {
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::new(),
             metadata: create_test_metadata(),
@@ -299,6 +307,7 @@ mod tests {
     #[test]
     fn test_requires_category_needs_another_tech_in_category() {
         let mut ruleset = FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies: HashMap::new(),
             categories: HashMap::from([(1, "CMS".to_string())]),
             metadata: create_test_metadata(),

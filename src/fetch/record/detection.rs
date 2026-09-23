@@ -173,6 +173,7 @@ mod tests {
         let mut technologies = HashMap::new();
         technologies.insert("Nginx".to_string(), tech);
         let ruleset = Arc::new(FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: FingerprintMetadata {

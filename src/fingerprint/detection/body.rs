@@ -23,29 +23,6 @@ pub struct BodyMatchResult {
     pub source: DetectionSource,
 }
 
-/// Tries patterns against `text`, updating `matched` / `version`.
-/// Returns `true` when a version was captured (caller may stop early).
-fn match_patterns_against_text(
-    patterns: &[CompiledPattern],
-    text: &str,
-    matched: &mut bool,
-    version: &mut Option<String>,
-) -> bool {
-    for pattern in patterns {
-        let result = pattern.evaluate(text);
-        if result.matched {
-            *matched = true;
-            if version.is_none() && result.version.is_some() {
-                *version = result.version;
-            }
-            if version.is_some() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 fn match_meta(
     tech_meta: &HashMap<String, Vec<CompiledPattern>>,
     meta_tags: &HashMap<String, Vec<String>>,
@@ -78,6 +55,19 @@ pub(crate) fn check_body_with_ruleset(
     url: &str,
     inline_script_text: &str,
 ) -> Vec<BodyMatchResult> {
+    let index = ruleset.literals();
+    let html_hits = index.scan_html(html_body);
+    let script_hits: Vec<_> = script_sources
+        .iter()
+        .map(|src| index.scan_script(src))
+        .collect();
+    let inline_hits = if inline_script_text.is_empty() {
+        None
+    } else {
+        Some(index.scan_scripts(inline_script_text))
+    };
+    let url_hits = index.scan_url(url);
+
     let mut results = Vec::new();
     for (tech_name, tech) in &ruleset.technologies {
         if tech.html.is_empty()
@@ -91,22 +81,16 @@ pub(crate) fn check_body_with_ruleset(
         let mut matched = false;
         let mut version: Option<String> = None;
         let mut source: Option<DetectionSource> = None;
-        let prepared = tech.prepared();
 
         let previously = matched;
-        let _ = match_patterns_against_text(&prepared.html, html_body, &mut matched, &mut version);
+        let _ = index.match_html(tech_name, &html_hits, html_body, &mut matched, &mut version);
         if matched && !previously {
             source = Some(DetectionSource::Html);
         }
         if version.is_none() {
-            for script_src in script_sources {
+            for (script_src, hits) in script_sources.iter().zip(&script_hits) {
                 let previously = matched;
-                if match_patterns_against_text(
-                    &prepared.script,
-                    script_src,
-                    &mut matched,
-                    &mut version,
-                ) {
+                if index.match_script(tech_name, hits, script_src, &mut matched, &mut version) {
                     if source.is_none() {
                         source = Some(DetectionSource::ScriptSrc);
                     }
@@ -117,28 +101,31 @@ pub(crate) fn check_body_with_ruleset(
                 }
             }
         }
-        if version.is_none() && !inline_script_text.is_empty() {
-            let previously = matched;
-            let _ = match_patterns_against_text(
-                &prepared.scripts,
-                inline_script_text,
-                &mut matched,
-                &mut version,
-            );
-            if matched && !previously && source.is_none() {
-                source = Some(DetectionSource::Scripts);
+        if version.is_none() {
+            if let Some(inline_hits) = &inline_hits {
+                let previously = matched;
+                let _ = index.match_scripts(
+                    tech_name,
+                    inline_hits,
+                    inline_script_text,
+                    &mut matched,
+                    &mut version,
+                );
+                if matched && !previously && source.is_none() {
+                    source = Some(DetectionSource::Scripts);
+                }
             }
         }
         if version.is_none() {
             let previously = matched;
-            match_meta(&prepared.meta, meta_tags, &mut matched, &mut version);
+            match_meta(&tech.prepared().meta, meta_tags, &mut matched, &mut version);
             if matched && !previously && source.is_none() {
                 source = Some(DetectionSource::Html);
             }
         }
         if version.is_none() {
             let previously = matched;
-            let _ = match_patterns_against_text(&prepared.url, url, &mut matched, &mut version);
+            let _ = index.match_url(tech_name, &url_hits, url, &mut matched, &mut version);
             if matched && !previously && source.is_none() {
                 source = Some(DetectionSource::Url);
             }
@@ -166,6 +153,8 @@ pub(crate) fn check_scripts_with_ruleset(
     if script_text.is_empty() {
         return Vec::new();
     }
+    let index = ruleset.literals();
+    let hits = index.scan_scripts(script_text);
     let mut results = Vec::new();
     for (tech_name, tech) in &ruleset.technologies {
         if tech.scripts.is_empty() {
@@ -173,9 +162,7 @@ pub(crate) fn check_scripts_with_ruleset(
         }
         let mut matched = false;
         let mut version: Option<String> = None;
-        let prepared = tech.prepared();
-        let _ =
-            match_patterns_against_text(&prepared.scripts, script_text, &mut matched, &mut version);
+        let _ = index.match_scripts(tech_name, &hits, script_text, &mut matched, &mut version);
         if matched {
             results.push(BodyMatchResult {
                 tech_name: tech_name.clone(),
@@ -198,6 +185,7 @@ mod tests {
 
     fn ruleset_with(technologies: HashMap<String, Technology>) -> FingerprintRuleset {
         FingerprintRuleset {
+            literals: std::sync::OnceLock::new(),
             technologies,
             categories: HashMap::new(),
             metadata: FingerprintMetadata {

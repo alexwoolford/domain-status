@@ -34,6 +34,7 @@ pub(crate) fn load_vendored_ruleset() -> Result<FingerprintRuleset> {
     }
 
     Ok(FingerprintRuleset {
+        literals: std::sync::OnceLock::new(),
         technologies,
         categories,
         metadata: FingerprintMetadata {
