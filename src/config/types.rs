@@ -195,9 +195,8 @@ pub struct Config {
     /// row with `error_type = ProcessUrlTimeout` so users can see which URLs were
     /// lost.
     ///
-    /// Default: 10 seconds. Lower this in tests to deterministically force the
-    /// drain-timeout path; raise it for production scans with very slow upstream
-    /// services (e.g. WHOIS-heavy workloads on small batches).
+    /// Default: 40 seconds, above the 35s per-URL processing cap. Lower this in
+    /// tests to deterministically force the drain-timeout path.
     pub drain_timeout_secs: u64,
 
     /// Allow a scan to start on the vendored / partial fingerprint catalog.
@@ -225,11 +224,11 @@ impl Default for Config {
             scan_external_scripts: false,
             fail_on: FailOn::Never,
             fail_on_pct_threshold: 10,
-            log_file: None,
+            log_file: Some(PathBuf::from("domain_status.log")),
             progress_callback: None,
             dependency_overrides: None,
             allow_localhost_for_tests: false,
-            drain_timeout_secs: 10,
+            drain_timeout_secs: 40,
             allow_degraded_fingerprints: false,
         }
     }
@@ -428,6 +427,10 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.file, PathBuf::from("urls.txt"));
         assert_eq!(config.db_path, PathBuf::from("./domain_status.db"));
+        assert_eq!(
+            config.log_file.as_deref(),
+            Some(std::path::Path::new("domain_status.log"))
+        );
     }
 
     #[test]

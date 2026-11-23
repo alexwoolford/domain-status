@@ -20,8 +20,8 @@ mod timing;
 pub(crate) use digest::sha256_hex;
 #[allow(unused_imports)]
 pub use io_context::{
-    ensure_parent_dir_secure, print_io_error_hint_if_applicable, warn_if_world_readable,
-    IoErrorContext, WrappedIoError,
+    create_private_file, ensure_parent_dir_secure, print_io_error_hint_if_applicable,
+    restrict_to_owner, warn_if_world_readable, IoErrorContext, WrappedIoError,
 };
 pub use process::{process_url, ProcessUrlResult};
 pub use selector::parse_selector_with_fallback;

@@ -118,6 +118,9 @@ pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
 /// - `::` unspecified, `::1` loopback
 /// - `fc00::/7` unique local, `fe80::/10` link-local, `ff00::/8` multicast
 /// - `2001:db8::/32` documentation (RFC 3849)
+/// - NAT64 `64:ff9b::/96` when the embedded IPv4 is private, local-use NAT64
+///   `64:ff9b:1::/48`, 6to4 `2002::/16` when the embedded IPv4 is private,
+///   and deprecated site-local `fec0::/10`
 pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     if let Some(ipv4) = ip.to_ipv4_mapped() {
         return is_private_ipv4(ipv4);
@@ -134,11 +137,47 @@ pub(crate) fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     if segments[0] == 0x2001 && segments[1] == 0x0db8 {
         return true;
     }
+    if embedded_transition_is_private(segments) {
+        return true;
+    }
     // Deprecated IPv4-compatible (`::10.0.0.1`); mapped addresses already returned above.
     if let Some(ipv4) = ip.to_ipv4() {
         return is_private_ipv4(ipv4);
     }
     false
+}
+
+/// NAT64 / 6to4 / site-local ranges that `Ipv6Addr` predicates do not cover.
+fn embedded_transition_is_private(segments: [u16; 8]) -> bool {
+    // Well-known NAT64 `64:ff9b::/96`. Public embedded IPv4 stays reachable.
+    if segments[0] == 0x0064
+        && segments[1] == 0xff9b
+        && segments[2] == 0
+        && segments[3] == 0
+        && segments[4] == 0
+        && segments[5] == 0
+    {
+        return is_private_ipv4(ipv4_from_halves(segments[6], segments[7]));
+    }
+    // Local-use NAT64 `64:ff9b:1::/48` (RFC 8215).
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
+        return true;
+    }
+    // 6to4 `2002::/16` embeds IPv4 in the next 32 bits.
+    if segments[0] == 0x2002 {
+        return is_private_ipv4(ipv4_from_halves(segments[1], segments[2]));
+    }
+    // Deprecated site-local `fec0::/10`.
+    (segments[0] & 0xffc0) == 0xfec0
+}
+
+fn ipv4_from_halves(hi: u16, lo: u16) -> Ipv4Addr {
+    Ipv4Addr::new(
+        u8::try_from(hi >> 8).unwrap_or(0),
+        u8::try_from(hi & 0xff).unwrap_or(0),
+        u8::try_from(lo >> 8).unwrap_or(0),
+        u8::try_from(lo & 0xff).unwrap_or(0),
+    )
 }
 
 /// Returns a reqwest redirect policy that validates each redirect target with SSRF checks.
@@ -208,6 +247,13 @@ mod tests {
         ("ff00::1", true, "IPv6 multicast"),
         ("2001:db8::1", true, "RFC3849 documentation"),
         ("2607:f8b0:4004:800::200e", false, "public IPv6"),
+        ("64:ff9b::808:808", false, "NAT64 public IPv4"),
+        ("64:ff9b::a9fe:a9fe", true, "NAT64 link-local metadata"),
+        ("64:ff9b::7f00:1", true, "NAT64 loopback"),
+        ("64:ff9b:1::808:808", true, "local-use NAT64"),
+        ("2002:808:808::", false, "6to4 public IPv4"),
+        ("2002:a9fe:a9fe::", true, "6to4 link-local"),
+        ("fec0::1", true, "deprecated site-local"),
     ];
 
     #[test]

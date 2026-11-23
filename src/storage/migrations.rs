@@ -8,8 +8,16 @@
 use std::path::Path;
 
 use include_dir::{include_dir, Dir};
+use sha2::{Digest, Sha384};
 use sqlx::{Pool, Sqlite};
 use tempfile::TempDir;
+
+/// sqlx runs a migration in a transaction unless the file starts with this line.
+/// `PRAGMA foreign_keys` is ignored inside a transaction, so the rebuild migrations
+/// (`0003`, `0013`, `0014`) opt out. Checksums already stored for the pre-prefix
+/// SQL are rewritten to the current file before `Migrator::run`.
+const NO_TRANSACTION_PREFIX: &str = "-- no-transaction\n";
+const REBUILD_MIGRATION_VERSIONS: [i64; 3] = [3, 13, 14];
 
 use crate::error_handling::MigrationError;
 
@@ -95,9 +103,65 @@ pub(crate) async fn run_migrations_embedded(pool: &Pool<Sqlite>) -> Result<(), M
 }
 
 async fn run_migrations_from_dir(pool: &Pool<Sqlite>, dir: &Path) -> Result<(), MigrationError> {
+    reconcile_rebuild_migration_checksums(pool, dir).await?;
     let migrator = sqlx::migrate::Migrator::new(dir).await?;
     migrator.run(pool).await?;
     Ok(())
+}
+
+/// Point `_sqlx_migrations.checksum` at the current rebuild SQL when the stored
+/// digest is the file without the `-- no-transaction` line.
+///
+/// Those three migrations shipped before the prefix. Editing them is required so
+/// `PRAGMA foreign_keys=OFF` actually runs, and existing databases must keep opening.
+async fn reconcile_rebuild_migration_checksums(
+    pool: &Pool<Sqlite>,
+    dir: &Path,
+) -> Result<(), MigrationError> {
+    let table_exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(sqlx::migrate::MigrateError::Execute)?;
+
+    if table_exists.is_none() {
+        return Ok(());
+    }
+
+    for version in REBUILD_MIGRATION_VERSIONS {
+        let Some(sql) = read_migration_sql(dir, version) else {
+            continue;
+        };
+        let Some(legacy_sql) = sql.strip_prefix(NO_TRANSACTION_PREFIX) else {
+            continue;
+        };
+        let legacy_checksum = Sha384::digest(legacy_sql.as_bytes()).to_vec();
+        let current_checksum = Sha384::digest(sql.as_bytes()).to_vec();
+        sqlx::query(
+            "UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2 AND checksum = ?3",
+        )
+        .bind(current_checksum)
+        .bind(version)
+        .bind(legacy_checksum)
+        .execute(pool)
+        .await
+        .map_err(sqlx::migrate::MigrateError::Execute)?;
+    }
+    Ok(())
+}
+
+fn read_migration_sql(dir: &Path, version: i64) -> Option<String> {
+    let prefix = format!("{version:04}_");
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(&prefix) && name.ends_with(".sql") {
+            return std::fs::read_to_string(entry.path()).ok();
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -334,5 +398,108 @@ mod tests {
             matches!(result, Err(MigrationError::BlockingTask(_))),
             "panicked extract task must surface as BlockingTask, got: {result:?}"
         );
+    }
+
+    /// Kills: rebuild migrations running inside a transaction, where
+    /// `PRAGMA foreign_keys=OFF` is ignored and `DROP TABLE url_status`
+    /// cascade-deletes satellite rows.
+    #[tokio::test]
+    async fn test_rebuild_migrations_keep_satellite_rows() {
+        let temp_file = NamedTempFile::new().expect("db");
+        let pool = SqlitePool::connect(&format!("sqlite:{}", temp_file.path().display()))
+            .await
+            .expect("pool");
+        let fk: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&pool)
+            .await
+            .expect("fk");
+        assert_eq!(
+            fk, 1,
+            "foreign keys must be on for this test to be meaningful"
+        );
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let migrator = sqlx::migrate::Migrator::new(dir).await.expect("migrator");
+        migrator
+            .run_to(12, &pool)
+            .await
+            .expect("migrate through 0012");
+
+        sqlx::query("INSERT INTO runs (run_id, start_time_ms) VALUES ('run_keep', 1)")
+            .execute(&pool)
+            .await
+            .expect("run");
+        sqlx::query(
+            "INSERT INTO url_status (
+                initial_domain, final_domain, ip_address, http_status, http_status_text,
+                response_time_seconds, title, observed_at_ms, run_id
+             ) VALUES ('example.com', 'example.com', '1.1.1.1', 200, 'OK', 0.1, 'title', 1, 'run_keep')",
+        )
+        .execute(&pool)
+        .await
+        .expect("status");
+        let id: i64 = sqlx::query_scalar("SELECT id FROM url_status WHERE run_id = 'run_keep'")
+            .fetch_one(&pool)
+            .await
+            .expect("id");
+        sqlx::query(
+            "INSERT INTO url_nameservers (url_status_id, nameserver) VALUES (?, 'ns.example.com')",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("nameserver");
+
+        migrator.run(&pool).await.expect("finish migrations");
+
+        let nameservers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_nameservers WHERE nameserver = 'ns.example.com'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("nameserver count");
+        assert_eq!(
+            nameservers, 1,
+            "DROP TABLE url_status must not cascade-delete satellite rows"
+        );
+        let status_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM url_status WHERE initial_domain = 'example.com'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("status count");
+        assert_eq!(status_rows, 1);
+    }
+
+    /// Kills: changing `0003` / `0013` / `0014` without rewriting the checksum
+    /// already stored for the pre-prefix SQL (`VersionMismatch` on next open).
+    #[tokio::test]
+    async fn test_legacy_rebuild_checksum_is_reconciled() {
+        let temp_file = NamedTempFile::new().expect("db");
+        let pool = SqlitePool::connect(&format!("sqlite:{}", temp_file.path().display()))
+            .await
+            .expect("pool");
+        run_migrations(&pool).await.expect("initial migrate");
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let sql = read_migration_sql(&dir, 14).expect("0014 sql");
+        let legacy = sql
+            .strip_prefix(NO_TRANSACTION_PREFIX)
+            .expect("0014 starts with -- no-transaction");
+        let legacy_checksum = Sha384::digest(legacy.as_bytes()).to_vec();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 14")
+            .bind(&legacy_checksum)
+            .execute(&pool)
+            .await
+            .expect("plant legacy checksum");
+
+        run_migrations(&pool).await.expect("reconciled migrate");
+
+        let stored: Vec<u8> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 14")
+                .fetch_one(&pool)
+                .await
+                .expect("stored checksum");
+        assert_eq!(stored, Sha384::digest(sql.as_bytes()).to_vec());
     }
 }

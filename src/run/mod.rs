@@ -72,6 +72,43 @@ fn domain_from_url_or_raw(url: &str) -> String {
         .unwrap_or_else(|| url.to_string())
 }
 
+/// `Inserted` counts as a new failure. `Skipped` means `url_status` or an
+/// abort row is already stored, so the caller must not count the URL again.
+pub(crate) enum AbortWrite {
+    Inserted,
+    Skipped,
+    Failed,
+}
+
+async fn url_status_already_stored(pool: &DbPool, run_id: &str, url: &str) -> bool {
+    let Ok(domain) = crate::domain::extract_domain(url) else {
+        return false;
+    };
+    sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM url_status WHERE run_id = ?1 AND initial_domain = ?2 LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(domain)
+    .fetch_optional(pool.as_ref())
+    .await
+    .ok()
+    .flatten()
+    .is_some()
+}
+
+async fn failure_already_stored(pool: &DbPool, run_id: &str, url: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM url_failures WHERE run_id = ?1 AND attempted_url = ?2 LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(url)
+    .fetch_optional(pool.as_ref())
+    .await
+    .ok()
+    .flatten()
+    .is_some()
+}
+
 async fn insert_abort_url_failure(
     pool: &DbPool,
     run_id: Option<&str>,
@@ -79,7 +116,17 @@ async fn insert_abort_url_failure(
     error_type: ErrorType,
     error_message: String,
     elapsed_time_seconds: Option<f64>,
-) -> bool {
+) -> AbortWrite {
+    if let Some(run_id) = run_id {
+        if url_status_already_stored(pool, run_id, url).await {
+            log::debug!("Skipping abort failure for {url}; url_status already committed");
+            return AbortWrite::Skipped;
+        }
+        if failure_already_stored(pool, run_id, url).await {
+            log::debug!("Skipping duplicate abort failure for {url}");
+            return AbortWrite::Skipped;
+        }
+    }
     let record = UrlFailureRecord {
         url: url.to_string(),
         final_url: None,
@@ -96,10 +143,10 @@ async fn insert_abort_url_failure(
         response_headers: vec![],
     };
     match insert_url_failure(pool.as_ref(), &record).await {
-        Ok(_) => true,
+        Ok(_) => AbortWrite::Inserted,
         Err(e) => {
             log::error!("Failed to insert {error_type} url_failures row for {url}: {e}");
-            false
+            AbortWrite::Failed
         }
     }
 }
@@ -129,7 +176,7 @@ async fn record_drain_timeout_failures(
             None,
         )
         .await;
-        if ok {
+        if matches!(ok, AbortWrite::Inserted) {
             inserted += 1;
         }
     }
@@ -144,8 +191,8 @@ pub(super) async fn record_cooperative_cancel_failure(
     pool: &DbPool,
     run_id: Option<&str>,
     url: &str,
-) {
-    let _ = insert_abort_url_failure(
+) -> AbortWrite {
+    insert_abort_url_failure(
         pool,
         run_id,
         url,
@@ -153,7 +200,7 @@ pub(super) async fn record_cooperative_cancel_failure(
         format!("Scan cancelled before URL finished processing: {url}"),
         None,
     )
-    .await;
+    .await
 }
 
 pub use resources::{ScanLoopResult, ScanResources, UrlTaskParams};
@@ -276,24 +323,38 @@ async fn drain_join_set(
                 .unwrap_or_default();
             let abandoned_count = abandoned.len();
             if abandoned_count > 0 {
+                let mut still_open = Vec::with_capacity(abandoned_count);
+                for url in &abandoned {
+                    if url_status_already_stored(&resources.shared_ctx.pool, &resources.run_id, url)
+                        .await
+                    {
+                        log::debug!(
+                            "Drain timeout leaving {url} as a success; url_status already committed"
+                        );
+                        continue;
+                    }
+                    still_open.push(url.clone());
+                }
                 log::warn!(
-                    "Drain timeout ({drain_timeout_secs}s) reached, recording {abandoned_count} in-flight task(s) as failures and aborting"
+                    "Drain timeout ({drain_timeout_secs}s) reached, recording {} in-flight task(s) as failures and aborting",
+                    still_open.len()
                 );
                 let inserted = record_drain_timeout_failures(
                     &resources.shared_ctx.pool,
                     &resources.run_id,
                     drain_timeout_secs,
-                    &abandoned,
+                    &still_open,
                 )
                 .await;
-                if inserted < abandoned_count {
+                if inserted < still_open.len() {
                     log::warn!(
-                        "Recorded {inserted}/{abandoned_count} drain-timeout failures (the rest hit DB errors; see preceding log lines)"
+                        "Recorded {inserted}/{} drain-timeout failures (the rest hit DB errors or were already stored)",
+                        still_open.len()
                     );
                 }
                 resources
                     .failed_urls
-                    .fetch_add(abandoned_count, Ordering::Relaxed);
+                    .fetch_add(still_open.len(), Ordering::Relaxed);
             } else {
                 log::info!("Drain timeout ({drain_timeout_secs}s) reached, no remaining tasks");
             }

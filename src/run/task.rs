@@ -152,12 +152,16 @@ async fn handle_cancelled(
     ctx: &Arc<crate::fetch::ProcessingContext>,
     progress: &TaskProgress<'_>,
 ) {
-    super::record_cooperative_cancel_failure(
+    let wrote = super::record_cooperative_cancel_failure(
         &ctx.pool,
         ctx.runtime.run_id.as_deref(),
         url.as_ref(),
     )
     .await;
+    // A committed `url_status` or a drain-timeout row is already counted.
+    if matches!(wrote, super::AbortWrite::Skipped) {
+        return;
+    }
     progress.failed_urls.fetch_add(1, Ordering::Relaxed);
     invoke_progress_callback(
         progress.progress_callback.as_ref(),

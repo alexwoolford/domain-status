@@ -16,7 +16,7 @@ use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::sync::Arc;
 
-use crate::utils::IoErrorContext;
+use crate::utils::{create_private_file, IoErrorContext};
 
 use super::bootstrap::for_each_export_row;
 
@@ -937,7 +937,7 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
         .set_compression(Compression::SNAPPY)
         .build();
 
-    let file = File::create(output_path).with_path(output_path)?;
+    let file = create_private_file(output_path).with_path(output_path)?;
 
     let mut writer = ArrowWriter::try_new(file, Arc::clone(&schema), Some(props))
         .context("Failed to create Parquet writer")?;

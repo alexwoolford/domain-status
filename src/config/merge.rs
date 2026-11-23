@@ -655,6 +655,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_unset_log_file_keeps_documented_default() {
+        let cli = Config {
+            log_file: Some(PathBuf::from("domain_status.log")),
+            ..Config::default()
+        };
+        let merged = merge_file_and_cli(None, cli, Some(&[]));
+        assert_eq!(
+            merged.log_file.as_deref(),
+            Some(std::path::Path::new("domain_status.log"))
+        );
+    }
+
     /// Adversarial: `scan_external_scripts` must parse permissive truthy string forms
     /// ("yes", "true", "1") from the config file / env map, not just canonical "true".
     #[test]

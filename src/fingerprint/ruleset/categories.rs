@@ -8,21 +8,25 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
 
+use crate::config::MAX_RULESET_DOWNLOAD_SIZE;
+use crate::fetch::stream::{reject_if_content_length_exceeds, stream_bytes_with_limit, OnLimit};
 use crate::fingerprint::models::Category;
+use crate::security::validate_url_safe;
 
-/// Fetches categories.json from a URL
+/// Fetches categories.json from a URL using the SSRF-safe download client.
 pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, String>> {
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    let categories_url = categories_url_for_source(url);
+    validate_url_safe(&categories_url)
+        .with_context(|| format!("Unsafe categories URL rejected: {categories_url}"))?;
+    let client = crate::initialization::build_download_client(Duration::from_secs(60))?;
+    fetch_categories_with_client(&client, &categories_url).await
+}
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS)) // FIX: Enforce TCP connect timeout
-        .build()?;
-
-    // Convert technologies URL to categories URL
+/// Maps a technologies source URL to the sibling `categories.json` URL.
+fn categories_url_for_source(url: &str) -> String {
     // e.g., https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies
     // -> https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/categories.json
-    let categories_url = if url.contains("raw.githubusercontent.com")
+    if url.contains("raw.githubusercontent.com")
         && !std::path::Path::new(url)
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
@@ -50,10 +54,15 @@ pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, 
     } else {
         // Fallback: try appending ../categories.json
         format!("{}/../categories.json", url.trim_end_matches('/'))
-    };
+    }
+}
 
+async fn fetch_categories_with_client(
+    client: &reqwest::Client,
+    categories_url: &str,
+) -> Result<HashMap<u32, String>> {
     log::debug!("Fetching categories from: {categories_url}");
-    let response = client.get(&categories_url).send().await?;
+    let response = client.get(categories_url).send().await?;
     if !response.status().is_success() {
         return Err(anyhow::anyhow!(
             "Failed to fetch categories: {}",
@@ -61,7 +70,17 @@ pub(crate) async fn fetch_categories_from_url(url: &str) -> Result<HashMap<u32, 
         ));
     }
 
-    let json_text = response.text().await?;
+    reject_if_content_length_exceeds(&response, MAX_RULESET_DOWNLOAD_SIZE, "Categories file")?;
+    let streamed = stream_bytes_with_limit(
+        response,
+        MAX_RULESET_DOWNLOAD_SIZE,
+        OnLimit::Error,
+        categories_url,
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!("Categories file too large or unreadable: {err}"))?;
+    let json_text = String::from_utf8(streamed.into_bytes())
+        .context("Categories file contains invalid UTF-8")?;
     // Parse as a map of category ID (string) -> Category
     let categories_map: HashMap<String, Category> =
         serde_json::from_str(&json_text).context("Failed to parse categories JSON")?;
@@ -139,6 +158,26 @@ mod tests {
     use tempfile::TempDir;
     use tokio::io::AsyncWriteExt;
 
+    /// Local JSON fixtures bind to loopback, which the SSRF client rejects.
+    /// Parsing tests call the body reader directly; SSRF is covered separately.
+    async fn fetch_categories_for_test(url: &str) -> Result<HashMap<u32, String>> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()?;
+        fetch_categories_with_client(&client, &categories_url_for_source(url)).await
+    }
+
+    #[tokio::test]
+    async fn test_fetch_categories_from_url_rejects_loopback() {
+        let err = fetch_categories_from_url("http://127.0.0.1/categories.json")
+            .await
+            .expect_err("loopback categories URL must be rejected");
+        assert!(
+            err.to_string().contains("Unsafe categories URL rejected"),
+            "got: {err}"
+        );
+    }
+
     #[tokio::test]
     async fn test_fetch_categories_from_url_success() {
         let server = Server::run();
@@ -150,7 +189,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_ok());
         let categories = result.unwrap();
         assert_eq!(categories.len(), 2);
@@ -168,7 +207,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}src/technologies", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_ok());
         let categories = result.unwrap();
         assert_eq!(categories.get(&1), Some(&"CMS".to_string()));
@@ -184,7 +223,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}src/technologies.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_ok());
     }
 
@@ -200,7 +239,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -221,7 +260,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -242,7 +281,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_ok());
         let categories = result.unwrap();
         // Non-numeric ID should be skipped
@@ -264,7 +303,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         let err = result.expect_err("missing name must fail deserialize");
         assert!(
             err.to_string().contains("Failed to parse categories JSON"),
@@ -287,7 +326,7 @@ mod tests {
 
         let base_url = server.url("/");
         let url = format!("{}categories.json", base_url);
-        let result = fetch_categories_from_url(&url).await;
+        let result = fetch_categories_for_test(&url).await;
         assert!(result.is_ok());
         let categories = result.unwrap();
         assert_eq!(categories.len(), 0);

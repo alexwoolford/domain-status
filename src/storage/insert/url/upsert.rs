@@ -238,10 +238,14 @@ async fn insert_url_record_impl(
     // children are replaced in the enrichment writer transaction so a successful
     // fact row never blanks GeoIP/WHOIS/secrets for concurrent readers.
     //
-    // If that DELETE fails, skip remaining core satellite writes so we do not mix
-    // stale and new child rows. Record one partial failure and still commit
-    // `url_status`. The enrichment transaction still runs.
+    // If that DELETE fails partway, roll the savepoint back so a prefix of
+    // deletes is not committed with the new fact row. The previous child set
+    // stays intact. Record one partial failure and still commit `url_status`.
     let mut satellite_insert_failures = Vec::new();
+    sqlx::query("SAVEPOINT core_satellite_cleanup")
+        .execute(&mut *tx)
+        .await
+        .map_err(DatabaseError::SqlError)?;
     let core_cleanup_ok = match crate::storage::insert::utils::delete_child_rows(
         &mut tx,
         URL_STATUS_CORE_SATELLITE_TABLES,
@@ -249,11 +253,25 @@ async fn insert_url_record_impl(
     )
     .await
     {
-        Ok(()) => true,
+        Ok(()) => {
+            sqlx::query("RELEASE SAVEPOINT core_satellite_cleanup")
+                .execute(&mut *tx)
+                .await
+                .map_err(DatabaseError::SqlError)?;
+            true
+        }
         Err(e) => {
             log::warn!(
                 "Failed to clean stale core satellite rows for url_status_id {url_status_id}: {e}"
             );
+            sqlx::query("ROLLBACK TO SAVEPOINT core_satellite_cleanup")
+                .execute(&mut *tx)
+                .await
+                .map_err(DatabaseError::SqlError)?;
+            sqlx::query("RELEASE SAVEPOINT core_satellite_cleanup")
+                .execute(&mut *tx)
+                .await
+                .map_err(DatabaseError::SqlError)?;
             satellite_insert_failures.push(SatelliteWriteFailure {
                 table: "core_satellites",
                 message: format!("Failed to clean stale core satellite rows: {e}"),

@@ -59,19 +59,40 @@ fn murmur3_32_bytes(bytes: &[u8]) -> u32 {
 /// Max redirect hops for favicon (SSRF-validated per hop).
 const MAX_FAVICON_REDIRECTS: u8 = 5;
 
+/// True when `url` must not be requested as a favicon.
+///
+/// The initial URL and every redirect hop are checked. IP literals never reach
+/// `SafeResolver`, so [`validate_url_safe`] has to run before the GET. Once the
+/// chain started on HTTPS, a later HTTP hop is rejected the same way as page redirects.
+fn favicon_target_rejected(url: &str, chain_started_https: bool) -> bool {
+    if chain_started_https && url::Url::parse(url).is_ok_and(|parsed| parsed.scheme() == "http") {
+        log::debug!("Favicon HTTPS->HTTP downgrade rejected: {url}");
+        return true;
+    }
+    if let Err(err) = validate_url_safe(url) {
+        log::debug!("Favicon SSRF-unsafe target rejected: {url}: {err}");
+        return true;
+    }
+    false
+}
+
 /// Streams favicon bytes from a URL with a size limit.
 /// Follows up to `MAX_FAVICON_REDIRECTS` redirects, validating each hop with SSRF checks.
 ///
 /// Returns `None` if the response is non-success, exceeds the size cap,
-/// or the fetch times out.
+/// the target fails the SSRF or downgrade check, or the fetch times out.
 async fn fetch_favicon_bytes(
     client: &reqwest::Client,
     url: &str,
     max_size: usize,
 ) -> Result<Option<Vec<u8>>, Error> {
+    let chain_started_https = url::Url::parse(url).is_ok_and(|parsed| parsed.scheme() == "https");
     let mut current_url = url.to_string();
     // Initial fetch + up to MAX_FAVICON_REDIRECTS redirect hops
     for _ in 0..=MAX_FAVICON_REDIRECTS {
+        if favicon_target_rejected(&current_url, chain_started_https) {
+            return Ok(None);
+        }
         let response = match tokio::time::timeout(
             std::time::Duration::from_secs(FAVICON_FETCH_TIMEOUT_SECS),
             client.get(&current_url).send(),
@@ -107,10 +128,6 @@ async fn fetch_favicon_bytes(
                     );
                     return Ok(None);
                 };
-                if validate_url_safe(&next_url).is_err() {
-                    log::debug!("Favicon redirect SSRF-unsafe target rejected: {next_url}");
-                    return Ok(None);
-                }
                 log::debug!("Favicon following redirect {current_url} -> {next_url}");
                 current_url = next_url;
                 continue;
@@ -363,9 +380,9 @@ mod tests {
             .respond_with(wiremock::ResponseTemplate::new(404))
             .mount(&server)
             .await;
-        let favicon_url = format!("{}/favicon.ico", server.uri());
-        let client = Arc::new(reqwest::Client::builder().build().expect("test client"));
-        let result = fetch_and_hash_favicon(&client, None, &favicon_url).await;
+        let (client, origin) = example_com_client(&server);
+        let favicon_url = format!("{origin}/favicon.ico");
+        let result = fetch_and_hash_favicon(&Arc::new(client), None, &favicon_url).await;
         assert!(result.is_none(), "4xx response must yield None");
     }
 
@@ -401,12 +418,12 @@ mod tests {
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![1u8; 9]))
             .mount(&server)
             .await;
-        let client = no_redirect_client();
-        let exact = fetch_favicon_bytes(&client, &format!("{}/exact.ico", server.uri()), 8)
+        let (client, origin) = example_com_client(&server);
+        let exact = fetch_favicon_bytes(&client, &format!("{origin}/exact.ico"), 8)
             .await
             .expect("exact");
         assert_eq!(exact.as_deref(), Some(&[1u8; 8][..]));
-        let over = fetch_favicon_bytes(&client, &format!("{}/over.ico", server.uri()), 8)
+        let over = fetch_favicon_bytes(&client, &format!("{origin}/over.ico"), 8)
             .await
             .expect("over");
         assert_eq!(over, None, "one byte over max_size must abort");
@@ -446,16 +463,48 @@ mod tests {
             .await;
         wiremock::Mock::given(wiremock::matchers::path("/stolen.ico"))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![3u8; 4]))
+            .expect(0)
             .mount(&server)
             .await;
-        let got = fetch_favicon_bytes(
-            &no_redirect_client(),
-            &format!("{}/favicon.ico", server.uri()),
-            64,
-        )
-        .await
-        .expect("ssrf hop");
+        let (client, origin) = example_com_client(&server);
+        let got = fetch_favicon_bytes(&client, &format!("{origin}/favicon.ico"), 64)
+            .await
+            .expect("ssrf hop");
         assert_eq!(got, None, "loopback redirect must be rejected");
+    }
+
+    /// Kills: fetching an icon href that is already an IP literal. Redirect checks
+    /// do not run if the first GET is issued, and `SafeResolver` does not see literals.
+    #[tokio::test]
+    async fn test_fetch_favicon_bytes_rejects_initial_ip_literal() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path("/stolen.ico"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![3u8; 4]))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let literal = format!("http://127.0.0.1:{}/stolen.ico", server.address().port());
+        let got = fetch_favicon_bytes(&no_redirect_client(), &literal, 64)
+            .await
+            .expect("ip literal");
+        assert_eq!(
+            got, None,
+            "initial IP literal must be rejected before connect"
+        );
+        let hits = server.received_requests().await.expect("request log");
+        assert!(hits.is_empty(), "rejected literal must not be requested");
+    }
+
+    #[test]
+    fn test_favicon_target_rejected_blocks_https_downgrade_and_metadata_literal() {
+        assert!(favicon_target_rejected("http://example.com/a.ico", true));
+        assert!(favicon_target_rejected(
+            "http://169.254.169.254/latest",
+            false
+        ));
+        assert!(favicon_target_rejected("http://2130706433/", false));
+        assert!(!favicon_target_rejected("https://example.com/a.ico", true));
+        assert!(!favicon_target_rejected("http://example.com/a.ico", false));
     }
 
     /// Kills: raising `MAX_FAVICON_REDIRECTS` so a 6-hop chain still returns

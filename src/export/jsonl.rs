@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, Write};
 
-use crate::utils::IoErrorContext;
+use crate::utils::{create_private_file, IoErrorContext};
 
 use super::bootstrap::for_each_export_row;
 use super::fields;
@@ -61,11 +61,10 @@ use super::row::{build_url, parse_string_list};
 #[allow(clippy::too_many_lines)] // Sequential export pipeline: DB setup, query, row serialization, output
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
     let mut writer: Box<dyn Write> = if let Some(output_path) = opts.output.as_ref() {
-        let file = tokio::fs::File::create(output_path)
+        let path = output_path.clone();
+        let file = tokio::task::spawn_blocking(move || create_private_file(&path).with_path(&path))
             .await
-            .with_path(output_path)?
-            .into_std()
-            .await;
+            .map_err(|err| anyhow::anyhow!("failed to create JSONL file: {err}"))??;
         Box::new(file)
     } else {
         Box::new(IgnoreBrokenPipe::new(io::stdout()))

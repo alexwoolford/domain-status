@@ -82,7 +82,7 @@ where
 /// `DOMAIN_STATUS_*` scan settings are applied via clap `env =` (not here), so env is
 /// not double-bound. Precedence when merging later: CLI > env (clap) > file > defaults.
 ///
-/// Returns `Ok(None)` when no config file is requested and cwd has no `domain_status.toml`.
+/// Returns `Ok(None)` when no config file is requested.
 ///
 /// # Errors
 /// Fails when a requested config file is missing or invalid, or when file values
@@ -99,8 +99,6 @@ fn load_file_config(explicit_config_path: Option<&Path>) -> Result<Option<FileCo
         warn_if_world_readable(path);
         let path_str = path.to_string_lossy();
         Some(config::File::with_name(path_str.as_ref()).required(true))
-    } else if Path::new("domain_status.toml").exists() {
-        Some(config::File::with_name("domain_status").required(false))
     } else {
         None
     };
@@ -503,7 +501,7 @@ async fn execute_summary_command(summary_cmd: SummaryCommand) -> Result<i32> {
     init_logger_with(log_level_filter(&LogLevel::Info), LogFormat::Plain)
         .context("Failed to initialize logger")?;
 
-    let pool = crate::storage::init_db_pool_with_path(&summary_cmd.db_path, 5)
+    let pool = crate::storage::init_existing_db_pool(&summary_cmd.db_path, 5)
         .await
         .with_context(|| {
             format!(

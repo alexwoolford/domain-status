@@ -74,19 +74,17 @@ async fn fetch_single_file_with_size_limit(
 
     reject_if_content_length_exceeds(&response, MAX_RULESET_DOWNLOAD_SIZE, "Ruleset file")?;
 
-    // Read response with size limit
-    let bytes = response.bytes().await?;
+    let bytes = crate::fetch::stream::stream_bytes_with_limit(
+        response,
+        MAX_RULESET_DOWNLOAD_SIZE,
+        crate::fetch::stream::OnLimit::Error,
+        url,
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!("Ruleset file too large or unreadable: {err}"))?
+    .into_bytes();
 
-    if bytes.len() > MAX_RULESET_DOWNLOAD_SIZE {
-        return Err(anyhow::anyhow!(
-            "Ruleset file too large: {} bytes (max: {} bytes)",
-            bytes.len(),
-            MAX_RULESET_DOWNLOAD_SIZE
-        ));
-    }
-
-    let json_text =
-        String::from_utf8(bytes.to_vec()).context("Ruleset file contains invalid UTF-8")?;
+    let json_text = String::from_utf8(bytes).context("Ruleset file contains invalid UTF-8")?;
 
     // Parse as a map of technology name -> Technology
     let technologies: HashMap<String, Technology> =

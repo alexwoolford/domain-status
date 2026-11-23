@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::config::MAX_RULESET_DOWNLOAD_SIZE;
+use crate::fetch::stream::{stream_bytes_with_limit, OnLimit};
 use crate::fingerprint::models::Technology;
 use crate::security::validate_url_safe;
 
@@ -130,7 +131,6 @@ pub(crate) async fn fetch_from_github_directory(
                 match client.get(&download_url).send().await {
                     Ok(resp) => {
                         if resp.status().is_success() {
-                            // Check content-length header if available
                             if let Some(content_length) = resp.content_length() {
                                 if content_length > MAX_RULESET_DOWNLOAD_SIZE as u64 {
                                     log::warn!(
@@ -140,30 +140,36 @@ pub(crate) async fn fetch_from_github_directory(
                                 }
                             }
 
-                            match resp.text().await {
-                                Ok(text) => {
-                                    // Double-check size after download (in case content-length was missing/wrong)
-                                    if text.len() > MAX_RULESET_DOWNLOAD_SIZE {
-                                        log::warn!(
-                                            "File {} too large after download ({} bytes, max: {}), skipping",
-                                            download_url,
-                                            text.len(),
-                                            MAX_RULESET_DOWNLOAD_SIZE
-                                        );
-                                        return None;
-                                    }
-
-                                    match serde_json::from_str::<HashMap<String, Technology>>(&text)
-                                    {
-                                        Ok(techs) => Some(techs),
-                                        Err(e) => {
-                                            log::warn!("Failed to parse {download_url}: {e}");
-                                            None
+                            let text = match stream_bytes_with_limit(
+                                resp,
+                                MAX_RULESET_DOWNLOAD_SIZE,
+                                OnLimit::Error,
+                                &download_url,
+                            )
+                            .await
+                            {
+                                Ok(streamed) => {
+                                    match String::from_utf8(streamed.into_bytes()) {
+                                        Ok(text) => text,
+                                        Err(err) => {
+                                            log::warn!(
+                                                "File {download_url} is not UTF-8: {err}"
+                                            );
+                                            return None;
                                         }
                                     }
                                 }
+                                Err(err) => {
+                                    log::warn!(
+                                        "File {download_url} too large or unreadable ({err}), skipping"
+                                    );
+                                    return None;
+                                }
+                            };
+                            match serde_json::from_str::<HashMap<String, Technology>>(&text) {
+                                Ok(techs) => Some(techs),
                                 Err(e) => {
-                                    log::warn!("Failed to read {download_url}: {e}");
+                                    log::warn!("Failed to parse {download_url}: {e}");
                                     None
                                 }
                             }

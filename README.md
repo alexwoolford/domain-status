@@ -72,7 +72,7 @@ WHOIS is on by default (`--no-whois` to disable). GeoIP needs `MAXMIND_LICENSE_K
 
 **Day-to-day:** CLI flags (`domain-status scan -h`; all flags: `scan --help`). Prefer `-v` / `-q` for log verbosity.
 
-**Repeatable jobs:** pick **one** of TOML (`--config ./domain_status.toml` or cwd `domain_status.toml`) **or** `DOMAIN_STATUS_*` env for the job profile; use CLI only to override. Mixing TOML and env for the same knobs works (env wins) but is harder to reason about. **`--config` wins** over `DOMAIN_STATUS_CONFIG_FILE`.
+**Repeatable jobs:** pick **one** of TOML (`--config ./domain_status.toml` or `DOMAIN_STATUS_CONFIG_FILE`) **or** `DOMAIN_STATUS_*` env for the job profile; use CLI only to override. A `domain_status.toml` in the working directory is not loaded on its own. Mixing TOML and env for the same knobs works (env wins) but is harder to reason about. **`--config` wins** over `DOMAIN_STATUS_CONFIG_FILE`.
 
 **Local secrets:** put `MAXMIND_LICENSE_KEY` / `GITHUB_TOKEN` in `.env` or the real environment — never in TOML. `.env` only seeds process env; it is not a fifth precedence tier.
 

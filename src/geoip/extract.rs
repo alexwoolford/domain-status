@@ -36,22 +36,22 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
         }
 
         let entry = entry_result.with_context(|| "Failed to read tar entry")?;
+        // Non-matching members are inflated when the tar reader skips them.
+        // Refuse that read before advancing, for every member, not only the .mmdb.
+        let declared_size = usize::try_from(entry.size()).unwrap_or(usize::MAX);
+        if declared_size > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
+            bail!(
+                "GeoIP archive entry too large: {} bytes (max: {} bytes)",
+                declared_size,
+                crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE
+            );
+        }
         let path = entry.path().with_context(|| "Failed to get entry path")?;
 
         // Look for the specified database .mmdb file
         if let Some(file_name) = path.file_name() {
             let expected_name = format!("{db_name}.mmdb");
             if file_name.to_str() == Some(&expected_name) {
-                let declared_size = usize::try_from(entry.size()).unwrap_or(usize::MAX);
-                if declared_size > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
-                    bail!(
-                        "{}.mmdb entry too large: {} bytes (max: {} bytes)",
-                        db_name,
-                        declared_size,
-                        crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE
-                    );
-                }
-
                 let read_limit = u64::try_from(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1)
                     .context(
                         "MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1 must fit in u64; this is a constant bug",
@@ -176,6 +176,32 @@ mod tests {
         assert!(
             err.contains("too large") || err.contains("entry too large"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_extract_mmdb_rejects_oversized_non_matching_entry() {
+        let declared = u64::try_from(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE)
+            .unwrap()
+            .saturating_add(1);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("README.txt").unwrap();
+        header.set_size(declared);
+        header.set_cksum();
+        let mut tar_bytes = header.as_bytes().to_vec();
+        tar_bytes.extend_from_slice(&[0u8; 512]);
+        let mut mmdb = tar::Header::new_gnu();
+        mmdb.set_path("GeoLite2-City.mmdb").unwrap();
+        mmdb.set_size(4);
+        mmdb.set_cksum();
+        tar_bytes.extend_from_slice(mmdb.as_bytes());
+        tar_bytes.extend_from_slice(b"city");
+        let err = extract_mmdb_from_tar_gz(&gzip(&tar_bytes), "GeoLite2-City")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("too large"),
+            "skipped members must be size-capped before inflate, got: {err}"
         );
     }
 

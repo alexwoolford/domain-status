@@ -63,11 +63,15 @@ pub async fn spawn_status_server(
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
         .map_err(|source| StatusServerLifecycleError::Bind { port, source })?;
+    let bound_port = listener
+        .local_addr()
+        .map_err(|source| StatusServerLifecycleError::Bind { port, source })?
+        .port();
 
-    log::info!("Status server listening on http://127.0.0.1:{port}/");
-    log::info!("  - Health: http://127.0.0.1:{port}/health");
-    log::info!("  - Metrics: http://127.0.0.1:{port}/metrics");
-    log::info!("  - Status: http://127.0.0.1:{port}/status");
+    log::info!("Status server listening on http://127.0.0.1:{bound_port}/");
+    log::info!("  - Health: http://127.0.0.1:{bound_port}/health");
+    log::info!("  - Metrics: http://127.0.0.1:{bound_port}/metrics");
+    log::info!("  - Status: http://127.0.0.1:{bound_port}/status");
 
     let shutdown = CancellationToken::new();
     let shutdown_signal = shutdown.clone();

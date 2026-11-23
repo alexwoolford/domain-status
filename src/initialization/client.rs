@@ -74,8 +74,11 @@ pub(crate) fn build_ssrf_client(
         RedirectMode::SsrfSafe => ssrf_safe_redirect_policy(),
     };
 
+    // System proxies resolve the target themselves, so SafeResolver would not
+    // see the address that actually gets connected.
     let mut builder = ClientBuilder::new()
         .use_rustls_tls()
+        .no_proxy()
         .dns_resolver(Arc::new(SafeResolver::new(resolver)))
         .redirect(redirect)
         .timeout(opts.timeout)

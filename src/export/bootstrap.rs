@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
 
-use crate::storage::init_db_pool_with_path;
+use crate::storage::init_existing_db_pool;
 
 use super::queries::build_export_query;
 use super::row::{build_export_row, extract_main_row_data, ExportRow};
@@ -20,7 +20,7 @@ pub(crate) async fn for_each_export_row<F>(opts: &ExportOptions, mut on_row: F) 
 where
     F: FnMut(ExportRow) -> Result<()>,
 {
-    let pool = init_db_pool_with_path(&opts.db_path, 5)
+    let pool = init_existing_db_pool(&opts.db_path, 5)
         .await
         .context("Failed to initialize database pool")?;
 

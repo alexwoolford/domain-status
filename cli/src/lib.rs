@@ -240,12 +240,12 @@ pub struct ScanCommand {
     pub cache_dir: Option<PathBuf>,
 
     /// Maximum time (seconds) to wait for in-flight tasks to finish after the
-    /// input queue is exhausted. Tasks still running after this window are
-    /// aborted and recorded in `url_failures` with the timeout reason.
-    /// Raise this for WHOIS-heavy small batches if scans report drain timeouts.
+    /// input queue is exhausted. The default sits above the 35s per-URL cap so
+    /// a task that just started is not aborted. Tasks still running after this
+    /// window are aborted and recorded in `url_failures` with the timeout reason.
     #[arg(
         long,
-        default_value_t = 10,
+        default_value_t = 40,
         env = "DOMAIN_STATUS_DRAIN_TIMEOUT_SECS",
         hide_short_help = true,
         help_heading = "Advanced"

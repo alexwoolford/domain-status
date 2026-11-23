@@ -6,6 +6,7 @@
 //! innernet.
 
 use std::fmt;
+use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
 
@@ -83,6 +84,41 @@ pub fn ensure_parent_dir_secure(file_path: &Path) -> io::Result<()> {
         std::fs::set_permissions(parent, perms)?;
     }
     Ok(())
+}
+
+/// Creates or truncates `path` as owner-read/write only (`0600` on Unix).
+///
+/// # Errors
+/// Returns `Err` when the file cannot be created.
+pub fn create_private_file(path: &Path) -> io::Result<std::fs::File> {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let file = opts.open(path)?;
+    restrict_to_owner(path);
+    Ok(file)
+}
+
+/// Sets an existing file to owner read/write (`0600`) on Unix.
+///
+/// Missing files are ignored. A permissions failure is logged and does not
+/// fail the caller; `SQLite` sidecars may not exist until the first write.
+pub fn restrict_to_owner(path: &Path) {
+    #[cfg(unix)]
+    {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return;
+        };
+        let mut perms = meta.permissions();
+        perms.set_mode(0o600);
+        if let Err(err) = std::fs::set_permissions(path, perms) {
+            log::warn!("Failed to restrict {} to mode 600: {err}", path.display());
+        }
+    }
 }
 
 /// Logs a warning if the file at `path` is world-readable (Unix only).

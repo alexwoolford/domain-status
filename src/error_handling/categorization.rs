@@ -99,10 +99,12 @@ pub fn categorize_reqwest_error(error: &reqwest::Error) -> ErrorType {
         ErrorType::HttpRequestStatusError
     } else if error.is_timeout() {
         ErrorType::HttpRequestTimeoutError
+    } else if error.is_connect() {
+        // `Kind::Request` is also true for dial failures. Connect is the
+        // specific class: a resolver error nested under the HTTP client.
+        ErrorType::HttpRequestConnectError
     } else if error.is_request() {
         ErrorType::HttpRequestRequestError
-    } else if error.is_connect() {
-        ErrorType::HttpRequestConnectError
     } else if error.is_body() {
         ErrorType::HttpRequestBodyError
     } else if error.is_decode() {

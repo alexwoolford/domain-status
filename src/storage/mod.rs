@@ -25,7 +25,7 @@ pub use insert::{
 };
 pub use migrations::run_migrations;
 pub use models::UrlRecord;
-pub use pool::{init_db_pool_with_path, DbPool};
+pub use pool::{init_db_pool_with_path, init_existing_db_pool, DbPool};
 pub use record::{CookieInfo, PersistedUrlRecord, ScriptHostInfo};
 
 // Enrichment inserts go through `*_in_tx` in the enrichment writer transaction.

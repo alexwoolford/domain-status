@@ -16,7 +16,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
 
 use crate::error_handling::DatabaseError;
-use crate::utils::{ensure_parent_dir_secure, IoErrorContext};
+use crate::utils::{ensure_parent_dir_secure, restrict_to_owner, IoErrorContext};
 
 /// Type alias for database connection pool.
 /// Used throughout the codebase for consistency.
@@ -81,10 +81,14 @@ pub async fn init_db_pool_with_path(
     // This is a one-time startup operation, so impact is low, but good practice.
     let path_for_task = db_path_str.clone();
     let file_creation_result = tokio::task::spawn_blocking(move || {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options
             .open(&path_for_task)
             .with_path(&path_for_task)
             .map(|_| ())
@@ -153,7 +157,49 @@ pub async fn init_db_pool_with_path(
             DatabaseError::SqlError(e)
         })?;
 
+    restrict_database_files(db_path).await;
+
     Ok(Arc::new(pool))
+}
+
+/// Secrets, cookies, and WHOIS live in the database file and its WAL sidecars.
+async fn restrict_database_files(db_path: &std::path::Path) {
+    let sidecar_path = db_path.to_path_buf();
+    let _ = tokio::task::spawn_blocking(move || {
+        restrict_to_owner(&sidecar_path);
+        restrict_sqlite_sidecar(&sidecar_path, "-wal");
+        restrict_sqlite_sidecar(&sidecar_path, "-shm");
+    })
+    .await;
+}
+
+/// Opens a database that must already exist.
+///
+/// Export and summary are read commands. A missing path must not create an
+/// empty database and then report zero rows.
+///
+/// # Errors
+/// Returns `Err` when `db_path` is not an existing file, or when the pool cannot be opened.
+pub async fn init_existing_db_pool(
+    db_path: &std::path::Path,
+    max_connections: u32,
+) -> Result<DbPool, DatabaseError> {
+    if !db_path.is_file() {
+        return Err(DatabaseError::FileCreationError {
+            context: format!("Database file does not exist: {}", db_path.display()),
+            source: Box::new(std::io::Error::new(
+                ErrorKind::NotFound,
+                "database file not found",
+            )),
+        });
+    }
+    init_db_pool_with_path(db_path, max_connections).await
+}
+
+fn restrict_sqlite_sidecar(db_path: &std::path::Path, suffix: &str) {
+    let mut name = db_path.as_os_str().to_os_string();
+    name.push(suffix);
+    restrict_to_owner(std::path::Path::new(&name));
 }
 
 #[cfg(test)]

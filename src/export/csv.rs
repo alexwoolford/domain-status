@@ -9,7 +9,7 @@ use anyhow::Result;
 use csv::Writer;
 use std::io::{self, Write};
 
-use crate::utils::IoErrorContext;
+use crate::utils::{create_private_file, IoErrorContext};
 
 use super::bootstrap::for_each_export_row;
 use super::fields;
@@ -22,6 +22,19 @@ pub(crate) fn csv_column_names() -> impl Iterator<Item = &'static str> {
 
 fn csv_record_cells(row: &super::row::ExportRow) -> Vec<String> {
     fields::csv_record_cells(row)
+        .into_iter()
+        .map(neutralize_csv_formula)
+        .collect()
+}
+
+/// Spreadsheet apps execute cells that start with `=`, `+`, `-`, `@`, tab, or CR.
+/// A leading `'` forces those cells to be text. Page titles and secrets are untrusted.
+fn neutralize_csv_formula(cell: String) -> String {
+    if cell.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{cell}")
+    } else {
+        cell
+    }
 }
 
 /// Exports data to CSV format.
@@ -33,11 +46,10 @@ fn csv_record_cells(row: &super::row::ExportRow) -> Vec<String> {
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
     let mut writer: Writer<Box<dyn Write>> = if let Some(output_path) = opts.output.as_ref() {
-        let file = tokio::fs::File::create(output_path)
+        let path = output_path.clone();
+        let file = tokio::task::spawn_blocking(move || create_private_file(&path).with_path(&path))
             .await
-            .with_path(output_path)?
-            .into_std()
-            .await;
+            .map_err(|err| anyhow::anyhow!("failed to create CSV file: {err}"))??;
         Writer::from_writer(Box::new(file) as Box<dyn Write>)
     } else {
         Writer::from_writer(Box::new(IgnoreBrokenPipe::new(io::stdout())) as Box<dyn Write>)
@@ -62,7 +74,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::super::types::{ExportFormat, ExportOptions};
-    use super::export_csv;
+    use super::{export_csv, neutralize_csv_formula};
     use crate::storage::run_migrations;
     use crate::storage::test_helpers::create_test_url_status_default;
     use sqlx::SqlitePool;
@@ -166,5 +178,28 @@ mod tests {
             Some("1"),
             "Should have 1 partial failure"
         );
+    }
+
+    #[test]
+    fn test_neutralize_csv_formula_prefixes() {
+        for cell in [
+            "=HYPERLINK(\"http://evil\")",
+            "+1",
+            "-1",
+            "@sum",
+            "\t=1",
+            "\r=1",
+        ] {
+            let out = neutralize_csv_formula(cell.to_string());
+            assert!(
+                out.starts_with('\''),
+                "formula cell {cell:?} must be prefixed, got {out:?}"
+            );
+        }
+        assert_eq!(
+            neutralize_csv_formula("plain title".to_string()),
+            "plain title"
+        );
+        assert_eq!(neutralize_csv_formula("200".to_string()), "200");
     }
 }

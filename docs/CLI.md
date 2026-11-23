@@ -25,7 +25,7 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 
 **Precedence:** `CLI flags` > `DOMAIN_STATUS_*` env (via clap) > TOML file > defaults.
 
-- Config file path: `--config` **wins** over `DOMAIN_STATUS_CONFIG_FILE`; else cwd `domain_status.toml` if present.
+- Config file path: `--config` **wins** over `DOMAIN_STATUS_CONFIG_FILE`. A `domain_status.toml` sitting in the working directory is not loaded unless one of those is set.
 - `.env` (cwd, else next to the binary) loads before clap runs; it does not override already-set env vars.
 - Secrets stay env / `.env` only: `MAXMIND_LICENSE_KEY`, `GITHUB_TOKEN` (no CLI flags).
 
@@ -34,7 +34,7 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 | Flag | Env | TOML key | Default |
 |------|-----|----------|---------|
 | positional `file` | — | `file` (library/TOML only; CLI requires the positional) | `urls.txt` (library) |
-| `--config` | `DOMAIN_STATUS_CONFIG_FILE` | — | cwd `domain_status.toml` if present |
+| `--config` | `DOMAIN_STATUS_CONFIG_FILE` | — | none |
 | `--db-path` | `DOMAIN_STATUS_DB_PATH` | `db_path` | `./domain_status.db` |
 | `--log-file` | `DOMAIN_STATUS_LOG_FILE` | `log_file` | `domain_status.log` |
 | `--log-level` | `DOMAIN_STATUS_LOG_LEVEL` | `log_level` | `info` |
@@ -55,7 +55,7 @@ Prefer **one** job style per deployment (TOML *or* env); use CLI to override. Do
 | `--scan-external-scripts` | `DOMAIN_STATUS_SCAN_EXTERNAL_SCRIPTS` | `scan_external_scripts` | off |
 | `--fail-on` | `DOMAIN_STATUS_FAIL_ON` | `fail_on` | `never` (`any-failure` \| `pct>`) |
 | `--fail-on-pct-threshold` | `DOMAIN_STATUS_FAIL_ON_PCT_THRESHOLD` | `fail_on_pct_threshold` | `10` |
-| `--drain-timeout-secs` | `DOMAIN_STATUS_DRAIN_TIMEOUT_SECS` | `drain_timeout_secs` | `10` |
+| `--drain-timeout-secs` | `DOMAIN_STATUS_DRAIN_TIMEOUT_SECS` | `drain_timeout_secs` | `40` |
 
 `--rate-limit-rps` is **URL admission** (one token per input URL), not per-HTTP-request RPS. Redirects, favicon, external scripts, TLS probe, and WHOIS share that token. When it is enabled, each host is also limited to 2 URL tokens/sec. `0` disables both caps.
 

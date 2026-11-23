@@ -50,13 +50,12 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
 
     log::debug!("Fetching commit SHA from: {api_url}");
 
-    use crate::config::TCP_CONNECT_TIMEOUT_SECS;
+    if crate::security::validate_url_safe(&api_url).is_err() {
+        log::warn!("Refusing unsafe commit-SHA URL: {api_url}");
+        return None;
+    }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .connect_timeout(Duration::from_secs(TCP_CONNECT_TIMEOUT_SECS))
-        .build()
-        .ok()?;
+    let client = crate::initialization::build_download_client(Duration::from_secs(10)).ok()?;
 
     #[derive(Deserialize)]
     struct Commit {
@@ -68,28 +67,23 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() {
-                match resp.text().await {
-                    Ok(text) => match serde_json::from_str::<Vec<Commit>>(&text) {
-                        Ok(commits) => {
-                            if let Some(commit) = commits.first() {
-                                log::debug!("Found commit SHA: {}", commit.sha);
-                                Some(commit.sha.clone())
-                            } else {
-                                log::warn!("No commits found in response for path: {path}");
-                                None
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to parse commit response: {} (first 200 chars: {})",
-                                e,
-                                &text[..text.len().min(200)]
-                            );
+                let text = read_capped_text(resp).await?;
+                match serde_json::from_str::<Vec<Commit>>(&text) {
+                    Ok(commits) => {
+                        if let Some(commit) = commits.first() {
+                            log::debug!("Found commit SHA: {}", commit.sha);
+                            Some(commit.sha.clone())
+                        } else {
+                            log::warn!("No commits found in response for path: {path}");
                             None
                         }
-                    },
+                    }
                     Err(e) => {
-                        log::warn!("Failed to read commit response: {e}");
+                        log::warn!(
+                            "Failed to parse commit response: {} (first 200 chars: {})",
+                            e,
+                            &text[..text.len().min(200)]
+                        );
                         None
                     }
                 }
@@ -100,6 +94,32 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
         }
         Err(e) => {
             log::warn!("Failed to fetch commit SHA from {api_url}: {e}");
+            None
+        }
+    }
+}
+
+/// Reads a GitHub commit response, refusing bodies over 1 MiB.
+async fn read_capped_text(response: reqwest::Response) -> Option<String> {
+    const MAX_COMMIT_BODY: usize = 1024 * 1024;
+    let url = response.url().to_string();
+    match crate::fetch::stream::stream_bytes_with_limit(
+        response,
+        MAX_COMMIT_BODY,
+        crate::fetch::stream::OnLimit::Error,
+        &url,
+    )
+    .await
+    {
+        Ok(streamed) => match String::from_utf8(streamed.into_bytes()) {
+            Ok(text) => Some(text),
+            Err(err) => {
+                log::warn!("Commit response is not UTF-8: {err}");
+                None
+            }
+        },
+        Err(err) => {
+            log::warn!("Failed to read commit response: {err}");
             None
         }
     }

@@ -43,7 +43,33 @@ fn mentions_nameserver_record(msg: &str) -> bool {
 /// (NS/TXT/MX) come from the `NetError` enrichment path — not from reclassifying
 /// HTTP connect failures whose chain happens to mention `dns error`.
 pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
-    // Check error chain for DNS resolver errors (predicate-based, no string matching)
+    // HTTP client errors win over a resolver error nested inside them. A dial
+    // that fails DNS is still a connect failure, not an NS/TXT/MX lookup.
+    for cause in error.chain() {
+        if let Some(reqwest_err) = cause.downcast_ref::<ReqwestError>() {
+            let base_type = categorize_reqwest_error(reqwest_err);
+            let error_msg = reqwest_err.to_string().to_lowercase();
+
+            if error_msg.contains("tls")
+                || error_msg.contains("ssl")
+                || error_msg.contains("certificate")
+                || error_msg.contains("handshake")
+            {
+                return ErrorType::TlsCertificateError;
+            }
+
+            if (base_type == ErrorType::HttpRequestRequestError
+                || base_type == ErrorType::HttpRequestConnectError)
+                && error_msg.contains("timeout")
+            {
+                return ErrorType::HttpRequestTimeoutError;
+            }
+
+            return base_type;
+        }
+    }
+
+    // Bare resolver errors (no HTTP client error) are enrichment lookups.
     for cause in error.chain() {
         if let Some(resolve_err) = cause.downcast_ref::<NetError>() {
             let kind = categorize_resolve_error(resolve_err);
@@ -55,37 +81,6 @@ pub(crate) fn extract_error_type(error: &Error) -> ErrorType {
                     dns_error_type_from_message(&resolve_err.to_string().to_lowercase())
                 }
             };
-        }
-    }
-
-    // Check error chain for reqwest errors
-    for cause in error.chain() {
-        if let Some(reqwest_err) = cause.downcast_ref::<ReqwestError>() {
-            // Trust reqwest's Connect/Timeout/Request classification. A connect
-            // failure often embeds "dns error" in the chain; that is still a
-            // connect failure, not an NS/TXT/MX enrichment lookup.
-            let base_type = categorize_reqwest_error(reqwest_err);
-            let error_msg = reqwest_err.to_string().to_lowercase();
-
-            // Check for TLS errors in message
-            if error_msg.contains("tls")
-                || error_msg.contains("ssl")
-                || error_msg.contains("certificate")
-                || error_msg.contains("handshake")
-            {
-                return ErrorType::TlsCertificateError;
-            }
-
-            // Check for timeout in request/connect errors
-            if (base_type == ErrorType::HttpRequestRequestError
-                || base_type == ErrorType::HttpRequestConnectError)
-                && error_msg.contains("timeout")
-            {
-                return ErrorType::HttpRequestTimeoutError;
-            }
-
-            // Return the base type (from shared categorization)
-            return base_type;
         }
     }
 
@@ -206,6 +201,36 @@ mod tests {
             ),
             "Expected connect/request/timeout for dial-time DNS failure, got: {:?}",
             error_type
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reqwest_connect_wrapping_net_error_is_connect() {
+        struct FailResolve;
+
+        impl reqwest::dns::Resolve for FailResolve {
+            fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+                Box::pin(async {
+                    let err = NetError::from("dns error");
+                    Err(Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
+                })
+            }
+        }
+
+        let client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .dns_resolver(std::sync::Arc::new(FailResolve))
+            .build()
+            .expect("client");
+        let reqwest_err = client
+            .get("https://example.com/")
+            .send()
+            .await
+            .expect_err("resolver fails before connect");
+        let error = anyhow::Error::from(reqwest_err);
+        assert_eq!(
+            extract_error_type(&error),
+            ErrorType::HttpRequestConnectError
         );
     }
 
