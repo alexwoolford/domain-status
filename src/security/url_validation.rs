@@ -185,10 +185,12 @@ fn ipv4_from_halves(hi: u16, lo: u16) -> Ipv4Addr {
 /// Use this for clients that need to follow redirects (e.g. GitHub CDN, `MaxMind` downloads)
 /// while blocking redirects to private/reserved IPs. Prefer this over `Policy::none()` so
 /// legitimate redirects still work; redirects to internal IPs cause the attempt to stop.
+///
+/// Also refuses an `https` → `http` hop. The scan client already does this in
+/// `validate_redirect_target`; asset downloads (ruleset, `GeoIP`) use this policy.
 pub fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        let url = attempt.url().as_str();
-        match validate_url_safe(url) {
+        match redirect_target_allowed(attempt.previous(), attempt.url()) {
             Ok(()) => attempt.follow(),
             Err(err) => {
                 log::warn!("SSRF-safe redirect stopped: {err}");
@@ -196,6 +198,18 @@ pub fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
             }
         }
     })
+}
+
+/// `Ok` when `next` may be followed from `previous`.
+///
+/// `previous` includes the URL that started the chain (reqwest's redirect attempt).
+fn redirect_target_allowed(previous: &[Url], next: &Url) -> Result<()> {
+    if previous.iter().any(|url| url.scheme() == "https") && next.scheme() == "http" {
+        return Err(anyhow::anyhow!(
+            "Blocked HTTPS->HTTP downgrade redirect to {next}"
+        ));
+    }
+    validate_url_safe(next.as_str())
 }
 
 /// Checks if a domain name is a localhost variant.
@@ -338,6 +352,27 @@ mod tests {
     fn test_validate_url_safe_unparseable() {
         assert!(validate_url_safe("not-a-url").is_err());
         assert!(validate_url_safe("").is_err());
+    }
+
+    #[test]
+    fn test_redirect_target_allowed_blocks_https_to_http() {
+        let https = Url::parse("https://example.com/rules.json").unwrap();
+        let http = Url::parse("http://example.com/rules.json").unwrap();
+        let same_https = Url::parse("https://cdn.example.com/rules.json").unwrap();
+        let err = redirect_target_allowed(std::slice::from_ref(&https), &http)
+            .expect_err("https to http must stop");
+        assert!(
+            err.to_string().contains("HTTPS->HTTP"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            redirect_target_allowed(std::slice::from_ref(&https), &same_https).is_ok(),
+            "https to https stays allowed"
+        );
+        assert!(
+            redirect_target_allowed(std::slice::from_ref(&http), &http).is_ok(),
+            "a chain that started on http may stay on http"
+        );
     }
 
     #[test]

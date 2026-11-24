@@ -5,6 +5,8 @@
 use reqwest::Client;
 use url::Url;
 
+use super::stream::{stream_bytes_with_limit, OnLimit};
+
 /// Max bytes retained from a well-known text response.
 const MAX_WELL_KNOWN_BODY: usize = 64 * 1024;
 /// Per-request timeout for well-known fetches.
@@ -184,19 +186,17 @@ async fn fetch_text(client: &Client, url: &str) -> Option<(u16, String)> {
         }
     };
     let status = response.status().as_u16();
-    let bytes = match response.bytes().await {
-        Ok(b) => b,
+    // Stop at the cap. `Response::bytes` would buffer the whole body first.
+    let bytes = match stream_bytes_with_limit(response, MAX_WELL_KNOWN_BODY, OnLimit::Truncate, url)
+        .await
+    {
+        Ok(streamed) => streamed.into_bytes(),
         Err(e) => {
             log::debug!("well-known body read failed for {url}: {e}");
             return None;
         }
     };
-    let truncated = if bytes.len() > MAX_WELL_KNOWN_BODY {
-        &bytes[..MAX_WELL_KNOWN_BODY]
-    } else {
-        &bytes
-    };
-    let body = String::from_utf8_lossy(truncated).into_owned();
+    let body = String::from_utf8_lossy(&bytes).into_owned();
     Some((status, body))
 }
 

@@ -7,7 +7,6 @@
 
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -66,20 +65,17 @@ pub async fn init_db_pool_with_path(
     db_path: &std::path::Path,
     max_connections: u32,
 ) -> Result<DbPool, DatabaseError> {
-    let db_path_str = db_path.to_string_lossy().to_string();
+    let db_path_display = db_path.display().to_string();
 
     // Ensure parent directory exists with secure permissions (0o700 on Unix) before creating DB file.
     ensure_parent_dir_secure(db_path).map_err(|e| DatabaseError::FileCreationError {
-        context: format!(
-            "Failed to create database directory for {}",
-            db_path.display()
-        ),
+        context: format!("Failed to create database directory for {db_path_display}"),
         source: Box::new(e),
     })?;
 
     // Wrap blocking filesystem operation in spawn_blocking to avoid blocking tokio runtime.
     // This is a one-time startup operation, so impact is low, but good practice.
-    let path_for_task = db_path_str.clone();
+    let path_for_task = db_path.to_path_buf();
     let file_creation_result = tokio::task::spawn_blocking(move || {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create_new(true);
@@ -97,7 +93,9 @@ pub async fn init_db_pool_with_path(
     .map_err(|e| {
         error!("Task panicked while creating database file: {e}");
         DatabaseError::FileCreationError {
-            context: format!("Background task panicked while creating database file {db_path_str}"),
+            context: format!(
+                "Background task panicked while creating database file {db_path_display}"
+            ),
             source: Box::new(e),
         }
     })?;
@@ -110,26 +108,22 @@ pub async fn init_db_pool_with_path(
         Err(e) => {
             error!("Failed to create database file: {e}");
             return Err(DatabaseError::FileCreationError {
-                context: format!("Failed to open database file {db_path_str}"),
+                context: format!("Failed to open database file {db_path_display}"),
                 source: Box::new(e),
             });
         }
     }
 
-    let db_url = format!("sqlite:{db_path_str}");
+    // Pass the filesystem path through. `sqlite:{path}` is a connection URL:
+    // `?` starts query options (`mode=memory` silently drops the file) and
+    // `%` is percent-decoded, so a real filename is not the database opened.
     // Use SqliteConnectOptions::pragma() so that per-connection PRAGMAs
     // (foreign_keys, synchronous, busy_timeout) are applied to EVERY connection
     // the pool creates, not just the first one. Without this, new pooled
     // connections revert to SQLite defaults (foreign_keys=OFF, synchronous=FULL,
     // busy_timeout=0).
-    let options = SqliteConnectOptions::from_str(&db_url)
-        .map_err(|e| {
-            error!("Failed to parse database URL: {e}");
-            DatabaseError::FileCreationError {
-                context: format!("Invalid database path: {db_path_str}"),
-                source: Box::new(e),
-            }
-        })?
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
         .create_if_missing(true)
         .pragma("foreign_keys", "ON")
         .pragma("synchronous", "NORMAL")
@@ -397,5 +391,46 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    /// A `%` in the filename must not be percent-decoded into a different path.
+    #[tokio::test]
+    async fn test_init_db_pool_percent_in_filename_is_not_decoded() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("scan%2Edb");
+        let decoded = dir.path().join("scan.db");
+        let pool = init_db_pool_with_path(&db_path, 2)
+            .await
+            .expect("percent in the filename must not be URI-decoded");
+        sqlx::query("CREATE TABLE kept (id INTEGER)")
+            .execute(pool.as_ref())
+            .await
+            .expect("write");
+        drop(pool);
+        assert!(
+            std::fs::metadata(&db_path).expect("named file").len() > 0,
+            "rows must persist in the path that contains %"
+        );
+        assert!(!decoded.exists(), "decoded sibling must not be created");
+    }
+
+    /// `?mode=memory` in a filename must not open an in-memory database.
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_init_db_pool_question_mark_is_not_a_uri_query() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("scan.db?mode=memory");
+        let pool = init_db_pool_with_path(&db_path, 2)
+            .await
+            .expect("question mark must stay part of the filename");
+        sqlx::query("CREATE TABLE kept (id INTEGER)")
+            .execute(pool.as_ref())
+            .await
+            .expect("write");
+        drop(pool);
+        assert!(
+            std::fs::metadata(&db_path).expect("named file").len() > 0,
+            "rows must persist in the named file, not memory"
+        );
     }
 }
