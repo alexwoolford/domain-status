@@ -2,3 +2,7 @@
 # SQLx 0.9 no longer pulls `rsa` into Cargo.lock (RUSTSEC-2023-0071 is gone).
 # Add crate-specific ignores here only with a comment and a SUPPLY_CHAIN_POSTURE.md note.
 [advisories]
+ignore = [
+    # chrono 0.4 has no patched release (RUSTSEC-2026-0543, informational: unmaintained).
+    "RUSTSEC-2026-0543",
+]

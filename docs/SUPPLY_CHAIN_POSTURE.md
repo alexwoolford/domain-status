@@ -28,7 +28,7 @@ This document summarizes dependency and CI practices for supply chain security.
 
 ## deny.toml policy
 
-- **Advisories:** `yanked = "deny"`. No crate-specific ignores in `deny.toml` today (`paste` / RUSTSEC-2024-0436 is gone from the lockfile as of parquet 59).
+- **Advisories:** `yanked = "deny"`. One ignore: `RUSTSEC-2026-0543` (chrono 0.4, informational unmaintained, no patched release). `paste` / RUSTSEC-2024-0436 is gone from the lockfile as of parquet 59.
 - **Bans:** `multiple-versions = "warn"`, `wildcards = "deny"`, `highlight = "all"`.
 - **Sources:** Only `https://github.com/rust-lang/crates.io-index` allowed; unknown registries and unknown git sources denied.
 
@@ -36,7 +36,7 @@ This document summarizes dependency and CI practices for supply chain security.
 
 ## .cargo/audit.toml
 
-- **Ignores:** none. SQLx 0.9 dropped the `rsa` crate from the resolved graph (`cargo tree -i rsa` is empty); `RUSTSEC-2023-0071` is no longer ignored.
+- **Ignores:** `RUSTSEC-2026-0543` only (chrono 0.4, informational unmaintained, no patched release). SQLx 0.9 dropped the `rsa` crate from the resolved graph (`cargo tree -i rsa` is empty); `RUSTSEC-2023-0071` is no longer ignored.
 - Revisit when upgrading `sqlx` or `parquet`; remove ignores that no longer apply.
 
 ---

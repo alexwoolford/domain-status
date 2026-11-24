@@ -4,6 +4,10 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # chrono 0.4 has no patched release (RUSTSEC-2026-0543, informational: unmaintained).
+    "RUSTSEC-2026-0543",
+]
 
 # Dependency license policy (not the project license — domain-status is MIT).
 # Checked by `just deny` / CI. Non-crate data (fingerprints, gitleaks rules,

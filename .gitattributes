@@ -1,0 +1,3 @@
+# sqlx checksums the migration file bytes. Keep LF so a Windows checkout
+# matches a database migrated from the committed files.
+migrations/*.sql text eol=lf

@@ -12,12 +12,31 @@ use sha2::{Digest, Sha384};
 use sqlx::{Pool, Sqlite};
 use tempfile::TempDir;
 
-/// sqlx runs a migration in a transaction unless the file starts with this line.
-/// `PRAGMA foreign_keys` is ignored inside a transaction, so the rebuild migrations
-/// (`0003`, `0013`, `0014`) opt out. Checksums already stored for the pre-prefix
-/// SQL are rewritten to the current file before `Migrator::run`.
-const NO_TRANSACTION_PREFIX: &str = "-- no-transaction\n";
+/// First line of a rebuild migration. sqlx treats a file that starts with this
+/// marker as non-transactional (`PRAGMA foreign_keys` is a no-op inside a
+/// transaction). The line ending may be LF or CRLF.
+const NO_TRANSACTION_MARKER: &str = "-- no-transaction";
 const REBUILD_MIGRATION_VERSIONS: [i64; 3] = [3, 13, 14];
+
+/// Body of a rebuild migration after the `-- no-transaction` line.
+///
+/// Accepts the LF files we commit and the CRLF bytes a Windows checkout can
+/// produce. `None` when the marker is missing.
+fn strip_no_transaction_prefix(sql: &str) -> Option<&str> {
+    let rest = sql.strip_prefix(NO_TRANSACTION_MARKER)?;
+    if let Some(rest) = rest.strip_prefix("\r\n") {
+        Some(rest)
+    } else {
+        rest.strip_prefix("\n")
+    }
+}
+
+/// Checksum of the pre-prefix SQL. Line endings are normalized to LF so a
+/// CRLF working copy still matches a database migrated from the committed file.
+fn legacy_rebuild_checksum(body: &str) -> Vec<u8> {
+    let normalized = body.replace("\r\n", "\n");
+    Sha384::digest(normalized.as_bytes()).to_vec()
+}
 
 use crate::error_handling::MigrationError;
 
@@ -133,10 +152,10 @@ async fn reconcile_rebuild_migration_checksums(
         let Some(sql) = read_migration_sql(dir, version) else {
             continue;
         };
-        let Some(legacy_sql) = sql.strip_prefix(NO_TRANSACTION_PREFIX) else {
+        let Some(legacy_sql) = strip_no_transaction_prefix(&sql) else {
             continue;
         };
-        let legacy_checksum = Sha384::digest(legacy_sql.as_bytes()).to_vec();
+        let legacy_checksum = legacy_rebuild_checksum(legacy_sql);
         let current_checksum = Sha384::digest(sql.as_bytes()).to_vec();
         sqlx::query(
             "UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2 AND checksum = ?3",
@@ -471,6 +490,21 @@ mod tests {
         assert_eq!(status_rows, 1);
     }
 
+    #[test]
+    fn test_no_transaction_prefix_crlf_matches_lf_legacy_checksum() {
+        let lf = "-- no-transaction\nCREATE TABLE t(id INTEGER);\n";
+        let crlf = "-- no-transaction\r\nCREATE TABLE t(id INTEGER);\r\n";
+        let lf_body = strip_no_transaction_prefix(lf).expect("lf prefix");
+        let crlf_body = strip_no_transaction_prefix(crlf).expect("crlf prefix");
+        assert_eq!(lf_body, "CREATE TABLE t(id INTEGER);\n");
+        assert_eq!(crlf_body, "CREATE TABLE t(id INTEGER);\r\n");
+        assert_eq!(
+            legacy_rebuild_checksum(lf_body),
+            legacy_rebuild_checksum(crlf_body)
+        );
+        assert!(strip_no_transaction_prefix("CREATE TABLE t(id INTEGER);\n").is_none());
+    }
+
     /// Kills: changing `0003` / `0013` / `0014` without rewriting the checksum
     /// already stored for the pre-prefix SQL (`VersionMismatch` on next open).
     #[tokio::test]
@@ -483,10 +517,8 @@ mod tests {
 
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
         let sql = read_migration_sql(&dir, 14).expect("0014 sql");
-        let legacy = sql
-            .strip_prefix(NO_TRANSACTION_PREFIX)
-            .expect("0014 starts with -- no-transaction");
-        let legacy_checksum = Sha384::digest(legacy.as_bytes()).to_vec();
+        let legacy = strip_no_transaction_prefix(&sql).expect("0014 starts with -- no-transaction");
+        let legacy_checksum = legacy_rebuild_checksum(legacy);
         sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 14")
             .bind(&legacy_checksum)
             .execute(&pool)
