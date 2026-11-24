@@ -45,17 +45,14 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     let path = parts[6..].join("/");
     log::debug!("Extracted: owner={owner}, repo={repo}, path={path}");
 
-    let api_url =
-        format!("https://api.github.com/repos/{owner}/{repo}/commits?path={path}&per_page=1");
+    let api_url = format!(
+        "{}/repos/{owner}/{repo}/commits?path={path}&per_page=1",
+        commit_api_origin()
+    );
 
     log::debug!("Fetching commit SHA from: {api_url}");
 
-    if crate::security::validate_url_safe(&api_url).is_err() {
-        log::warn!("Refusing unsafe commit-SHA URL: {api_url}");
-        return None;
-    }
-
-    let client = crate::initialization::build_download_client(Duration::from_secs(10)).ok()?;
+    let resp = fetch_commit_response(&api_url).await?;
 
     #[derive(Deserialize)]
     struct Commit {
@@ -63,37 +60,60 @@ pub(crate) async fn get_latest_commit_sha(repo_path: &str) -> Option<String> {
     }
 
     log::debug!("Fetching commit SHA from GitHub API: {api_url}");
-    match super::github_api_get(&client, &api_url).await {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() {
-                let text = read_capped_text(resp).await?;
-                match serde_json::from_str::<Vec<Commit>>(&text) {
-                    Ok(commits) => {
-                        if let Some(commit) = commits.first() {
-                            log::debug!("Found commit SHA: {}", commit.sha);
-                            Some(commit.sha.clone())
-                        } else {
-                            log::warn!("No commits found in response for path: {path}");
-                            None
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to parse commit response: {} (first 200 chars: {})",
-                            e,
-                            &text[..text.len().min(200)]
-                        );
-                        None
-                    }
-                }
+    let status = resp.status();
+    if !status.is_success() {
+        log::warn!("GitHub API returned status: {status} for URL: {api_url}");
+        return None;
+    }
+    let text = read_capped_text(resp).await?;
+    match serde_json::from_str::<Vec<Commit>>(&text) {
+        Ok(commits) => {
+            if let Some(commit) = commits.first() {
+                log::debug!("Found commit SHA: {}", commit.sha);
+                Some(commit.sha.clone())
             } else {
-                log::warn!("GitHub API returned status: {status} for URL: {api_url}");
+                log::warn!("No commits found in response for path: {path}");
                 None
             }
         }
         Err(e) => {
-            log::warn!("Failed to fetch commit SHA from {api_url}: {e}");
+            log::warn!(
+                "Failed to parse commit response: {} (first 200 chars: {})",
+                e,
+                &text[..text.len().min(200)]
+            );
+            None
+        }
+    }
+}
+
+fn commit_api_origin() -> String {
+    #[cfg(test)]
+    if let Ok(origin) = std::env::var("DOMAIN_STATUS_TEST_GITHUB_API") {
+        return origin;
+    }
+    "https://api.github.com".to_string()
+}
+
+async fn fetch_commit_response(api_url: &str) -> Option<reqwest::Response> {
+    #[cfg(test)]
+    if std::env::var_os("DOMAIN_STATUS_TEST_GITHUB_API").is_some() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .ok()?;
+        return client.get(api_url).send().await.ok();
+    }
+
+    if crate::security::validate_url_safe(api_url).is_err() {
+        log::warn!("Refusing unsafe commit-SHA URL: {api_url}");
+        return None;
+    }
+    let client = crate::initialization::build_download_client(Duration::from_secs(10)).ok()?;
+    match super::github_api_get(&client, api_url).await {
+        Ok(resp) => Some(resp),
+        Err(err) => {
+            log::warn!("Failed to fetch commit SHA from {api_url}: {err}");
             None
         }
     }
@@ -178,5 +198,63 @@ mod tests {
         let result = get_latest_commit_sha(url).await;
         // Should return None (parts.len() < 7)
         assert_eq!(result, None);
+    }
+
+    async fn mocked_response(body: Vec<u8>) -> reqwest::Response {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/body"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .mount(&server)
+            .await;
+        reqwest::Client::new()
+            .get(format!("{}/body", server.uri()))
+            .send()
+            .await
+            .expect("response")
+    }
+
+    #[tokio::test]
+    async fn test_read_capped_text_returns_the_body() {
+        let body = "a".repeat(4096);
+        let text = read_capped_text(mocked_response(body.clone().into_bytes()).await)
+            .await
+            .expect("body within 1 MiB");
+        assert_eq!(text, body);
+    }
+
+    #[tokio::test]
+    async fn test_read_capped_text_rejects_over_one_mibibyte() {
+        let body = vec![b'a'; 1024 * 1024 + 1];
+        assert!(read_capped_text(mocked_response(body).await)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_commit_sha_returns_sha_from_api_json() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/HTTPArchive/wappalyzer/commits"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"[{"sha":"abc123def456"}]"#))
+            .mount(&server)
+            .await;
+        std::env::set_var("DOMAIN_STATUS_TEST_GITHUB_API", server.uri());
+        struct ClearApiOrigin;
+        impl Drop for ClearApiOrigin {
+            fn drop(&mut self) {
+                std::env::remove_var("DOMAIN_STATUS_TEST_GITHUB_API");
+            }
+        }
+        let _clear = ClearApiOrigin;
+        let sha = get_latest_commit_sha(
+            "https://raw.githubusercontent.com/HTTPArchive/wappalyzer/main/src/technologies",
+        )
+        .await;
+        assert_eq!(sha.as_deref(), Some("abc123def456"));
     }
 }

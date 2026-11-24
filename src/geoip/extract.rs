@@ -5,6 +5,14 @@
 
 use anyhow::{bail, Context, Result};
 
+fn declared_entry_too_large(declared_size: usize) -> bool {
+    declared_size > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE
+}
+
+fn mmdb_read_limit() -> usize {
+    crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1
+}
+
 /// Extracts .mmdb file from a tar.gz archive.
 ///
 /// # Arguments
@@ -39,7 +47,7 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
         // Non-matching members are inflated when the tar reader skips them.
         // Refuse that read before advancing, for every member, not only the .mmdb.
         let declared_size = usize::try_from(entry.size()).unwrap_or(usize::MAX);
-        if declared_size > crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE {
+        if declared_entry_too_large(declared_size) {
             bail!(
                 "GeoIP archive entry too large: {} bytes (max: {} bytes)",
                 declared_size,
@@ -52,10 +60,9 @@ pub(crate) fn extract_mmdb_from_tar_gz(tar_gz_bytes: &[u8], db_name: &str) -> Re
         if let Some(file_name) = path.file_name() {
             let expected_name = format!("{db_name}.mmdb");
             if file_name.to_str() == Some(&expected_name) {
-                let read_limit = u64::try_from(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1)
-                    .context(
-                        "MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1 must fit in u64; this is a constant bug",
-                    )?;
+                let read_limit = u64::try_from(mmdb_read_limit()).context(
+                    "MAX_GEOIP_ARCHIVE_ENTRY_SIZE + 1 must fit in u64; this is a constant bug",
+                )?;
                 let capacity = declared_size.min(crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE);
                 let mut mmdb_bytes = Vec::with_capacity(capacity);
                 entry
@@ -157,6 +164,14 @@ mod tests {
     fn test_extract_mmdb_from_tar_gz_case_sensitive_filename() {
         let tar_gz = create_test_tar_gz(&[("geolite2-city.mmdb", b"nope")]);
         assert!(extract_mmdb_from_tar_gz(&tar_gz, "GeoLite2-City").is_err());
+    }
+
+    #[test]
+    fn test_geoip_entry_limit_allows_exact_max_and_reads_one_past_it() {
+        let max = crate::config::MAX_GEOIP_ARCHIVE_ENTRY_SIZE;
+        assert!(!declared_entry_too_large(max));
+        assert!(declared_entry_too_large(max + 1));
+        assert_eq!(mmdb_read_limit(), max + 1);
     }
 
     #[test]

@@ -251,10 +251,28 @@ mod tests {
         ("64:ff9b::a9fe:a9fe", true, "NAT64 link-local metadata"),
         ("64:ff9b::7f00:1", true, "NAT64 loopback"),
         ("64:ff9b:1::808:808", true, "local-use NAT64"),
+        (
+            "64::1",
+            false,
+            "NAT64 hextet without the rest of the prefix",
+        ),
+        (
+            "0:0:1::",
+            false,
+            "local-use marker without the NAT64 prefix",
+        ),
         ("2002:808:808::", false, "6to4 public IPv4"),
         ("2002:a9fe:a9fe::", true, "6to4 link-local"),
         ("fec0::1", true, "deprecated site-local"),
     ];
+
+    #[test]
+    fn test_ipv4_from_halves_keeps_octet_order() {
+        assert_eq!(
+            ipv4_from_halves(0x0a01, 0x0203),
+            std::net::Ipv4Addr::new(10, 1, 2, 3)
+        );
+    }
 
     #[test]
     fn test_is_private_ip_table() {

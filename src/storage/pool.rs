@@ -353,4 +353,49 @@ mod tests {
             other => panic!("expected FileCreationError, got {other:?}"),
         }
     }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_restrict_database_files_sets_db_and_sidecars_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = NamedTempFile::new().expect("db");
+        let db_path = tmp.path();
+        let wal = format!("{}-wal", db_path.display());
+        let shm = format!("{}-shm", db_path.display());
+        std::fs::write(&wal, b"wal").expect("wal");
+        std::fs::write(&shm, b"shm").expect("shm");
+        for path in [
+            db_path.to_path_buf(),
+            std::path::PathBuf::from(&wal),
+            std::path::PathBuf::from(&shm),
+        ] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("mode");
+        }
+        restrict_database_files(db_path).await;
+        for path in [
+            db_path,
+            std::path::Path::new(&wal),
+            std::path::Path::new(&shm),
+        ] {
+            let mode = std::fs::metadata(path).expect("meta").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", path.display());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_restrict_sqlite_sidecar_sets_mode_600() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = NamedTempFile::new().expect("db");
+        let sidecar = format!("{}-wal", tmp.path().display());
+        std::fs::write(&sidecar, b"wal").expect("wal");
+        std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o644)).expect("mode");
+        restrict_sqlite_sidecar(tmp.path(), "-wal");
+        let mode = std::fs::metadata(&sidecar)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 }

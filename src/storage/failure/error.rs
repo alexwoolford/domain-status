@@ -533,6 +533,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_status_error_whose_url_says_timeout_stays_not_found() {
+        use httptest::{matchers::*, responders::*, Expectation, Server};
+
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(request::method_path("GET", "/timeout"))
+                .respond_with(status_code(404)),
+        );
+        let client = reqwest::Client::new();
+        let url = server.url("/timeout").to_string();
+        let response = client.get(&url).send().await.expect("response");
+        let reqwest_err = response.error_for_status().expect_err("404");
+        assert!(
+            reqwest_err.to_string().to_lowercase().contains("timeout"),
+            "the response url must appear in the reqwest error"
+        );
+        let error = anyhow::Error::from(reqwest_err);
+        assert_eq!(extract_error_type(&error), ErrorType::HttpRequestNotFound);
+    }
+
+    #[tokio::test]
     async fn test_extract_http_status_from_error_itself() {
         // Test that HTTP status is extracted from error itself first (line 102-105)
         // This is critical - direct reqwest errors should be handled efficiently

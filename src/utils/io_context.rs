@@ -166,6 +166,20 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Kills: `restrict_to_owner` leaving a world-readable file unchanged.
+    #[test]
+    #[cfg(unix)]
+    fn test_restrict_to_owner_sets_mode_600() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("secret.db");
+        std::fs::write(&path, b"x").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("mode");
+        restrict_to_owner(&path);
+        let mode = std::fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
     /// Kills: `ensure_parent_dir_secure` creating a directory for a bare
     /// filename or `./file` (those parents must be no-ops).
     #[test]

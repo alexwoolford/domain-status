@@ -96,6 +96,10 @@ async fn url_status_already_stored(pool: &DbPool, run_id: &str, url: &str) -> bo
     .is_some()
 }
 
+fn drain_timeout_records_incomplete(inserted: usize, still_open: usize) -> bool {
+    inserted < still_open
+}
+
 async fn failure_already_stored(pool: &DbPool, run_id: &str, url: &str) -> bool {
     sqlx::query_scalar::<_, i64>(
         "SELECT 1 FROM url_failures WHERE run_id = ?1 AND attempted_url = ?2 LIMIT 1",
@@ -346,7 +350,7 @@ async fn drain_join_set(
                     &still_open,
                 )
                 .await;
-                if inserted < still_open.len() {
+                if drain_timeout_records_incomplete(inserted, still_open.len()) {
                     log::warn!(
                         "Recorded {inserted}/{} drain-timeout failures (the rest hit DB errors or were already stored)",
                         still_open.len()
@@ -842,5 +846,42 @@ mod tests {
             report.total_urls, 1,
             "File with one URL and comments should result in one URL attempted"
         );
+    }
+
+    #[test]
+    fn test_drain_timeout_warns_only_when_a_failure_was_not_recorded() {
+        assert!(drain_timeout_records_incomplete(0, 2));
+        assert!(!drain_timeout_records_incomplete(2, 2));
+        assert!(!drain_timeout_records_incomplete(3, 2));
+    }
+
+    #[tokio::test]
+    async fn test_stored_rows_are_already_stored() {
+        let sqlite = crate::storage::test_helpers::create_test_pool().await;
+        crate::storage::test_helpers::create_test_run(&sqlite, "run-1", 1).await;
+        crate::storage::test_helpers::create_test_url_status(
+            &sqlite,
+            "example.com",
+            "example.com",
+            200,
+            Some("run-1"),
+            1,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO url_failures (
+                attempted_url, initial_domain, error_type, error_message,
+                retry_count, observed_at_ms, run_id
+            ) VALUES ('https://example.com/down', 'example.com', 'timeout', 'timed out', 0, 1, 'run-1')",
+        )
+        .execute(&sqlite)
+        .await
+        .expect("insert failure");
+        let pool = Arc::new(sqlite);
+
+        assert!(url_status_already_stored(&pool, "run-1", "https://example.com/page").await);
+        assert!(!url_status_already_stored(&pool, "run-2", "https://example.com/page").await);
+        assert!(failure_already_stored(&pool, "run-1", "https://example.com/down").await);
+        assert!(!failure_already_stored(&pool, "run-1", "https://example.com/other").await);
     }
 }

@@ -670,6 +670,23 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    #[tokio::test]
+    async fn test_summary_missing_database_is_an_error() {
+        let err = execute_summary_command(SummaryCommand {
+            db_path: PathBuf::from("/nonexistent/domain_status_missing.db"),
+            run_id: None,
+            top: 15,
+        })
+        .await
+        .expect_err("a missing database must not exit 0");
+        let message = err.to_string();
+        assert!(
+            message.contains("Failed to open database")
+                || message.contains("Failed to initialize logger"),
+            "unexpected summary error: {message}"
+        );
+    }
+
     fn sample_report(total_urls: usize, successful: usize, failed: usize) -> ScanReport {
         ScanReport {
             total_urls,
