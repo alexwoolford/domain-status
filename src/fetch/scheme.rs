@@ -50,7 +50,12 @@ fn should_try_http_fallback(scheme_omitted: bool, url: &str, error: &Error) -> b
     }
 }
 
-/// Connection refused, timeout, or TLS handshake failure, with no HTTP status.
+/// Connection refused, timeout, TLS handshake failure, or the peer aborting the
+/// handshake, with no HTTP status.
+///
+/// A wrapped I/O error often has [`std::io::ErrorKind::Other`], so the OS
+/// message is required as well as the kind. Windows says "forcibly closed"
+/// (os error 10054). Other platforms say "connection reset" or "broken pipe".
 fn https_attempt_never_completed(error: &Error) -> bool {
     let Some(reqwest_err) = error
         .chain()
@@ -67,8 +72,26 @@ fn https_attempt_never_completed(error: &Error) -> bool {
     if chain_has_rustls_error(reqwest_err) || chain_text_has_tls(reqwest_err) {
         return true;
     }
-    chain_has_io_kind(reqwest_err, std::io::ErrorKind::ConnectionRefused)
-        || chain_text_has(reqwest_err, "connection refused")
+    peer_closed_before_http_status(reqwest_err)
+}
+
+fn peer_closed_before_http_status(err: &reqwest::Error) -> bool {
+    const KINDS: [std::io::ErrorKind; 4] = [
+        std::io::ErrorKind::ConnectionRefused,
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::ConnectionAborted,
+        std::io::ErrorKind::BrokenPipe,
+    ];
+    if KINDS.iter().any(|kind| chain_has_io_kind(err, *kind)) {
+        return true;
+    }
+    const NEEDLES: [&str; 4] = [
+        "connection refused",
+        "connection reset",
+        "forcibly closed",
+        "broken pipe",
+    ];
+    NEEDLES.iter().any(|needle| chain_text_has(err, needle))
 }
 
 fn chain_any(err: &reqwest::Error, pred: impl Fn(&(dyn StdError + 'static)) -> bool) -> bool {
@@ -591,6 +614,34 @@ mod tests {
             0,
             "https to http redirect is not a fallback"
         );
+    }
+
+    #[tokio::test]
+    async fn peer_reset_during_handshake_is_classified() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind reset port");
+        let addr = listener.local_addr().expect("addr");
+        let hold = tokio::spawn(async move {
+            if let Ok((sock, _)) = listener.accept().await {
+                let std_stream = sock.into_std().expect("std stream");
+                socket2::SockRef::from(&std_stream)
+                    .set_linger(Some(Duration::ZERO))
+                    .expect("linger");
+                drop(std_stream);
+            }
+        });
+        let error = plain_client()
+            .get(format!("https://{addr}/"))
+            .send()
+            .await
+            .expect_err("reset handshake");
+        let error = Error::from(error);
+        assert!(
+            https_attempt_never_completed(&error),
+            "peer reset should allow fallback, got {error:#}"
+        );
+        hold.abort();
     }
 
     #[tokio::test]

@@ -224,6 +224,7 @@ wiremock = "^0.6"           # HTTP mocking for integration tests
 tower = "^0.5"
 rcgen = "^0.14"
 divan = "0.1"
+socket2 = "^0.6"
 
 [patch.crates-io]
 # crates.io whois-service 0.3.0 enables reqwest default features (native-tls).
