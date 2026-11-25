@@ -538,6 +538,7 @@ pub async fn run_scan(
                     continue;
                 }
 
+                let scheme_omitted = crate::app::url::input_omitted_scheme(trimmed);
                 let Some(url) = validate_and_normalize_url(trimmed) else {
                     skip_url(&resources, &progress_callback, total_lines);
                     continue;
@@ -582,6 +583,7 @@ pub async fn run_scan(
 
                 let task_params = UrlTaskParams {
                     url: Arc::from(url.as_str()),
+                    scheme_omitted,
                     ctx: Arc::clone(&resources.shared_ctx),
                     cancel: cancel.clone(),
                     permit,

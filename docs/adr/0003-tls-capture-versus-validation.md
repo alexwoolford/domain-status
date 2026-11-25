@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-03-01
-- Updated: 2026-09-16
+- Updated: 2026-11-25
 
 ## Context
 
@@ -15,7 +15,8 @@ Page-fetch clients live in `src/initialization/client.rs`. Dedicated TLS observa
 Split **page fetch** from **TLS capture**:
 
 - **Page-fetch HTTP clients** use **strict** rustls verification (invalid certificates and hostnames fail the request). A failed fetch is still a useful observation (recorded as failure / skip), not a reason to disable trust.
-- **TLS capture** uses a separate AcceptAll path so certificate fields, SANs, fingerprints, and related facts can be collected independently of page-fetch trust **when that path runs**. It runs only after a successful strict HTTPS GET (`fetch_tls_and_dns`). Expired, self-signed, or hostname-mismatched sites fail the page client and land in `url_failures` with no cert columns.
+- **TLS capture** uses a separate AcceptAll path so certificate fields, SANs, fingerprints, and related facts can be collected independently of page-fetch trust **when that path runs**. It runs only after a successful strict HTTPS GET (`fetch_tls_and_dns`), on that page's host and port (443 when the URL omits it). Explicit HTTP, and a scheme-less name that fell back to HTTP, do not open it. Expired, self-signed, or hostname-mismatched explicit `https://` URLs fail the page client and land in `url_failures` with no cert columns.
+- A scheme-less input is fetched as `https` on the port in the input (443 when omitted). Fetch tries `http` on that same host and port only when HTTPS never completes (connection refused, timeout, or TLS handshake failure). A completed HTTPS status, including 4xx/5xx and an HTTPS response that redirects toward HTTP, is kept. The HTTPS→HTTP redirect hop stays blocked; fallback is a new request, not that hop. A successful fallback stores the HTTP page only.
 - Redirect handling remains manual and SSRF-aware (`Policy::none` + hop validation + `SafeResolver`).
 - Trust outcomes are stored as fact columns (`cert_is_self_signed`, `cert_is_wildcard`, `cert_is_mismatched`, `tls_version`, validity timestamps) for SQL / export — not as a separate “security warnings” analysis layer.
 
@@ -29,7 +30,7 @@ Positive:
 
 Trade-offs:
 
-- Invalid-cert HTTPS is a failed fetch (`url_failures`), not an AcceptAll observation. Running capture on the HTTP failure path is a later product change, not implied by this split.
+- Invalid-cert explicit `https://` is a failed fetch (`url_failures`), not an AcceptAll observation. A scheme-less name whose HTTPS handshake never completes can be stored as the HTTP fallback page, still without certificate columns. Running capture on the HTTP failure path is a later product change, not implied by this split.
 - Capture success does not imply the page-fetch client trusted the certificate (the two handshakes are independent).
 - Dual paths must stay documented so “we got a cert” is not read as “HTTPS was valid.”
 

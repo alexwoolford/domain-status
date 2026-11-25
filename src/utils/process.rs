@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::error_handling::get_retry_strategy;
 use crate::fetch::UrlProcessOutcome;
-use crate::fetch::{handle_http_request, ProcessingContext};
+use crate::fetch::{handle_http_request_with_fallback, ProcessingContext};
 
 use super::retry::is_retriable_error;
 
@@ -69,6 +69,8 @@ where
 ///
 /// * `url` - The URL to process (wrapped in Arc<str> to avoid cloning on retries)
 /// * `ctx` - Processing context containing all shared resources
+/// * `scheme_omitted` - The input had no scheme. When the `https` attempt never
+///   completes, fetch tries `http` on the same host and port once per attempt.
 ///
 /// # Returns
 ///
@@ -80,7 +82,11 @@ where
 /// This is tracked manually using an atomic counter, and may not be 100% accurate in all edge cases
 /// (e.g., if retries are aborted early or if the retry strategy changes). For most practical purposes,
 /// this provides a good approximation of retry attempts.
-pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessUrlResult {
+pub async fn process_url(
+    url: Arc<str>,
+    ctx: Arc<ProcessingContext>,
+    scheme_omitted: bool,
+) -> ProcessUrlResult {
     log::debug!("Starting process for URL: {}", url.as_ref());
 
     // Track retry attempts using Arc<AtomicU32> (needed for async closures with move semantics)
@@ -99,7 +105,15 @@ pub async fn process_url(url: Arc<str>, ctx: Arc<ProcessingContext>) -> ProcessU
                 // at process.rs:57 would be included in elapsed time passed to handle_response,
                 // corrupting response_time_seconds and http_request_us for retried requests.
                 let start_time = std::time::Instant::now();
-                async move { handle_http_request(&ctx, url.as_ref(), start_time).await }
+                async move {
+                    handle_http_request_with_fallback(
+                        &ctx,
+                        url.as_ref(),
+                        start_time,
+                        scheme_omitted,
+                    )
+                    .await
+                }
             }
         },
         &attempt_count,

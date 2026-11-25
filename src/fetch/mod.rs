@@ -22,6 +22,7 @@ mod record;
 mod redirects;
 mod request;
 mod response;
+mod scheme;
 pub(crate) mod stream;
 mod utils;
 pub(crate) mod well_known;
@@ -32,6 +33,7 @@ pub use handler::{handle_http_request, handle_response, UrlProcessOutcome};
 pub use redirects::resolve_redirect_chain;
 #[cfg(any(test, feature = "bench-utils"))]
 pub(crate) use response::parse_html_content;
+pub(crate) use scheme::handle_http_request_with_fallback;
 
 #[cfg(test)]
 mod tests {

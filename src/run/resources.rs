@@ -123,6 +123,8 @@ pub struct ScanLoopResult {
 pub struct UrlTaskParams {
     /// The URL to process
     pub url: Arc<str>,
+    /// Input had no scheme, so fetch may fall back from HTTPS to HTTP.
+    pub scheme_omitted: bool,
     /// Shared processing context
     pub ctx: Arc<ProcessingContext>,
     /// Cancellation token so workers can respond to Ctrl-C

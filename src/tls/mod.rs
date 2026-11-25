@@ -127,6 +127,7 @@ fn naive_utc_from_unix_timestamp(secs: i64, field: &str) -> Result<NaiveDateTime
 /// first avoids wasting the connect timeout on an address family that can't route.
 async fn resolve_public_tls_addrs(
     domain: &str,
+    port: u16,
     resolver: &TokioResolver,
 ) -> Result<Vec<SocketAddr>> {
     crate::security::validate_url_safe(&format!("https://{domain}/"))?;
@@ -136,13 +137,30 @@ async fn resolve_public_tls_addrs(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to resolve {domain}: {e}"))?;
 
-    public_tls_socket_addrs(domain, response.iter())
+    public_tls_socket_addrs(domain, response.iter(), port)
 }
 
-/// Filters to public IPs, IPv4-first, and binds them to port 443.
+/// TCP port for certificate capture of an HTTPS page.
+///
+/// `None` for any non-HTTPS URL, including explicit HTTP and a scheme-less name
+/// that fell back to HTTP, so those pages do not open a certificate connection.
+/// An omitted HTTPS port is 443. A port written in the URL is kept (`8443`).
+pub(crate) fn https_certificate_port(page_url: &str) -> Option<u16> {
+    let url = url::Url::parse(page_url).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    url.port_or_known_default()
+}
+
+/// Filters to public IPs, IPv4-first, and binds them to `port`.
+///
+/// `port` is the page URL's port ([`https_certificate_port`]): 443 when an
+/// `https` URL omits it, otherwise the port written in the URL.
 fn public_tls_socket_addrs(
     domain: &str,
     ips: impl IntoIterator<Item = IpAddr>,
+    port: u16,
 ) -> Result<Vec<SocketAddr>> {
     let addrs = order_public_addrs_ipv4_first(
         ips.into_iter()
@@ -157,7 +175,7 @@ fn public_tls_socket_addrs(
 
     Ok(addrs
         .into_iter()
-        .map(|ip| SocketAddr::new(ip, 443))
+        .map(|ip| SocketAddr::new(ip, port))
         .collect())
 }
 
@@ -304,6 +322,7 @@ async fn handshake_and_parse(domain: &str, sock: TcpStream) -> Result<Certificat
 /// # Arguments
 ///
 /// * `domain` - The domain name to connect to (e.g., "example.com")
+/// * `port` - TCP port of the HTTPS page (443 when the URL omits a port)
 /// * `resolver` - DNS resolver (hickory with configured timeout); avoids bypassing timeout via system DNS
 ///
 /// # Returns
@@ -319,12 +338,13 @@ async fn handshake_and_parse(domain: &str, sock: TcpStream) -> Result<Certificat
 /// - Certificate parsing fails
 pub async fn get_ssl_certificate_info(
     domain: &str,
+    port: u16,
     resolver: &TokioResolver,
 ) -> Result<CertificateInfo> {
-    debug!("Attempting to get SSL info for domain: {domain}");
+    debug!("Attempting to get SSL info for domain: {domain} port {port}");
     parse_tls_server_name(domain)?;
     debug!("Attempting to connect to domain: {domain}");
-    let socket_addrs = resolve_public_tls_addrs(domain, resolver).await?;
+    let socket_addrs = resolve_public_tls_addrs(domain, port, resolver).await?;
     let (sock, socket_addr) = connect_tls_tcp(domain, &socket_addrs).await?;
     debug!("Connected to {domain} via {socket_addr}");
     handshake_and_parse(domain, sock).await
@@ -345,7 +365,7 @@ mod tests {
     async fn test_get_ssl_certificate_info_valid_domain() {
         init_crypto_for_test();
         let resolver = test_resolver();
-        let cert_info = get_ssl_certificate_info("example.com", resolver.as_ref())
+        let cert_info = get_ssl_certificate_info("example.com", 443, resolver.as_ref())
             .await
             .unwrap_or_else(|e| {
                 panic!("ignored live TLS test must handshake example.com, got {e}")
@@ -490,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn public_tls_socket_addrs_skips_private_and_uses_port_443() {
+    fn public_tls_socket_addrs_skips_private_and_uses_given_port() {
         let addrs = public_tls_socket_addrs(
             "example.test",
             [
@@ -498,14 +518,54 @@ mod tests {
                 IpAddr::from([1, 1, 1, 1]),
                 IpAddr::from([10, 0, 0, 1]),
             ],
+            443,
         )
         .expect("public ip");
         assert_eq!(addrs, vec![SocketAddr::from(([1, 1, 1, 1], 443))]);
     }
 
     #[test]
+    fn public_tls_socket_addrs_uses_non_443_page_port() {
+        let addrs = public_tls_socket_addrs(
+            "example.test",
+            [IpAddr::from([1, 1, 1, 1]), IpAddr::from([8, 8, 8, 8])],
+            8443,
+        )
+        .expect("public ips");
+        assert_eq!(
+            addrs,
+            vec![
+                SocketAddr::from(([1, 1, 1, 1], 8443)),
+                SocketAddr::from(([8, 8, 8, 8], 8443)),
+            ]
+        );
+    }
+
+    #[test]
+    fn https_certificate_port_follows_the_page_url() {
+        assert_eq!(https_certificate_port("http://example.com"), None);
+        assert_eq!(https_certificate_port("http://example.com:8080/path"), None);
+        assert_eq!(
+            https_certificate_port("https://example.com/path"),
+            Some(443)
+        );
+        assert_eq!(
+            https_certificate_port("https://example.com:8443/path"),
+            Some(8443)
+        );
+        assert_eq!(
+            https_certificate_port("https://example.com:443/path"),
+            Some(443)
+        );
+        assert_eq!(
+            https_certificate_port("https://[2001:db8::1]:8443/"),
+            Some(8443)
+        );
+    }
+
+    #[test]
     fn public_tls_socket_addrs_errors_when_none_public() {
-        let err = public_tls_socket_addrs("example.test", [IpAddr::from([127, 0, 0, 1])])
+        let err = public_tls_socket_addrs("example.test", [IpAddr::from([127, 0, 0, 1])], 8443)
             .expect_err("loopback only");
         assert!(
             err.to_string()

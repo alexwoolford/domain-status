@@ -39,6 +39,7 @@ struct TaskProgress<'a> {
 pub async fn process_url_task(params: UrlTaskParams) {
     let UrlTaskParams {
         url,
+        scheme_omitted,
         ctx,
         cancel,
         permit: _permit, // Hold permit until task completes
@@ -90,7 +91,7 @@ pub async fn process_url_task(params: UrlTaskParams) {
     let result = tokio::select! {
         r = tokio::time::timeout(
             URL_PROCESSING_TIMEOUT,
-            crate::utils::process_url(url, ctx.clone()),
+            crate::utils::process_url(url, ctx.clone(), scheme_omitted),
         ) => r,
         () = cancel.cancelled() => {
             handle_cancelled(&url_for_logging, &ctx, &progress).await;
@@ -577,6 +578,7 @@ mod tests {
 
         process_url_task(UrlTaskParams {
             url: Arc::from("https://example.com/cancelled"),
+            scheme_omitted: false,
             ctx: Arc::clone(&ctx),
             cancel,
             permit,

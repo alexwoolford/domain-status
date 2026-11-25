@@ -8,9 +8,15 @@ const MAX_URL_LENGTH: usize = 2048;
 
 /// Validates and normalizes a URL.
 ///
-/// Adds https:// prefix if missing, then validates that the URL is syntactically
-/// valid and uses http/https scheme. Rejects URLs longer than `MAX_URL_LENGTH` to prevent `DoS`.
-/// Logs a warning and returns None if the URL is invalid, too long, or uses an unsupported scheme.
+/// Adds an `https://` prefix when the input has no scheme, then validates that the
+/// URL is syntactically valid and uses the `http` or `https` scheme. Rejects URLs
+/// longer than `MAX_URL_LENGTH`. Logs a warning and returns `None` if the URL is
+/// invalid, too long, or uses an unsupported scheme.
+///
+/// The prefix is the first fetch for a scheme-less input, not a guarantee that the
+/// stored page is HTTPS. Fetch falls back to `http` on the same host and port only
+/// when that HTTPS attempt never completes (connection refused, timeout, or TLS
+/// handshake failure). An explicit `http://` or `https://` input is left unchanged.
 ///
 /// # Arguments
 ///
@@ -64,9 +70,35 @@ pub fn validate_and_normalize_url(url: &str) -> Option<String> {
     }
 }
 
+/// True when `raw` has no `://` scheme.
+///
+/// Those inputs are normalized to `https` and may fall back to `http` at fetch
+/// time. Explicit `http://` and `https://` inputs return false.
+pub(crate) fn input_omitted_scheme(raw: &str) -> bool {
+    !raw.contains("://")
+}
+
+/// `https://host[:port]/path` → `http://host[:port]/path`.
+///
+/// Keeps a port written in the URL (`example.com:8443` stays on 8443). An omitted
+/// port stays omitted, so the HTTP attempt uses port 80. Returns `None` unless
+/// `https_url` is an `https` URL.
+pub(crate) fn http_fallback_url(https_url: &str) -> Option<String> {
+    let parsed = url::Url::parse(https_url).ok()?;
+    if parsed.scheme() != "https" {
+        return None;
+    }
+    let scheme_sep = https_url.find("://")?;
+    let rest = https_url.get(scheme_sep + 3..)?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!("http://{rest}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_and_normalize_url;
+    use super::{http_fallback_url, input_omitted_scheme, validate_and_normalize_url};
 
     #[test]
     fn test_validate_and_normalize_url_adds_https() {
@@ -294,6 +326,32 @@ mod tests {
             result.is_some(),
             "Should accept URL at maximum length (2048 chars)"
         );
+    }
+
+    #[test]
+    fn test_http_fallback_url_keeps_written_port_and_omits_default() {
+        assert_eq!(
+            http_fallback_url("https://example.com/path?q=1"),
+            Some("http://example.com/path?q=1".to_string())
+        );
+        assert_eq!(
+            http_fallback_url("https://example.com:8443/path"),
+            Some("http://example.com:8443/path".to_string())
+        );
+        assert_eq!(
+            http_fallback_url("https://example.org"),
+            Some("http://example.org".to_string())
+        );
+        assert_eq!(http_fallback_url("http://example.com"), None);
+        assert_eq!(http_fallback_url("https://"), None);
+    }
+
+    #[test]
+    fn test_input_omitted_scheme_matches_normalize_rule() {
+        assert!(input_omitted_scheme("example.com"));
+        assert!(input_omitted_scheme("example.com:8443/path"));
+        assert!(!input_omitted_scheme("http://example.com"));
+        assert!(!input_omitted_scheme("https://example.net/a"));
     }
 
     #[test]
