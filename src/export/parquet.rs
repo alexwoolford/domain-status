@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::utils::{create_private_file, IoErrorContext};
 
-use super::bootstrap::for_each_export_row;
+use super::bootstrap::{for_each_export_row, open_export_pool};
 
 /// Batch size for collecting rows before writing a Parquet row group.
 const BATCH_SIZE: usize = 10_000;
@@ -937,13 +937,14 @@ pub async fn export_parquet(opts: &super::ExportOptions) -> Result<usize> {
         .set_compression(Compression::SNAPPY)
         .build();
 
+    let pool = open_export_pool(opts).await?;
     let file = create_private_file(output_path).with_path(output_path)?;
 
     let mut writer = ArrowWriter::try_new(file, Arc::clone(&schema), Some(props))
         .context("Failed to create Parquet writer")?;
 
     let mut batch_rows: Vec<super::row::ExportRow> = Vec::with_capacity(BATCH_SIZE);
-    let record_count = for_each_export_row(opts, |export_row| {
+    let record_count = for_each_export_row(&pool, opts, |export_row| {
         batch_rows.push(export_row);
         if batch_rows.len() >= BATCH_SIZE {
             write_batch(&mut writer, &schema, &batch_rows)?;
@@ -1067,6 +1068,32 @@ mod tests {
         .await;
 
         assert!(result.is_err(), "Parquet to '-' (stdout) should fail");
+    }
+
+    #[tokio::test]
+    async fn test_parquet_export_missing_db_does_not_create_output() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output_path = dir.path().join("out.parquet");
+
+        let err = export_parquet(&ExportOptions {
+            db_path: dir.path().join("missing.db"),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Parquet,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect_err("missing database");
+
+        assert!(!output_path.exists(), "output file must not be created");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Database file does not exist"),
+            "expected missing-database error, got {message}"
+        );
     }
 
     #[tokio::test]

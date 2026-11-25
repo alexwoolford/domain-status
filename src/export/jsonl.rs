@@ -10,7 +10,7 @@ use std::io::{self, Write};
 
 use crate::utils::{create_private_file, IoErrorContext};
 
-use super::bootstrap::for_each_export_row;
+use super::bootstrap::{for_each_export_row, open_export_pool};
 use super::fields;
 use super::queries::IgnoreBrokenPipe;
 use super::row::{build_url, parse_string_list};
@@ -60,6 +60,8 @@ use super::row::{build_url, parse_string_list};
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
 #[allow(clippy::too_many_lines)] // Sequential export pipeline: DB setup, query, row serialization, output
 pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
+    let pool = open_export_pool(opts).await?;
+
     let mut writer: Box<dyn Write> = if let Some(output_path) = opts.output.as_ref() {
         let path = output_path.clone();
         let file = tokio::task::spawn_blocking(move || create_private_file(&path).with_path(&path))
@@ -70,7 +72,7 @@ pub async fn export_jsonl(opts: &super::ExportOptions) -> Result<usize> {
         Box::new(IgnoreBrokenPipe::new(io::stdout()))
     };
 
-    let record_count = for_each_export_row(opts, |export_row| {
+    let record_count = for_each_export_row(&pool, opts, |export_row| {
 
         // Build URL
         let url = build_url(&export_row.main.final_domain);
@@ -941,6 +943,32 @@ mod tests {
             .expect("Should be array");
         assert_eq!(redirect_chain.len(), 2);
         assert_eq!(json_obj["final_redirect_url"], "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn test_export_jsonl_missing_db_does_not_create_output() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output_path = dir.path().join("out.jsonl");
+
+        let err = export_jsonl(&ExportOptions {
+            db_path: dir.path().join("missing.db"),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Jsonl,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect_err("missing database");
+
+        assert!(!output_path.exists(), "output file must not be created");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Database file does not exist"),
+            "expected missing-database error, got {message}"
+        );
     }
 
     #[tokio::test]

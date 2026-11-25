@@ -11,7 +11,7 @@ use std::io::{self, Write};
 
 use crate::utils::{create_private_file, IoErrorContext};
 
-use super::bootstrap::for_each_export_row;
+use super::bootstrap::{for_each_export_row, open_export_pool};
 use super::fields;
 use super::queries::IgnoreBrokenPipe;
 
@@ -45,6 +45,8 @@ fn neutralize_csv_formula(cell: String) -> String {
 /// # Errors
 /// Returns `Err` when the database pool cannot be created, the query fails, or writing the output fails.
 pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
+    let pool = open_export_pool(opts).await?;
+
     let mut writer: Writer<Box<dyn Write>> = if let Some(output_path) = opts.output.as_ref() {
         let path = output_path.clone();
         let file = tokio::task::spawn_blocking(move || create_private_file(&path).with_path(&path))
@@ -59,7 +61,7 @@ pub async fn export_csv(opts: &super::ExportOptions) -> Result<usize> {
         .write_record(csv_column_names().collect::<Vec<_>>())
         .map_err(anyhow::Error::from)?;
 
-    let record_count = for_each_export_row(opts, |export_row| {
+    let record_count = for_each_export_row(&pool, opts, |export_row| {
         writer
             .write_record(csv_record_cells(&export_row))
             .map_err(anyhow::Error::from)?;
@@ -201,5 +203,31 @@ mod tests {
             "plain title"
         );
         assert_eq!(neutralize_csv_formula("200".to_string()), "200");
+    }
+
+    #[tokio::test]
+    async fn test_csv_export_missing_db_does_not_create_output() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output_path = dir.path().join("out.csv");
+
+        let err = export_csv(&ExportOptions {
+            db_path: dir.path().join("missing.db"),
+            output: Some(output_path.clone()),
+            format: ExportFormat::Csv,
+            run_id: None,
+            domain: None,
+            status: None,
+            since: None,
+            include_implied_tech: false,
+        })
+        .await
+        .expect_err("missing database");
+
+        assert!(!output_path.exists(), "output file must not be created");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Database file does not exist"),
+            "expected missing-database error, got {message}"
+        );
     }
 }
